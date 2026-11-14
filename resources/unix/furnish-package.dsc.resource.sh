@@ -1,7 +1,8 @@
 #!/bin/sh
 # Furnish/Package: manage a package with the system package manager.
 # DSC passes the resource properties as env vars: $name, $packageManager (optional: pacman, apt,
-# dnf, zypper, brew, nix; default: the first one found) and $_exist.
+# dnf, zypper, brew, nix; default: the first one found), $<manager>Name (optional: the package's
+# name for that package manager, e.g. nixName), $nixpkgs (optional flake reference) and $_exist.
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
@@ -79,18 +80,39 @@ use_brew() {
     upgrade_desc="brew upgrade $name"
 }
 use_nix() {
-    # NixOS (or nix-only systems): per-user profile from nixpkgs, needs no root.
+    # Nix profiles, no root needed: the user's own profile. As root (the furnish service), the
+    # shared profile /nix/var/nix/profiles/furnish, which the NixOS module puts on everyone's PATH.
     have nix || return 1
     via=nix admin=false
-    export NIX_CONFIG="experimental-features = nix-command flakes"
-    installed_version() {
-        nix profile list --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$name\":" || return 0
-        path=$(nix profile list --json | grep -o "/nix/store/[a-z0-9]*-$name-[^\"]*" | head -n1)
+    # Add to the user's settings rather than replacing them.
+    export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
+}extra-experimental-features = nix-command flakes"
+    shared=/nix/var/nix/profiles/furnish
+    ref=${nixpkgs:-nixpkgs}
+    if [ "$(id -u)" = 0 ]; then profile="--profile $shared"; else profile=""; fi
+    # The version in a profile ("" if it doesn't hold the package).
+    version_in() {
+        nix profile list $1 --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$name\":" || return 0
+        path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$name-[^\"]*" | head -n1)
         echo "${path##*-"$name"-}"
     }
-    do_install() { run_step nix profile install "nixpkgs#$name"; }
-    do_remove() { run_step nix profile remove "$name"; }
-    install_desc="nix profile install nixpkgs#$name" remove_desc="nix profile remove $name"
+    # Installed for this user or for everyone.
+    installed_version() {
+        v=$(version_in "")
+        [ -n "$v" ] || { [ -e "$shared" ] && v=$(version_in "--profile $shared"); }
+        echo "$v"
+    }
+    do_install() { run_step nix profile install $profile "$ref#$name"; }
+    do_remove() { run_step nix profile remove $profile "$name"; }
+    # Not `nix profile upgrade`: it re-resolves the reference installed from, not the current one.
+    do_upgrade() { do_remove && do_install; }
+    install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $name"
+    upgrade_desc="nix profile remove $profile $name && nix profile install $profile $ref#$name"
+    # The version in the referenced nixpkgs, if it differs from the installed one.
+    newer_version() {
+        available=$(nix eval --raw "$ref#$name.version" 2>/dev/null) || return 0
+        [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
+    }
 }
 
 case "${packageManager:-}" in
@@ -108,5 +130,9 @@ nix) use_nix || missing "Nix" ;;
     ;;
 *) fail 10 "unknown packageManager '$packageManager' (pacman, apt, dnf, zypper, brew, nix)" ;;
 esac
+
+# A package can have another name per package manager (e.g. code / vscode).
+eval "override=\${${via}Name:-}"
+if [ -n "$override" ]; then name=$override subject=$override; fi
 
 furnish_main "$@"

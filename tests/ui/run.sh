@@ -85,10 +85,11 @@ git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c 
 git -C "$work/origin-src" push -q "$work/origin.git" HEAD
 repo_from_fixture "$work/second"
 
-# An admin policy: the fixture collection is managed, the update interval locked.
+# An admin policy: the fixture collection is managed, the update interval locked, the app branded.
 cat > "$work/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}},
- "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git"}]}}
+ "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git"}]},
+ "branding": {"name": "Acme Apps", "logo": "fixture/branding/logo.svg", "accent": "#e30613"}}
 JSON
 
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.

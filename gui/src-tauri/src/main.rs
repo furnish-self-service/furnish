@@ -80,6 +80,56 @@ struct CollectionInfo {
     options: Vec<options::Resolved>,
 }
 
+/// The organization's branding (policy `branding`), checked: colors are `#rgb`/`#rrggbb`, theme
+/// color names letters and dashes, so nothing else reaches the page's CSS.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrandingInfo {
+    name: String,
+    /// Data URL of the logo, if any.
+    logo: Option<String>,
+    accent: Option<String>,
+    accent_dark: Option<String>,
+    light: std::collections::BTreeMap<String, String>,
+    dark: std::collections::BTreeMap<String, String>,
+}
+
+fn hex_color(value: &str) -> Option<String> {
+    let hex = value.strip_prefix('#')?;
+    (matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| value.to_string())
+}
+
+fn branding_info() -> BrandingInfo {
+    let b = furnish::policy::load().branding;
+    let colors = |m: std::collections::BTreeMap<String, String>| {
+        m.into_iter()
+            .filter_map(|(name, value)| {
+                let ok = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+                match (ok, hex_color(&value)) {
+                    (true, Some(v)) => Some((name, v)),
+                    _ => {
+                        eprintln!("warning: ignoring branding color {name}: {value} (use a name like `canvas` and #rrggbb)");
+                        None
+                    }
+                }
+            })
+            .collect()
+    };
+    BrandingInfo {
+        name: b.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "furnish".into()),
+        logo: catalog::branding_logo().as_deref().and_then(icon_data_url),
+        accent: b.accent.as_deref().and_then(hex_color),
+        accent_dark: b.accent_dark.as_deref().and_then(hex_color),
+        light: colors(b.theme.light),
+        dark: colors(b.theme.dark),
+    }
+}
+
+#[tauri::command]
+fn get_branding() -> BrandingInfo {
+    branding_info()
+}
+
 #[derive(Serialize)]
 struct Revisions {
     old: String,
@@ -347,6 +397,10 @@ fn main() {
     furnish::load::start_sampler(load_interval());
     tauri::Builder::default()
         .setup(|app| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&branding_info().name);
+            }
             // Stream what installs are doing to the UI's activity log.
             let handle = app.handle().clone();
             engine::capture_logs(move |line| {
@@ -355,6 +409,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_branding,
             list_apps,
             list_kits,
             app_status,

@@ -61,6 +61,17 @@ const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
 const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDir}/${file}`, 'utf8') : '');
 
 const steps = [
+  ['the organization branding: name, logo and colors', async () => {
+    // The logo ships with the preset collection, which the app clones on launch.
+    await waitFor('logo from the collection', async () => (await prop("//nav/button[contains(@class,'brand')]//img", 'src')).startsWith('data:image/svg'), 30000);
+    if ((await text("//nav/button[contains(@class,'brand')]")) !== 'Acme Apps') throw new Error('name not shown');
+    const title = await wd('GET', s('/title'));
+    if (title !== 'Acme Apps') throw new Error(`window title: ${title}`);
+    const accent = await wd('POST', s('/execute/sync'), {
+      script: "return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()", args: [],
+    });
+    if (accent !== '#e30613') throw new Error(`accent: ${accent}`);
+  }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
   }],
@@ -287,7 +298,7 @@ const steps = [
   }],
   ['automatic update settings are saved; locked ones are not editable', async () => {
     await click(button('Collections'));
-    await click("//label[contains(., 'when furnish starts')]/input");
+    await click("//label[contains(., 'when Acme Apps starts')]/input");
     await waitFor('settings.json', () => log('data/settings.json').includes('"updateOnLaunch": false'));
     // The admin policy locks the interval.
     if (!(await prop('//select', 'disabled'))) throw new Error('locked interval is editable');
@@ -300,7 +311,7 @@ const steps = [
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
   }],
   ['the logo leads back to Discover', async () => {
-    await click("//button[@aria-label='furnish, go to Discover']");
+    await click("//button[@aria-label='Acme Apps, go to Discover']");
     await waitFor('Discover page', async () => (await text('//h1')) === 'Discover');
   }],
 ];

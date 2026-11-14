@@ -45,7 +45,7 @@ sudo zypper addrepo https://furnish-self-service.github.io/furnish/alpha/furnish
 sudo zypper install furnish
 ```
 
-Updates then arrive with the system's own updates. To build from source instead, you need git and Rust 1.85 or later:
+Updates then arrive with the system's own updates. To build from source instead, you need git and Rust 1.91 or later:
 
 ```sh
 git clone git@github.com:furnish-self-service/furnish.git
@@ -128,6 +128,29 @@ Admins set policy where each OS keeps managed settings, which users can't write:
 
 Each setting is either a default the user can change, or `locked`. `parameters` sets [options](#options) the same way, for a collection (`acme-it`) or one app (`acme-it/kubectl`). Preset collections are cloned for every user and can't be removed; with `usersCanAdd: false`, users can't add others, and collections they added before are ignored. On macOS the plist dictionary has the same structure.
 
+### Branding
+
+The desktop app can carry your organization's name, logo and colors instead of furnish's. Set them in the policy:
+
+```json
+{
+  "branding": {
+    "name": "Acme Apps",
+    "logo": "acme-it/branding/logo.svg",
+    "accent": "#e30613",
+    "accentDark": "#ff5a4f",
+    "theme": { "light": { "sidebar": "#fff5f4" }, "dark": {} }
+  }
+}
+```
+
+- `name` replaces "furnish" in the window title, the sidebar and the app's texts.
+- `logo` is an SVG, PNG, JPEG or WebP file: an absolute path, or `<preset collection>/<path>` so it ships with your collection.
+- `accent` is your brand color. The app derives its accent shades from it and keeps text in that color readable (at least 4.5:1 contrast) for both themes. `accentDark` sets the dark theme's color; it defaults to a lighter `accent`.
+- `theme` overrides any other color of the app per theme, by the names in [`gui/src/app.css`](gui/src/app.css) without `--` (for example `canvas`, `sidebar`, `ink`, `highlight`). Values are `#rrggbb`.
+
+The installed app's icon and desktop entry stay furnish's: they come from the package.
+
 ### Users without administrator rights
 
 By default furnish runs as the user and asks for an administrator password when a step needs one, which suits small organizations where users are local admins. If users aren't admins, run the furnish service: it installs the apps of your preset collections system-wide on their behalf. Enable it with a `service` section in the policy:
@@ -204,6 +227,10 @@ resources:
       name: visual-studio-code
       packageManager: brew     # optional: use this package manager instead of the first one found
 ```
+
+A package can have another name with some package managers: `pacmanName`, `aptName`, `dnfName`, `zypperName`, `brewName` and `nixName` override `name` for that one (for example `name: code`, `nixName: vscode`).
+
+With Nix (NixOS, or Nix on another system), furnish installs into the user's profile (`nix profile install nixpkgs#<name>`), and as root, through the furnish service, into the shared profile `/nix/var/nix/profiles/furnish`, which the NixOS module puts on everyone's `PATH`. `nixpkgs` is the registry's entry, which NixOS systems built from a flake pin to the system's nixpkgs; the `nixpkgs` property names another flake reference, for example a pinned one. An update is available when that nixpkgs has another version.
 
 If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the app shows what it needs ("Needs Homebrew") instead of failing; a dependency can provide it. Resources report a missing tool by printing `furnish: needs <what>` to stderr and exiting with code 11.
 

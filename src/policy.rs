@@ -37,6 +37,31 @@ pub struct Policy {
     pub parameters: BTreeMap<String, BTreeMap<String, Entry>>,
     /// Present: the furnish service installs the preset collections' apps (see `service`).
     pub service: Option<Service>,
+    /// The desktop app under the organization's name, logo and colors.
+    pub branding: Branding,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Branding {
+    /// Shown instead of "furnish": window title, sidebar, texts.
+    pub name: Option<String>,
+    /// SVG, PNG, JPEG or WebP: an absolute path, or `<preset collection>/<path>` inside a
+    /// collection the policy presets (so it ships with the collection).
+    pub logo: Option<String>,
+    /// Brand color (`#rrggbb`); the app derives its accent shades from it.
+    pub accent: Option<String>,
+    /// Brand color for the dark theme; defaults to a lighter `accent`.
+    pub accent_dark: Option<String>,
+    /// Any theme color by name (`canvas`, `sidebar`, `ink`, `highlight`, …), per theme.
+    pub theme: Theme,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Theme {
+    pub light: BTreeMap<String, String>,
+    pub dark: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]

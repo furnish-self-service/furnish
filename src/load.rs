@@ -115,8 +115,8 @@ pub fn current(limits: &Limits, interval: Duration) -> Load {
 /// Sample every `interval` on a background thread.
 pub fn start_sampler(interval: Duration) {
     std::thread::spawn(move || {
-        let (Ok(mut sys), Ok(mut nets), Ok(me)) = (System::new(), Networks::new_with_refreshed_list(), sysinfo::get_current_pid())
-        else {
+        let (mut sys, mut nets) = (System::new(), Networks::new_with_refreshed_list());
+        let Ok(me) = sysinfo::get_current_pid() else {
             return; // no load data on this platform: `current` keeps saying "measuring"
         };
         sys.refresh_cpu_usage();
@@ -150,7 +150,7 @@ fn measure(sys: &System, nets: &Networks, me: Pid, interval: Duration) -> Sample
     let total = sys.total_memory().max(1);
     let bytes: u64 = nets
         .iter()
-        .filter(|(name, _)| !name.to_string_lossy().starts_with("lo"))
+        .filter(|(name, _)| !name.starts_with("lo"))
         .map(|(_, data)| data.received() + data.transmitted())
         .sum();
     Sample {

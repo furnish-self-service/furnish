@@ -67,6 +67,26 @@ jobs:
           path: bin
       - run: chmod +x bin/furnish && tests/service.sh bin/furnish
 
+  nix:
+    name: Nix (shared profile, updates)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/nix.sh bin/furnish
+
+  flake:
+    name: Nix flake (CLI and desktop app)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build -L .#furnish .#furnish-gui
+
   native:
     name: e2e ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -164,7 +184,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, native, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, native, service-macos, service-windows, packages, gui]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -223,7 +243,7 @@ jobs:
           cache: npm
           cache-dependency-path: gui/package-lock.json
       - uses: Swatinem/rust-cache@v2
-      - run: npm ci
+      - run: npm ci && npm test
         working-directory: gui
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis, each with the CLI.
       - run: npm run bundle

@@ -5,7 +5,7 @@
 #   docker run --rm -v "$PWD:/src" -w /src -e HOST_UID=$(id -u) [-e FURNISH_VERSION=…] ubuntu:22.04 packaging/linux/build.sh
 set -eu
 # Hand the build output back to the host user, also when the build fails.
-[ -z "${HOST_UID:-}" ] || trap 'chown -R "$HOST_UID" target/jammy gui/node_modules gui/src-tauri/binaries 2>/dev/null || true' EXIT
+[ -z "${HOST_UID:-}" ] || trap 'chown -R "$HOST_UID" target/jammy gui/dist gui/node_modules gui/src-tauri/binaries 2>/dev/null || true' EXIT
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates build-essential pkg-config git musl-tools \

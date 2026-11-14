@@ -120,6 +120,8 @@ export interface CollectionInfo {
   options: Option[];
 }
 
+/** The organization's name, logo and colors (admin policy `branding`). */
+export const getBranding = () => invoke<import('./brand').Branding>('get_branding');
 export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */

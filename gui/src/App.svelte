@@ -40,9 +40,9 @@
 
 <div class="shell">
   <nav aria-label="Sections">
-    <button class="brand" onclick={() => go({ page: 'discover' })} aria-label="furnish, go to Discover">
-      <img src={logo} alt="" width="34" height="34" />
-      <span>furnish</span>
+    <button class="brand" onclick={() => go({ page: 'discover' })} aria-label="{store.brand.name}, go to Discover">
+      <img src={store.brand.logo ?? logo} alt="" width="34" height="34" />
+      <span>{store.brand.name}</span>
     </button>
 
     <button class:active={isActive('discover')} onclick={() => go({ page: 'discover' })}>Discover</button>
@@ -120,7 +120,7 @@
         </div>
       {:else if !apps.length && !kits.length}
         <p class="empty">
-          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date. furnish installs updates automatically unless you turn that off for an app.' : 'No apps here yet.'}
+          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date. ${store.brand.name} installs updates automatically unless you turn that off for an app.' : 'No apps here yet.'}
         </p>
       {:else}
         <div class="grid">

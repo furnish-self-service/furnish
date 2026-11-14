@@ -1,6 +1,7 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
+import { applyBranding, type Branding } from './brand';
 
 export type View =
   | { page: 'discover' }
@@ -48,6 +49,8 @@ export interface Toast {
 }
 
 export const store = $state({
+  /** The organization's branding; furnish's own until loaded. */
+  brand: { name: 'furnish', logo: null, accent: null, accentDark: null, light: {}, dark: {} } as Branding,
   apps: [] as AppInfo[],
   kits: [] as KitInfo[],
   /** Missing key: status not known yet. 'error': the check failed. */
@@ -311,6 +314,12 @@ function schedule() {
 
 /** App start: load settings and the catalog, then update collections if enabled. */
 export async function start() {
+  try {
+    store.brand = await api.getBranding();
+    applyBranding(store.brand);
+  } catch (e) {
+    toast('error', "Couldn't read the branding", message(e));
+  }
   try {
     const effective = await api.getSettings();
     store.settings = effective.settings;

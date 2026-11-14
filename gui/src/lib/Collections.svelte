@@ -101,11 +101,11 @@
           disabled={isLocked('updateOnLaunch')}
           onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
         />
-        Update collections when furnish starts
+        Update collections when {store.brand.name} starts
         {#if isLocked('updateOnLaunch')}<span class="org">Set by your organization</span>{/if}
       </label>
       <label class="interval">
-        <span>While furnish is open</span>
+        <span>While {store.brand.name} is open</span>
         <select
           value={store.settings.updateIntervalMinutes}
           disabled={isLocked('updateIntervalMinutes')}
@@ -130,7 +130,7 @@
       <p class="explain">
         Busy means the last 5 minutes averaged over {store.settings.loadLimits.cpuPercent}% CPU,
         {store.settings.loadLimits.memoryPercent}% memory or {store.settings.loadLimits.networkKbps} KB/s of network
-        traffic, not counting furnish itself.
+        traffic, not counting {store.brand.name} itself.
       </p>
       <p class="last" aria-live="polite">
         {#if store.autoUpdate.running}

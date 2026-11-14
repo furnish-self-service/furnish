@@ -167,6 +167,17 @@ pub fn get(name: &str) -> Result<Collection> {
         .with_context(|| format!("no collection named '{name}'"))
 }
 
+/// The branding logo (`branding.logo` in the policy): an absolute path, or `<collection>/<path>`
+/// inside a preset collection. `None` if missing or outside that collection.
+pub fn branding_logo() -> Option<PathBuf> {
+    let spec = crate::policy::load().branding.logo?;
+    if Path::new(&spec).is_absolute() {
+        return Path::new(&spec).is_file().then(|| PathBuf::from(spec));
+    }
+    let (name, path) = spec.split_once('/')?;
+    get(name).ok().filter(|c| c.managed)?.file_in_repo(path)
+}
+
 /// Default collection name: last URL path segment without `.git`.
 pub fn name_from_url(url: &str) -> String {
     let last = url.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or(url);

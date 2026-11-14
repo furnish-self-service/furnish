@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/Package",
-  "description": "Install or remove a package with the system package manager (pacman, apt, dnf, zypper, brew)",
+  "description": "Install or remove a package with the system package manager (pacman, apt, dnf, zypper, brew, nix)",
   "version": "0.1.0",
   "get": {
     "executable": "furnish-package.dsc.resource.sh",
@@ -89,6 +89,41 @@
         "_inDesiredState": {
           "type": "boolean",
           "readOnly": true
+        },
+        "pacmanName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when pacman installs it (default: name)"
+        },
+        "aptName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when apt installs it (default: name)"
+        },
+        "dnfName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when dnf installs it (default: name)"
+        },
+        "zypperName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when zypper installs it (default: name)"
+        },
+        "brewName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when brew installs it (default: name)"
+        },
+        "nixName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "description": "Package name when nix installs it (default: name)"
+        },
+        "nixpkgs": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:/._?=&#+-]+$",
+          "description": "Flake reference to install Nix packages from (default: the registry's nixpkgs, which NixOS pins to the system's)"
         }
       }
     }

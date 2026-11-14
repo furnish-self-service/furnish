@@ -190,6 +190,14 @@ if ! $real; then
     step uninstall homebrew >/dev/null
 fi
 
+# A per-package-manager name: the fake pacman gets pacmanName (fake package managers only).
+if ! $real; then
+    expect "$(step install renamed)" "Installed renamed"
+    [ -f "$tmp/pkgs/renamed" ] && [ ! -f "$tmp/pkgs/renamed-generic" ] || { echo "FAIL: pacmanName not used" >&2; exit 1; }
+    expect "$(step list)" "✓  renamed"
+    expect "$(step uninstall renamed)" "Uninstalled renamed"
+fi
+
 # Kits (fake package manager only: the fixture's packages don't exist for real).
 if ! $real; then
     expect "$(step list)" "·  starter"
