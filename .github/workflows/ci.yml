@@ -199,6 +199,11 @@ jobs:
         with:
           name: furnish-linux-packages
           path: new
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: furnish-desktop-*
+          path: new/desktop
+          merge-multiple: true
       - run: sudo apt-get install -y -qq apt-utils createrepo-c
       - run: echo "$REPO_SIGNING_KEY" | gpg --batch --import
         env:
@@ -245,6 +250,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm ci && npm test
         working-directory: gui
+      # Builds of main are alpha releases (see linux-packages); the bundled CLI reports it.
+      - shell: bash
+        run: |
+          v=$(jq -r .version gui/src-tauri/tauri.conf.json)
+          if [ "$GITHUB_REF" = refs/heads/main ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
+          echo "FURNISH_VERSION=$v" >> "$GITHUB_ENV"
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis, each with the CLI.
       - run: npm run bundle
         working-directory: gui
@@ -259,6 +270,20 @@ jobs:
       # Real app under Xvfb, driven via WebDriver; also checks GUI elevation never uses sudo.
       - if: runner.os == 'Linux'
         run: tests/ui/run.sh target/release/furnish-gui
+      # The macOS and Windows installers for the package repository (publish-alpha), by version.
+      - if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          mkdir -p desktop
+          case "$RUNNER_OS" in
+            macOS)   cp target/release/bundle/dmg/*.dmg "desktop/furnish_${FURNISH_VERSION}_$(uname -m).dmg" ;;
+            Windows) cp target/release/bundle/msi/*.msi "desktop/furnish_${FURNISH_VERSION}_x64.msi" ;;
+          esac
+      - if: runner.os != 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: furnish-desktop-${{ runner.os }}
+          path: desktop/
       - if: always()
         uses: actions/upload-artifact@v4
         with:

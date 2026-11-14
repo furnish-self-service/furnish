@@ -11,14 +11,21 @@ channel=${1:?usage: $0 <channel> <packages dir> <site dir>}
 packages=${2:?}; site=${3:?}
 : "${BASE_URL:?set BASE_URL to where the site is served}"
 here=$(cd "$(dirname "$0")" && pwd)
-apt="$site/$channel/apt"; rpm="$site/$channel/rpm"
-mkdir -p "$apt/pool/main" "$apt/dists/furnish/main/binary-amd64" "$rpm/x86_64"
+apt="$site/$channel/apt"; rpm="$site/$channel/rpm"; mac="$site/$channel/macos"; win="$site/$channel/windows"
+mkdir -p "$apt/pool/main" "$apt/dists/furnish/main/binary-amd64" "$rpm/x86_64" "$mac" "$win"
 find "$packages" -name '*.deb' -exec cp {} "$apt/pool/main/" \;
 find "$packages" -name '*.rpm' -exec cp {} "$rpm/x86_64/" \;
+# The desktop app for macOS and Windows: downloads, no package manager (unsigned for now).
+find "$packages" -name '*.dmg' -exec cp {} "$mac/" \;
+find "$packages" -name '*.msi' -exec cp {} "$win/" \;
 
 # Keep the newest versions only (GitHub Pages sites are limited to 1 GB).
 prune() { ls "$1" | sort -V | head -n "-${KEEP:-5}" | while read -r f; do rm -f "$1/$f"; done; }
-prune "$apt/pool/main"; prune "$rpm/x86_64"
+prune "$apt/pool/main"; prune "$rpm/x86_64"; prune "$mac"; prune "$win"
+# Stable links to the newest download, for the website.
+latest() { ls "$1" | grep -E "$2\$" | sort -V | tail -n 1; }
+if [ -n "$(latest "$mac" .dmg)" ]; then cp "$mac/$(latest "$mac" .dmg)" "$site/$channel/furnish-macos.dmg"; fi
+if [ -n "$(latest "$win" .msi)" ]; then cp "$win/$(latest "$win" .msi)" "$site/$channel/furnish-windows.msi"; fi
 
 # APT: one suite for every Debian-based distro (the packages run on all of them).
 (cd "$apt" && apt-ftparchive packages pool > dists/furnish/main/binary-amd64/Packages)
@@ -49,5 +56,5 @@ REPO
 echo "deb [signed-by=/etc/apt/keyrings/furnish.asc] $BASE_URL/$channel/apt furnish main" > "$site/$channel/furnish.list"
 
 # What fetch.sh restores next time: the packages of every channel.
-(cd "$site" && find . -name '*.deb' -o -name '*.rpm' | sed 's|^\./||' | sort) > "$site/packages.txt"
-echo "published $(ls "$apt/pool/main" | wc -l) .deb and $(ls "$rpm/x86_64" | wc -l) .rpm in $channel"
+(cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -path '*/macos/*.dmg' -o -path '*/windows/*.msi' \) | sed 's|^\./||' | sort) > "$site/packages.txt"
+echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$mac" | wc -l) .dmg and $(ls "$win" | wc -l) .msi in $channel"

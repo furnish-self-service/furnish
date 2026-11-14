@@ -44,7 +44,7 @@ Uninstalling runs the same resources with `_exist: false`, in reverse order. A r
 
 Installs a package with the system's package manager: pacman, apt, dnf, zypper, brew or nix, the first one found; winget on Windows.
 
-| Property | |
+| Property | What it does |
 |---|---|
 | `name` | The package |
 | `packageManager` | Use this one instead of the first one found |

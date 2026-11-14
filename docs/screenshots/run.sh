@@ -60,6 +60,12 @@ shoot() { node "$repo/docs/screenshots/shoot.mjs" "$1" "$work" "$out"; }
 start "$work/policy.json" && shoot main
 start "$work/policy-branded.json" && shoot branded
 start "$work/policy.json" GTK_THEME=Adwaita:dark && shoot dark
+# Phone crops: cut each window screenshot to its element (x.crop holds WxH+X+Y in pixels).
+docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots sh -c \
+    'for c in '"$out"'/*.crop; do convert "${c%.crop}.png" -crop "$(cat "$c")" +repage "${c%.crop}.png" && rm "$c"; done'
+# The branded look for phones: the top left (logo, name, the first accent-colored buttons).
+docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots \
+    convert "$out/branded.png" -crop 1100x700+0+0 +repage "$out/branded-mobile.png"
 # WebP for the web: a fraction of the PNG size at the same look.
 docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots \
     sh -c 'for f in '"$out"'/*.png; do convert "$f" -quality 88 "${f%.png}.webp" && rm "$f"; done'

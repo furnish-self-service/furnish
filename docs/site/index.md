@@ -10,7 +10,7 @@ furnish is an app catalog for your organization. People pick apps from it and in
 
 ## Install furnish
 
-furnish is in alpha. Its Linux packages are published from the main branch to a signed package repository; there are no releases yet.
+furnish is in alpha: builds of the main branch are published, there are no releases yet. Linux gets packages from a signed package repository, macOS and Windows a download.
 
 | System | How |
 |---|---|
@@ -18,7 +18,9 @@ furnish is in alpha. Its Linux packages are published from the main branch to a 
 | Fedora, Enterprise Linux 10 | DNF repository; on EL 10 enable EPEL and CRB first |
 | openSUSE Leap and Tumbleweed | zypper repository |
 | NixOS | the flake's NixOS module, see [For admins](admins.md#nixos) |
-| macOS, Windows | build from source (below) |
+| macOS (Apple silicon) | [download](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg); not signed yet: open it once, then allow it under System Settings → Privacy & Security → Open Anyway |
+| Windows (64-bit) | [download](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi); not signed yet: in SmartScreen choose More info → Run anyway |
+| Intel Macs, other systems | build from source (below) |
 
 On Debian or Ubuntu:
 
