@@ -442,26 +442,47 @@ impl App {
         crate::options::values(&self.options())
     }
 
-    /// Data directory of whoever installs this app (the user, or the furnish service), which
-    /// records the option values it was installed with.
-    fn state_dir(&self) -> PathBuf {
-        // Inside the service, data_dir() is the system directory too.
-        if self.remote() { system_dir() } else { data_dir() }
+    /// Installs into the user's account with these values: `metadata.furnish.perUser`, a DSC
+    /// expression over the options (e.g. `[parameters('userInstall')]`) or `true`. Such installs
+    /// never go through the furnish service: root or SYSTEM would install for the wrong account.
+    pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
+        match &self.doc["metadata"]["furnish"]["perUser"] {
+            Value::Bool(b) => *b,
+            Value::String(expr) => crate::options::condition_holds(expr, values).unwrap_or_else(|err| {
+                eprintln!("warning: {}: perUser: {err:#}", self.id);
+                false
+            }),
+            _ => false,
+        }
     }
 
-    /// Installed through the furnish service.
-    fn remote(&self) -> bool {
-        self.managed && crate::service::enabled()
+    /// Installed through the furnish service with these values.
+    fn remote(&self, values: &serde_json::Map<String, Value>) -> bool {
+        self.managed && crate::service::enabled() && !self.per_user(values)
+    }
+
+    /// Data directory of whoever installs with these values (the user, or the furnish service),
+    /// which records the option values it was installed with.
+    fn state_dir(&self, values: &serde_json::Map<String, Value>) -> PathBuf {
+        // Inside the service, data_dir() is the system directory too.
+        if self.remote(values) { system_dir() } else { data_dir() }
+    }
+
+    /// The values it was installed with: the user's record, else the service's.
+    fn recorded_values(&self) -> Option<serde_json::Map<String, Value>> {
+        crate::options::installed_with(&data_dir(), &self.key()).or_else(|| {
+            (self.managed && crate::service::enabled()).then(|| crate::options::installed_with(&system_dir(), &self.key())).flatten()
+        })
     }
 
     /// Values for status, updates and uninstall: those it was installed with, else the current ones.
     pub fn installed_values(&self) -> serde_json::Map<String, Value> {
-        crate::options::installed_with(&self.state_dir(), &self.key()).unwrap_or_else(|| self.current_values())
+        self.recorded_values().unwrap_or_else(|| self.current_values())
     }
 
     /// Installed with option values that differ from the current ones (a reinstall applies them).
     pub fn options_differ(&self) -> bool {
-        let Some(installed) = crate::options::installed_with(&self.state_dir(), &self.key()) else { return false };
+        let Some(installed) = self.recorded_values() else { return false };
         self.current_values().iter().any(|(k, v)| installed.get(k) != Some(v))
     }
 
@@ -499,8 +520,12 @@ impl App {
     /// Install or update, with the values it was installed with (else the current ones), and
     /// remember them.
     pub fn install(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        let values = self.installed_values();
-        if self.remote() {
+        self.install_values(self.installed_values(), report)
+    }
+
+    /// Install with these values: through the furnish service, or here.
+    fn install_values(&self, values: serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        if self.remote(&values) {
             return crate::service::run(&crate::service::Request::Install { app: self.key(), values }, report);
         }
         self.install_with(&values, report)
@@ -508,29 +533,37 @@ impl App {
 
     pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         crate::engine::run(&self.doc_for(values), false, report)?;
-        crate::options::remember(&self.state_dir(), &self.key(), values)
+        crate::options::remember(&self.state_dir(values), &self.key(), values)
     }
 
+    /// Uninstall with the values it was installed with.
     pub fn uninstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        if self.remote() {
+        let values = self.installed_values();
+        if self.remote(&values) {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
-        crate::engine::run(&self.doc_for(&self.installed_values()), true, report)?;
-        crate::options::forget(&self.state_dir(), &self.key())
+        crate::engine::run(&self.doc_for(&values), true, report)?;
+        crate::options::forget(&self.state_dir(&values), &self.key())
     }
 
     /// Apply changed options: uninstall with the old values, install with the current ones.
-    pub fn reinstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        let values = self.current_values();
-        if self.remote() {
-            return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values }, report);
+    /// Moving between a system-wide and a per-user install takes both the service and this process.
+    pub fn reinstall(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let (old, new) = (self.installed_values(), self.current_values());
+        if self.remote(&old) && self.remote(&new) {
+            return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new }, report);
         }
-        self.reinstall_with(&values, report)
+        if self.remote(&old) || self.remote(&new) {
+            self.uninstall(&mut report)?;
+            return self.install_values(new, report);
+        }
+        self.reinstall_with(&new, report)
     }
 
     pub fn reinstall_with(&self, values: &serde_json::Map<String, Value>, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        crate::engine::run(&self.doc_for(&self.installed_values()), true, &mut report)?;
-        crate::options::forget(&self.state_dir(), &self.key())?;
+        let old = self.installed_values();
+        crate::engine::run(&self.doc_for(&old), true, &mut report)?;
+        crate::options::forget(&self.state_dir(&old), &self.key())?;
         self.install_with(values, report)
     }
 }

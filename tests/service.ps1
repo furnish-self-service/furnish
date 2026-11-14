@@ -68,8 +68,10 @@ $policy = @{ collections = @{ preset = @(@{ name = 'org'; url = 'C:/srv/org' });
 New-Item HKLM:\SOFTWARE\Policies\furnish -Force | Out-Null
 Set-ItemProperty HKLM:\SOFTWARE\Policies\furnish Policy $policy
 
-New-Service -Name furnish -BinaryPathName "`"$bin`" service" -StartupType Manual | Out-Null
-Start-Service furnish
+& $bin service install
+if ($LASTEXITCODE -ne 0) { Fail 'service install failed' }
+& $bin service install  # again: replaces the running service
+if ($LASTEXITCODE -ne 0) { Fail 'reinstalling the service failed' }
 for ($i = 0; $i -lt 100 -and -not (Test-Path \\.\pipe\furnish); $i++) { Start-Sleep -Milliseconds 300 }
 if (-not (Test-Path \\.\pipe\furnish)) { Fail "the service didn't start" }
 for ($i = 0; $i -lt 100 -and -not (Test-Path C:\ProgramData\furnish\collections\org\apps); $i++) { Start-Sleep -Milliseconds 300 }
@@ -93,5 +95,7 @@ Write-Host '== uninstall through the service'
 if ((As alice 'uninstall demo') -ne 0) { Fail 'alice could not uninstall' }
 if (Installed) { Fail 'still installed' }
 
-Stop-Service furnish
+& $bin service uninstall
+if ($LASTEXITCODE -ne 0) { Fail 'service uninstall failed' }
+if (Get-Service furnish -ErrorAction SilentlyContinue) { Fail 'service still registered' }
 Write-Host 'service OK'

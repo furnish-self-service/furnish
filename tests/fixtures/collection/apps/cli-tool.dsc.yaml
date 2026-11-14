@@ -7,6 +7,8 @@ parameters:
 metadata:
   furnish:
     description: A command-line tool, system-wide or just for you
+    # A user install runs as the user, never through the furnish service.
+    perUser: "[parameters('userInstall')]"
     categories: [Test]
     dependencies:
       - app: homebrew

@@ -6,7 +6,6 @@
 #   tests/service-macos.sh target/release/furnish
 set -eu
 binary=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
-repo=$(cd "$(dirname "$0")/.." && pwd)
 label=io.github.furnish-self-service.furnish
 fail() { echo "FAIL: $*" >&2; sudo cat /var/log/furnish.log >&2 || true; exit 1; }
 as() { user=$1; shift; sudo -u "$user" env FURNISH_DATA_DIR="/tmp/$user-data" HOME=/tmp "$@"; }
@@ -43,8 +42,8 @@ printf '{"collections": {"preset": [{"name": "org", "url": "%s"}], "usersCanAdd"
 sudo mkdir -p "/Library/Managed Preferences"
 plutil -convert xml1 -o - "$work/policy.json" | sudo tee "/Library/Managed Preferences/$label.plist" >/dev/null
 
-sudo install -m 644 "$repo/packaging/macos/$label.plist" /Library/LaunchDaemons/
-sudo launchctl bootstrap system "/Library/LaunchDaemons/$label.plist"
+sudo /usr/local/bin/furnish service install || fail "service install failed"
+[ -f "/Library/LaunchDaemons/$label.plist" ] || fail "no launchd definition"
 for _ in $(seq 100); do [ -S /var/run/furnish.sock ] && [ -d "/Library/Application Support/furnish/collections/org/apps" ] && break; sleep 0.3; done
 [ -S /var/run/furnish.sock ] || fail "the service didn't start"
 
@@ -65,5 +64,7 @@ echo "== uninstall through the service"
 as alice furnish uninstall demo || fail "alice couldn't uninstall"
 if installed; then fail "still installed"; fi
 
-sudo launchctl bootout "system/$label"
+sudo /usr/local/bin/furnish service uninstall || fail "service uninstall failed"
+[ ! -e "/Library/LaunchDaemons/$label.plist" ] || fail "launchd definition left behind"
+if sudo launchctl print "system/$label" >/dev/null 2>&1; then fail "still loaded"; fi
 echo "service OK"

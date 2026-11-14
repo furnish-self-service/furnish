@@ -1,6 +1,6 @@
 # Installs your organization's apps for users without administrator rights (see README:
-# "Users without administrator rights"). Install to /etc/systemd/system/ (or
-# /usr/lib/systemd/system/), then: systemctl enable --now furnish
+# "Users without administrator rights"). `sudo furnish service install` installs this unit
+# with the path of that furnish binary.
 [Unit]
 Description=furnish service: installs apps your organization provides
 After=network-online.target

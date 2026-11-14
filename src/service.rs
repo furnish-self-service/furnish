@@ -191,7 +191,13 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Re
         }
         Ok(app)
     };
-    let accept = |app: &crate::catalog::App, values: &Map<String, Value>| crate::options::accept(&app.options(), values);
+    let accept = |app: &crate::catalog::App, values: &Map<String, Value>| {
+        let values = crate::options::accept(&app.options(), values)?;
+        if app.per_user(&values) {
+            bail!("with these options {} installs into your user account, which furnish does without the service", app.id);
+        }
+        Ok(values)
+    };
     type Work<'a> = &'a dyn Fn(&mut dyn FnMut(Progress)) -> Result<()>;
     let operation = |work: Work| -> Result<Reply> {
         let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
@@ -364,6 +370,9 @@ pub fn serve() -> Result<()> {
 
 #[cfg(windows)]
 mod windows;
+
+mod install;
+pub use install::{install, uninstall};
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn serve() -> Result<()> {

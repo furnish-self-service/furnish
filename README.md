@@ -118,16 +118,25 @@ By default furnish runs as the user and asks for an administrator password when 
 }
 ```
 
-- The service (`furnish service`, as root or SYSTEM) keeps its own copies of the preset collections (`/var/lib/furnish`, `/Library/Application Support/furnish`, `C:\ProgramData\furnish`), which users can read but not change. Collections users add still install as the user.
-- Members of `allowedGroup` install without a password. Everyone else gets what polkit allows for `io.github.furnish.install`, by default an administrator password; grant groups with a polkit rule instead if you prefer ([example](packaging/linux/50-furnish.rules.example)).
+- The service keeps its own copies of the preset collections, which users can read but not change. Collections users add still install as the user.
 - Requests name an app and option values only. The service accepts only options the app declares, with the right type, never against a locked policy value, and no free-text strings (declare `allowedValues`).
 - With `trustedKeys`, preset collections only move to commits signed by one of these SSH keys (`git commit -S` with `gpg.format=ssh`). Without it, whoever can push to the repository can run code as root on every computer.
 
-Install the service:
+Install the service on each computer as administrator, for example from your MDM or Intune:
 
-- **Linux:** copy [`furnish.service`](packaging/linux/furnish.service) to `/etc/systemd/system/` and [`io.github.furnish.policy`](packaging/linux/io.github.furnish.policy) to `/usr/share/polkit-1/actions/`, then `systemctl enable --now furnish`.
-- **Windows:** run [`install-service.ps1`](packaging/windows/install-service.ps1) as administrator. The service runs as SYSTEM, listens on `\\.\pipe\furnish` and keeps its collections in `C:\ProgramData\furnish`, which it creates readable but not writable for users. Elevated administrators and members of `allowedGroup` (a local or domain group name, or a SID) may install; there is no password fallback.
-- **macOS:** install `furnish` to `/usr/local/bin`, copy [the launchd definition](packaging/macos/io.github.furnish-self-service.furnish.plist) to `/Library/LaunchDaemons/` and run `sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.furnish-self-service.furnish.plist`. Its collections live in `/Library/Application Support/furnish`. Root and members of `allowedGroup` (checked with `dseditgroup`, so nested and directory groups count) may install; there is no password fallback.
+```sh
+sudo furnish service install     # Linux, macOS (Windows: furnish service install, elevated)
+```
+
+It registers furnish with the OS's service manager, pointing at that `furnish` binary, which the desktop app's installers include (`/usr/bin/furnish`, `furnish.app/Contents/MacOS/furnish`, `C:\Program Files\furnish\furnish.exe`). `furnish service uninstall` removes it.
+
+| | Service | Collections | May install, besides root/SYSTEM |
+|---|---|---|---|
+| Linux | systemd unit `furnish`, `/run/furnish.sock` | `/var/lib/furnish` | members of `allowedGroup`; others what polkit allows for `io.github.furnish.install` (default: an administrator password; [rule example](packaging/linux/50-furnish.rules.example)) |
+| macOS | launchd daemon `io.github.furnish-self-service.furnish`, `/var/run/furnish.sock` | `/Library/Application Support/furnish` | members of `allowedGroup`, nested and directory groups included |
+| Windows | service `furnish` as SYSTEM, `\\.\pipe\furnish` | `C:\ProgramData\furnish` | elevated administrators; members of `allowedGroup` (a name or SID) |
+
+Apps whose options make them install into the user's account (`perUser` in the app's metadata, see [Options](#options)) install as the user, not through the service; their system-wide dependencies still go through it.
 
 On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
 
@@ -198,6 +207,7 @@ parameters:
     defaultValue: false
 metadata:
   furnish:
+    perUser: "[parameters('userInstall')]"         # installs as the user, not through the furnish service
     dependencies:
       - app: homebrew
         required: true

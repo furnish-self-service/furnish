@@ -17,10 +17,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the furnish service (as root): installs your organization's apps for users without
-    /// administrator rights. See the `service` section of the admin policy.
-    #[command(hide = true)]
-    Service,
+    /// The furnish service, which installs your organization's apps for users without
+    /// administrator rights (see the `service` section of the admin policy). Without an action:
+    /// run it (as root or SYSTEM; the service manager does that).
+    Service {
+        #[command(subcommand)]
+        action: Option<ServiceAction>,
+    },
     /// List all apps and their status
     #[command(visible_alias = "ls")]
     List,
@@ -84,6 +87,14 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum ServiceAction {
+    /// Register and start the service with the OS's service manager (as administrator)
+    Install,
+    /// Stop and unregister the service (as administrator)
+    Uninstall,
+}
+
+#[derive(Subcommand)]
 enum OptionCommand {
     /// List the options of a collection or an app, their values and where those come from
     List { target: String },
@@ -113,7 +124,7 @@ enum CollectionCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if matches!(cli.command, Command::Service) {
+    if matches!(cli.command, Command::Service { action: None }) {
         // The service keeps its collections, resources and records in the system directory.
         // SAFETY: still single-threaded.
         unsafe { std::env::set_var("FURNISH_DATA_DIR", catalog::system_dir()) };
@@ -141,13 +152,23 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::Service) {
+    if !matches!(command, Command::Settings { .. } | Command::Service { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
     }
     match command {
-        Command::Service => furnish::service::serve(),
+        Command::Service { action: None } => furnish::service::serve(),
+        Command::Service { action: Some(ServiceAction::Install) } => {
+            furnish::service::install()?;
+            println!("✓ The furnish service is running. Enable it for users with the `service` section of the admin policy.");
+            Ok(())
+        }
+        Command::Service { action: Some(ServiceAction::Uninstall) } => {
+            furnish::service::uninstall()?;
+            println!("✓ Removed the furnish service");
+            Ok(())
+        }
         Command::List => list(),
         // Kits: names that are no app but a kit.
         Command::Install { app, dry_run, with, without } if is_kit(&app) => {
