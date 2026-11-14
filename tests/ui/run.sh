@@ -40,6 +40,8 @@ SH
 for tool in sudo pkexec; do
     printf '#!/bin/sh\necho "$*" >> %s/%s.log\nexec "$@"\n' "$work" "$tool" > "$work/bin/$tool"
 done
+# Like a refused polkit dialog while the test has created $work/deny.
+sed -i '2i [ -e '"$work"'/deny ] && { echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
 # Like a real sudo without cached credentials: `sudo -n` fails, so only the terminal prompt is left.
 sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work/bin/sudo"
 chmod +x "$work/bin/"*

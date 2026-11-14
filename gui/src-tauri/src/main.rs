@@ -58,7 +58,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> anyhow::Result<T> + 
     spawn_blocking(work)
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| if e.is::<engine::Cancelled>() { engine::CANCELLED.to_string() } else { format!("{e:#}") })
 }
 
 fn app_info(app: &App) -> AppInfo {
@@ -155,6 +155,18 @@ async fn plan(key: String, uninstall: bool) -> CmdResult<Vec<engine::Step>> {
     blocking(move || engine::plan(&catalog::find_app(&key)?.doc, uninstall)).await
 }
 
+/// Stop the running install/update/uninstall after its current step.
+#[tauri::command]
+fn abort() {
+    engine::abort();
+}
+
+/// Stop the running install/update/uninstall now, interrupting its current step.
+#[tauri::command]
+fn force_stop() {
+    engine::force_stop();
+}
+
 #[tauri::command]
 async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
@@ -184,6 +196,12 @@ async fn remove_collection(name: String) -> CmdResult<()> {
 }
 
 fn main() {
+    // On Wayland the compositor finds the app's icon via the desktop file named like the app ID,
+    // which GTK takes from the program name ("furnish-gui", the binary). The packages install
+    // furnish.desktop, so name the program to match.
+    #[cfg(target_os = "linux")]
+    glib::set_prgname(Some("furnish"));
+
     // Must run before Tauri starts any threads: both set process environment variables.
     // FURNISH_GRAPHICAL makes resources ask for admin rights with the system dialog (pkexec)
     // instead of sudo in whatever terminal the app happened to be started from.
@@ -208,6 +226,8 @@ fn main() {
             install,
             uninstall,
             plan,
+            abort,
+            force_stop,
             list_collections,
             add_collection,
             update_collection,

@@ -15,7 +15,7 @@ export type Busy = 'install' | 'uninstall';
 /** A step of a run: the planned step plus what happened to it so far. */
 export interface RunStep {
   step: Step;
-  state: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  state: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled';
   startedAt?: number;
   durationMs?: number;
   outcome?: Outcome;
@@ -25,12 +25,15 @@ export interface Run {
   kind: 'install' | 'update' | 'uninstall';
   startedAt: number;
   finishedAt?: number;
+  /** Abort requested: 'abort' stops after the current step, 'force' interrupts it. */
+  stopping?: 'abort' | 'force';
+  cancelled?: boolean;
   steps: RunStep[];
 }
 
 export interface Toast {
   id: number;
-  kind: 'success' | 'error';
+  kind: 'success' | 'error' | 'info';
   title: string;
   detail?: string;
 }
@@ -60,7 +63,7 @@ api.onProgress((p) => {
     Object.assign(run.steps[p.index], { state: 'running', startedAt: p.atMs });
   } else {
     const s = run.steps[p.index];
-    s.state = p.outcome.error ? 'failed' : p.outcome.action === 'skipped' ? 'skipped' : 'done';
+    s.state = p.outcome.cancelled ? 'cancelled' : p.outcome.error ? 'failed' : p.outcome.action === 'skipped' ? 'skipped' : 'done';
     s.startedAt ??= p.atMs - p.durationMs;
     s.durationMs = p.durationMs;
     s.outcome = p.outcome;
@@ -71,10 +74,19 @@ function startRun(key: string, kind: Run['kind']) {
   store.logs[key] = [];
   store.runs[key] = { kind, startedAt: Date.now(), steps: [] };
 }
-function endRun(key: string) {
+function endRun(key: string, cancelled = false) {
   const run = store.runs[key];
-  if (run) run.finishedAt = Date.now();
+  if (run) Object.assign(run, { finishedAt: Date.now(), cancelled });
 }
+
+/** Abort the running operation of an app: first after its current step, then (force) right away. */
+export async function stop(key: string, how: 'abort' | 'force') {
+  const run = store.runs[key];
+  if (run) run.stopping = how;
+  await (how === 'force' ? api.forceStop() : api.abort());
+}
+
+const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall' } as const;
 
 // Operations run one at a time, so log lines belong to whichever app is busy.
 // Lines from background status checks are not kept.
@@ -91,7 +103,7 @@ export function toast(kind: Toast['kind'], title: string, detail?: string) {
   const id = nextToast++;
   store.toasts.push({ id, kind, title, detail });
   // Errors stay until dismissed: their details may be needed.
-  if (kind === 'success') setTimeout(() => dismiss(id), 4000);
+  if (kind !== 'error') setTimeout(() => dismiss(id), 4000);
 }
 export function dismiss(id: number) {
   store.toasts = store.toasts.filter((t) => t.id !== id);
@@ -125,13 +137,16 @@ export async function install(app: AppInfo) {
   const updating = store.status[app.key] === 'needsUpdate';
   startRun(app.key, updating ? 'update' : 'install');
   store.busy[app.key] = 'install';
+  let cancelled = false;
   try {
     await api.install(app.key);
     toast('success', `${updating ? 'Updated' : 'Installed'} ${app.id}`);
   } catch (e) {
-    toast('error', `Couldn't ${updating ? 'update' : 'install'} ${app.id}`, message(e));
+    cancelled = message(e) === api.CANCELLED;
+    if (cancelled) toast('info', `${kindNoun[updating ? 'update' : 'install']} of ${app.id} cancelled`);
+    else toast('error', `Couldn't ${updating ? 'update' : 'install'} ${app.id}`, message(e));
   } finally {
-    endRun(app.key);
+    endRun(app.key, cancelled);
     delete store.busy[app.key];
     await checkStatus(app.key);
   }
@@ -140,13 +155,16 @@ export async function install(app: AppInfo) {
 export async function uninstall(app: AppInfo) {
   startRun(app.key, 'uninstall');
   store.busy[app.key] = 'uninstall';
+  let cancelled = false;
   try {
     await api.uninstall(app.key);
     toast('success', `Uninstalled ${app.id}`);
   } catch (e) {
-    toast('error', `Couldn't uninstall ${app.id}`, message(e));
+    cancelled = message(e) === api.CANCELLED;
+    if (cancelled) toast('info', `${kindNoun.uninstall} of ${app.id} cancelled`);
+    else toast('error', `Couldn't uninstall ${app.id}`, message(e));
   } finally {
-    endRun(app.key);
+    endRun(app.key, cancelled);
     delete store.busy[app.key];
     await checkStatus(app.key);
   }

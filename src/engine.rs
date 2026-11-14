@@ -1,7 +1,14 @@
 //! Thin wrapper around the embedded DSC engine. The only module that touches dsc-lib,
 //! so upstream API churn stays contained here.
 
-use std::{env, fs, path::Path, path::PathBuf, sync::Mutex};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use anyhow::Result;
 use dsc_lib::{
@@ -40,6 +47,46 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
 /// calls must not overlap. The GUI runs them on worker threads.
 // ponytail: one global lock; installs run one at a time, which is also what package managers want.
 static ENGINE: Mutex<()> = Mutex::new(());
+
+/// Set by `abort`: skip the remaining steps of the running operation.
+static ABORT: AtomicBool = AtomicBool::new(false);
+/// File whose existence asks the running step to stop (see `force_stop`). Resources get its path
+/// as FURNISH_STOP_FILE; the watcher runs with the step's privileges, so it may signal root processes.
+static STOP_FILE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Message of the error an operation ends with when the user cancelled it.
+pub const CANCELLED: &str = "cancelled";
+
+/// The operation was cancelled by the user: an abort, a force stop, or a refused password dialog.
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(CANCELLED)
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// Stop the running operation after its current step.
+pub fn abort() {
+    ABORT.store(true, Ordering::SeqCst);
+}
+
+/// Stop the running operation now: abort, and interrupt the current step (SIGTERM to its
+/// command). Steps whose resource doesn't support it still finish.
+pub fn force_stop() {
+    abort();
+    if let Some(file) = STOP_FILE.get() {
+        let _ = fs::write(file, "");
+    }
+}
+
+/// Resources report a user cancellation with these exit code descriptions (see the manifests).
+fn is_cancellation(error: &str) -> bool {
+    error.contains("Cancelled: administrator rights were not granted") || error.contains("Cancelled: stopped by the user")
+}
 
 /// One line of what an operation is doing, for experts.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -136,10 +183,12 @@ pub fn init(dir: &Path) -> Result<()> {
     }
     let mut path: Vec<PathBuf> = vec![dir.to_path_buf()];
     path.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let stop_file = STOP_FILE.get_or_init(|| dir.join(".stop"));
     // SAFETY: called once at startup from main, before any threads are spawned.
     unsafe {
         env::set_var("DSC_RESOURCE_PATH", dir);
         env::set_var("PATH", env::join_paths(path)?);
+        env::set_var("FURNISH_STOP_FILE", stop_file);
     }
     Ok(())
 }
@@ -213,6 +262,8 @@ pub struct Outcome {
     pub changes: Vec<Change>,
     /// Set if the step failed; the run stops there.
     pub error: Option<String>,
+    /// The user cancelled this step (refused the password dialog or force-stopped it).
+    pub cancelled: bool,
 }
 
 /// Preview installing (or uninstalling) an app without changing anything.
@@ -223,15 +274,23 @@ pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
 
 /// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
 /// furnish orchestrates the steps itself because DSC only reports per-resource progress on stderr.
+/// Fails with [`Cancelled`] if the user aborted, force-stopped or refused the password dialog.
 pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Result<()> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    ABORT.store(false, Ordering::SeqCst);
+    if let Some(file) = STOP_FILE.get() {
+        let _ = fs::remove_file(file);
+    }
     let docs = step_docs(doc, uninstall)?;
     let steps = docs.iter().map(preview).collect::<Result<Vec<_>>>()?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
+        if ABORT.load(Ordering::SeqCst) {
+            return Err(Cancelled.into());
+        }
         let started = now_ms();
         if step.action == Action::Skipped {
-            let outcome = Outcome { action: Action::Skipped, changes: vec![], error: None };
+            let outcome = Outcome { action: Action::Skipped, changes: vec![], error: None, cancelled: false };
             report(Progress::Finished { index, at_ms: started, duration_ms: 0, outcome });
             continue;
         }
@@ -244,12 +303,21 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
                     action: action(&r.before_state, &r.after_state),
                     changes: changes(&r.before_state, &r.after_state),
                     error: None,
+                    cancelled: false,
                 },
-                _ => Outcome { action: Action::Skipped, changes: vec![], error: None },
+                _ => Outcome { action: Action::Skipped, changes: vec![], error: None, cancelled: false },
             },
-            Err(e) => Outcome { action: step.action, changes: vec![], error: Some(format!("{e:#}")) },
+            Err(e) => {
+                let error = format!("{e:#}");
+                let cancelled = is_cancellation(&error);
+                Outcome { action: step.action, changes: vec![], error: (!cancelled).then_some(error), cancelled }
+            }
         };
+        let cancelled = outcome.cancelled;
         report(Progress::Finished { index, at_ms: finished, duration_ms: finished - started, outcome });
+        if cancelled {
+            return Err(Cancelled.into());
+        }
         result?;
     }
     Ok(())

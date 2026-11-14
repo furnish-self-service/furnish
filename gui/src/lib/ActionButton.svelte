@@ -1,7 +1,7 @@
 <script lang="ts">
   // The primary action for an app. While it runs, the button fills like a level.
   import type { AppInfo } from './api';
-  import { store, install, uninstall } from './state.svelte';
+  import { store, install, uninstall, stop } from './state.svelte';
 
   let { app, large = false }: { app: AppInfo; large?: boolean } = $props();
 
@@ -22,6 +22,13 @@
             : 'Install',
   );
   const quiet = $derived(!busy && status === 'installed');
+  const stopping = $derived(busy ? store.runs[app.key]?.stopping : undefined);
+
+  // Abort first lets the current step finish; a second click (Force stop) interrupts it.
+  function halt(event: MouseEvent) {
+    event.stopPropagation();
+    stop(app.key, stopping ? 'force' : 'abort');
+  }
 
   function run(event: MouseEvent) {
     event.stopPropagation();
@@ -48,9 +55,44 @@
     <span class="fill" aria-hidden="true"></span>
     <span class="label">{label}</span>
   </button>
+  {#if busy}
+    <button
+      class="stop"
+      class:large
+      class:force={!!stopping}
+      disabled={stopping === 'force'}
+      title={stopping ? 'Interrupt the current step now' : 'Stop after the current step'}
+      onclick={halt}
+    >
+      {stopping === 'force' ? 'Stopping…' : stopping ? 'Force stop' : 'Abort'}
+    </button>
+  {/if}
 {/if}
 
 <style>
+  .stop {
+    margin-left: 0.4rem;
+    padding: 0.42rem 0.85rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink);
+    font: 600 0.85rem/1 var(--font-body);
+    cursor: pointer;
+  }
+  .stop:hover:not(:disabled) {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+  .stop.force {
+    border-color: var(--danger);
+    background: var(--danger);
+    color: var(--surface);
+  }
+  .stop.large {
+    padding: 0.7rem 1.2rem;
+    font-size: 1rem;
+  }
   .action {
     position: relative;
     overflow: hidden;

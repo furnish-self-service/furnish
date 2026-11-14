@@ -65,6 +65,7 @@
   };
   const kindVerb = { install: 'Installing', update: 'Updating', uninstall: 'Uninstalling' } as const;
   const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled' } as const;
+  const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall' } as const;
 
   const active = $derived(rows.filter((r) => r.step.action !== 'skipped'));
   const changing = $derived(active.filter((r) => r.step.action !== 'nothing').length);
@@ -91,6 +92,7 @@
   function result(row: RunStep): string {
     const o = row.outcome;
     if (!o) return '';
+    if (o.cancelled) return 'Cancelled';
     if (o.error) return 'Failed';
     return { install: 'Installed', remove: 'Removed', change: 'Changed', nothing: 'Already as described', skipped: 'Skipped' }[o.action];
   }
@@ -117,6 +119,11 @@
         <span class="pulse" aria-hidden="true"></span>
         {kindVerb[run.kind]} {app.id}: <strong>step {Math.min(finished + 1, rows.length || 1)} of {rows.length || '…'}</strong>
         <span class="muted">· {seconds(total)}</span>
+        {#if run.stopping === 'abort'}<span class="stopping">Stopping after this step…</span>
+        {:else if run.stopping === 'force'}<span class="stopping">Interrupting this step…</span>{/if}
+      {:else if run.cancelled}
+        <strong>{kindNoun[run.kind]} of {app.id} cancelled</strong> after {seconds(total)}.
+        <span class="muted">Steps already done stay done.</span>
       {:else if failedRow}
         <strong class="failed-text">{kindVerb[run.kind]} {app.id} failed</strong> at “{failedRow.step.name}” after {seconds(total)}.
       {:else}
@@ -150,6 +157,7 @@
             {:else if row.state === 'done'}✓
             {:else if row.state === 'failed'}✕
             {:else if row.state === 'skipped'}–
+            {:else if row.state === 'cancelled'}⊘
             {:else}{i + 1}{/if}
           </span>
         {/if}
@@ -324,6 +332,21 @@
   }
   .running .marker {
     border-color: var(--accent);
+  }
+  .cancelled .marker {
+    color: var(--surface);
+    background: var(--muted);
+    border-color: var(--muted);
+  }
+  .steps li.cancelled {
+    --tone: var(--muted);
+    --tone-soft: var(--hover);
+    --tone-ink: var(--ink-soft);
+  }
+  .stopping {
+    margin-left: 0.5rem;
+    font-weight: 650;
+    color: var(--danger);
   }
   .spinner {
     width: 0.8rem;

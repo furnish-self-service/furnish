@@ -15,12 +15,36 @@ set -eu
 # graphical pkexec dialog, even if a terminal exists; otherwise via sudo, or pkexec without a terminal.
 as_root() {
     if [ "$(id -u)" = 0 ]; then "$@"
-    elif [ -n "${FURNISH_GRAPHICAL:-}" ]; then pkexec "$@"
+    elif [ -n "${FURNISH_GRAPHICAL:-}" ]; then pkexec_or_cancel "$@"
     elif sudo -n true 2>/dev/null; then sudo -n "$@"
     elif (: </dev/tty) 2>/dev/null; then sudo "$@" </dev/tty
-    else pkexec "$@"
+    else pkexec_or_cancel "$@"
     fi
 }
+
+# pkexec exits 126 (dialog dismissed) or 127 (not authorized) without running anything:
+# that is the user saying no, not a failure. Exit 12 tells furnish the step was cancelled.
+pkexec_or_cancel() {
+    rc=0
+    pkexec "$@" || rc=$?
+    if [ "$rc" = 126 ] || [ "$rc" = 127 ]; then
+        echo '{"warn":"administrator rights were not granted"}' >&2
+        exit 12
+    fi
+    return "$rc"
+}
+
+# Runs a command so furnish can force-stop it: when the file $FURNISH_STOP_FILE appears, the
+# command gets SIGTERM and the step exits 13. The watcher runs with the command (as root if
+# needed), because furnish itself may not signal root processes. SIGTERM, not SIGINT:
+# non-interactive shells start background jobs with SIGINT ignored.
+WATCH='stop=$1; shift; "$@" & pid=$!
+while kill -0 "$pid" 2>/dev/null; do
+    if [ -n "$stop" ] && [ -e "$stop" ]; then kill -TERM "$pid"; wait "$pid"; exit 13; fi
+    sleep 0.3
+done
+wait "$pid"'
+stoppable() { sh -c "$WATCH" furnish-step "${FURNISH_STOP_FILE:-}" "$@"; }
 
 # rpm -q prints "package X is not installed" on stdout, so only print on success.
 rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$name" 2>/dev/null) && echo "$v"; }
@@ -117,7 +141,8 @@ set)
         how="as your user"; $admin && how="as administrator"
         echo "{\"info\":\"$step: running $how: $cmd\"}" >&2
         # Package manager output goes to stderr: DSC reads stdout as JSON.
-        if $admin; then as_root $cmd >&2; else $cmd >&2; fi
+        if $admin; then as_root sh -c "$WATCH" furnish-step "${FURNISH_STOP_FILE:-}" $cmd >&2
+        else stoppable $cmd >&2; fi
     fi
     state "$(installed_version || true)"
     echo '}'

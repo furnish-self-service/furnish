@@ -68,6 +68,10 @@ Each app's detail page has three collapsed sections for experts:
 - **Activity log** shows each DSC step and the package manager's output during install, update or uninstall.
 - **DSC configuration** shows the app's file.
 
+While an install, update or uninstall runs, **Abort** next to its button stops it after the current step; clicking again (**Force stop**) interrupts the current step. Dismissing the administrator password dialog cancels the operation instead of failing it.
+
+On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
+
 The CLI has the same features: `furnish install <app> --dry-run` and `furnish uninstall <app> --dry-run` preview the steps, and `--verbose` shows the log.
 
 ## Example app definition

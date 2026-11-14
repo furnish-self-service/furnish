@@ -43,7 +43,16 @@ export interface Outcome {
   changes: Step['changes'];
   /** Set if the step failed; the run stops there. */
   error: string | null;
+  /** The user cancelled this step (refused the password dialog or force-stopped it). */
+  cancelled: boolean;
 }
+
+/** Error message of an install/update/uninstall the user cancelled. */
+export const CANCELLED = 'cancelled';
+/** Stop the running operation after its current step. */
+export const abort = () => invoke<void>('abort');
+/** Stop the running operation now, interrupting its current step. */
+export const forceStop = () => invoke<void>('force_stop');
 
 export type Progress = { key: string } & (
   | { event: 'planned'; steps: Step[] }

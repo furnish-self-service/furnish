@@ -67,6 +67,10 @@ fn main() -> ExitCode {
     let result = engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command));
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(err) if err.is::<engine::Cancelled>() => {
+            eprintln!("⊘ Cancelled");
+            ExitCode::from(130)
+        }
         Err(err) => {
             eprintln!("✗ {err:#}");
             ExitCode::FAILURE
@@ -185,6 +189,7 @@ fn print_progress() -> impl FnMut(engine::Progress) {
             let step = &steps[index];
             let secs = duration_ms as f64 / 1000.0;
             match (&outcome.error, outcome.action) {
+                _ if outcome.cancelled => println!("  ⊘ {} cancelled after {secs:.1}s", step.name),
                 (Some(err), _) => println!("  ✗ {} failed after {secs:.1}s: {}", step.name, err.lines().next().unwrap_or_default()),
                 (None, Action::Skipped) => println!("  – {} skipped: not for this system", step.name),
                 (None, Action::Nothing) => println!("  ✓ {} already as described ({secs:.1}s)", step.name),

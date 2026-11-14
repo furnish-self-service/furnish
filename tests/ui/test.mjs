@@ -1,7 +1,7 @@
 // UI tests for the real furnish GUI, driven over WebDriver (tauri-driver on localhost:4444).
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 
 const DRIVER = 'http://127.0.0.1:4444';
 const [workDir, screenshot] = process.argv.slice(2);
@@ -102,6 +102,40 @@ const steps = [
     const done = await text(`${panel}//li[contains(@class,'done')]`);
     if (!/Installed/.test(done) || !/\d+(\.\d)? (ms|s)/.test(done)) throw new Error(`done step lacks result/duration: ${done}`);
     if (!(await findAll(`${panel}//li[contains(@class,'skipped')]`)).length) throw new Error('skipped step missing');
+  }],
+  ['refusing the password dialog cancels quietly instead of failing', async () => {
+    await click(button('Discover'));
+    writeFileSync(`${workDir}/deny`, '');
+    try {
+      await click(`${card('toolbox')}${button('Install')}`);
+      await waitFor('cancelled notice', () => find("//div[contains(@class,'toast') and contains(., 'Installation of toolbox cancelled')]"), 30000);
+      if ((await findAll("//div[contains(@class,'toast') and contains(@class,'error')]")).length) throw new Error('shown as an error');
+      await waitFor('still installable', () => find(`${card('toolbox')}${button('Install')}`));
+    } finally {
+      rmSync(`${workDir}/deny`);
+    }
+  }],
+  ['abort lets the current step finish and skips the rest', async () => {
+    const panel = "//details[summary[contains(., 'Steps')]]";
+    await click(`${card('toolbox')}//button[@aria-label='Open toolbox']`);
+    if (!(await isOpen(panel))) await click(`${panel}/summary`);
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    await waitFor('first step running', () => find(`${panel}//li[contains(@class,'running') and contains(., 'toolbox-a')]`));
+    await click(button('Abort'));
+    await waitFor('stopping notice', async () => (await text(panel)).includes('Stopping after this step'));
+    await waitFor('run cancelled', async () => (await text(panel)).includes('Installation of toolbox cancelled'), 30000);
+    if (!(await text(`${panel}//li[contains(., 'toolbox-a')]`)).includes('Installed')) throw new Error('first step did not finish');
+    if (!(await text(`${panel}//li[contains(., 'toolbox-b')]`)).includes('Not run')) throw new Error('second step ran');
+  }],
+  ['force stop interrupts the running step', async () => {
+    const panel = "//details[summary[contains(., 'Steps')]]";
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    await waitFor('second step running', () => find(`${panel}//li[contains(@class,'running') and contains(., 'toolbox-b')]`));
+    await click(button('Abort'));
+    await click(button('Force stop'));
+    await waitFor('run cancelled', async () => (await text(panel)).includes('Installation of toolbox cancelled'), 30000);
+    if (!(await findAll(`${panel}//li[contains(@class,'cancelled') and contains(., 'toolbox-b')]`)).length) throw new Error('step not marked cancelled');
+    if (existsSync(`${workDir}/pkgs/toolbox-b`)) throw new Error('toolbox-b got installed anyway');
   }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));

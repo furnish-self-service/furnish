@@ -1,0 +1,12 @@
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}}
+Icon={{icon}}
+Name={{name}}
+# Must match the program name the app sets (see src/main.rs), so the window gets this icon.
+StartupWMClass=furnish
+Terminal=false
+Type=Application

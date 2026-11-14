@@ -39,6 +39,9 @@
   .error {
     border-left-color: var(--danger);
   }
+  .info {
+    border-left-color: var(--muted);
+  }
   .body {
     flex: 1;
     min-width: 0;

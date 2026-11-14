@@ -12,3 +12,7 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 base64 = "0.22"
+
+# Same glib as Tauri's GTK stack, used to set the Wayland app ID (see main.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"

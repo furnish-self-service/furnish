@@ -1,0 +1,14 @@
+# Two steps, so tests can abort between them.
+metadata:
+  furnish:
+    description: Two command-line tools
+    categories: [Test]
+resources:
+  - name: toolbox-a
+    type: Furnish/Package
+    properties:
+      name: toolbox-a
+  - name: toolbox-b
+    type: Furnish/Package
+    properties:
+      name: toolbox-b

@@ -1351,6 +1351,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "furnish",
+ "glib",
  "serde",
  "tauri",
  "tauri-build",
