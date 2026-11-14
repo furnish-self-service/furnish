@@ -121,7 +121,7 @@ If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the 
 
 ### Updates
 
-`Furnish/Package` reports an update when the package manager knows a newer version (`pacman -Qu`, `apt list --upgradable`, `dnf -C check-update`, `zypper lu`, `brew outdated`, winget), and `Furnish/Installer` when the collection ships a `.deb` or `.rpm` with a different version. The desktop app installs updates automatically on launch and with every scheduled check; turn that off per app on its detail page. The CLI: `furnish upgrade` (`--all` includes apps with automatic updates off) and `furnish settings --no-auto-update <app>`.
+`Furnish/Package` reports an update when the package manager knows a newer version (`pacman -Qu`, `apt list --upgradable`, `dnf -C check-update`, `zypper lu`, `brew outdated`, winget), and `Furnish/Installer` when the collection ships a `.deb` or `.rpm` with a different version. The desktop app installs updates automatically on launch and with every scheduled check; turn that off per app on its detail page. By default it postpones them while the computer is busy: when the last 5 minutes averaged over 50% CPU, 90% memory or 1000 KB/s network traffic (`loadLimits` in `settings.json`). It doesn't count its own load: samples taken while furnish works are discarded, and its own processes are subtracted. Turn this off on the Collections page or with `furnish settings --load-aware-updates false`. The CLI: `furnish upgrade` (`--all` includes apps with automatic updates off) and `furnish settings --no-auto-update <app>`.
 
 ### Kits
 

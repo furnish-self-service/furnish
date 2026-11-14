@@ -65,6 +65,9 @@ enum Command {
         /// Update collections when the desktop app starts
         #[arg(long)]
         update_on_launch: Option<bool>,
+        /// Postpone automatic updates while the computer is busy
+        #[arg(long)]
+        load_aware_updates: Option<bool>,
         /// Update collections every N minutes while the desktop app runs (0: never)
         #[arg(long, value_name = "MINUTES")]
         update_interval: Option<u32>,
@@ -134,7 +137,7 @@ fn run(command: Command) -> Result<()> {
         Command::Uninstall { app, .. } => uninstall_app(&catalog::find_app(&app)?),
         Command::Collection(cmd) => collection(cmd),
         Command::Upgrade { all } => upgrade(all),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update } => {
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates } => {
             let mut s = furnish::settings::load();
             let key = |name: &str| catalog::find_app(name).map(|a| format!("{}/{}", a.collection, a.id));
             for name in &no_auto_update {
@@ -147,7 +150,13 @@ fn run(command: Command) -> Result<()> {
                 let key = key(name)?;
                 s.no_auto_update.retain(|k| k != &key);
             }
-            if update_on_launch.is_some() || update_interval.is_some() || !auto_update.is_empty() || !no_auto_update.is_empty() {
+            if update_on_launch.is_some()
+                || update_interval.is_some()
+                || load_aware_updates.is_some()
+                || !auto_update.is_empty()
+                || !no_auto_update.is_empty()
+            {
+                s.load_aware_updates = load_aware_updates.unwrap_or(s.load_aware_updates);
                 s.update_on_launch = update_on_launch.unwrap_or(s.update_on_launch);
                 s.update_interval_minutes = update_interval.unwrap_or(s.update_interval_minutes);
                 furnish::settings::save(&s)?;
@@ -156,6 +165,15 @@ fn run(command: Command) -> Result<()> {
             match s.update_interval_minutes {
                 0 => println!("update interval:   never"),
                 m => println!("update interval:   every {m} minutes"),
+            }
+            let l = &s.load_limits;
+            if s.load_aware_updates {
+                println!(
+                    "when busy:         postpone automatic updates (5-minute average over CPU {}%, memory {}% or network {} KB/s)",
+                    l.cpu_percent, l.memory_percent, l.network_kbps
+                );
+            } else {
+                println!("when busy:         update anyway");
             }
             match s.no_auto_update.as_slice() {
                 [] => println!("app updates:       automatic for all apps"),

@@ -219,6 +219,19 @@ fn force_stop() {
     engine::force_stop();
 }
 
+/// How often the load sampler measures; FURNISH_LOAD_SAMPLE_SECONDS overrides the default 10 s
+/// (the window is 30 samples, so 10 s means 5 minutes).
+fn load_interval() -> std::time::Duration {
+    let secs = std::env::var("FURNISH_LOAD_SAMPLE_SECONDS").ok().and_then(|s| s.parse().ok()).unwrap_or(10);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Current system load, and whether automatic updates should wait.
+#[tauri::command]
+fn system_load() -> furnish::load::Load {
+    furnish::load::current(&furnish::settings::load().load_limits, load_interval())
+}
+
 #[tauri::command]
 fn get_settings() -> furnish::settings::Settings {
     furnish::settings::load()
@@ -273,6 +286,7 @@ fn main() {
         eprintln!("furnish: failed to prepare bundled resources: {err:#}");
         std::process::exit(1);
     }
+    furnish::load::start_sampler(load_interval());
     tauri::Builder::default()
         .setup(|app| {
             // Stream what installs are doing to the UI's activity log.
@@ -292,6 +306,7 @@ fn main() {
             abort,
             force_stop,
             get_settings,
+            system_load,
             save_settings,
             list_collections,
             add_collection,

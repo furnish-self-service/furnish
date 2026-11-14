@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::data_dir;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     /// Pull all collections when the desktop app starts.
@@ -17,11 +17,20 @@ pub struct Settings {
     pub update_interval_minutes: u32,
     /// Apps (`collection/app`) whose updates are not installed automatically.
     pub no_auto_update: Vec<String>,
+    /// Postpone automatic updates while the computer is busy (5-minute averages over `load_limits`).
+    pub load_aware_updates: bool,
+    pub load_limits: crate::load::Limits,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { update_on_launch: true, update_interval_minutes: 30, no_auto_update: Vec::new() }
+        Self {
+            update_on_launch: true,
+            update_interval_minutes: 30,
+            no_auto_update: Vec::new(),
+            load_aware_updates: true,
+            load_limits: crate::load::Limits::default(),
+        }
     }
 }
 
@@ -51,6 +60,7 @@ mod tests {
     #[test]
     fn missing_fields_use_defaults() {
         let s: Settings = serde_json::from_str(r#"{"updateIntervalMinutes": 0}"#).unwrap();
-        assert_eq!(s, Settings { update_on_launch: true, update_interval_minutes: 0, no_auto_update: vec![] });
+        assert_eq!(s, Settings { update_interval_minutes: 0, ..Settings::default() });
+        assert!(s.load_aware_updates);
     }
 }

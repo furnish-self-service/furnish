@@ -91,8 +91,12 @@
             <button class="secondary" disabled={store.autoUpdate.running} onclick={checkForUpdates}>
               {store.autoUpdate.running ? 'Checking…' : 'Check for updates'}
             </button>
-            <span class="muted">
-              {#if store.autoUpdate.error}Last check failed{:else if store.autoUpdate.lastAt}Last checked
+            <span class="muted" aria-live="polite">
+              {#if store.autoUpdate.postponed}
+                <span class="postponed">Updates postponed: {store.autoUpdate.postponed.startsWith('measuring')
+                  ? store.autoUpdate.postponed
+                  : `this computer is busy (${store.autoUpdate.postponed})`}</span>
+              {:else if store.autoUpdate.error}Last check failed{:else if store.autoUpdate.lastAt}Last checked
                 {new Date(store.autoUpdate.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{/if}
             </span>
           </div>
@@ -247,6 +251,10 @@
   .check .muted {
     font-size: 0.82rem;
     color: var(--muted);
+  }
+  .postponed {
+    font-weight: 650;
+    color: var(--highlight-ink);
   }
   .search {
     width: min(20rem, 100%);

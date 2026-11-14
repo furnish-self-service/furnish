@@ -2,9 +2,11 @@
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
 import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 const DRIVER = 'http://127.0.0.1:4444';
-const [workDir, screenshot] = process.argv.slice(2);
+const [workDir, screenshot, container] = process.argv.slice(2);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let session;
 
 async function wd(method, path, body) {
@@ -226,6 +228,21 @@ const steps = [
     await waitFor('hyperfine updated', () => log('pkgs/hyperfine').trim() === '2.0', 30000);
     await waitFor('extras still waiting', () => find(card('extras')));
     if (log('pkgs/extras').trim() === '2.0') throw new Error('extras was updated although turned off');
+  }],
+  ['automatic updates wait while the computer is busy, unless that is turned off', async () => {
+    // Real CPU load from outside furnish: a busy loop on every core for 45 s.
+    spawnSync('docker', ['exec', '-d', container, 'sh', '-c',
+      'for i in $(seq $(nproc)); do timeout 45 sh -c "while :; do :; done" & done; wait']);
+    await sleep(20000); // the 30 s test window fills with busy samples
+    writeFileSync(`${workDir}/pkgs/hyperfine.new`, '3.0\n');
+    await click("//nav//button[starts-with(normalize-space(), 'Updates')]");
+    await click(button('Check for updates'));
+    await waitFor('update postponed', async () => (await text("//*[contains(@class,'postponed')]")).includes('busy (CPU'), 20000);
+    if (log('pkgs/hyperfine').trim() === '3.0') throw new Error('updated although the computer was busy');
+    await click(button('Collections'));
+    await click("//label[contains(., 'while this computer is busy')]/input");
+    await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
+    await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));

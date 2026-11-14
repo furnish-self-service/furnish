@@ -116,6 +116,18 @@ export interface Settings {
   updateIntervalMinutes: number;
   /** Apps (`collection/app`) whose updates are not installed automatically. */
   noAutoUpdate: string[];
+  /** Postpone automatic updates while the computer is busy. */
+  loadAwareUpdates: boolean;
+  loadLimits: { cpuPercent: number; memoryPercent: number; networkKbps: number };
 }
+
+export interface Load {
+  average: { cpuPercent: number; memoryPercent: number; networkKbps: number };
+  samples: number;
+  /** Why automatic updates should wait, e.g. "CPU 84%"; null: go ahead. */
+  busy: string | null;
+  retryAfterSeconds: number;
+}
+export const systemLoad = () => invoke<Load>('system_load');
 export const getSettings = () => invoke<Settings>('get_settings');
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings });

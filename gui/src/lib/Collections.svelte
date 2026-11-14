@@ -88,6 +88,7 @@
   {#if store.settings}
     <section class="auto" aria-labelledby="auto-title">
       <h2 id="auto-title">Automatic updates</h2>
+      <p class="explain flush">Installed apps update automatically; turn that off for an app on its page.</p>
       <label class="check">
         <input
           type="checkbox"
@@ -107,6 +108,19 @@
           {/each}
         </select>
       </label>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={store.settings.loadAwareUpdates}
+          onchange={(e) => changeSettings({ loadAwareUpdates: e.currentTarget.checked })}
+        />
+        Postpone automatic updates while this computer is busy
+      </label>
+      <p class="explain">
+        Busy means the last 5 minutes averaged over {store.settings.loadLimits.cpuPercent}% CPU,
+        {store.settings.loadLimits.memoryPercent}% memory or {store.settings.loadLimits.networkKbps} KB/s of network
+        traffic, not counting furnish itself.
+      </p>
       <p class="last" aria-live="polite">
         {#if store.autoUpdate.running}
           Checking for updates…
@@ -231,6 +245,14 @@
     background: var(--surface);
     color: var(--ink);
     font: 0.92rem var(--font-body);
+  }
+  .explain.flush {
+    margin-left: 0;
+  }
+  .explain {
+    margin: -0.3rem 0 0 1.6rem;
+    font-size: 0.8rem;
+    color: var(--muted);
   }
   .last {
     margin: 0;

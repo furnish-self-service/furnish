@@ -70,7 +70,13 @@ export const store = $state({
   /** App whose optional dependencies the install dialog asks about. */
   choosing: null as string | null,
   /** Background collection updates: when the last one ran and how it went. */
-  autoUpdate: { running: false, lastAt: null as number | null, error: null as string | null },
+  autoUpdate: {
+    running: false,
+    lastAt: null as number | null,
+    error: null as string | null,
+    /** Why automatic app updates are waiting (computer busy), if they are. */
+    postponed: null as string | null,
+  },
 });
 
 api.onProgress((p) => {
@@ -247,17 +253,36 @@ export async function updateCollections(): Promise<string[]> {
 
 const declinedUpdates = new Set<string>();
 
-/** Queue updates of installed apps that have one, unless turned off for the app. */
-function updateApps() {
-  const due = store.apps.filter(
-    (a) =>
-      store.status[a.key] === 'needsUpdate' &&
-      !store.settings?.noAutoUpdate.includes(a.key) &&
-      !declinedUpdates.has(a.key) &&
-      !isPending(a.key),
-  );
-  for (const app of due) enqueue(app.key, 'install', true);
-  if (due.length) toast('info', `Updating ${due.map((a) => a.id).join(', ')} automatically`);
+let retry: ReturnType<typeof setTimeout> | undefined;
+
+/** Queue updates of installed apps that have one, unless turned off for the app. With
+ *  load-aware updates on, wait while the computer is busy and ask again a little later. */
+async function updateApps() {
+  clearTimeout(retry);
+  const due = () =>
+    store.apps.filter(
+      (a) =>
+        store.status[a.key] === 'needsUpdate' &&
+        !store.settings?.noAutoUpdate.includes(a.key) &&
+        !declinedUpdates.has(a.key) &&
+        !isPending(a.key),
+    );
+  if (!due().length) {
+    store.autoUpdate.postponed = null;
+    return;
+  }
+  if (store.settings?.loadAwareUpdates) {
+    const load = await api.systemLoad().catch(() => null);
+    if (load?.busy) {
+      store.autoUpdate.postponed = load.busy;
+      retry = setTimeout(updateApps, load.retryAfterSeconds * 1000);
+      return;
+    }
+  }
+  store.autoUpdate.postponed = null;
+  const apps = due();
+  for (const app of apps) enqueue(app.key, 'install', true);
+  if (apps.length) toast('info', `Updating ${apps.map((a) => a.id).join(', ')} automatically`);
 }
 
 /** Pull collections, look for app updates (package managers learn about them on their own),
@@ -279,7 +304,7 @@ export async function checkForUpdates() {
     const s = store.status[app.key];
     if ((s === 'installed' || s === 'needsUpdate') && !isPending(app.key)) await checkStatus(app.key);
   }
-  updateApps();
+  await updateApps();
 }
 
 /** Automatic updates for one app (on by default). */
@@ -300,7 +325,13 @@ function schedule() {
 export async function start() {
   store.settings = await api
     .getSettings()
-    .catch(() => ({ updateOnLaunch: true, updateIntervalMinutes: 30, noAutoUpdate: [] as string[] }));
+    .catch(() => ({
+      updateOnLaunch: true,
+      updateIntervalMinutes: 30,
+      noAutoUpdate: [] as string[],
+      loadAwareUpdates: true,
+      loadLimits: { cpuPercent: 50, memoryPercent: 90, networkKbps: 1000 },
+    }));
   schedule();
   await loadAll();
   if (store.settings.updateOnLaunch) await checkForUpdates();
@@ -314,6 +345,7 @@ export async function changeSettings(change: Partial<Settings>) {
     await api.saveSettings(next);
     store.settings = next;
     schedule();
+    if ('loadAwareUpdates' in change) await updateApps(); // postponed updates may go ahead now
   } catch (e) {
     toast('error', "Couldn't save the settings", message(e));
   }

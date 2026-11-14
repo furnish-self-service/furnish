@@ -373,6 +373,7 @@ pub fn find_app(query: &str) -> Result<App> {
 }
 
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
+    let _working = crate::load::activity(); // load-aware updates ignore furnish's own downloads
     let mut cmd = Command::new("git");
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);

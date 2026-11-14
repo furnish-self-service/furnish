@@ -216,6 +216,7 @@ pub fn status(doc: &Value) -> Result<Status> {
 /// Status plus, for a blocked app, what it needs.
 pub fn check(doc: &Value) -> Result<Check> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let result = match configurator(doc).and_then(|mut c| Ok(c.invoke_test()?)) {
         Ok(result) => result,
         Err(e) => {
@@ -295,6 +296,7 @@ pub struct Outcome {
 /// Preview installing (or uninstalling) an app without changing anything.
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     step_docs(doc, uninstall)?.iter().map(preview).collect()
 }
 
@@ -303,6 +305,7 @@ pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
 /// Fails with [`Cancelled`] if the user aborted, force-stopped or refused the password dialog.
 pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Result<()> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     ABORT.store(false, Ordering::SeqCst);
     if let Some(file) = STOP_FILE.get() {
         let _ = fs::remove_file(file);
