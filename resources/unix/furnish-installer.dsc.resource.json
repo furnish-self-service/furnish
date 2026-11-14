@@ -26,7 +26,6 @@
   "exitCodes": {
     "0": "Success",
     "10": "Invalid arguments",
-    "11": "No supported package manager found",
     "12": "Cancelled: administrator rights were not granted",
     "13": "Cancelled: stopped by the user"
   },

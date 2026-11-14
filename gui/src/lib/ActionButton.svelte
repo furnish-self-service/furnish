@@ -48,6 +48,11 @@
   <span class="checking" class:large>Checking…</span>
 {:else if status === 'error'}
   <span class="checking" class:large>Status unknown</span>
+{:else if status === 'blocked' && !app.requires.length && !busy && !queued}
+  <!-- A tool this app needs is missing and the collection doesn't provide it. -->
+  <span class="checking needs" class:large title="Needs {store.reasons[app.key]}">
+    Needs {(store.reasons[app.key] ?? 'a missing tool').split(' (')[0]}
+  </span>
 {:else if queued}
   <!-- Waiting: same slot, removable from the queue. -->
   <div class="action queued" class:large role="group" aria-label="{app.id} is queued, position {position}">
@@ -85,7 +90,7 @@
     class="action"
     class:large
     class:quiet
-    title={engineBusy ? 'Starts after what is already running' : undefined}
+    title={status === 'blocked' ? `Installs ${app.requires.map((k) => k.split('/')[1]).join(', ')} first` : engineBusy ? 'Starts after what is already running' : undefined}
     onclick={run}
   >
     <span class="label">{label}</span>
@@ -224,5 +229,10 @@
   .checking {
     font-size: 0.8rem;
     color: var(--muted);
+  }
+  .needs {
+    flex: none;
+    font-weight: 650;
+    color: var(--highlight-ink);
   }
 </style>

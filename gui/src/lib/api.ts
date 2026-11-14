@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable';
+export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable' | 'blocked';
 
 export interface Resource {
   name: string;
@@ -20,6 +20,8 @@ export interface AppInfo {
   resources: Resource[];
   /** The app's DSC configuration document, as written in the collection. */
   source: string;
+  /** Keys of apps installed first, e.g. a package manager it needs. */
+  requires: string[];
 }
 
 export interface LogLine {
@@ -88,7 +90,8 @@ export interface CollectionInfo {
 
 export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
-export const appStatus = (key: string) => invoke<Status>('app_status', { key });
+/** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
+export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null }>('app_status', { key });
 export const install = (key: string) => invoke<void>('install', { key });
 export const uninstall = (key: string) => invoke<void>('uninstall', { key });
 export const listCollections = () => invoke<CollectionInfo[]>('list_collections');

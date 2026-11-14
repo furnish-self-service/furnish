@@ -8,7 +8,7 @@ use std::{fs, path::Path};
 use base64::Engine as _;
 use furnish::{
     catalog::{self, App},
-    engine::{self, Status},
+    engine,
 };
 use serde::Serialize;
 use tauri::{Emitter, async_runtime::spawn_blocking};
@@ -29,6 +29,8 @@ struct AppInfo {
     resources: Vec<ResourceInfo>,
     /// The DSC configuration document as written in the collection, for experts to inspect.
     source: String,
+    /// Keys of apps to install first (`metadata.furnish.requires`).
+    requires: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -106,6 +108,7 @@ fn app_info(app: &App) -> AppInfo {
         icon: app.icon.as_deref().and_then(icon_data_url),
         resources,
         source: fs::read_to_string(&app.path).unwrap_or_default(),
+        requires: app.requires.iter().map(|r| format!("{}/{r}", app.collection)).collect(),
     }
 }
 
@@ -162,8 +165,8 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
 }
 
 #[tauri::command]
-async fn app_status(key: String) -> CmdResult<Status> {
-    blocking(move || engine::status(&catalog::find_app(&key)?.doc)).await
+async fn app_status(key: String) -> CmdResult<engine::Check> {
+    blocking(move || engine::check(&catalog::find_app(&key)?.doc)).await
 }
 
 /// A step progress event for the UI, tagged with the app it belongs to.

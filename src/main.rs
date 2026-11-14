@@ -139,24 +139,36 @@ fn list() -> Result<()> {
     let mut rows = vec![row(["", "App", "Collection", "Categories", "Description"])];
     let mut installed = std::collections::HashSet::new();
     for app in &apps {
-        let status = engine::status(&app.doc);
-        if matches!(status, Ok(Status::Installed | Status::NeedsUpdate)) {
+        let check = engine::check(&app.doc);
+        if matches!(check, Ok(engine::Check { status: Status::Installed | Status::NeedsUpdate, .. })) {
             installed.insert((app.collection.clone(), app.id.clone()));
         }
-        let symbol = match status {
-            Ok(Status::Installed) => "✓",
-            Ok(Status::NeedsUpdate) => "↑",
-            Ok(Status::NotInstalled) => "·",
-            Ok(Status::Unavailable) => "–",
+        let mut description = app.description.clone();
+        let symbol = match check {
+            Ok(c) => match c.status {
+                Status::Installed => "✓",
+                Status::NeedsUpdate => "↑",
+                Status::NotInstalled => "·",
+                Status::Unavailable => "–",
+                Status::Blocked => {
+                    let needs = c.reason.unwrap_or_default();
+                    description = if app.requires.is_empty() {
+                        format!("needs {needs}")
+                    } else {
+                        format!("needs {needs}; installing it installs {} first", app.requires.join(", "))
+                    };
+                    "!"
+                }
+            },
             Err(err) => {
                 eprintln!("warning: could not check {}: {err:#}", app.id);
                 "?"
             }
         };
-        rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &app.description]));
+        rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &description]));
     }
     print_table(&rows);
-    println!("\n✓ installed  ↑ update available  · not installed  – not available on this OS  ? unknown");
+    println!("\n✓ installed  ↑ update available  · not installed  – not available on this OS  ! needs a missing tool  ? unknown");
 
     let kits = catalog::all_kits()?;
     if !kits.is_empty() {
@@ -242,12 +254,35 @@ fn is_kit(name: &str) -> bool {
 }
 
 fn install_app(app: &catalog::App) -> Result<()> {
-    match engine::status(&app.doc)? {
+    install_with_prerequisites(app, &mut Vec::new())
+}
+
+/// Install the app's missing prerequisites (`requires`) first, recursively.
+fn install_with_prerequisites(app: &catalog::App, path: &mut Vec<String>) -> Result<()> {
+    if path.contains(&app.id) {
+        anyhow::bail!("prerequisites form a cycle: {} → {}", path.join(" → "), app.id);
+    }
+    path.push(app.id.clone());
+    let siblings = catalog::get(&app.collection)?.apps();
+    for name in &app.requires {
+        let Some(dep) = siblings.iter().find(|a| &a.id == name) else {
+            anyhow::bail!("{} requires {name}, which is not an app in collection {}", app.id, app.collection);
+        };
+        // Installed (even if outdated) is enough; not-for-this-OS prerequisites don't apply.
+        if !matches!(engine::status(&dep.doc)?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
+            println!("{} needs {} first", app.id, dep.id);
+            install_with_prerequisites(dep, path)?;
+        }
+    }
+    path.pop();
+    let check = engine::check(&app.doc)?;
+    match check.status {
         Status::Installed => {
             println!("✓ {} is already installed and up to date", app.id);
             return Ok(());
         }
         Status::Unavailable => anyhow::bail!("{} is not available on this operating system", app.id),
+        Status::Blocked => anyhow::bail!("{} needs {}", app.id, check.reason.unwrap_or_default()),
         Status::NotInstalled | Status::NeedsUpdate => {}
     }
     println!("⟳ Installing {}…", app.id);

@@ -70,6 +70,8 @@ pub struct App {
     pub icon: Option<PathBuf>,
     /// The app's DSC configuration file.
     pub path: PathBuf,
+    /// Apps of the same collection to install first (`metadata.furnish.requires`), e.g. Homebrew.
+    pub requires: Vec<String>,
     pub doc: Value,
 }
 
@@ -282,6 +284,10 @@ impl Collection {
                 .unwrap_or_default(),
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
             path: path.to_path_buf(),
+            requires: meta["requires"]
+                .as_array()
+                .map(|r| r.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
             doc,
         })
     }

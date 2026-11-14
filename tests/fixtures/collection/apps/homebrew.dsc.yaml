@@ -1,0 +1,11 @@
+# Provides the brew tool other apps need (a stand-in for Homebrew's .pkg in tests).
+metadata:
+  furnish:
+    description: Homebrew package manager
+    categories: [Test]
+resources:
+  - name: homebrew
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties:
+      name: brew

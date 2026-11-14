@@ -95,6 +95,25 @@ resources:
       name: cowsay
 ```
 
+### Prerequisites and missing tools
+
+If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the app shows what it needs ("Needs Homebrew") instead of failing. A collection can provide the tool as an app of its own and list it under `requires`; installing the app then installs the prerequisite first:
+
+```yaml
+metadata:
+  furnish:
+    description: Video player
+    requires: [homebrew]       # app ids in this collection, installed first if missing
+resources:
+  - name: vlc
+    type: Furnish/Package
+    properties:
+      name: vlc
+      packageManager: brew     # optional: use this package manager instead of the first one found
+```
+
+Prerequisites that aren't available on this OS are skipped. Resources report a missing tool by printing `furnish: needs <what>` to stderr and exiting with code 11.
+
 ### Kits
 
 A kit is a set of apps from the same collection that users install together, for example everything a new web developer needs. Each kit is a file in the collection's `kits/` directory:

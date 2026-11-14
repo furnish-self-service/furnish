@@ -33,10 +33,22 @@ cat > "$work/bin/pacman" <<SH
 #!/bin/sh
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
-  -S) sleep 2; echo 1.0 > "$work/pkgs/\$4" ;;  # slow enough to observe live progress
-  -R) rm "$work/pkgs/\$3" ;;
+  -S) sleep 2; echo 1.0 > "$work/pkgs/\$4"  # slow enough to observe live progress
+      if [ "\$4" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
+  -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
 esac
 SH
+# Installing the "brew" package provides this fake Homebrew (see the homebrew fixture app).
+cat > "$work/fake-brew" <<SH
+#!/bin/sh
+mkdir -p "$work/brew-pkgs"
+case "\$1" in
+  list) [ -f "$work/brew-pkgs/\$3" ] && echo "\$3 1.0" ;;
+  install) touch "$work/brew-pkgs/\$2" ;;
+  uninstall) rm -f "$work/brew-pkgs/\$2" ;;
+esac
+SH
+chmod +x "$work/fake-brew"
 for tool in sudo pkexec; do
     printf '#!/bin/sh\necho "$*" >> %s/%s.log\nexec "$@"\n' "$work" "$tool" > "$work/bin/$tool"
 done

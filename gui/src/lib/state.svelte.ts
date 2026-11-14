@@ -50,6 +50,8 @@ export const store = $state({
   kits: [] as KitInfo[],
   /** Missing key: status not known yet. 'error': the check failed. */
   status: {} as Record<string, Status | 'error'>,
+  /** For blocked apps: what they need, e.g. "Homebrew (brew)". */
+  reasons: {} as Record<string, string>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
@@ -142,7 +144,10 @@ export async function loadAll() {
 
 export async function checkStatus(key: string) {
   try {
-    store.status[key] = await api.appStatus(key);
+    const check = await api.appStatus(key);
+    store.status[key] = check.status;
+    if (check.reason) store.reasons[key] = check.reason;
+    else delete store.reasons[key];
   } catch {
     store.status[key] = 'error';
   }
@@ -273,9 +278,24 @@ export async function changeSettings(change: Partial<Settings>) {
   }
 }
 
-/** Install or update an app: right away, or after what is already running and queued. */
-export function install(app: AppInfo) {
+/** Install or update an app: right away, or after what is already running and queued.
+ *  Missing prerequisites (`requires`) are queued first. */
+export function install(app: AppInfo, seen = new Set<string>()) {
+  if (seen.has(app.key)) return; // a prerequisite cycle: the run itself will report it
+  seen.add(app.key);
+  for (const key of app.requires) {
+    const dep = store.apps.find((a) => a.key === key);
+    const status = store.status[key];
+    if (dep && status !== 'installed' && status !== 'needsUpdate' && status !== 'unavailable') install(dep, seen);
+  }
   enqueue(app.key, 'install');
+}
+
+/** Apps waiting for a missing tool may be installable now (e.g. Homebrew was just installed). */
+async function recheckBlocked() {
+  for (const key of Object.keys(store.status)) {
+    if (store.status[key] === 'blocked') await checkStatus(key);
+  }
 }
 
 /** Uninstall an app: right away, or after what is already running and queued. */
@@ -304,6 +324,7 @@ async function pump() {
   if (!next) return;
   const app = store.apps.find((a) => a.key === next.key);
   if (app) await (next.action === 'install' ? runInstall(app) : runUninstall(app));
+  await recheckBlocked();
   // A cancelled or failed operation only ends itself; the queue carries on.
   pump();
 }

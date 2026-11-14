@@ -58,6 +58,14 @@ const steps = [
   ['apps without a resource for this OS are hidden', async () => {
     if ((await findAll(card('nowhere'))).length) throw new Error('nowhere is shown');
   }],
+  ['a missing tool shows what is needed; prerequisites install first', async () => {
+    await waitFor('brew-only shows what it needs', async () => (await text(card('brew-only'))).includes('Needs Homebrew'));
+    if ((await findAll(`${card('brew-only')}${button('Install')}`)).length) throw new Error('blocked app offers Install');
+    await click(`${card('brewed')}${button('Install')}`); // brewed requires the homebrew app
+    await waitFor('homebrew installed', () => find(`${card('homebrew')}//*[normalize-space()='Installed']`), 30000);
+    await waitFor('brewed installed', () => find(`${card('brewed')}//*[normalize-space()='Installed']`), 30000);
+    await waitFor('brew-only installable now', () => find(`${card('brew-only')}${button('Install')}`));
+  }],
   ['install from the card finishes and shows Installed', async () => {
     await click(`${card('hyperfine')}${button('Install')}`);
     await waitFor('Installed state', () => find(`${card('hyperfine')}//*[normalize-space()='Installed']`), 30000);

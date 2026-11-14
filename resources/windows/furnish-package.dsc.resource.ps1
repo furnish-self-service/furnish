@@ -10,7 +10,8 @@ $name = $env:name
 # Own exit codes start at 10; winget failures exit with winget's (unmapped) code so DSC shows stderr.
 if (-not $name) { [Console]::Error.WriteLine('{"error":"property name is required"}'); exit 10 }
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine('{"error":"winget not found"}'); exit 11
+    # Plain text and an unmapped exit code: furnish shows "Needs winget" instead of a failure.
+    [Console]::Error.WriteLine('furnish: needs winget (App Installer from the Microsoft Store)'); exit 11
 }
 
 $common = @('--exact', '--id', $name, '--accept-source-agreements', '--disable-interactivity')

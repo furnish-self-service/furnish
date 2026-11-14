@@ -165,6 +165,22 @@ pub enum Status {
     NeedsUpdate,
     /// Every resource's `condition` excluded it on this machine (e.g. a Windows-only app on Linux).
     Unavailable,
+    /// A tool a resource needs is missing, e.g. Homebrew; see [`Check::reason`].
+    Blocked,
+}
+
+/// An app's status, with what it needs if it is blocked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Check {
+    pub status: Status,
+    /// For `Blocked`: what is missing, e.g. "Homebrew (brew)".
+    pub reason: Option<String>,
+}
+
+/// Resources report a missing tool as a plain stderr line "furnish: needs <what>" (exit 11).
+pub fn missing_reason(error: &str) -> Option<String> {
+    let rest = &error[error.find("furnish: needs ")? + "furnish: needs ".len()..];
+    Some(rest.lines().next().unwrap_or_default().trim().to_string())
 }
 
 /// Write the bundled resources to `dir` and restrict DSC resource discovery to it.
@@ -194,11 +210,22 @@ pub fn init(dir: &Path) -> Result<()> {
 
 // DSC v3.3 reports resource failures as `Err`; `had_errors`/`messages` are never set.
 pub fn status(doc: &Value) -> Result<Status> {
+    Ok(check(doc)?.status)
+}
+
+/// Status plus, for a blocked app, what it needs.
+pub fn check(doc: &Value) -> Result<Check> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
-    let result = configurator(doc)?.invoke_test()?;
+    let result = match configurator(doc).and_then(|mut c| Ok(c.invoke_test()?)) {
+        Ok(result) => result,
+        Err(e) => {
+            let reason = missing_reason(&format!("{e:#}")).ok_or(e)?;
+            return Ok(Check { status: Status::Blocked, reason: Some(reason) });
+        }
+    };
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
-    Ok(classify(&states))
+    Ok(Check { status: classify(&states), reason: None })
 }
 
 /// Install an app, or bring it up to date.
@@ -482,6 +509,13 @@ mod tests {
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    #[test]
+    fn missing_tool_reason_from_resource_error() {
+        let err = "Command: Resource 'furnish-package.dsc.resource.sh' [exit code 11] furnish: needs Homebrew (brew)\nmore";
+        assert_eq!(missing_reason(err).as_deref(), Some("Homebrew (brew)"));
+        assert_eq!(missing_reason("exit code 1: E: Unable to locate package"), None);
     }
 
     #[test]

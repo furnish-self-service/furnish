@@ -27,6 +27,7 @@
       needsUpdate: 'Installed, update available',
       notInstalled: 'Not installed',
       unavailable: 'Not available on this system',
+      blocked: `Needs ${store.reasons[app.key] ?? 'a missing tool'}${app.requires.length ? `: installing ${app.id} installs ${app.requires.map((k) => k.split('/')[1]).join(', ')} first` : ''}`,
       error: "Couldn't check the status",
     } as Record<string, string>)[status ?? ''] ?? 'Checking status…',
   );
@@ -40,7 +41,7 @@
     <div class="heading">
       <h1>{app.id}</h1>
       <p class="meta">{app.categories.join(' · ')}{app.categories.length ? ' — ' : ''}from {app.collection}</p>
-      <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate'}>{statusText}</p>
+      <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate' || status === 'blocked'}>{statusText}</p>
     </div>
     <div class="cta">
       {#if status === 'installed' && confirming}

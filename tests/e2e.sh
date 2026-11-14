@@ -23,10 +23,21 @@ if ! $real; then
 #!/bin/sh
 case "\$1" in
   -Q) [ -f "$tmp/pkgs/\$2" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2")" ;;
-  -S) echo 1.0 > "$tmp/pkgs/\$4" ;;
-  -R) rm "$tmp/pkgs/\$3" ;;
+  -S) echo 1.0 > "$tmp/pkgs/\$4"; if [ "\$4" = brew ]; then cp "$tmp/fake-brew" "$tmp/bin/brew"; fi ;;
+  -R) rm "$tmp/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$tmp/bin/brew"; fi ;;
 esac
 SH
+    # Installing the "brew" package provides this fake Homebrew (see the homebrew fixture app).
+    cat > "$tmp/fake-brew" <<SH
+#!/bin/sh
+mkdir -p "$tmp/brew-pkgs"
+case "\$1" in
+  list) [ -f "$tmp/brew-pkgs/\$3" ] && echo "\$3 1.0" ;;
+  install) touch "$tmp/brew-pkgs/\$2" ;;
+  uninstall) rm -f "$tmp/brew-pkgs/\$2" ;;
+esac
+SH
+    chmod +x "$tmp/fake-brew"
     printf '#!/bin/sh\nexec "$@"\n' > "$tmp/bin/pkexec"
     cp "$tmp/bin/pkexec" "$tmp/bin/sudo"
     chmod +x "$tmp/bin/"*
@@ -117,6 +128,20 @@ expect "$(step uninstall hyperfine --dry-run)" "- remove"
 expect "$(step list)" "✓  hyperfine"
 expect "$(step uninstall hyperfine)" "Uninstalled hyperfine"
 expect "$(step list)" "·  hyperfine"
+# Missing tools and prerequisites (fake package manager and fake Homebrew).
+if ! $real; then
+    expect "$(step list)" "!  brew-only"
+    expect "$(step list)" "needs Homebrew (brew)"
+    if step install brew-only >/dev/null 2>&1; then echo "FAIL: installed although Homebrew is missing" >&2; exit 1; fi
+    out=$(step install brewed)
+    expect "$out" "brewed needs homebrew first"
+    expect "$out" "Installed brewed"
+    expect "$(step list)" "✓  brewed"
+    expect "$(step list)" "·  brew-only"   # brew is there now
+    step uninstall brewed >/dev/null && step uninstall homebrew >/dev/null
+    expect "$(step list)" "!  brew-only"
+fi
+
 # Kits (fake package manager only: the fixture's packages don't exist for real).
 if ! $real; then
     expect "$(step list)" "·  starter"

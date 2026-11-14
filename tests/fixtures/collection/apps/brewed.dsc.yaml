@@ -1,0 +1,13 @@
+# Needs Homebrew; lists the homebrew app as a prerequisite, so installing it installs that first.
+metadata:
+  furnish:
+    description: A tool installed with Homebrew
+    categories: [Test]
+    requires: [homebrew]
+resources:
+  - name: brewed tool
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties:
+      name: brewed-tool
+      packageManager: brew

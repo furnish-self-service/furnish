@@ -15,7 +15,7 @@ subject=$(basename "$file")
 [ -f "$file" ] || fail 10 "installer not found: $file"
 # Without git-lfs, an LFS-tracked file is a small text pointer instead of the installer.
 if head -c 64 "$file" | grep -q '^version https://git-lfs'; then
-    fail 11 "$subject is a Git LFS pointer, not the installer: install git-lfs, then update the collection"
+    missing "git-lfs to download $subject (install it, then update the collection)"
 fi
 
 rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null) && echo "$v"; }
@@ -23,38 +23,39 @@ rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null) && ech
 admin=true
 case "$file" in
 *.deb)
-    command -v dpkg-deb >/dev/null 2>&1 || fail 11 ".deb installers need dpkg (Debian, Ubuntu)"
+    command -v dpkg-deb >/dev/null 2>&1 || missing "dpkg (Debian, Ubuntu) for .deb installers"
     id=$(dpkg-deb -f "$file" Package)
-    manager=apt
+    via=apt
     installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' "$id" 2>/dev/null | sed -n 's/^installed //p'; }
     do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y "$file"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$id"; }
     install_desc="apt-get install -y $file" remove_desc="apt-get remove -y $id"
     ;;
 *.rpm)
-    command -v rpm >/dev/null 2>&1 || fail 11 ".rpm installers need rpm (Fedora, openSUSE, RHEL)"
+    command -v rpm >/dev/null 2>&1 || missing "rpm (Fedora, openSUSE, RHEL) for .rpm installers"
     id=$(rpm -qp --qf '%{NAME}' "$file" 2>/dev/null)
     installed_version() { rpm_version "$id"; }
     if command -v dnf >/dev/null 2>&1; then
-        manager=dnf
+        via=dnf
         do_install() { run_step dnf install -y "$file"; }
         do_remove() { run_step dnf remove -y "$id"; }
         install_desc="dnf install -y $file" remove_desc="dnf remove -y $id"
     elif command -v zypper >/dev/null 2>&1; then
-        manager=zypper
+        via=zypper
         do_install() { run_step zypper --non-interactive install --allow-unsigned-rpm "$file"; }
         do_remove() { run_step zypper --non-interactive remove "$id"; }
         install_desc="zypper install $file" remove_desc="zypper remove $id"
     else
-        manager=rpm
+        via=rpm
         do_install() { run_step rpm -i "$file"; }
         do_remove() { run_step rpm -e "$id"; }
         install_desc="rpm -i $file" remove_desc="rpm -e $id"
     fi
     ;;
 *.pkg)
+    command -v installer >/dev/null 2>&1 || missing "macOS for .pkg installers"
     [ -n "${packageId:-}" ] || fail 10 ".pkg installers need the property packageId (see: pkgutil --pkgs)"
-    manager=installer
+    via=installer
     installed_version() { pkgutil --pkg-info "$packageId" 2>/dev/null | sed -n 's/^version: //p'; }
     do_install() { run_step installer -pkg "$file" -target /; }
     # macOS has no uninstaller for .pkg: remove the files it installed, then its receipt.
@@ -62,8 +63,9 @@ case "$file" in
     install_desc="installer -pkg $file -target /" remove_desc="remove the files of $packageId, then pkgutil --forget $packageId"
     ;;
 *.dmg)
+    command -v hdiutil >/dev/null 2>&1 || missing "macOS for .dmg installers"
     [ -n "${app:-}" ] || fail 10 ".dmg installers need the property app, e.g. Firefox.app"
-    manager="the disk image"
+    via="the disk image"
     admin=false # /Applications is writable for admin users
     target="/Applications/$app"
     installed_version() {

@@ -1,0 +1,12 @@
+# Needs Homebrew but names no prerequisite: blocked until brew is installed some other way.
+metadata:
+  furnish:
+    description: Another tool installed with Homebrew
+    categories: [Test]
+resources:
+  - name: brew-only tool
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties:
+      name: brew-only-tool
+      packageManager: brew

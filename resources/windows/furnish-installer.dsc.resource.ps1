@@ -18,7 +18,7 @@ if (-not $file) { Fail 10 'property file is required' }
 if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { Fail 11 "installer not found: $file" }
 $subject = Split-Path -Leaf $file
 if ((Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue) -like 'version https://git-lfs*') {
-    Fail 11 "$subject is a Git LFS pointer, not the installer: install git-lfs, then update the collection"
+    [Console]::Error.WriteLine("furnish: needs git-lfs to download $subject (install it, then update the collection)"); exit 11
 }
 
 $uninstallKeys = @(
