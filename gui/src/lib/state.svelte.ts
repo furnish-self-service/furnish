@@ -1,6 +1,6 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
-import type { AppInfo, CollectionInfo, LogLine, Outcome, Settings, Status, Step } from './api';
+import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 
 export type View =
   | { page: 'discover' }
@@ -9,6 +9,7 @@ export type View =
   | { page: 'category'; name: string }
   | { page: 'collections' }
   | { page: 'activity' }
+  | { page: 'kit'; key: string; back: View }
   | { page: 'app'; key: string; back: View };
 
 export type Busy = 'install' | 'uninstall';
@@ -46,6 +47,7 @@ export interface Toast {
 
 export const store = $state({
   apps: [] as AppInfo[],
+  kits: [] as KitInfo[],
   /** Missing key: status not known yet. 'error': the check failed. */
   status: {} as Record<string, Status | 'error'>,
   busy: {} as Record<string, Busy>,
@@ -125,9 +127,11 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export async function loadAll() {
   store.loading = true;
   // Loaded independently: a problem with one must not hide the other.
-  const [apps, collections] = await Promise.allSettled([api.listApps(), api.listCollections()]);
+  const [apps, collections, kits] = await Promise.allSettled([api.listApps(), api.listCollections(), api.listKits()]);
   if (apps.status === 'fulfilled') store.apps = apps.value;
   else toast('error', "Couldn't load the apps", message(apps.reason));
+  if (kits.status === 'fulfilled') store.kits = kits.value;
+  else toast('error', "Couldn't load the kits", message(kits.reason));
   if (collections.status === 'fulfilled') store.collections = collections.value;
   else toast('error', "Couldn't load the collections", message(collections.reason));
   store.loading = false;
@@ -302,4 +306,52 @@ async function pump() {
   if (app) await (next.action === 'install' ? runInstall(app) : runUninstall(app));
   // A cancelled or failed operation only ends itself; the queue carries on.
   pump();
+}
+
+// --- Kits
+
+export const isInstalled = (key: string) => store.status[key] === 'installed' || store.status[key] === 'needsUpdate';
+export const isPending = (key: string) => !!store.busy[key] || store.queue.some((q) => q.key === key);
+export const appByKey = (key: string) => store.apps.find((a) => a.key === key);
+
+/** A kit counts as installed when all its required items are. */
+function kitInstalled(kit: KitInfo) {
+  return kit.items.some((i) => isInstalled(i.key)) && kit.items.filter((i) => i.required).every((i) => isInstalled(i.key));
+}
+
+/** Other installed kits that contain this app. */
+export function otherKitsWith(appKey: string, except: KitInfo) {
+  return store.kits.filter((k) => k.key !== except.key && kitInstalled(k) && k.items.some((i) => i.key === appKey));
+}
+
+/** Installed items to preselect for uninstalling a kit: those no other installed kit needs. */
+export function defaultUninstall(kit: KitInfo) {
+  return kit.items.map((i) => i.key).filter((key) => isInstalled(key) && !otherKitsWith(key, kit).length);
+}
+
+/** Queue installing the chosen items, in kit order. */
+export function installKit(kit: KitInfo, keys: string[]) {
+  for (const item of kit.items) {
+    const app = appByKey(item.key);
+    if (app && keys.includes(item.key)) install(app);
+  }
+}
+
+/** Queue uninstalling the chosen items, in reverse kit order (later items may build on earlier). */
+export function uninstallKit(kit: KitInfo, keys: string[]) {
+  for (const item of [...kit.items].reverse()) {
+    const app = appByKey(item.key);
+    if (app && keys.includes(item.key)) uninstall(app);
+  }
+}
+
+export function visibleKits(view: View, query: string): KitInfo[] {
+  if (view.page !== 'discover' && view.page !== 'category') return [];
+  const q = query.trim().toLowerCase();
+  return store.kits.filter((kit) => {
+    if (kit.items.every((i) => store.status[i.key] === 'unavailable')) return false;
+    if (view.page === 'category' && !kit.categories.includes(view.name)) return false;
+    if (!q) return true;
+    return [kit.id, kit.description, kit.collection, ...kit.categories].some((s) => s.toLowerCase().includes(q));
+  });
 }

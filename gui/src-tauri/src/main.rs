@@ -40,6 +40,29 @@ struct ResourceInfo {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KitInfo {
+    /// `collection/id`, like app keys (kits and apps share a namespace).
+    key: String,
+    id: String,
+    collection: String,
+    description: String,
+    categories: Vec<String>,
+    icon: Option<String>,
+    items: Vec<KitItemInfo>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KitItemInfo {
+    /// Key of the app this item installs.
+    key: String,
+    required: bool,
+    /// Preselected when installing (required items always are).
+    selected: bool,
+}
+
+#[derive(Serialize)]
 struct CollectionInfo {
     name: String,
     url: String,
@@ -113,6 +136,29 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
 #[tauri::command]
 async fn list_apps() -> CmdResult<Vec<AppInfo>> {
     blocking(|| Ok(catalog::all_apps()?.iter().map(app_info).collect())).await
+}
+
+#[tauri::command]
+async fn list_kits() -> CmdResult<Vec<KitInfo>> {
+    blocking(|| {
+        Ok(catalog::all_kits()?
+            .into_iter()
+            .map(|k| KitInfo {
+                key: format!("{}/{}", k.collection, k.id),
+                items: k
+                    .items
+                    .iter()
+                    .map(|i| KitItemInfo { key: format!("{}/{}", k.collection, i.app), required: i.required, selected: i.required || i.selected })
+                    .collect(),
+                icon: k.icon.as_deref().and_then(icon_data_url),
+                id: k.id,
+                collection: k.collection,
+                description: k.description,
+                categories: k.categories,
+            })
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -232,6 +278,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_apps,
+            list_kits,
             app_status,
             install,
             uninstall,

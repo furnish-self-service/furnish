@@ -95,6 +95,24 @@ resources:
       name: cowsay
 ```
 
+### Kits
+
+A kit is a set of apps from the same collection that users install together, for example everything a new web developer needs. Each kit is a file in the collection's `kits/` directory:
+
+```yaml
+# kits/web-developer.yaml
+description: Everything a new web developer needs
+categories: [Development]
+items:
+  - app: vscode
+    required: true      # always installed with the kit
+  - app: nodejs         # optional, selected by default
+  - app: docker
+    selected: false     # optional, not selected by default
+```
+
+When installing a kit, users choose the optional items; required ones can't be deselected. When uninstalling, furnish preselects the kit's installed apps that no other installed kit contains. In the CLI: `furnish install web-developer --without nodejs --with docker`, `furnish uninstall web-developer [--only docker]`.
+
 ### Installer files and Git LFS
 
 Collections can ship installers. Store them with [Git LFS](https://git-lfs.com) (`git lfs track "*.msi"`); furnish downloads LFS files when it adds or updates a collection, so users need `git-lfs` installed. Install a file with the bundled `Furnish/Installer` resource, giving the path relative to the collection root:

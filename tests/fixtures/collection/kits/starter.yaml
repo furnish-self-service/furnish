@@ -1,0 +1,9 @@
+# A kit: apps of this collection installed together. Users can deselect optional items.
+description: The basics for trying furnish
+categories: [Test]
+items:
+  - app: hyperfine
+    required: true
+  - app: toolbox        # optional, selected by default
+  - app: extras
+    selected: false     # optional, not selected by default

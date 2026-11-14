@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { AppInfo } from './api';
 
-  let { app, size = 56 }: { app: AppInfo; size?: number } = $props();
+  // Apps and kits: anything with an id and an optional icon.
+  let { app, size = 56 }: { app: Pick<AppInfo, 'id' | 'icon'>; size?: number } = $props();
 
   // Stable hue per app, so its fallback tile is recognizable across views.
   const hue = $derived([...app.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7));

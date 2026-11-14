@@ -1,21 +1,30 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, type View } from './lib/state.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
   import Activity from './lib/Activity.svelte';
+  import KitCard from './lib/KitCard.svelte';
+  import KitDetail from './lib/KitDetail.svelte';
   import Toasts from './lib/Toasts.svelte';
 
   start();
 
   const view = $derived(store.view);
   const categories = $derived(
-    [...new Set(store.apps.filter((a) => store.status[a.key] !== 'unavailable').flatMap((a) => a.categories))].sort(),
+    [
+      ...new Set([
+        ...store.apps.filter((a) => store.status[a.key] !== 'unavailable').flatMap((a) => a.categories),
+        ...store.kits.flatMap((k) => k.categories),
+      ]),
+    ].sort(),
   );
   const count = (page: 'installed' | 'updates') => visibleApps({ page }, '').length;
   const activity = $derived(Object.keys(store.busy).length + store.queue.length);
   const apps = $derived(visibleApps(view, store.query));
+  const kits = $derived(visibleKits(view, store.query));
+  const kit = $derived(view.page === 'kit' ? store.kits.find((k) => k.key === view.key) : undefined);
   const detail = $derived(view.page === 'app' ? store.apps.find((a) => a.key === view.key) : undefined);
 
   const titles: Record<string, string> = { discover: 'Discover', installed: 'Installed', updates: 'Updates' };
@@ -65,6 +74,12 @@
       <Collections />
     {:else if view.page === 'activity'}
       <Activity onopen={(key) => go({ page: 'app', key, back: view })} />
+    {:else if view.page === 'kit' && kit}
+      <KitDetail
+        {kit}
+        onback={() => view.page === 'kit' && go(view.back)}
+        onopen={(key) => go({ page: 'app', key, back: view })}
+      />
     {:else if view.page === 'app' && detail}
       <AppDetail app={detail} onback={() => view.page === 'app' && go(view.back)} />
     {:else}
@@ -87,12 +102,15 @@
           <p>Your organization publishes its apps in a git repository. Add its URL to get started.</p>
           <button class="primary" onclick={() => go({ page: 'collections' })}>Add a collection</button>
         </div>
-      {:else if !apps.length}
+      {:else if !apps.length && !kits.length}
         <p class="empty">
           {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date.' : 'No apps here yet.'}
         </p>
       {:else}
         <div class="grid">
+          {#each kits as k (k.key)}
+            <KitCard kit={k} onopen={() => go({ page: 'kit', key: k.key, back: view })} />
+          {/each}
           {#each apps as app (app.key)}
             <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
           {/each}

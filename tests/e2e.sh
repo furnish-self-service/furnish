@@ -117,6 +117,22 @@ expect "$(step uninstall hyperfine --dry-run)" "- remove"
 expect "$(step list)" "✓  hyperfine"
 expect "$(step uninstall hyperfine)" "Uninstalled hyperfine"
 expect "$(step list)" "·  hyperfine"
+# Kits (fake package manager only: the fixture's packages don't exist for real).
+if ! $real; then
+    expect "$(step list)" "·  starter"
+    plan=$(step install starter --without toolbox --with extras --dry-run)
+    expect "$plan" "toolbox (not selected)"
+    expect "$plan" "+ install        extras"
+    if step install starter --without hyperfine >/dev/null 2>&1; then echo "FAIL: a required item was deselected" >&2; exit 1; fi
+    expect "$(step install starter)" "Installed toolbox"   # default selection: hyperfine + toolbox
+    expect "$(step list)" "◐  starter"                    # extras is not installed
+    expect "$(step install starter --with extras)" "Installed extras"
+    expect "$(step list)" "✓  starter"
+    expect "$(step uninstall starter --only extras)" "Uninstalled extras"
+    expect "$(step uninstall starter)" "Uninstalled hyperfine"
+    expect "$(step list)" "·  starter"
+fi
+
 for i in $(seq 1 "$n"); do
     app="installer-$i"
     echo "--- $app: $(sed -n "${i}p" "$tmp/installers" | cut -d'|' -f1)" >&2

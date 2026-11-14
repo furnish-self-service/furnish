@@ -68,6 +68,17 @@ export const plan = (key: string, uninstall: boolean) => invoke<Step[]>('plan', 
 export const onLog = (handler: (line: LogLine) => void) =>
   listen<LogLine>('furnish://log', (event) => handler(event.payload));
 
+export interface KitInfo {
+  /** `collection/id`; kits and apps share names. */
+  key: string;
+  id: string;
+  collection: string;
+  description: string;
+  categories: string[];
+  icon: string | null;
+  items: { key: string; required: boolean; selected: boolean }[];
+}
+
 export interface CollectionInfo {
   name: string;
   url: string;
@@ -76,6 +87,7 @@ export interface CollectionInfo {
 }
 
 export const listApps = () => invoke<AppInfo[]>('list_apps');
+export const listKits = () => invoke<KitInfo[]>('list_kits');
 export const appStatus = (key: string) => invoke<Status>('app_status', { key });
 export const install = (key: string) => invoke<void>('install', { key });
 export const uninstall = (key: string) => invoke<void>('uninstall', { key });

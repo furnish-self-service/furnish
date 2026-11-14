@@ -16,6 +16,51 @@ pub struct Collection {
     pub dir: PathBuf,
 }
 
+/// A curated set of apps from the same collection, installed together (`kits/<id>.yaml`).
+pub struct Kit {
+    pub id: String,
+    pub collection: String,
+    pub description: String,
+    pub categories: Vec<String>,
+    pub icon: Option<PathBuf>,
+    pub items: Vec<KitItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KitItem {
+    /// App id in the kit's collection.
+    pub app: String,
+    /// Always installed with the kit; users can't deselect it.
+    #[serde(default)]
+    pub required: bool,
+    /// For optional items: selected when the user starts installing the kit.
+    #[serde(default = "yes")]
+    pub selected: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KitFile {
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    categories: Vec<String>,
+    icon: Option<String>,
+    items: Vec<KitItem>,
+}
+
+impl Kit {
+    /// The apps installing this kit starts with: required ones and optional ones selected by default.
+    pub fn default_selection(&self) -> Vec<&str> {
+        self.items.iter().filter(|i| i.required || i.selected).map(|i| i.app.as_str()).collect()
+    }
+}
+
 pub struct App {
     pub id: String,
     pub collection: String,
@@ -134,6 +179,53 @@ impl Collection {
             .collect()
     }
 
+    /// Load `kits/*.yaml`. Kits naming unknown apps, or named like an app, are reported and skipped.
+    pub fn kits(&self) -> Vec<Kit> {
+        let Ok(entries) = fs::read_dir(self.dir.join("kits")) else {
+            return vec![];
+        };
+        let mut paths: Vec<_> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
+            .collect();
+        paths.sort();
+        let app_ids: Vec<String> = self.apps().into_iter().map(|a| a.id).collect();
+        paths
+            .iter()
+            .filter_map(|path| match self.load_kit(path, &app_ids) {
+                Ok(kit) => Some(kit),
+                Err(err) => {
+                    eprintln!("warning: skipping {}: {err:#}", path.display());
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn load_kit(&self, path: &Path, app_ids: &[String]) -> Result<Kit> {
+        let file: KitFile = serde_yaml::from_str(&fs::read_to_string(path)?)?;
+        let id = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        if app_ids.contains(&id) {
+            bail!("an app is also named '{id}'; kits and apps share names");
+        }
+        if file.items.is_empty() {
+            bail!("a kit needs at least one item");
+        }
+        for item in &file.items {
+            if !app_ids.contains(&item.app) {
+                bail!("item '{}' is not an app in collection '{}'", item.app, self.name);
+            }
+        }
+        Ok(Kit {
+            id,
+            collection: self.name.clone(),
+            description: file.description.trim().to_string(),
+            categories: file.categories,
+            icon: file.icon.as_deref().and_then(|p| self.file_in_repo(p)),
+            items: file.items,
+        })
+    }
+
     /// Collections may store installers with Git LFS; without it they'd hold pointer files.
     // ponytail: downloads every LFS file; per-OS `lfs.fetchinclude` if collections get large.
     fn fetch_lfs_files(&self) -> Result<()> {
@@ -195,6 +287,44 @@ impl Collection {
     }
 }
 
+pub fn all_kits() -> Result<Vec<Kit>> {
+    Ok(collections()?.iter().flat_map(Collection::kits).collect())
+}
+
+/// Find a kit by `id` or `collection/id`.
+pub fn find_kit(query: &str) -> Result<Kit> {
+    let (collection, id) = match query.split_once('/') {
+        Some((c, id)) => (Some(c), id),
+        None => (None, query),
+    };
+    let mut matches: Vec<_> = all_kits()?
+        .into_iter()
+        .filter(|k| k.id == id && collection.is_none_or(|c| k.collection == c))
+        .collect();
+    match matches.len() {
+        0 => bail!("no app or kit named '{query}' (see `furnish list`)"),
+        1 => Ok(matches.remove(0)),
+        _ => bail!("'{query}' is ambiguous, use collection/{id}"),
+    }
+}
+
+/// Apps to preselect when uninstalling `kit`: its installed items, except those another
+/// installed kit (all its required items installed) also contains.
+pub fn default_uninstall<'a>(kit: &'a Kit, kits: &[Kit], installed: &dyn Fn(&str, &str) -> bool) -> Vec<&'a str> {
+    let others: Vec<&Kit> = kits
+        .iter()
+        .filter(|k| !(k.collection == kit.collection && k.id == kit.id))
+        .filter(|k| k.items.iter().filter(|i| i.required).all(|i| installed(&k.collection, &i.app)))
+        .filter(|k| k.items.iter().any(|i| installed(&k.collection, &i.app)))
+        .collect();
+    kit.items
+        .iter()
+        .map(|i| i.app.as_str())
+        .filter(|app| installed(&kit.collection, app))
+        .filter(|app| !others.iter().any(|k| k.collection == kit.collection && k.items.iter().any(|i| i.app == *app)))
+        .collect()
+}
+
 pub fn all_apps() -> Result<Vec<App>> {
     Ok(collections()?.iter().flat_map(Collection::apps).collect())
 }
@@ -240,6 +370,35 @@ mod tests {
         assert_eq!(name_from_url("https://gitlab.com/furnish-self-service/self-service-example.git"), "self-service-example");
         assert_eq!(name_from_url("git@gitlab.com:org/apps.git"), "apps");
         assert_eq!(name_from_url("/srv/git/apps/"), "apps");
+    }
+
+    fn kit(collection: &str, id: &str, items: &[(&str, bool)]) -> Kit {
+        Kit {
+            id: id.into(),
+            collection: collection.into(),
+            description: String::new(),
+            categories: vec![],
+            icon: None,
+            items: items.iter().map(|(app, required)| KitItem { app: (*app).into(), required: *required, selected: true }).collect(),
+        }
+    }
+
+    #[test]
+    fn uninstall_keeps_items_another_installed_kit_needs() {
+        let web = kit("c", "web", &[("editor", true), ("node", false), ("docker", false)]);
+        let ops = kit("c", "ops", &[("docker", true), ("kubectl", false)]);
+        let design = kit("c", "design", &[("figma", true), ("node", false)]); // not installed: figma missing
+        let installed = |_: &str, app: &str| ["editor", "node", "docker", "kubectl"].contains(&app);
+        let kits = [web, ops, design];
+        // docker stays (ops is installed); node goes (design isn't installed).
+        assert_eq!(default_uninstall(&kits[0], &kits, &installed), ["editor", "node"]);
+    }
+
+    #[test]
+    fn kit_file_defaults() {
+        let file: KitFile = serde_yaml::from_str("items:\n  - app: a\n    required: true\n  - app: b\n  - app: c\n    selected: false\n").unwrap();
+        let k = Kit { id: "k".into(), collection: "c".into(), description: file.description, categories: file.categories, icon: None, items: file.items };
+        assert_eq!(k.default_selection(), ["a", "b"]);
     }
 
     #[test]

@@ -42,6 +42,7 @@ const click = async (xpath) => waitFor(`click on ${xpath}`, async () => (await w
 const text = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/text`));
 const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpath)}/value`), { text: value });
 // WebKitWebDriver reports content of a closed <details> as displayed, so check `open` instead.
+const prop = async (xpath, name) => wd('GET', s(`/element/${await find(xpath)}/property/${name}`));
 const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/property/open`));
 const button = (label) => `//button[normalize-space()='${label}']`;
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
@@ -157,6 +158,34 @@ const steps = [
     }
     await waitFor('fresh still installable', () => find(`${card('fresh')}${button('Install')}`));
     if (existsSync(`${workDir}/pkgs/fresh`)) throw new Error('removed item was installed');
+  }],
+  ['kit uninstall: deselected items stay, the rest is removed', async () => {
+    const item = (app) => `//ul[contains(@class,'items')]/li[.//*[contains(@class,'name') and normalize-space()='${app}']]`;
+    await click(button('Discover'));
+    await click("//button[@aria-label='Open kit starter']");
+    await click(button('Uninstall apps…'));
+    for (const app of ['hyperfine', 'toolbox', 'extras']) {
+      if (!(await prop(`${item(app)}//input`, 'checked'))) throw new Error(`${app} not preselected`);
+    }
+    await click(`${item('extras')}//input`);
+    await click(button('Uninstall 2 apps'));
+    await click(button('Discover'));
+    for (const app of ['hyperfine', 'toolbox']) {
+      await waitFor(`${app} uninstalled`, () => find(`${card(app)}${button('Install')}`), 30000);
+    }
+    await waitFor('extras kept', () => find(`${card('extras')}//*[normalize-space()='Installed']`));
+  }],
+  ['kit install: required items are locked, deselected ones are skipped', async () => {
+    const item = (app) => `//ul[contains(@class,'items')]/li[.//*[contains(@class,'name') and normalize-space()='${app}']]`;
+    await click("//button[@aria-label='Open kit starter']");
+    const required = `${item('hyperfine')}//input`;
+    if (!(await prop(required, 'checked')) || !(await prop(required, 'disabled'))) throw new Error('required item not locked');
+    if (!(await text(item('extras'))).includes('Installed')) throw new Error('installed item not marked');
+    await click(`${item('toolbox')}//input`); // deselect the default-selected optional item
+    await click(button('Install 1 app'));
+    await click(button('Discover'));
+    await waitFor('hyperfine installed', () => find(`${card('hyperfine')}//*[normalize-space()='Installed']`), 30000);
+    await waitFor('toolbox skipped', () => find(`${card('toolbox')}${button('Install')}`));
   }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));
