@@ -70,9 +70,13 @@ fn run(command: Command) -> Result<()> {
         Command::List => list(),
         Command::Install { app } => {
             let app = catalog::find_app(&app)?;
-            if engine::status(&app.doc)? == Status::Installed {
-                println!("✓ {} is already installed and up to date", app.id);
-                return Ok(());
+            match engine::status(&app.doc)? {
+                Status::Installed => {
+                    println!("✓ {} is already installed and up to date", app.id);
+                    return Ok(());
+                }
+                Status::Unavailable => anyhow::bail!("{} is not available on this operating system", app.id),
+                Status::NotInstalled | Status::NeedsUpdate => {}
             }
             println!("⟳ Installing {}…", app.id);
             engine::apply(&app.doc)?;
@@ -81,7 +85,7 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Uninstall { app } => {
             let app = catalog::find_app(&app)?;
-            if engine::status(&app.doc)? == Status::NotInstalled {
+            if matches!(engine::status(&app.doc)?, Status::NotInstalled | Status::Unavailable) {
                 println!("✓ {} is not installed", app.id);
                 return Ok(());
             }
@@ -106,6 +110,7 @@ fn list() -> Result<()> {
             Ok(Status::Installed) => "✓",
             Ok(Status::NeedsUpdate) => "↑",
             Ok(Status::NotInstalled) => "·",
+            Ok(Status::Unavailable) => "–",
             Err(err) => {
                 eprintln!("warning: could not check {}: {err:#}", app.id);
                 "?"
@@ -114,7 +119,7 @@ fn list() -> Result<()> {
         rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &app.description]));
     }
     print_table(&rows);
-    println!("\n✓ installed  ↑ update available  · not installed  ? unknown");
+    println!("\n✓ installed  ↑ update available  · not installed  – not available on this OS  ? unknown");
     Ok(())
 }
 

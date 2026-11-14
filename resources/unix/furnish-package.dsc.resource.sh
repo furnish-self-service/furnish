@@ -3,7 +3,9 @@
 # DSC passes the resource properties as env vars: $name and (optionally) $_exist.
 set -eu
 
-: "${name:?property 'name' is required}"
+# Own exit codes start at 10, so package-manager failures (usually 1) stay unmapped
+# and DSC shows their stderr instead of a canned description.
+[ -n "${name:-}" ] || { echo '{"error":"property name is required"}' >&2; exit 10; }
 
 # Run privileged commands: directly as root, via passwordless or interactive sudo,
 # or via pkexec when there is no terminal (GUI sessions).
@@ -51,8 +53,8 @@ elif command -v nix >/dev/null 2>&1; then
     install() { nix profile install "nixpkgs#$name"; }
     remove() { nix profile remove "$name"; }
 else
-    echo "Furnish/Package: no supported package manager found (pacman, apt-get, dnf, zypper, brew, nix)" >&2
-    exit 2
+    echo '{"error":"no supported package manager found (pacman, apt-get, dnf, zypper, brew, nix)"}' >&2
+    exit 11
 fi
 
 case "${1:-}" in
@@ -69,7 +71,7 @@ set)
     if [ "${_exist:-true}" = true ]; then install >&2; else remove >&2; fi
     ;;
 *)
-    echo "usage: $0 get|set" >&2
-    exit 1
+    echo '{"error":"usage: get|set"}' >&2
+    exit 10
     ;;
 esac

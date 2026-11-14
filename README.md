@@ -66,6 +66,11 @@ resources:
 
 See [self-service-example](https://github.com/furnish-self-service/self-service-example) for a complete collection.
 
+## Writing apps and resources
+
+- [DSC v3 guide](docs/dsc-v3-guide.md): how DSC v3.3 behaves, verified against its source code, with the consequences for furnish.
+- [authoring-dsc-v3 skill](skills/authoring-dsc-v3/SKILL.md): rules and a tested example for writing DSC v3 documents and resources. To make it available to Claude Code in your own repository, copy `skills/authoring-dsc-v3/` to `.claude/skills/authoring-dsc-v3/` there.
+
 ## Development
 
 Use the cargo aliases `cargo b`, `cargo t` and `cargo r`. A plain `cargo build` fails without PowerShell, because one DSC build script calls `pwsh` in debug builds. The `fast` profile in `Cargo.toml` avoids that. `tests/e2e.sh` runs install and uninstall against a fake package manager.

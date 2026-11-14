@@ -3,9 +3,9 @@
 
 use std::{env, fs, path::Path, path::PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use dsc_lib::{
-    configure::{Configurator, config_result::ResourceMessage, config_result::ResourceTestResult},
+    configure::{Configurator, config_result::ResourceTestResult},
     dscresources::invoke_result::TestResult,
     progress::ProgressFormat,
 };
@@ -42,6 +42,8 @@ pub enum Status {
     NotInstalled,
     /// Present, but not in the desired state (e.g. outdated or modified).
     NeedsUpdate,
+    /// Every resource's `condition` excluded it on this machine (e.g. a Windows-only app on Linux).
+    Unavailable,
 }
 
 /// Write the bundled resources to `dir` and restrict DSC resource discovery to it.
@@ -67,17 +69,17 @@ pub fn init(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+// DSC v3.3 reports resource failures as `Err`; `had_errors`/`messages` are never set.
 pub fn status(doc: &Value) -> Result<Status> {
     let result = configurator(doc)?.invoke_test()?;
-    fail_on_errors(result.had_errors, &result.messages)?;
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
     Ok(classify(&states))
 }
 
 pub fn apply(doc: &Value) -> Result<()> {
-    let result = configurator(doc)?.invoke_set(false)?;
-    fail_on_errors(result.had_errors, &result.messages)
+    configurator(doc)?.invoke_set(false)?;
+    Ok(())
 }
 
 /// Apply the document with every resource flipped to `_exist: false`.
@@ -99,14 +101,6 @@ fn configurator(doc: &Value) -> Result<Configurator> {
     Ok(configurator)
 }
 
-fn fail_on_errors(had_errors: bool, messages: &[ResourceMessage]) -> Result<()> {
-    if had_errors {
-        let details: Vec<_> = messages.iter().map(|m| format!("{}: {}", m.name, m.message)).collect();
-        bail!("DSC reported errors:\n  {}", details.join("\n  "));
-    }
-    Ok(())
-}
-
 /// Collect (in_desired_state, actual_state) of every resource, descending into groups.
 fn flatten(results: &[ResourceTestResult], out: &mut Vec<(bool, Value)>) {
     for result in results {
@@ -118,7 +112,11 @@ fn flatten(results: &[ResourceTestResult], out: &mut Vec<(bool, Value)>) {
 }
 
 /// Everything in desired state → installed; anything missing → not installed; else drifted.
+/// No states at all means every resource was skipped by its `condition`.
 fn classify(states: &[(bool, Value)]) -> Status {
+    if states.is_empty() {
+        return Status::Unavailable;
+    }
     let drifted: Vec<_> = states.iter().filter(|(ok, _)| !ok).map(|(_, actual)| actual).collect();
     if drifted.is_empty() {
         Status::Installed
@@ -142,5 +140,6 @@ mod tests {
         assert_eq!(classify(&[(true, present.clone()), (false, missing)]), Status::NotInstalled);
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
+        assert_eq!(classify(&[]), Status::Unavailable);
     }
 }

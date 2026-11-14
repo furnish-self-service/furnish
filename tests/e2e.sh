@@ -53,6 +53,8 @@ expect() { grep -q "$2" <<<"$1" || { echo "FAIL: expected '$2'" >&2; exit 1; }; 
 
 step collection add "$tmp/repo" --name fixture >/dev/null
 expect "$(step list)" "·  hyperfine"
+expect "$(step list)" "–  nowhere"
+if step install nowhere >/dev/null 2>&1; then echo "FAIL: installing an unavailable app succeeded" >&2; exit 1; fi
 expect "$(step install hyperfine)" "Installed hyperfine"
 expect "$(step list)" "✓  hyperfine"
 expect "$(step install fixture/hyperfine)" "already installed"

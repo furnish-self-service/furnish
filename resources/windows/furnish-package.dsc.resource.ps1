@@ -3,9 +3,10 @@
 param([string]$Operation)
 
 $name = $env:name
-if (-not $name) { [Console]::Error.WriteLine("property 'name' is required"); exit 1 }
+# Own exit codes start at 10; winget failures exit with winget's (unmapped) code so DSC shows stderr.
+if (-not $name) { [Console]::Error.WriteLine('{"error":"property name is required"}'); exit 10 }
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine('Furnish/Package: winget not found'); exit 2
+    [Console]::Error.WriteLine('{"error":"winget not found"}'); exit 11
 }
 
 # winget output goes to stderr: DSC reads stdout as JSON.
@@ -26,7 +27,7 @@ switch ($Operation) {
         } else {
             $code = Invoke-Winget install --silent --accept-package-agreements
         }
-        if ($code -ne 0) { [Console]::Error.WriteLine("winget failed with exit code $code"); exit 3 }
+        if ($code -ne 0) { [Console]::Error.WriteLine("{`"error`":`"winget failed with exit code $code`"}"); exit $code }
     }
-    default { [Console]::Error.WriteLine('usage: get|set'); exit 1 }
+    default { [Console]::Error.WriteLine('{"error":"usage: get|set"}'); exit 10 }
 }

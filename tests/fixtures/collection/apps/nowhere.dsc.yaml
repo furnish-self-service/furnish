@@ -1,0 +1,11 @@
+# Its only resource is excluded on every OS, so furnish must report it as unavailable.
+metadata:
+  furnish:
+    description: App with no resource for this OS
+    categories: [Test]
+resources:
+  - name: never runs
+    type: Furnish/Package
+    condition: "[equals(context().os.family, 'NoSuchOS')]"
+    properties:
+      name: nowhere
