@@ -30,10 +30,10 @@ Admins publish apps in a git repository, called a *collection*. Each app is one 
 You need git and Rust 1.85 or later.
 
 ```sh
-git clone git@gitlab.com:furnish-self-service/furnish.git
+git clone git@github.com:furnish-self-service/furnish.git
 cd furnish
 cargo install --path .
-furnish collection add git@gitlab.com:furnish-self-service/self-service-example.git
+furnish collection add git@github.com:furnish-self-service/self-service-example.git
 furnish list
 ```
 
@@ -64,7 +64,7 @@ resources:
       name: cowsay
 ```
 
-See [self-service-example](https://gitlab.com/furnish-self-service/self-service-example) for a complete collection.
+See [self-service-example](https://github.com/furnish-self-service/self-service-example) for a complete collection.
 
 ## Development
 
