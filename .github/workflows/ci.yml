@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  HOMEBREW_NO_AUTO_UPDATE: 1
+
+jobs:
+  check:
+    name: Unit tests and fake e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo t
+      - run: cargo b && tests/e2e.sh
+
+  linux-binary:
+    name: Static Linux binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq musl-tools && rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: target/x86_64-unknown-linux-musl/release/furnish
+
+  linux:
+    name: e2e ${{ matrix.image }}
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:24.04
+          - debian:12
+          - fedora:latest
+          - opensuse/tumbleweed
+          - archlinux:latest
+          - nixos/nix:latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/distro.sh "${{ matrix.image }}" bin/furnish
+
+  native:
+    name: e2e ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - if: runner.os == 'Windows'
+        run: winget --version
+      - shell: bash
+        run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}

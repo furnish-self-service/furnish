@@ -1,0 +1,36 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Package",
+  "description": "Install or remove a package with winget",
+  "version": "0.1.0",
+  "get": {
+    "executable": "powershell.exe",
+    "args": ["-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "furnish-package.dsc.resource.ps1", "get"],
+    "input": "env"
+  },
+  "set": {
+    "executable": "powershell.exe",
+    "args": ["-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "furnish-package.dsc.resource.ps1", "set"],
+    "input": "env",
+    "handlesExist": true
+  },
+  "exitCodes": {
+    "0": "Success",
+    "1": "Invalid arguments",
+    "2": "winget not found",
+    "3": "winget failed"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Package",
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "winget package ID, e.g. sharkdp.hyperfine" },
+        "_exist": { "type": "boolean", "description": "Whether the package should be installed" }
+      }
+    }
+  }
+}
