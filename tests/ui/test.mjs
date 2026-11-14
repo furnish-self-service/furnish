@@ -39,8 +39,18 @@ async function waitFor(what, fn, timeout = 20000) {
 }
 const find = async (xpath) => (await wd('POST', s('/element'), { using: 'xpath', value: xpath }))[ELEMENT];
 const findAll = async (xpath) => (await wd('POST', s('/elements'), { using: 'xpath', value: xpath })).map((e) => e[ELEMENT]);
-// Retries until the click lands: e.g. a notification may briefly cover the target.
-const click = async (xpath) => waitFor(`click on ${xpath}`, async () => (await wd('POST', s(`/element/${await find(xpath)}/click`), {}), true));
+// Scrolls the target to the middle first: notifications sit bottom-right and WebKitWebDriver
+// doesn't report a click that lands on one. Retries until the click goes through.
+const click = async (xpath) =>
+  waitFor(`click on ${xpath}`, async () => {
+    const el = await find(xpath);
+    await wd('POST', s('/execute/sync'), {
+      script: "arguments[0].scrollIntoView({ block: 'center', inline: 'center' });",
+      args: [{ [ELEMENT]: el }],
+    });
+    await wd('POST', s(`/element/${el}/click`), {});
+    return true;
+  });
 const text = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/text`));
 const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpath)}/value`), { text: value });
 // WebKitWebDriver reports content of a closed <details> as displayed, so check `open` instead.
