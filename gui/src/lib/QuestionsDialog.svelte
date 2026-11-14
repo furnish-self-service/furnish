@@ -11,7 +11,10 @@
 
   $effect(() => {
     if (collections.length && dialog && !dialog.open) {
-      answers = Object.fromEntries(collections.map((c) => [c.name, {}]));
+      // Start at "Choose…" (''): WebKit otherwise shows the first answer as if it were chosen.
+      answers = Object.fromEntries(
+        collections.map((c) => [c.name, Object.fromEntries(c.options.filter((o) => o.missing).map((o) => [o.name, '']))]),
+      );
       dialog.showModal();
     }
   });
@@ -41,7 +44,10 @@
 </script>
 
 <dialog bind:this={dialog} onclose={() => store.asking && postponeQuestions()} aria-labelledby="questions-title">
-  <h2 id="questions-title">{collections.length === 1 ? `${collections[0].name} asks` : 'A few questions'}</h2>
+  <h2 id="questions-title">
+    {#if collections.length === 1 && collections[0].icon}<img src={collections[0].icon} alt="" width="32" height="32" />{/if}
+    {collections.length === 1 ? `${collections[0].name} asks` : 'A few questions'}
+  </h2>
   <p>Your answers decide what is recommended and how apps are set up. You can change them later on the Collections page.</p>
   {#each collections as c (c.name)}
     <section>
@@ -50,8 +56,6 @@
           {#if c.icon}<img src={c.icon} alt="" width="22" height="22" />{/if}
           {c.name}
         </h3>
-      {:else if c.icon}
-        <img class="avatar" src={c.icon} alt="" width="40" height="40" />
       {/if}
       {#each c.options.filter((o) => o.missing) as o (o.name)}
         <label>
@@ -91,8 +95,14 @@
     background: rgb(10 25 28 / 0.4);
   }
   h2 {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     margin: 0;
     font: 700 1.4rem var(--font-display);
+  }
+  h2 img {
+    border-radius: 8px;
   }
   h3 {
     display: flex;
@@ -101,13 +111,8 @@
     margin: 1.25rem 0 0.25rem;
     font: 650 1rem var(--font-display);
   }
-  h3 img,
-  .avatar {
-    border-radius: 8px;
-  }
-  .avatar {
-    display: block;
-    margin-top: 1rem;
+  h3 img {
+    border-radius: 6px;
   }
   p {
     color: var(--ink-soft);

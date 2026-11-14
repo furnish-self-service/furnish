@@ -90,11 +90,13 @@ use_nix() {
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
     if [ "$(id -u)" = 0 ]; then profile="--profile $shared"; else profile=""; fi
+    # A profile names an entry after the package's last attribute: kdePackages.kdenlive → kdenlive.
+    entry=${name##*.}
     # The version in a profile ("" if it doesn't hold the package).
     version_in() {
-        nix profile list $1 --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$name\":" || return 0
-        path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$name-[^\"]*" | head -n1)
-        echo "${path##*-"$name"-}"
+        nix profile list $1 --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$entry\":" || return 0
+        path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$entry-[^\"]*" | head -n1)
+        echo "${path##*-"$entry"-}"
     }
     # Installed for this user or for everyone.
     installed_version() {
@@ -103,11 +105,11 @@ use_nix() {
         echo "$v"
     }
     do_install() { run_step nix profile install $profile "$ref#$name"; }
-    do_remove() { run_step nix profile remove $profile "$name"; }
+    do_remove() { run_step nix profile remove $profile "$entry"; }
     # Not `nix profile upgrade`: it re-resolves the reference installed from, not the current one.
     do_upgrade() { do_remove && do_install; }
-    install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $name"
-    upgrade_desc="nix profile remove $profile $name && nix profile install $profile $ref#$name"
+    install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $entry"
+    upgrade_desc="nix profile remove $profile $entry && nix profile install $profile $ref#$name"
     # The version in the referenced nixpkgs, if it differs from the installed one.
     newer_version() {
         available=$(nix eval --raw "$ref#$name.version" 2>/dev/null) || return 0

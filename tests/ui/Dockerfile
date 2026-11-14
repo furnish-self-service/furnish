@@ -18,3 +18,10 @@ RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq 
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal && chmod -R a+rwX /opt/cargo /opt/rustup
+
+# Screenshots for the website and docs (docs/screenshots/run.sh): a nicer system font than DejaVu.
+FROM build AS screenshots
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        fonts-inter fonts-noto-color-emoji imagemagick \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '<?xml version="1.0"?><fontconfig><alias><family>sans-serif</family><prefer><family>Inter</family></prefer></alias><alias><family>system-ui</family><prefer><family>Inter</family></prefer></alias></fontconfig>' > /etc/fonts/local.conf

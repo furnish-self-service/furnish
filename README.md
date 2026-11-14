@@ -4,6 +4,8 @@
 
 A self-service app catalog for Linux, macOS and Windows. Your organization lists apps in git, and users install them with one command.
 
+Website and docs: <https://furnish-self-service.github.io/>. The docs' sources are in [`docs/site/`](docs/site); `docs/screenshots/run.sh` retakes their screenshots.
+
 **Status:** early prototype. The CLI, the desktop app and the package resource work on Linux, macOS and Windows. Apps run with administrator rights, so only add collections you trust.
 
 ## What you get
