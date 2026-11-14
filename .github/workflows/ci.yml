@@ -72,7 +72,7 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.0.2
-          wix build tests/fixtures/installers/demo.wxs -o target/furnish-demo.msi
+          wix build tests/fixtures/installers/demo.wxs -bindpath tests/fixtures/installers -o target/furnish-demo.msi
           "FURNISH_TEST_MSI=$((Get-Location).Path -replace '\\','/')/target/furnish-demo.msi" >> $env:GITHUB_ENV
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}

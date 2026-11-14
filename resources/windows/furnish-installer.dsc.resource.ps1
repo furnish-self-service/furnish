@@ -65,7 +65,13 @@ switch -Wildcard ($file) {
 $version = if ($installed) { if ($installed.DisplayVersion) { [string]$installed.DisplayVersion } else { '?' } } else { '' }
 
 function Write-State([string]$Version, [string[]]$WhatIf) {
-    $state = [ordered]@{ file = $file; _exist = [bool]$Version }
+    # Echo back every identifying property: DSC's test compares each desired property with the state.
+    $state = [ordered]@{ file = $file }
+    foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
+        $v = [Environment]::GetEnvironmentVariable($p)
+        if ($null -ne $v) { $state[$p] = $v }
+    }
+    $state._exist = [bool]$Version
     if ($Version -and $Version -ne '?') { $state.version = $Version }
     if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
     [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))

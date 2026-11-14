@@ -1,5 +1,5 @@
 <!-- A minimal MSI for the Windows e2e test of Furnish/Installer. CI builds it with WiX 5:
-     wix build tests/fixtures/installers/demo.wxs -o target/furnish-demo.msi -->
+     wix build tests/fixtures/installers/demo.wxs -bindpath tests/fixtures/installers -o target/furnish-demo.msi -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Furnish Demo" Manufacturer="furnish" Version="1.0.0" Scope="perMachine"
            UpgradeCode="6f1d6f2e-6c0b-4a7e-9a2c-1c2b3d4e5f60">

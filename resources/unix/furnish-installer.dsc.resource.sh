@@ -6,7 +6,10 @@ set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
 [ -n "${file:-}" ] || fail 10 "property file is required"
+# Echo back every identifying property: DSC's test compares each desired property with the state.
 identity=$(json_member file "$file")
+[ -n "${packageId:-}" ] && identity="$identity,$(json_member packageId "$packageId")"
+[ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
 subject=$(basename "$file")
 
 [ -f "$file" ] || fail 10 "installer not found: $file"
