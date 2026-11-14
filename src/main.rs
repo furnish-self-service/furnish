@@ -39,6 +39,15 @@ enum Command {
     /// Manage app collections (git repositories with apps)
     #[command(subcommand)]
     Collection(CollectionCommand),
+    /// Show or change settings (automatic collection updates in the desktop app)
+    Settings {
+        /// Update collections when the desktop app starts
+        #[arg(long)]
+        update_on_launch: Option<bool>,
+        /// Update collections every N minutes while the desktop app runs (0: never)
+        #[arg(long, value_name = "MINUTES")]
+        update_interval: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -110,6 +119,20 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Collection(cmd) => collection(cmd),
+        Command::Settings { update_on_launch, update_interval } => {
+            let mut s = furnish::settings::load();
+            if update_on_launch.is_some() || update_interval.is_some() {
+                s.update_on_launch = update_on_launch.unwrap_or(s.update_on_launch);
+                s.update_interval_minutes = update_interval.unwrap_or(s.update_interval_minutes);
+                furnish::settings::save(&s)?;
+            }
+            println!("update on launch:  {}", if s.update_on_launch { "yes" } else { "no" });
+            match s.update_interval_minutes {
+                0 => println!("update interval:   never"),
+                m => println!("update interval:   every {m} minutes"),
+            }
+            Ok(())
+        }
     }
 }
 

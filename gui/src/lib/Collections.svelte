@@ -1,6 +1,22 @@
 <script lang="ts">
   import * as api from './api';
-  import { store, collectionAction } from './state.svelte';
+  import { store, collectionAction, changeSettings, updateCollections, toast } from './state.svelte';
+
+  const intervals = [
+    [15, 'Every 15 minutes'],
+    [30, 'Every 30 minutes'],
+    [60, 'Every hour'],
+    [240, 'Every 4 hours'],
+    [1440, 'Every day'],
+    [0, 'Never'],
+  ] as const;
+  // A value set outside the app (settings.json) still shows up as a choice.
+  const options = $derived(
+    store.settings && !intervals.some(([m]) => m === store.settings!.updateIntervalMinutes)
+      ? [...intervals, [store.settings.updateIntervalMinutes, `Every ${store.settings.updateIntervalMinutes} minutes`] as const]
+      : intervals,
+  );
+  const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   let url = $state('');
   let name = $state('');
@@ -22,15 +38,19 @@
 
   async function update(target: string) {
     working = target;
-    const names = target === '*' ? store.collections.map((c) => c.name) : [target];
-    await collectionAction(async () => {
-      const changed: string[] = [];
-      for (const n of names) {
-        const r = await api.updateCollection(n);
-        if (r.old !== r.new) changed.push(n);
+    if (target === '*') {
+      try {
+        const changed = await updateCollections();
+        toast('success', changed.length ? `Updated ${changed.join(', ')}` : 'Everything is up to date');
+      } catch (e) {
+        toast('error', "Couldn't update every collection", e instanceof Error ? e.message : String(e));
       }
-      return changed.length ? `Updated ${changed.join(', ')}` : 'Everything is up to date';
-    }, "Couldn't update");
+    } else {
+      await collectionAction(async () => {
+        const r = await api.updateCollection(target);
+        return r.old !== r.new ? `Updated ${target}` : `${target} is up to date`;
+      }, "Couldn't update");
+    }
     working = null;
   }
 
@@ -64,6 +84,40 @@
     <button class="primary" disabled={adding || !url.trim()}>{adding ? 'Adding…' : 'Add collection'}</button>
   </form>
   <p class="warning">Apps run with administrator rights. Only add collections from people you trust.</p>
+
+  {#if store.settings}
+    <section class="auto" aria-labelledby="auto-title">
+      <h2 id="auto-title">Automatic updates</h2>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={store.settings.updateOnLaunch}
+          onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
+        />
+        Update collections when furnish starts
+      </label>
+      <label class="interval">
+        <span>While furnish is open</span>
+        <select
+          value={store.settings.updateIntervalMinutes}
+          onchange={(e) => changeSettings({ updateIntervalMinutes: Number(e.currentTarget.value) })}
+        >
+          {#each options as [minutes, text]}
+            <option value={minutes}>{minutes === 0 ? "Don't check" : text}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="last" aria-live="polite">
+        {#if store.autoUpdate.running}
+          Checking for updates…
+        {:else if store.autoUpdate.error}
+          <span class="failed">Last automatic check failed:</span> {store.autoUpdate.error}
+        {:else if store.autoUpdate.lastAt}
+          Last checked at {clock(store.autoUpdate.lastAt)}.
+        {/if}
+      </p>
+    </section>
+  {/if}
 
   {#if store.collections.length}
     <div class="toolbar">
@@ -142,6 +196,51 @@
   .warning {
     font-size: 0.8rem;
     color: var(--muted);
+  }
+  .auto {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 2.5rem;
+    max-width: 36rem;
+  }
+  .check {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    font-size: 0.92rem;
+    font-weight: 400;
+    color: var(--ink);
+  }
+  .check input {
+    width: 1.05rem;
+    height: 1.05rem;
+    accent-color: var(--accent);
+  }
+  .interval {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    font-size: 0.92rem;
+    font-weight: 400;
+    color: var(--ink);
+  }
+  select {
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+    font: 0.92rem var(--font-body);
+  }
+  .last {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+    white-space: pre-line;
+  }
+  .failed {
+    color: var(--danger);
+    font-weight: 600;
   }
   .toolbar {
     display: flex;

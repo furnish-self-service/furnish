@@ -23,8 +23,10 @@
     gap: 0.6rem;
     width: min(26rem, calc(100vw - 2.5rem));
     z-index: 10;
+    pointer-events: none; /* only the toasts themselves catch clicks, not the gaps between them */
   }
   .toast {
+    pointer-events: auto;
     display: flex;
     gap: 0.75rem;
     align-items: start;

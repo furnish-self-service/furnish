@@ -52,8 +52,23 @@ repo_from_fixture() {
     git -C "$1" init -q && git -C "$1" add -A && git -C "$1" -c user.name=t -c user.email=t@t commit -qm init
 }
 mkdir -p "$work/data/collections"
-repo_from_fixture "$work/data/collections/fixture"
-git -C "$work/data/collections/fixture" remote add origin https://example.invalid/fixture.git
+repo_from_fixture "$work/origin-src"
+git clone -q --bare "$work/origin-src" "$work/origin.git"
+git clone -q "$work/origin.git" "$work/data/collections/fixture"
+# The origin moves on after the app's clone: updating on launch must bring in this app.
+cat > "$work/origin-src/apps/fresh.dsc.yaml" <<'YAML'
+metadata:
+  furnish:
+    description: Arrived with a collection update
+    categories: [Test]
+resources:
+  - name: fresh
+    type: Furnish/Package
+    properties:
+      name: fresh
+YAML
+git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm fresh
+git -C "$work/origin-src" push -q "$work/origin.git" HEAD
 repo_from_fixture "$work/second"
 
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.

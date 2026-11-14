@@ -1,6 +1,6 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
-import type { AppInfo, CollectionInfo, LogLine, Outcome, Status, Step } from './api';
+import type { AppInfo, CollectionInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 
 export type View =
   | { page: 'discover' }
@@ -52,6 +52,9 @@ export const store = $state({
   logs: {} as Record<string, LogLine[]>,
   /** Step progress of the current or last install/update/uninstall per app (this session only). */
   runs: {} as Record<string, Run>,
+  settings: null as Settings | null,
+  /** Background collection updates: when the last one ran and how it went. */
+  autoUpdate: { running: false, lastAt: null as number | null, error: null as string | null },
 });
 
 api.onProgress((p) => {
@@ -193,4 +196,67 @@ export function visibleApps(view: View, query: string): AppInfo[] {
     if (!q) return true;
     return [app.id, app.description, app.collection, ...app.categories].some((s) => s.toLowerCase().includes(q));
   });
+}
+
+/**
+ * Pull all collections. Returns the names that changed; reloads the catalog if any did.
+ * Automatic runs stay quiet on failure (e.g. offline): the Collections page shows the last error.
+ */
+export async function updateCollections(): Promise<string[]> {
+  const changed: string[] = [];
+  const errors: string[] = [];
+  for (const c of store.collections) {
+    try {
+      const r = await api.updateCollection(c.name);
+      if (r.old !== r.new) changed.push(c.name);
+    } catch (e) {
+      errors.push(`${c.name}: ${message(e)}`);
+    }
+  }
+  if (changed.length) await loadAll();
+  if (errors.length) throw new Error(errors.join('\n'));
+  return changed;
+}
+
+async function autoUpdate() {
+  if (store.autoUpdate.running || Object.keys(store.busy).length) return; // next tick will retry
+  store.autoUpdate.running = true;
+  try {
+    const changed = await updateCollections();
+    store.autoUpdate.error = null;
+    if (changed.length) toast('info', `Updated ${changed.join(', ')}`);
+  } catch (e) {
+    store.autoUpdate.error = message(e);
+  } finally {
+    store.autoUpdate.running = false;
+    store.autoUpdate.lastAt = Date.now();
+  }
+}
+
+let timer: ReturnType<typeof setInterval> | undefined;
+/** (Re)start the update interval from the current settings. */
+function schedule() {
+  clearInterval(timer);
+  const minutes = store.settings?.updateIntervalMinutes ?? 0;
+  if (minutes > 0) timer = setInterval(autoUpdate, minutes * 60_000);
+}
+
+/** App start: load settings and the catalog, then update collections if enabled. */
+export async function start() {
+  store.settings = await api.getSettings().catch(() => ({ updateOnLaunch: true, updateIntervalMinutes: 30 }));
+  schedule();
+  await loadAll();
+  if (store.settings.updateOnLaunch) await autoUpdate();
+}
+
+export async function changeSettings(change: Partial<Settings>) {
+  if (!store.settings) return;
+  const next = { ...store.settings, ...change };
+  try {
+    await api.saveSettings(next);
+    store.settings = next;
+    schedule();
+  } catch (e) {
+    toast('error', "Couldn't save the settings", message(e));
+  }
 }

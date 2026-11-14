@@ -1,12 +1,12 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, loadAll, visibleApps, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, type View } from './lib/state.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
   import Toasts from './lib/Toasts.svelte';
 
-  loadAll();
+  start();
 
   const view = $derived(store.view);
   const categories = $derived(

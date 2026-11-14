@@ -168,6 +168,16 @@ fn force_stop() {
 }
 
 #[tauri::command]
+fn get_settings() -> furnish::settings::Settings {
+    furnish::settings::load()
+}
+
+#[tauri::command]
+fn save_settings(settings: furnish::settings::Settings) -> CmdResult<()> {
+    furnish::settings::save(&settings).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
 }
@@ -228,6 +238,8 @@ fn main() {
             plan,
             abort,
             force_stop,
+            get_settings,
+            save_settings,
             list_collections,
             add_collection,
             update_collection,

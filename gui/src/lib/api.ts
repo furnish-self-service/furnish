@@ -85,3 +85,12 @@ export const addCollection = (url: string, name: string | null) =>
 export const updateCollection = (name: string) =>
   invoke<{ old: string; new: string }>('update_collection', { name });
 export const removeCollection = (name: string) => invoke<void>('remove_collection', { name });
+
+export interface Settings {
+  /** Pull all collections when the app starts. */
+  updateOnLaunch: boolean;
+  /** Pull all collections this often while the app runs; 0 turns it off. */
+  updateIntervalMinutes: number;
+}
+export const getSettings = () => invoke<Settings>('get_settings');
+export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings });

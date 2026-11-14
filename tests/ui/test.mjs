@@ -37,7 +37,8 @@ async function waitFor(what, fn, timeout = 20000) {
 }
 const find = async (xpath) => (await wd('POST', s('/element'), { using: 'xpath', value: xpath }))[ELEMENT];
 const findAll = async (xpath) => (await wd('POST', s('/elements'), { using: 'xpath', value: xpath })).map((e) => e[ELEMENT]);
-const click = async (xpath) => wd('POST', s(`/element/${await waitFor(xpath, () => find(xpath))}/click`), {});
+// Retries until the click lands: e.g. a notification may briefly cover the target.
+const click = async (xpath) => waitFor(`click on ${xpath}`, async () => (await wd('POST', s(`/element/${await find(xpath)}/click`), {}), true));
 const text = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/text`));
 const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpath)}/value`), { text: value });
 // WebKitWebDriver reports content of a closed <details> as displayed, so check `open` instead.
@@ -49,6 +50,9 @@ const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDi
 const steps = [
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
+  }],
+  ['collections update on launch: an app added upstream appears', async () => {
+    await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
   }],
   ['apps without a resource for this OS are hidden', async () => {
     if ((await findAll(card('nowhere'))).length) throw new Error('nowhere is shown');
@@ -145,6 +149,15 @@ const steps = [
     await click("//li[.//*[normalize-space()='second']]//button[normalize-space()='Remove']");
     await click("//button[contains(@class,'danger') and normalize-space()='Remove']");
     await waitFor('second collection gone', async () => !(await findAll("//li[.//*[normalize-space()='second']]")).length);
+  }],
+  ['automatic update settings are saved', async () => {
+    await click(button('Collections'));
+    await click("//label[contains(., 'when furnish starts')]/input");
+    await click("//select/option[normalize-space()='Every hour']");
+    await waitFor('settings.json', () => {
+      const saved = log('data/settings.json');
+      return saved.includes('"updateOnLaunch": false') && saved.includes('"updateIntervalMinutes": 60');
+    });
   }],
   ['the logo leads back to Discover', async () => {
     await click("//button[@aria-label='furnish, go to Discover']");
