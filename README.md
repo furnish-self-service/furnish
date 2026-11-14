@@ -69,7 +69,7 @@ See [self-service-example](https://github.com/furnish-self-service/self-service-
 ## Writing apps and resources
 
 - [DSC v3 guide](docs/dsc-v3-guide.md): how DSC v3.3 behaves, verified against its source code, with the consequences for furnish.
-- [authoring-dsc-v3 skill](skills/authoring-dsc-v3/SKILL.md): rules and a tested example for writing DSC v3 documents and resources. To make it available to Claude Code in your own repository, copy `skills/authoring-dsc-v3/` to `.claude/skills/authoring-dsc-v3/` there.
+- [authoring-dsc-v3 skill](.claude/skills/authoring-dsc-v3/SKILL.md): rules and a tested example for writing DSC v3 documents and resources. Claude Code loads it automatically in this repository. To use it in your own repository, copy `.claude/skills/authoring-dsc-v3/` there.
 
 ## Development
 
