@@ -26,8 +26,21 @@ function Invoke-Winget([string[]]$WingetArgs) {
     return $LASTEXITCODE
 }
 function Test-Installed { (Invoke-Winget (@('list') + $common)) -eq 0 }
-# Lists the package only if winget knows a newer version (local source data).
-function Test-Outdated { (Invoke-Winget (@('list', '--upgrade-available') + $common)) -eq 0 }
+# winget's exit code for `list --upgrade-available` isn't a reliable "newer version" signal (e.g.
+# portable packages with an unknown installed version), so read the row: Name, Id, Version,
+# Available, Source. Only a known installed version that differs from Available counts.
+function Test-Outdated {
+    $out = & winget list --upgrade-available @common 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $row = ($out -split "`r?`n") | Where-Object { $_ -match "(^|\s)$([regex]::Escape($name))(\s|$)" } | Select-Object -Last 1
+    [Console]::Error.WriteLine((@{ trace = "winget upgrade row: $row" } | ConvertTo-Json -Compress))
+    if (-not $row) { return $false }
+    $cols = $row.Trim() -split '\s+'
+    $i = [array]::IndexOf($cols, $name)
+    if ($i -lt 0 -or $cols.Count -lt $i + 3) { return $false }
+    $installed, $available = $cols[$i + 1], $cols[$i + 2]
+    return ($installed -notmatch '^(Unknown|<)' -and $available -and $available -ne $installed -and $available -ne 'winget')
+}
 function Write-State([bool]$Exist, [string[]]$WhatIf, $InDesiredState) {
     $state = [ordered]@{ name = $name; _exist = $Exist }
     if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
