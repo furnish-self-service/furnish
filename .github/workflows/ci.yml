@@ -118,6 +118,45 @@ jobs:
           wix build tests/fixtures/installers/demo.wxs -bindpath tests/fixtures/installers -o target/furnish-demo.msi
           tests/service.ps1 -Furnish target/release/furnish.exe -Msi target/furnish-demo.msi
 
+  linux-packages:
+    name: Linux packages (built on Ubuntu 22.04)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            target/jammy
+            .cache/cargo-registry
+          key: jammy-${{ hashFiles('Cargo.lock') }}
+          restore-keys: jammy-
+      - run: |
+          mkdir -p .cache/cargo-registry
+          docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
+            -e HOST_UID=$(id -u) ubuntu:22.04 packaging/linux/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-linux-packages
+          path: |
+            target/jammy/release/bundle/deb/*.deb
+            target/jammy/release/bundle/rpm/*.rpm
+
+  packages:
+    name: install on ${{ matrix.image }}
+    needs: linux-packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12, ubuntu:22.04, ubuntu:24.04, fedora:latest, opensuse/leap:15.6, opensuse/tumbleweed, almalinux:10]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-packages
+          path: bundle
+      - run: tests/packages.sh "${{ matrix.image }}" bundle
+
   gui:
     name: GUI ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

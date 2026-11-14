@@ -55,10 +55,16 @@ furnish list
 cd gui
 npm ci
 npx tauri dev -- --profile fast   # development; the fast profile avoids DSC's pwsh build step
-npx tauri build                   # release build with installers in target/release/bundle/
+npm run bundle                    # release build with installers in target/release/bundle/, CLI included
 ```
 
 On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libwebkit2gtk-4.1-dev` on Debian and Ubuntu. CI builds installers for Linux, macOS and Windows.
+
+The Linux packages for distribution are built on Ubuntu 22.04 with a static `furnish` CLI, so they run on glibc 2.34 and newer with WebKitGTK 4.1. CI installs them on Debian 12, Ubuntu 22.04 and 24.04, Fedora, openSUSE Leap 15.6 and Tumbleweed, and AlmaLinux 10 (`tests/packages.sh`). Enterprise Linux 10 needs EPEL and CRB enabled for WebKitGTK 4.1; Enterprise Linux 9 has no WebKitGTK 4.1, so only the CLI and the service run there (the static `furnish` binary). To build them:
+
+```sh
+docker run --rm -v "$PWD:/src" -w /src -e HOST_UID=$(id -u) ubuntu:22.04 packaging/linux/build.sh
+```
 
 `tests/ui/run.sh` runs UI tests against the real app: Ubuntu 24.04 in Docker, Xvfb, and `tauri-driver`, with a fake package manager. Without arguments it also builds the app in that container, so it works on any Linux host with Docker and Node.
 
