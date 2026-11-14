@@ -253,14 +253,19 @@ const steps = [
     await click("//button[contains(@class,'danger') and normalize-space()='Remove']");
     await waitFor('second collection gone', async () => !(await findAll("//li[.//*[normalize-space()='second']]")).length);
   }],
-  ['automatic update settings are saved', async () => {
+  ['automatic update settings are saved; locked ones are not editable', async () => {
     await click(button('Collections'));
     await click("//label[contains(., 'when furnish starts')]/input");
-    await click("//select/option[normalize-space()='Every hour']");
-    await waitFor('settings.json', () => {
-      const saved = log('data/settings.json');
-      return saved.includes('"updateOnLaunch": false') && saved.includes('"updateIntervalMinutes": 60');
-    });
+    await waitFor('settings.json', () => log('data/settings.json').includes('"updateOnLaunch": false'));
+    // The admin policy locks the interval.
+    if (!(await prop('//select', 'disabled'))) throw new Error('locked interval is editable');
+    if (!(await text("//label[contains(@class,'interval')]")).includes('Set by your organization')) throw new Error('no hint');
+    if (log('data/settings.json').includes('updateIntervalMinutes')) throw new Error('locked setting saved for the user');
+  }],
+  ['collections the organization provides cannot be removed', async () => {
+    const row = "//li[.//*[normalize-space()='fixture']]";
+    if (!(await text(row)).includes('Managed by your organization')) throw new Error('not marked managed');
+    if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
   }],
   ['the logo leads back to Discover', async () => {
     await click("//button[@aria-label='furnish, go to Discover']");

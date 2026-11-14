@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as api from './api';
-  import { store, collectionAction, changeSettings, updateCollections, toast } from './state.svelte';
+  import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
   const intervals = [
     [15, 'Every 15 minutes'],
@@ -72,6 +72,7 @@
     remove their collection.
   </p>
 
+  {#if store.usersCanAddCollections}
   <form onsubmit={add}>
     <label class="url">
       <span>Git URL</span>
@@ -84,6 +85,9 @@
     <button class="primary" disabled={adding || !url.trim()}>{adding ? 'Adding…' : 'Add collection'}</button>
   </form>
   <p class="warning">Apps run with administrator rights. Only add collections from people you trust.</p>
+  {:else}
+    <p class="managed-note">Your organization manages the collections on this computer.</p>
+  {/if}
 
   {#if store.settings}
     <section class="auto" aria-labelledby="auto-title">
@@ -93,28 +97,34 @@
         <input
           type="checkbox"
           checked={store.settings.updateOnLaunch}
+          disabled={isLocked('updateOnLaunch')}
           onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
         />
         Update collections when furnish starts
+        {#if isLocked('updateOnLaunch')}<span class="org">Set by your organization</span>{/if}
       </label>
       <label class="interval">
         <span>While furnish is open</span>
         <select
           value={store.settings.updateIntervalMinutes}
+          disabled={isLocked('updateIntervalMinutes')}
           onchange={(e) => changeSettings({ updateIntervalMinutes: Number(e.currentTarget.value) })}
         >
           {#each options as [minutes, text]}
             <option value={minutes}>{minutes === 0 ? "Don't check" : text}</option>
           {/each}
         </select>
+        {#if isLocked('updateIntervalMinutes')}<span class="org">Set by your organization</span>{/if}
       </label>
       <label class="check">
         <input
           type="checkbox"
           checked={store.settings.loadAwareUpdates}
+          disabled={isLocked('loadAwareUpdates')}
           onchange={(e) => changeSettings({ loadAwareUpdates: e.currentTarget.checked })}
         />
         Postpone automatic updates while this computer is busy
+        {#if isLocked('loadAwareUpdates')}<span class="org">Set by your organization</span>{/if}
       </label>
       <p class="explain">
         Busy means the last 5 minutes averaged over {store.settings.loadLimits.cpuPercent}% CPU,
@@ -149,7 +159,14 @@
           </div>
           <span class="mono rev" title="Revision">{c.revision}</span>
           <span class="count">{c.apps} app{c.apps === 1 ? '' : 's'}</span>
-          {#if confirmRemove === c.name}
+          {#if c.managed}
+            <span class="actions">
+              <span class="org">Managed by your organization</span>
+              <button class="secondary" disabled={working !== null} onclick={() => update(c.name)}>
+                {working === c.name ? 'Updating…' : 'Update'}
+              </button>
+            </span>
+          {:else if confirmRemove === c.name}
             <span class="confirm">
               Remove {c.name}?
               <button class="danger" onclick={() => remove(c.name)}>Remove</button>
@@ -245,6 +262,20 @@
     background: var(--surface);
     color: var(--ink);
     font: 0.92rem var(--font-body);
+  }
+  .org {
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 650;
+    color: var(--ink-soft);
+    background: var(--hover);
+    white-space: nowrap;
+  }
+  .managed-note {
+    margin-top: 1.5rem;
+    color: var(--ink-soft);
   }
   .explain.flush {
     margin-left: 0;

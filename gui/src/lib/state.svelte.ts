@@ -67,6 +67,10 @@ export const store = $state({
   /** Operations waiting for the running one to finish, in order. */
   queue: [] as Queued[],
   settings: null as Settings | null,
+  /** Settings the admin policy locks. */
+  locked: [] as string[],
+  /** From the admin policy: whether users may add collections. */
+  usersCanAddCollections: true,
   /** App whose optional dependencies the install dialog asks about. */
   choosing: null as string | null,
   /** Background collection updates: when the last one ran and how it went. */
@@ -323,27 +327,31 @@ function schedule() {
 
 /** App start: load settings and the catalog, then update collections if enabled. */
 export async function start() {
-  store.settings = await api
-    .getSettings()
-    .catch(() => ({
-      updateOnLaunch: true,
-      updateIntervalMinutes: 30,
-      noAutoUpdate: [] as string[],
-      loadAwareUpdates: true,
-      loadLimits: { cpuPercent: 50, memoryPercent: 90, networkKbps: 1000 },
-    }));
+  try {
+    const effective = await api.getSettings();
+    store.settings = effective.settings;
+    store.locked = effective.locked;
+    store.usersCanAddCollections = effective.usersCanAddCollections;
+  } catch (e) {
+    toast('error', "Couldn't read the settings", message(e));
+  }
   schedule();
+  // Collections the organization provides, for this user too.
+  for (const problem of await api.ensurePresets().catch((e) => [message(e)])) {
+    toast('error', "Couldn't set up a collection", problem);
+  }
   await loadAll();
-  if (store.settings.updateOnLaunch) await checkForUpdates();
+  if (store.settings?.updateOnLaunch) await checkForUpdates();
   else updateApps();
 }
 
+export const isLocked = (key: keyof Settings) => store.locked.includes(key);
+
 export async function changeSettings(change: Partial<Settings>) {
   if (!store.settings) return;
-  const next = { ...store.settings, ...change };
   try {
-    await api.saveSettings(next);
-    store.settings = next;
+    for (const [key, value] of Object.entries(change)) await api.setSetting(key as keyof Settings, value);
+    store.settings = { ...store.settings, ...change };
     schedule();
     if ('loadAwareUpdates' in change) await updateApps(); // postponed updates may go ahead now
   } catch (e) {

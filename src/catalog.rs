@@ -14,6 +14,8 @@ const DSC_SCHEMA: &str = "https://aka.ms/dsc/schemas/v3/bundled/config/document.
 pub struct Collection {
     pub name: String,
     pub dir: PathBuf,
+    /// Preset by the admin policy: users can't remove it.
+    pub managed: bool,
 }
 
 /// A curated set of apps from the same collection, installed together (`kits/<id>.yaml`).
@@ -108,10 +110,17 @@ pub fn collections() -> Result<Vec<Collection>> {
     if !dir.exists() {
         return Ok(vec![]);
     }
+    let policy = crate::policy::load().collections;
+    let preset = |name: &str| policy.preset.iter().any(|p| p.name == name);
     let mut collections: Vec<_> = fs::read_dir(&dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().join(".git").exists())
-        .map(|e| Collection { name: e.file_name().to_string_lossy().into_owned(), dir: e.path() })
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            Collection { managed: preset(&name), name, dir: e.path() }
+        })
+        // If users may not add collections, only the admin's count (others stay on disk, unused).
+        .filter(|c| policy.users_can_add || c.managed)
         .collect();
     collections.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(collections)
@@ -130,7 +139,39 @@ pub fn name_from_url(url: &str) -> String {
     last.trim_end_matches(".git").to_string()
 }
 
+/// Add a collection the user chose; the admin policy may forbid that.
 pub fn add(url: &str, name: &str) -> Result<Collection> {
+    let policy = crate::policy::load().collections;
+    if !policy.users_can_add {
+        bail!("your organization manages the collections; adding others isn't allowed");
+    }
+    if policy.preset.iter().any(|p| p.name == name) {
+        bail!("'{name}' is the name of a collection your organization provides");
+    }
+    clone(url, name, false)
+}
+
+/// Clone the admin's preset collections this user doesn't have yet. Returns problems as messages
+/// (e.g. offline), so a missing preset doesn't stop furnish.
+pub fn ensure_presets() -> Vec<String> {
+    let mut problems = Vec::new();
+    for preset in crate::policy::load().collections.preset {
+        let dir = collections_dir().join(&preset.name);
+        if dir.join(".git").exists() {
+            match git(Some(&dir), &["remote", "get-url", "origin"]) {
+                Ok(url) if url == preset.url => {}
+                _ => problems.push(format!("collection '{}' exists but doesn't come from {}", preset.name, preset.url)),
+            }
+            continue;
+        }
+        if let Err(err) = clone(&preset.url, &preset.name, true) {
+            problems.push(format!("couldn't set up collection '{}': {err:#}", preset.name));
+        }
+    }
+    problems
+}
+
+fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
     // The name becomes a directory name: no separators, no `..`, no hidden dirs.
     let valid = !name.is_empty()
         && !name.starts_with('.')
@@ -144,7 +185,7 @@ pub fn add(url: &str, name: &str) -> Result<Collection> {
     }
     fs::create_dir_all(collections_dir())?;
     git(None, &["clone", "--quiet", url, &dir.to_string_lossy()])?;
-    let collection = Collection { name: name.to_string(), dir };
+    let collection = Collection { name: name.to_string(), dir, managed };
     if let Err(err) = collection.fetch_lfs_files() {
         let _ = fs::remove_dir_all(&collection.dir); // no half-usable collection
         return Err(err);
@@ -154,6 +195,9 @@ pub fn add(url: &str, name: &str) -> Result<Collection> {
 
 pub fn remove(name: &str) -> Result<()> {
     let collection = get(name)?;
+    if collection.managed {
+        bail!("'{name}' is provided by your organization and can't be removed");
+    }
     fs::remove_dir_all(&collection.dir)?;
     Ok(())
 }

@@ -91,6 +91,8 @@ export interface KitInfo {
 
 export interface CollectionInfo {
   name: string;
+  /** Provided by the admin policy: can't be removed. */
+  managed: boolean;
   url: string;
   revision: string;
   apps: number;
@@ -129,5 +131,9 @@ export interface Load {
   retryAfterSeconds: number;
 }
 export const systemLoad = () => invoke<Load>('system_load');
-export const getSettings = () => invoke<Settings>('get_settings');
-export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings });
+/** Settings in effect plus what the admin policy restricts. */
+export const getSettings = () =>
+  invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean }>('get_settings');
+export const setSetting = (key: keyof Settings, value: unknown) => invoke<void>('set_setting', { key, value });
+/** Clone the admin's preset collections; returns problems (e.g. offline). */
+export const ensurePresets = () => invoke<string[]>('ensure_presets');

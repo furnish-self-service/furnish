@@ -215,5 +215,32 @@ if git lfs version >/dev/null 2>&1; then
 else
     lfs="LFS skipped: git-lfs not installed"
 fi
-echo "e2e OK ($lfs, $n installer(s))" >&2
+# Admin policy in the OS's native store (real mode; needs admin rights), else via the test override.
+step collection remove lfs >/dev/null 2>&1 || true
+cat > "$tmp/policy.json" <<JSON
+{"settings": {"updateIntervalMinutes": {"value": 60, "locked": true}},
+ "collections": {"preset": [{"name": "org", "url": "$tmp/repo"}], "usersCanAdd": false}}
+JSON
+policy_id=io.github.furnish-self-service.furnish
+if $real && [ "$(uname -s)" = Darwin ]; then
+    plutil -convert xml1 -o "$tmp/policy.plist" "$tmp/policy.json"
+    sudo mkdir -p "/Library/Managed Preferences" && sudo cp "$tmp/policy.plist" "/Library/Managed Preferences/$policy_id.plist"
+    store="managed preferences"; drop() { sudo rm -f "/Library/Managed Preferences/$policy_id.plist"; }
+elif $real && command -v powershell >/dev/null; then
+    powershell -NoProfile -Command "New-Item -Path 'HKLM:\SOFTWARE\Policies\furnish' -Force | Out-Null; Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\furnish' -Name Policy -Value (Get-Content -Raw '$tmp/policy.json')"
+    store="registry"; drop() { powershell -NoProfile -Command "Remove-Item -Path 'HKLM:\SOFTWARE\Policies\furnish' -Recurse"; }
+elif $real && [ "$(id -u)" = 0 ]; then
+    mkdir -p /etc/furnish && cp "$tmp/policy.json" /etc/furnish/policy.json
+    store="/etc/furnish"; drop() { rm -f /etc/furnish/policy.json; }
+else
+    export FURNISH_POLICY_FILE="$tmp/policy.json"
+    store="FURNISH_POLICY_FILE"; drop() { unset FURNISH_POLICY_FILE; }
+fi
+expect "$(step collection list)" "managed by your organization"
+expect "$(step settings)" "every 60 minutes  (set by your organization)"
+if step settings --update-interval 5 >/dev/null 2>&1; then echo "FAIL: changed a locked setting" >&2; exit 1; fi
+if step collection remove org >/dev/null 2>&1; then echo "FAIL: removed a managed collection" >&2; exit 1; fi
+if step collection add "$tmp/repo" --name mine >/dev/null 2>&1; then echo "FAIL: added a collection against the policy" >&2; exit 1; fi
+drop
+echo "e2e OK ($lfs, $n installer(s), policy from $store)" >&2
 echo "e2e OK ($($real && echo real || echo fake) package manager)"

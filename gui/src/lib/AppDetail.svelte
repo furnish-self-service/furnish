@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store, uninstall, install, defaultDependencies, setAutoUpdate } from './state.svelte';
+  import { store, uninstall, install, defaultDependencies, setAutoUpdate, isLocked } from './state.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
@@ -65,8 +65,13 @@
       {/if}
       {#if installed}
         <label class="auto">
-          <input type="checkbox" checked={autoUpdate} onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)} />
-          Update automatically
+          <input
+            type="checkbox"
+            checked={autoUpdate}
+            disabled={isLocked('noAutoUpdate')}
+            onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)}
+          />
+          Update automatically{isLocked('noAutoUpdate') ? ' (set by your organization)' : ''}
         </label>
       {/if}
     </div>

@@ -74,6 +74,33 @@ While an install, update or uninstall runs, its button turns into a progress ind
 
 The app updates collections when it starts and every 30 minutes while it runs. Both are settings on the Collections page, in `settings.json` in furnish's data directory (admins can deploy it), and in the CLI: `furnish settings --update-on-launch false --update-interval 60` (`0` turns the interval off).
 
+### Settings and admin policy
+
+Users' own settings live in `settings.json` in furnish's data directory (`~/.local/share/furnish` on Linux, `~/Library/Application Support/furnish` on macOS, `%APPDATA%\furnish` on Windows). It only holds what the user changed.
+
+Admins set policy where each OS keeps managed settings, which users can't write:
+
+| OS | Location |
+|---|---|
+| Linux | `/etc/furnish/policy.json` |
+| macOS | Managed preferences for `io.github.furnish-self-service.furnish` (an MDM configuration profile), read from `/Library/Managed Preferences` |
+| Windows | Registry value `Policy` (string, the JSON below) in `HKLM\SOFTWARE\Policies\furnish` (Group Policy, Intune) |
+
+```json
+{
+  "settings": {
+    "updateIntervalMinutes": { "value": 60, "locked": true },
+    "loadAwareUpdates": { "value": false }
+  },
+  "collections": {
+    "preset": [{ "name": "acme-it", "url": "git@github.com:acme/it-apps.git" }],
+    "usersCanAdd": false
+  }
+}
+```
+
+Each setting is either a default the user can change, or `locked`. Preset collections are cloned for every user and can't be removed; with `usersCanAdd: false`, users can't add others, and collections they added before are ignored. On macOS the plist dictionary has the same structure.
+
 On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
 
 The CLI has the same features: `furnish install <app> --dry-run` and `furnish uninstall <app> --dry-run` preview the steps, and `--verbose` shows the log.

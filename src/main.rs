@@ -112,6 +112,12 @@ fn main() -> ExitCode {
 }
 
 fn run(command: Command) -> Result<()> {
+    // Collections the admin provides are set up for every user.
+    if !matches!(command, Command::Settings { .. }) {
+        for problem in catalog::ensure_presets() {
+            eprintln!("warning: {problem}");
+        }
+    }
     match command {
         Command::List => list(),
         // Kits: names that are no app but a kit.
@@ -138,46 +144,51 @@ fn run(command: Command) -> Result<()> {
         Command::Collection(cmd) => collection(cmd),
         Command::Upgrade { all } => upgrade(all),
         Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates } => {
-            let mut s = furnish::settings::load();
-            let key = |name: &str| catalog::find_app(name).map(|a| format!("{}/{}", a.collection, a.id));
-            for name in &no_auto_update {
-                let key = key(name)?;
-                if !s.no_auto_update.contains(&key) {
-                    s.no_auto_update.push(key);
+            use furnish::settings::set;
+            if let Some(v) = update_on_launch {
+                set("updateOnLaunch", v.into())?;
+            }
+            if let Some(v) = update_interval {
+                set("updateIntervalMinutes", v.into())?;
+            }
+            if let Some(v) = load_aware_updates {
+                set("loadAwareUpdates", v.into())?;
+            }
+            if !auto_update.is_empty() || !no_auto_update.is_empty() {
+                let mut off = furnish::settings::load().no_auto_update;
+                let key = |name: &str| catalog::find_app(name).map(|a| format!("{}/{}", a.collection, a.id));
+                for name in &no_auto_update {
+                    let key = key(name)?;
+                    if !off.contains(&key) {
+                        off.push(key);
+                    }
                 }
+                for name in &auto_update {
+                    let key = key(name)?;
+                    off.retain(|k| k != &key);
+                }
+                set("noAutoUpdate", off.into())?;
             }
-            for name in &auto_update {
-                let key = key(name)?;
-                s.no_auto_update.retain(|k| k != &key);
-            }
-            if update_on_launch.is_some()
-                || update_interval.is_some()
-                || load_aware_updates.is_some()
-                || !auto_update.is_empty()
-                || !no_auto_update.is_empty()
-            {
-                s.load_aware_updates = load_aware_updates.unwrap_or(s.load_aware_updates);
-                s.update_on_launch = update_on_launch.unwrap_or(s.update_on_launch);
-                s.update_interval_minutes = update_interval.unwrap_or(s.update_interval_minutes);
-                furnish::settings::save(&s)?;
-            }
-            println!("update on launch:  {}", if s.update_on_launch { "yes" } else { "no" });
+            let effective = furnish::settings::effective();
+            let s = effective.settings;
+            let org = |key: &str| if effective.locked.iter().any(|k| k == key) { "  (set by your organization)" } else { "" };
+            println!("update on launch:  {}{}", if s.update_on_launch { "yes" } else { "no" }, org("updateOnLaunch"));
             match s.update_interval_minutes {
-                0 => println!("update interval:   never"),
-                m => println!("update interval:   every {m} minutes"),
+                0 => println!("update interval:   never{}", org("updateIntervalMinutes")),
+                m => println!("update interval:   every {m} minutes{}", org("updateIntervalMinutes")),
             }
             let l = &s.load_limits;
             if s.load_aware_updates {
                 println!(
-                    "when busy:         postpone automatic updates (5-minute average over CPU {}%, memory {}% or network {} KB/s)",
-                    l.cpu_percent, l.memory_percent, l.network_kbps
+                    "when busy:         postpone automatic updates (5-minute average over CPU {}%, memory {}% or network {} KB/s){}",
+                    l.cpu_percent, l.memory_percent, l.network_kbps, org("loadAwareUpdates")
                 );
             } else {
-                println!("when busy:         update anyway");
+                println!("when busy:         update anyway{}", org("loadAwareUpdates"));
             }
             match s.no_auto_update.as_slice() {
-                [] => println!("app updates:       automatic for all apps"),
-                apps => println!("app updates:       automatic, except {}", apps.join(", ")),
+                [] => println!("app updates:       automatic for all apps{}", org("noAutoUpdate")),
+                apps => println!("app updates:       automatic, except {}{}", apps.join(", "), org("noAutoUpdate")),
             }
             Ok(())
         }
@@ -250,12 +261,16 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
             println!("⚠ Apps run with administrator rights. Only add collections from authors you trust.");
         }
         CollectionCommand::List => {
-            let mut rows = vec![row(["Name", "Apps", "Revision", "URL"])];
+            let mut rows = vec![row(["Name", "Apps", "Revision", "URL", ""])];
             for c in catalog::collections()? {
                 let (apps, rev, url) = (c.apps().len().to_string(), c.revision()?, c.url()?);
-                rows.push(row([&c.name, &apps, &rev, &url]));
+                let managed = if c.managed { "managed by your organization" } else { "" };
+                rows.push(row([&c.name, &apps, &rev, &url, managed]));
             }
             print_table(&rows);
+            if !furnish::settings::effective().users_can_add_collections {
+                println!("\nYour organization manages the collections; adding others isn't allowed.");
+            }
         }
         CollectionCommand::Update { name } => {
             let collections = match name {

@@ -67,6 +67,8 @@ struct ItemInfo {
 #[derive(Serialize)]
 struct CollectionInfo {
     name: String,
+    /// Provided by the admin policy: can't be removed.
+    managed: bool,
     url: String,
     revision: String,
     apps: usize,
@@ -137,6 +139,7 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
     let unknown = |_| "unknown".to_string();
     Ok(CollectionInfo {
         name: c.name.clone(),
+        managed: c.managed,
         url: c.url().unwrap_or_else(unknown),
         revision: c.revision().unwrap_or_else(unknown),
         apps: c.apps().len(),
@@ -232,14 +235,22 @@ fn system_load() -> furnish::load::Load {
     furnish::load::current(&furnish::settings::load().load_limits, load_interval())
 }
 
+/// Settings in effect, which ones the admin policy locks, and whether users may add collections.
 #[tauri::command]
-fn get_settings() -> furnish::settings::Settings {
-    furnish::settings::load()
+fn get_settings() -> furnish::settings::Effective {
+    furnish::settings::effective()
 }
 
+/// Change one setting for this user (refused for settings the admin policy locks).
 #[tauri::command]
-fn save_settings(settings: furnish::settings::Settings) -> CmdResult<()> {
-    furnish::settings::save(&settings).map_err(|e| format!("{e:#}"))
+fn set_setting(key: String, value: serde_json::Value) -> CmdResult<()> {
+    furnish::settings::set(&key, value).map_err(|e| format!("{e:#}"))
+}
+
+/// Clone the admin's preset collections this user doesn't have yet; returns problems.
+#[tauri::command]
+async fn ensure_presets() -> CmdResult<Vec<String>> {
+    blocking(|| Ok(catalog::ensure_presets())).await
 }
 
 #[tauri::command]
@@ -307,7 +318,8 @@ fn main() {
             force_stop,
             get_settings,
             system_load,
-            save_settings,
+            set_setting,
+            ensure_presets,
             list_collections,
             add_collection,
             update_collection,

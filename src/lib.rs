@@ -2,4 +2,5 @@
 pub mod catalog;
 pub mod engine;
 pub mod load;
+pub mod policy;
 pub mod settings;

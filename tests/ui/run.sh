@@ -85,9 +85,15 @@ git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c 
 git -C "$work/origin-src" push -q "$work/origin.git" HEAD
 repo_from_fixture "$work/second"
 
+# An admin policy: the fixture collection is managed, the update interval locked.
+cat > "$work/policy.json" <<JSON
+{"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}},
+ "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git"}]}}
+JSON
+
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" "$image" \
     sh -c 'Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
 
