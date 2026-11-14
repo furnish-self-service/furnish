@@ -1,0 +1,17 @@
+# Dependencies: hyperfine is required; toolbox is optional and preselected; extras is optional
+# and not preselected. Users can deselect optional ones when installing.
+metadata:
+  furnish:
+    description: A development tool with optional extras
+    categories: [Test]
+    dependencies:
+      - app: hyperfine
+        required: true
+      - app: toolbox
+      - app: extras
+        selected: false
+resources:
+  - name: devtool
+    type: Furnish/Package
+    properties:
+      name: devtool

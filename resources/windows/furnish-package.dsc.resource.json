@@ -17,6 +17,21 @@
     ],
     "input": "env"
   },
+  "test": {
+    "executable": "powershell.exe",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "furnish-package.dsc.resource.ps1",
+      "test"
+    ],
+    "input": "env",
+    "return": "state"
+  },
   "set": {
     "executable": "powershell.exe",
     "args": [
@@ -72,6 +87,10 @@
               }
             }
           }
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
         }
       }
     }

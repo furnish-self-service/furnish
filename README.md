@@ -95,24 +95,33 @@ resources:
       name: cowsay
 ```
 
-### Prerequisites and missing tools
+### Dependencies and missing tools
 
-If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the app shows what it needs ("Needs Homebrew") instead of failing. A collection can provide the tool as an app of its own and list it under `requires`; installing the app then installs the prerequisite first:
+An app can depend on other apps of its collection. Required dependencies are always installed first; optional ones are preselected unless `selected: false`, and users can deselect them when installing (the app asks in a dialog, the CLI takes `--with`/`--without`). The detail page lists them.
 
 ```yaml
 metadata:
   furnish:
-    description: Video player
-    requires: [homebrew]       # app ids in this collection, installed first if missing
+    description: Code editor with our settings
+    dependencies:
+      - app: homebrew          # required: installed first if missing
+        required: true
+      - app: node              # optional, preselected
+      - app: docker            # optional, not preselected
+        selected: false
 resources:
-  - name: vlc
+  - name: vscode
     type: Furnish/Package
     properties:
-      name: vlc
+      name: visual-studio-code
       packageManager: brew     # optional: use this package manager instead of the first one found
 ```
 
-Prerequisites that aren't available on this OS are skipped. Resources report a missing tool by printing `furnish: needs <what>` to stderr and exiting with code 11.
+If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the app shows what it needs ("Needs Homebrew") instead of failing; a dependency can provide it. Resources report a missing tool by printing `furnish: needs <what>` to stderr and exiting with code 11.
+
+### Updates
+
+`Furnish/Package` reports an update when the package manager knows a newer version (`pacman -Qu`, `apt list --upgradable`, `dnf -C check-update`, `zypper lu`, `brew outdated`, winget), and `Furnish/Installer` when the collection ships a `.deb` or `.rpm` with a different version. The desktop app installs updates automatically on launch and with every scheduled check; turn that off per app on its detail page. The CLI: `furnish upgrade` (`--all` includes apps with automatic updates off) and `furnish settings --no-auto-update <app>`.
 
 ### Kits
 

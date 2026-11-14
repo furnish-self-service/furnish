@@ -10,6 +10,14 @@
     ],
     "input": "env"
   },
+  "test": {
+    "executable": "furnish-installer.dsc.resource.sh",
+    "args": [
+      "test"
+    ],
+    "input": "env",
+    "return": "state"
+  },
   "set": {
     "executable": "furnish-installer.dsc.resource.sh",
     "args": [
@@ -74,6 +82,10 @@
               }
             }
           }
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
         }
       }
     }

@@ -30,11 +30,14 @@ case "$file" in
     do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y "$file"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$id"; }
     install_desc="apt-get install -y $file" remove_desc="apt-get remove -y $id"
+    # A different version in the collection's file is an update: installing the file brings it.
+    newer_version() { v=$(dpkg-deb -f "$file" Version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     ;;
 *.rpm)
     command -v rpm >/dev/null 2>&1 || missing "rpm (Fedora, openSUSE, RHEL) for .rpm installers"
     id=$(rpm -qp --qf '%{NAME}' "$file" 2>/dev/null)
     installed_version() { rpm_version "$id"; }
+    newer_version() { v=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$file" 2>/dev/null) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     if command -v dnf >/dev/null 2>&1; then
         via=dnf
         do_install() { run_step dnf install -y "$file"; }
@@ -47,9 +50,9 @@ case "$file" in
         install_desc="zypper install $file" remove_desc="zypper remove $id"
     else
         via=rpm
-        do_install() { run_step rpm -i "$file"; }
+        do_install() { run_step rpm -U "$file"; }
         do_remove() { run_step rpm -e "$id"; }
-        install_desc="rpm -i $file" remove_desc="rpm -e $id"
+        install_desc="rpm -U $file" remove_desc="rpm -e $id"
     fi
     ;;
 *.pkg)

@@ -29,8 +29,8 @@ struct AppInfo {
     resources: Vec<ResourceInfo>,
     /// The DSC configuration document as written in the collection, for experts to inspect.
     source: String,
-    /// Keys of apps to install first (`metadata.furnish.requires`).
-    requires: Vec<String>,
+    /// Apps installed first: required ones always, optional ones if chosen.
+    dependencies: Vec<ItemInfo>,
 }
 
 #[derive(Serialize)]
@@ -51,12 +51,12 @@ struct KitInfo {
     description: String,
     categories: Vec<String>,
     icon: Option<String>,
-    items: Vec<KitItemInfo>,
+    items: Vec<ItemInfo>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct KitItemInfo {
+struct ItemInfo {
     /// Key of the app this item installs.
     key: String,
     required: bool,
@@ -108,8 +108,15 @@ fn app_info(app: &App) -> AppInfo {
         icon: app.icon.as_deref().and_then(icon_data_url),
         resources,
         source: fs::read_to_string(&app.path).unwrap_or_default(),
-        requires: app.requires.iter().map(|r| format!("{}/{r}", app.collection)).collect(),
+        dependencies: items(&app.collection, &app.dependencies),
     }
+}
+
+fn items(collection: &str, items: &[catalog::Item]) -> Vec<ItemInfo> {
+    items
+        .iter()
+        .map(|i| ItemInfo { key: format!("{collection}/{}", i.app), required: i.required, selected: i.required || i.selected })
+        .collect()
 }
 
 fn icon_data_url(path: &Path) -> Option<String> {
@@ -148,11 +155,7 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
             .into_iter()
             .map(|k| KitInfo {
                 key: format!("{}/{}", k.collection, k.id),
-                items: k
-                    .items
-                    .iter()
-                    .map(|i| KitItemInfo { key: format!("{}/{}", k.collection, i.app), required: i.required, selected: i.required || i.selected })
-                    .collect(),
+                items: items(&k.collection, &k.items),
                 icon: k.icon.as_deref().and_then(icon_data_url),
                 id: k.id,
                 collection: k.collection,

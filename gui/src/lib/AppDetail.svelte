@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store, uninstall } from './state.svelte';
+  import { store, uninstall, install, defaultDependencies, setAutoUpdate } from './state.svelte';
+  import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import { highlightYaml } from './highlight';
@@ -11,6 +12,13 @@
   let confirming = $state(false);
   let logList = $state<HTMLOListElement>();
   let planOpen = $state(false);
+  // Dependencies to install along with the app; the list below lets users change optional ones.
+  let chosen = $state<string[]>([]);
+  $effect.pre(() => {
+    chosen = defaultDependencies(app);
+  });
+  const autoUpdate = $derived(!store.settings?.noAutoUpdate.includes(app.key));
+  const installed = $derived(status === 'installed' || status === 'needsUpdate');
 
   const lines = $derived(store.logs[app.key] ?? []);
   const busy = $derived(!!store.busy[app.key]);
@@ -27,7 +35,7 @@
       needsUpdate: 'Installed, update available',
       notInstalled: 'Not installed',
       unavailable: 'Not available on this system',
-      blocked: `Needs ${store.reasons[app.key] ?? 'a missing tool'}${app.requires.length ? `: installing ${app.id} installs ${app.requires.map((k) => k.split('/')[1]).join(', ')} first` : ''}`,
+      blocked: `Needs ${store.reasons[app.key] ?? 'a missing tool'}${app.dependencies.length ? `: installing ${app.id} installs its dependencies first` : ''}`,
       error: "Couldn't check the status",
     } as Record<string, string>)[status ?? ''] ?? 'Checking status…',
   );
@@ -53,12 +61,24 @@
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
         <button class="secondary large" onclick={() => (confirming = true)}>Uninstall</button>
       {:else}
-        <ActionButton {app} large />
+        <ActionButton {app} large oninstall={() => install(app, chosen)} />
+      {/if}
+      {#if installed}
+        <label class="auto">
+          <input type="checkbox" checked={autoUpdate} onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)} />
+          Update automatically
+        </label>
       {/if}
     </div>
   </header>
 
   <p class="description">{app.description || 'No description.'}</p>
+
+  {#if app.dependencies.length}
+    <h2>Dependencies</h2>
+    <p class="lead">Installed along with {app.id}{app.dependencies.some((d) => !d.required) ? '. Deselect optional ones you don’t want.' : '.'}</p>
+    <DependencyList {app} bind:chosen />
+  {/if}
 
   <h2>What this sets up</h2>
   <ul class="resources">
@@ -169,6 +189,22 @@
     font-size: 1rem;
     border-radius: 999px;
   }
+  .auto {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .auto input {
+    accent-color: var(--accent);
+  }
+  .lead {
+    margin: -0.4rem 0 0.6rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
   .description {
     margin: 2rem 0;
     font-size: 1.05rem;
@@ -177,7 +213,7 @@
   }
   h2 {
     font: 650 1rem var(--font-display);
-    margin: 0 0 0.75rem;
+    margin: 1.75rem 0 0.75rem;
   }
   .resources {
     margin: 0;

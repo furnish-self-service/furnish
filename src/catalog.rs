@@ -23,20 +23,43 @@ pub struct Kit {
     pub description: String,
     pub categories: Vec<String>,
     pub icon: Option<PathBuf>,
-    pub items: Vec<KitItem>,
+    pub items: Vec<Item>,
 }
 
+/// An app a kit contains, or an app depends on.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct KitItem {
-    /// App id in the kit's collection.
+pub struct Item {
+    /// App id in the same collection.
     pub app: String,
-    /// Always installed with the kit; users can't deselect it.
+    /// Always installed; users can't deselect it.
     #[serde(default)]
     pub required: bool,
-    /// For optional items: selected when the user starts installing the kit.
+    /// For optional items: preselected when the user installs.
     #[serde(default = "yes")]
     pub selected: bool,
+}
+
+/// What installing starts with: required items and optional items selected by default.
+pub fn default_selection(items: &[Item]) -> Vec<&str> {
+    items.iter().filter(|i| i.required || i.selected).map(|i| i.app.as_str()).collect()
+}
+
+/// `default_selection` plus `with`, minus `without`; fails for unknown items or a required one in `without`.
+pub fn choose<'a>(items: &'a [Item], with: &'a [String], without: &[String], what: &str) -> Result<Vec<&'a str>> {
+    for name in with.iter().chain(without) {
+        if !items.iter().any(|i| &i.app == name) {
+            bail!("'{name}' is not part of {what}");
+        }
+    }
+    if let Some(required) = items.iter().find(|i| i.required && without.contains(&i.app)) {
+        bail!("'{}' is required by {what}", required.app);
+    }
+    let mut chosen = default_selection(items);
+    chosen.extend(with.iter().map(String::as_str));
+    chosen.retain(|app| !without.iter().any(|w| w == app));
+    chosen.dedup();
+    Ok(chosen)
 }
 
 fn yes() -> bool {
@@ -51,16 +74,10 @@ struct KitFile {
     #[serde(default)]
     categories: Vec<String>,
     icon: Option<String>,
-    items: Vec<KitItem>,
+    items: Vec<Item>,
 }
 
-impl Kit {
-    /// The apps installing this kit starts with: required ones and optional ones selected by default.
-    pub fn default_selection(&self) -> Vec<&str> {
-        self.items.iter().filter(|i| i.required || i.selected).map(|i| i.app.as_str()).collect()
-    }
-}
-
+#[derive(Clone)]
 pub struct App {
     pub id: String,
     pub collection: String,
@@ -70,8 +87,8 @@ pub struct App {
     pub icon: Option<PathBuf>,
     /// The app's DSC configuration file.
     pub path: PathBuf,
-    /// Apps of the same collection to install first (`metadata.furnish.requires`), e.g. Homebrew.
-    pub requires: Vec<String>,
+    /// Apps of the same collection installed first (`metadata.furnish.dependencies`), e.g. Homebrew.
+    pub dependencies: Vec<Item>,
     pub doc: Value,
 }
 
@@ -284,10 +301,10 @@ impl Collection {
                 .unwrap_or_default(),
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
             path: path.to_path_buf(),
-            requires: meta["requires"]
-                .as_array()
-                .map(|r| r.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default(),
+            dependencies: match meta.get("dependencies") {
+                Some(deps) => serde_json::from_value(deps.clone()).context("metadata.furnish.dependencies")?,
+                None => Vec::new(),
+            },
             doc,
         })
     }
@@ -385,7 +402,7 @@ mod tests {
             description: String::new(),
             categories: vec![],
             icon: None,
-            items: items.iter().map(|(app, required)| KitItem { app: (*app).into(), required: *required, selected: true }).collect(),
+            items: items.iter().map(|(app, required)| Item { app: (*app).into(), required: *required, selected: true }).collect(),
         }
     }
 
@@ -404,7 +421,12 @@ mod tests {
     fn kit_file_defaults() {
         let file: KitFile = serde_yaml::from_str("items:\n  - app: a\n    required: true\n  - app: b\n  - app: c\n    selected: false\n").unwrap();
         let k = Kit { id: "k".into(), collection: "c".into(), description: file.description, categories: file.categories, icon: None, items: file.items };
-        assert_eq!(k.default_selection(), ["a", "b"]);
+        assert_eq!(default_selection(&k.items), ["a", "b"]);
+        let with = ["c".to_string()];
+        let without = ["b".to_string()];
+        assert_eq!(choose(&k.items, &with, &without, "kit k").unwrap(), ["a", "c"]);
+        assert!(choose(&k.items, &[], &["a".to_string()], "kit k").is_err()); // required
+        assert!(choose(&k.items, &["x".to_string()], &[], "kit k").is_err()); // unknown
     }
 
     #[test]

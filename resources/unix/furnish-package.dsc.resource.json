@@ -10,6 +10,14 @@
     ],
     "input": "env"
   },
+  "test": {
+    "executable": "furnish-package.dsc.resource.sh",
+    "args": [
+      "test"
+    ],
+    "input": "env",
+    "return": "state"
+  },
   "set": {
     "executable": "furnish-package.dsc.resource.sh",
     "args": [
@@ -77,6 +85,10 @@
             "nix"
           ],
           "description": "Use this package manager (default: the first one found)"
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
         }
       }
     }

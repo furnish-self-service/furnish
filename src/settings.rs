@@ -15,11 +15,13 @@ pub struct Settings {
     pub update_on_launch: bool,
     /// Pull all collections this often while the desktop app runs; 0 turns it off.
     pub update_interval_minutes: u32,
+    /// Apps (`collection/app`) whose updates are not installed automatically.
+    pub no_auto_update: Vec<String>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { update_on_launch: true, update_interval_minutes: 30 }
+        Self { update_on_launch: true, update_interval_minutes: 30, no_auto_update: Vec::new() }
     }
 }
 
@@ -49,6 +51,6 @@ mod tests {
     #[test]
     fn missing_fields_use_defaults() {
         let s: Settings = serde_json::from_str(r#"{"updateIntervalMinutes": 0}"#).unwrap();
-        assert_eq!(s, Settings { update_on_launch: true, update_interval_minutes: 0 });
+        assert_eq!(s, Settings { update_on_launch: true, update_interval_minutes: 0, no_auto_update: vec![] });
     }
 }

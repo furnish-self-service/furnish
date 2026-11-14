@@ -7,12 +7,16 @@
 #   install_desc, remove_desc   the commands as shown in previews
 #   do_install, do_remove       functions that run them through run_step
 #   installed_version   function printing the installed version, "?" if unknown, or nothing
+#   newer_version       optional function printing the version an update would bring, or nothing
+#   do_upgrade, upgrade_desc    optional: how to update (default: install again)
 #
 # and then calls `furnish_main "$@"`:
 #
 #   get                 print the current state
-#   set [--what-if]     converge to the desired state; with --what-if only describe the
-#                       steps (in _metadata.whatIf) and print the state it would lead to
+#   test                print the current state with _inDesiredState: installed means
+#                       up to date, so an available update counts as not in desired state
+#   set [--what-if]     converge to the desired state (install, update or remove); with
+#                       --what-if only describe the steps (in _metadata.whatIf)
 #
 # Exit codes: 10 invalid input, 11 a needed tool is missing (see `missing`), 12 administrator rights
 # not granted, 13 stopped by the user. Tool failures keep their own code so DSC shows their stderr.
@@ -88,22 +92,42 @@ state() {
     esac
 }
 
+newer_version() { :; }
+upgrade_desc=
+do_upgrade() { do_install; }
+
 furnish_main() {
     case "${1:-}" in
     get)
         state "$(installed_version || true)"
         echo '}'
         ;;
+    test)
+        version=$(installed_version || true)
+        if [ "${_exist:-true}" = true ]; then
+            ok=false
+            [ -n "$version" ] && [ -z "$(newer_version || true)" ] && ok=true
+        else
+            ok=true
+            [ -n "$version" ] && ok=false
+        fi
+        state "$version"
+        printf ',"_inDesiredState":%s}\n' "$ok"
+        ;;
     set)
         version=$(installed_version || true)
+        newer=
+        [ -n "$version" ] && [ "${_exist:-true}" = true ] && newer=$(newer_version || true)
         shown=$subject; [ -n "$version" ] && [ "$version" != '?' ] && shown="$subject $version"
         action=
         if [ "${_exist:-true}" = true ] && [ -z "$version" ]; then
             action=install step="Install $subject with $via" desc=$install_desc after='?'
+        elif [ -n "$newer" ]; then
+            action=upgrade step="Update $subject from $version to $newer with $via" desc=${upgrade_desc:-$install_desc} after=$newer
         elif [ "${_exist:-true}" != true ] && [ -n "$version" ]; then
             action=remove step="Remove $shown with $via" desc=$remove_desc after=
         elif [ -n "$version" ]; then
-            step="$shown is already installed" after=$version
+            step="$shown is installed and up to date" after=$version
         else
             step="$subject is not installed" after=
         fi
@@ -126,7 +150,7 @@ furnish_main() {
         echo '}'
         ;;
     *)
-        fail 10 "usage: get|set [--what-if]"
+        fail 10 "usage: get|test|set [--what-if]"
         ;;
     esac
 }

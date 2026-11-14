@@ -20,8 +20,16 @@ export interface AppInfo {
   resources: Resource[];
   /** The app's DSC configuration document, as written in the collection. */
   source: string;
-  /** Keys of apps installed first, e.g. a package manager it needs. */
-  requires: string[];
+  /** Apps installed first: required ones always, optional ones if the user keeps them selected. */
+  dependencies: Item[];
+}
+
+/** An app a kit contains or an app depends on. */
+export interface Item {
+  key: string;
+  required: boolean;
+  /** Preselected when installing (required items always are). */
+  selected: boolean;
 }
 
 export interface LogLine {
@@ -78,7 +86,7 @@ export interface KitInfo {
   description: string;
   categories: string[];
   icon: string | null;
-  items: { key: string; required: boolean; selected: boolean }[];
+  items: Item[];
 }
 
 export interface CollectionInfo {
@@ -106,6 +114,8 @@ export interface Settings {
   updateOnLaunch: boolean;
   /** Pull all collections this often while the app runs; 0 turns it off. */
   updateIntervalMinutes: number;
+  /** Apps (`collection/app`) whose updates are not installed automatically. */
+  noAutoUpdate: string[];
 }
 export const getSettings = () => invoke<Settings>('get_settings');
 export const saveSettings = (settings: Settings) => invoke<void>('save_settings', { settings });

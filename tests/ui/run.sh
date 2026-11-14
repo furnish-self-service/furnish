@@ -33,7 +33,9 @@ cat > "$work/bin/pacman" <<SH
 #!/bin/sh
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
-  -S) sleep 2; echo 1.0 > "$work/pkgs/\$4"  # slow enough to observe live progress
+  -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
+  -S) sleep 2  # slow enough to observe live progress
+      if [ -f "$work/pkgs/\$4.new" ]; then mv "$work/pkgs/\$4.new" "$work/pkgs/\$4"; else echo 1.0 > "$work/pkgs/\$4"; fi
       if [ "\$4" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
   -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
 esac

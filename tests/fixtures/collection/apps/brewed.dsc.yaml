@@ -1,9 +1,11 @@
-# Needs Homebrew; lists the homebrew app as a prerequisite, so installing it installs that first.
+# Needs Homebrew; depends on the homebrew app, so installing it installs that first.
 metadata:
   furnish:
     description: A tool installed with Homebrew
     categories: [Test]
-    requires: [homebrew]
+    dependencies:
+      - app: homebrew
+        required: true
 resources:
   - name: brewed tool
     type: Furnish/Package

@@ -2,7 +2,8 @@
 # DSC passes the resource properties as env vars: $env:name (a winget package ID) and $env:_exist.
 #
 #   get                  print the current state
-#   set [what-if]        converge to the desired state; with what-if only describe the
+#   test                 current state with _inDesiredState (an available update: not in desired state)
+#   set [what-if]        converge (install, update or remove); with what-if only describe the
 #                        steps (in _metadata.whatIf) and print the state it would lead to
 param([string]$Operation, [string]$Mode)
 
@@ -17,6 +18,7 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 $common = @('--exact', '--id', $name, '--accept-source-agreements', '--disable-interactivity')
 $installArgs = @('install') + $common + @('--silent', '--accept-package-agreements')
 $removeArgs = @('uninstall') + $common + @('--silent')
+$upgradeArgs = @('upgrade') + $common + @('--silent', '--accept-package-agreements')
 
 # winget output goes to stderr: DSC reads stdout as JSON.
 function Invoke-Winget([string[]]$WingetArgs) {
@@ -24,21 +26,30 @@ function Invoke-Winget([string[]]$WingetArgs) {
     return $LASTEXITCODE
 }
 function Test-Installed { (Invoke-Winget (@('list') + $common)) -eq 0 }
-function Write-State([bool]$Exist, [string[]]$WhatIf) {
+# Lists the package only if winget knows a newer version (local source data).
+function Test-Outdated { (Invoke-Winget (@('list', '--upgrade-available') + $common)) -eq 0 }
+function Write-State([bool]$Exist, [string[]]$WhatIf, $InDesiredState) {
     $state = [ordered]@{ name = $name; _exist = $Exist }
     if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
+    if ($null -ne $InDesiredState) { $state._inDesiredState = [bool]$InDesiredState }
     [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
 }
 
 switch ($Operation) {
     'get' { Write-State (Test-Installed) }
+    'test' {
+        $installed = Test-Installed
+        $ok = if ($env:_exist -ne 'false') { $installed -and -not (Test-Outdated) } else { -not $installed }
+        Write-State $installed $null $ok
+    }
     'set' {
         $installed = Test-Installed
         $want = $env:_exist -ne 'false'
         $wingetArgs = $null
         if ($want -and -not $installed) { $step = "Install $name with winget"; $wingetArgs = $installArgs }
+        elseif ($want -and (Test-Outdated)) { $step = "Update $name with winget"; $wingetArgs = $upgradeArgs }
         elseif (-not $want -and $installed) { $step = "Remove $name with winget"; $wingetArgs = $removeArgs }
-        elseif ($installed) { $step = "$name is already installed" }
+        elseif ($installed) { $step = "$name is installed and up to date" }
         else { $step = "$name is not installed" }
 
         if ($Mode -eq 'what-if') {
@@ -54,5 +65,5 @@ switch ($Operation) {
         }
         Write-State (Test-Installed)
     }
-    default { [Console]::Error.WriteLine('{"error":"usage: get|set [what-if]"}'); exit 10 }
+    default { [Console]::Error.WriteLine('{"error":"usage: get|test|set [what-if]"}'); exit 10 }
 }

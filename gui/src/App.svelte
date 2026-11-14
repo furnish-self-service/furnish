@@ -1,6 +1,7 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, checkForUpdates, type View } from './lib/state.svelte';
+  import DepsDialog from './lib/DepsDialog.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
@@ -85,6 +86,17 @@
     {:else}
       <div class="top">
         <h1>{title}</h1>
+        {#if view.page === 'updates'}
+          <div class="check">
+            <button class="secondary" disabled={store.autoUpdate.running} onclick={checkForUpdates}>
+              {store.autoUpdate.running ? 'Checking…' : 'Check for updates'}
+            </button>
+            <span class="muted">
+              {#if store.autoUpdate.error}Last check failed{:else if store.autoUpdate.lastAt}Last checked
+                {new Date(store.autoUpdate.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{/if}
+            </span>
+          </div>
+        {/if}
         <input
           class="search"
           type="search"
@@ -104,7 +116,7 @@
         </div>
       {:else if !apps.length && !kits.length}
         <p class="empty">
-          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date.' : 'No apps here yet.'}
+          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date. furnish installs updates automatically unless you turn that off for an app.' : 'No apps here yet.'}
         </p>
       {:else}
         <div class="grid">
@@ -121,6 +133,7 @@
 </div>
 
 <Toasts />
+<DepsDialog />
 
 <style>
   .shell {
@@ -224,6 +237,16 @@
     margin: 0;
     font: 700 2rem/1.1 var(--font-display);
     letter-spacing: -0.02em;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-right: auto;
+  }
+  .check .muted {
+    font-size: 0.82rem;
+    color: var(--muted);
   }
   .search {
     width: min(20rem, 100%);

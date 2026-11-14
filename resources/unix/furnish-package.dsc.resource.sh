@@ -23,6 +23,8 @@ use_pacman() {
     do_install() { run_step pacman -S --noconfirm --needed "$name"; }
     do_remove() { run_step pacman -R --noconfirm "$name"; }
     install_desc="pacman -S --noconfirm --needed $name" remove_desc="pacman -R --noconfirm $name"
+    # Local sync database only ("name 1.0-1 -> 1.1-1").
+    newer_version() { pacman -Qu "$name" 2>/dev/null | cut -d' ' -f4; }
 }
 use_apt() {
     have apt-get || return 1
@@ -31,6 +33,10 @@ use_apt() {
     do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y "$name"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$name"; }
     install_desc="apt-get install -y $name" remove_desc="apt-get remove -y $name"
+    # Local package lists only ("name/suite 1.1 amd64 [upgradable from: 1.0]").
+    newer_version() { apt list --upgradable 2>/dev/null | grep "^$name/" | cut -d' ' -f2; }
+    do_upgrade() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade "$name"; }
+    upgrade_desc="apt-get install -y --only-upgrade $name"
 }
 use_dnf() {
     have dnf || return 1
@@ -39,6 +45,10 @@ use_dnf() {
     do_install() { run_step dnf install -y "$name"; }
     do_remove() { run_step dnf remove -y "$name"; }
     install_desc="dnf install -y $name" remove_desc="dnf remove -y $name"
+    # Cached metadata only (-C): no download during a status check.
+    newer_version() { dnf -C -q check-update "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
+    do_upgrade() { run_step dnf upgrade -y "$name"; }
+    upgrade_desc="dnf upgrade -y $name"
 }
 use_zypper() {
     have zypper || return 1
@@ -47,6 +57,13 @@ use_zypper() {
     do_install() { run_step zypper --non-interactive install "$name"; }
     do_remove() { run_step zypper --non-interactive remove "$name"; }
     install_desc="zypper --non-interactive install $name" remove_desc="zypper --non-interactive remove $name"
+    # Without refreshing repositories: "v | repo | name | current | available | arch".
+    newer_version() {
+        line=$(zypper --no-refresh -q list-updates 2>/dev/null | grep "| $name " | head -n1) || return 0
+        [ -n "$line" ] && echo "$line" | cut -d'|' -f5 | tr -d ' '
+    }
+    do_upgrade() { run_step zypper --non-interactive update "$name"; }
+    upgrade_desc="zypper --non-interactive update $name"
 }
 use_brew() {
     have brew || return 1
@@ -55,6 +72,11 @@ use_brew() {
     do_install() { run_step brew install "$name"; }
     do_remove() { run_step brew uninstall "$name"; }
     install_desc="brew install $name" remove_desc="brew uninstall $name"
+    # "name (1.0) < 1.1"; no auto-update of Homebrew itself during a status check.
+    # brew outdated exits non-zero exactly when something is outdated.
+    newer_version() { line=$(HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --verbose "$name" 2>/dev/null || true); [ -n "$line" ] && echo "${line##* }"; }
+    do_upgrade() { run_step brew upgrade "$name"; }
+    upgrade_desc="brew upgrade $name"
 }
 use_nix() {
     # NixOS (or nix-only systems): per-user profile from nixpkgs, needs no root.

@@ -4,9 +4,10 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { store, install, uninstall, stop, dequeue } from './state.svelte';
+  import { store, requestInstall, uninstall, stop, dequeue } from './state.svelte';
 
-  let { app, large = false }: { app: AppInfo; large?: boolean } = $props();
+  // `oninstall` replaces the default (asking about optional dependencies, then installing).
+  let { app, large = false, oninstall }: { app: AppInfo; large?: boolean; oninstall?: () => void } = $props();
 
   const status = $derived(store.status[app.key]);
   const busy = $derived(store.busy[app.key]);
@@ -35,7 +36,8 @@
   function run(event: MouseEvent) {
     event.stopPropagation();
     if (status === 'installed') uninstall(app);
-    else install(app);
+    else if (oninstall) oninstall();
+    else requestInstall(app);
   }
 
   function halt(event: MouseEvent) {
@@ -48,7 +50,7 @@
   <span class="checking" class:large>Checking…</span>
 {:else if status === 'error'}
   <span class="checking" class:large>Status unknown</span>
-{:else if status === 'blocked' && !app.requires.length && !busy && !queued}
+{:else if status === 'blocked' && !app.dependencies.some((d) => d.required || d.selected) && !busy && !queued}
   <!-- A tool this app needs is missing and the collection doesn't provide it. -->
   <span class="checking needs" class:large title="Needs {store.reasons[app.key]}">
     Needs {(store.reasons[app.key] ?? 'a missing tool').split(' (')[0]}
@@ -90,7 +92,7 @@
     class="action"
     class:large
     class:quiet
-    title={status === 'blocked' ? `Installs ${app.requires.map((k) => k.split('/')[1]).join(', ')} first` : engineBusy ? 'Starts after what is already running' : undefined}
+    title={status === 'blocked' ? `Installs ${app.dependencies.map((d) => d.key.split('/')[1]).join(', ')} first` : engineBusy ? 'Starts after what is already running' : undefined}
     onclick={run}
   >
     <span class="label">{label}</span>

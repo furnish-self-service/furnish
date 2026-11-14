@@ -36,6 +36,8 @@ export interface Run {
 export interface Queued {
   key: string;
   action: Busy;
+  /** Started by automatic updates, not by the user. */
+  auto?: boolean;
 }
 
 export interface Toast {
@@ -65,6 +67,8 @@ export const store = $state({
   /** Operations waiting for the running one to finish, in order. */
   queue: [] as Queued[],
   settings: null as Settings | null,
+  /** App whose optional dependencies the install dialog asks about. */
+  choosing: null as string | null,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: { running: false, lastAt: null as number | null, error: null as string | null },
 });
@@ -153,13 +157,15 @@ export async function checkStatus(key: string) {
   }
 }
 
-async function runInstall(app: AppInfo) {
+async function runInstall(app: AppInfo): Promise<boolean> {
   const updating = store.status[app.key] === 'needsUpdate';
   startRun(app.key, updating ? 'update' : 'install');
   store.busy[app.key] = 'install';
   let cancelled = false;
+  let ok = false;
   try {
     await api.install(app.key);
+    ok = true;
     toast('success', `${updating ? 'Updated' : 'Installed'} ${app.id}`);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
@@ -170,14 +176,17 @@ async function runInstall(app: AppInfo) {
     delete store.busy[app.key];
     await checkStatus(app.key);
   }
+  return ok;
 }
 
-async function runUninstall(app: AppInfo) {
+async function runUninstall(app: AppInfo): Promise<boolean> {
   startRun(app.key, 'uninstall');
   store.busy[app.key] = 'uninstall';
   let cancelled = false;
+  let ok = false;
   try {
     await api.uninstall(app.key);
+    ok = true;
     toast('success', `Uninstalled ${app.id}`);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
@@ -188,6 +197,7 @@ async function runUninstall(app: AppInfo) {
     delete store.busy[app.key];
     await checkStatus(app.key);
   }
+  return ok;
 }
 
 /** Runs a collection change, then reloads the catalog. Returns true on success. */
@@ -235,8 +245,25 @@ export async function updateCollections(): Promise<string[]> {
   return changed;
 }
 
-async function autoUpdate() {
-  if (store.autoUpdate.running || Object.keys(store.busy).length) return; // next tick will retry
+const declinedUpdates = new Set<string>();
+
+/** Queue updates of installed apps that have one, unless turned off for the app. */
+function updateApps() {
+  const due = store.apps.filter(
+    (a) =>
+      store.status[a.key] === 'needsUpdate' &&
+      !store.settings?.noAutoUpdate.includes(a.key) &&
+      !declinedUpdates.has(a.key) &&
+      !isPending(a.key),
+  );
+  for (const app of due) enqueue(app.key, 'install', true);
+  if (due.length) toast('info', `Updating ${due.map((a) => a.id).join(', ')} automatically`);
+}
+
+/** Pull collections, look for app updates (package managers learn about them on their own),
+ *  and install those that are due. Runs on launch, on the interval and from "Check for updates". */
+export async function checkForUpdates() {
+  if (store.autoUpdate.running) return;
   store.autoUpdate.running = true;
   try {
     const changed = await updateCollections();
@@ -248,6 +275,17 @@ async function autoUpdate() {
     store.autoUpdate.running = false;
     store.autoUpdate.lastAt = Date.now();
   }
+  for (const app of store.apps) {
+    const s = store.status[app.key];
+    if ((s === 'installed' || s === 'needsUpdate') && !isPending(app.key)) await checkStatus(app.key);
+  }
+  updateApps();
+}
+
+/** Automatic updates for one app (on by default). */
+export function setAutoUpdate(key: string, on: boolean) {
+  const off = (store.settings?.noAutoUpdate ?? []).filter((k) => k !== key);
+  changeSettings({ noAutoUpdate: on ? off : [...off, key] });
 }
 
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -255,15 +293,18 @@ let timer: ReturnType<typeof setInterval> | undefined;
 function schedule() {
   clearInterval(timer);
   const minutes = store.settings?.updateIntervalMinutes ?? 0;
-  if (minutes > 0) timer = setInterval(autoUpdate, minutes * 60_000);
+  if (minutes > 0) timer = setInterval(checkForUpdates, minutes * 60_000);
 }
 
 /** App start: load settings and the catalog, then update collections if enabled. */
 export async function start() {
-  store.settings = await api.getSettings().catch(() => ({ updateOnLaunch: true, updateIntervalMinutes: 30 }));
+  store.settings = await api
+    .getSettings()
+    .catch(() => ({ updateOnLaunch: true, updateIntervalMinutes: 30, noAutoUpdate: [] as string[] }));
   schedule();
   await loadAll();
-  if (store.settings.updateOnLaunch) await autoUpdate();
+  if (store.settings.updateOnLaunch) await checkForUpdates();
+  else updateApps();
 }
 
 export async function changeSettings(change: Partial<Settings>) {
@@ -278,15 +319,20 @@ export async function changeSettings(change: Partial<Settings>) {
   }
 }
 
+/** Dependencies installed with an app unless the user changes the choice. */
+export const defaultDependencies = (app: AppInfo) => app.dependencies.filter((d) => d.selected).map((d) => d.key);
+
 /** Install or update an app: right away, or after what is already running and queued.
- *  Missing prerequisites (`requires`) are queued first. */
-export function install(app: AppInfo, seen = new Set<string>()) {
-  if (seen.has(app.key)) return; // a prerequisite cycle: the run itself will report it
+ *  Its chosen dependencies (default: required + preselected) that are missing are queued first. */
+export function install(app: AppInfo, chosen = defaultDependencies(app), seen = new Set<string>()) {
+  if (seen.has(app.key)) return; // a dependency cycle: the run itself will report it
   seen.add(app.key);
-  for (const key of app.requires) {
+  for (const key of chosen) {
     const dep = store.apps.find((a) => a.key === key);
     const status = store.status[key];
-    if (dep && status !== 'installed' && status !== 'needsUpdate' && status !== 'unavailable') install(dep, seen);
+    if (dep && status !== 'installed' && status !== 'needsUpdate' && status !== 'unavailable') {
+      install(dep, defaultDependencies(dep), seen);
+    }
   }
   enqueue(app.key, 'install');
 }
@@ -303,9 +349,9 @@ export function uninstall(app: AppInfo) {
   enqueue(app.key, 'uninstall');
 }
 
-function enqueue(key: string, action: Busy) {
+function enqueue(key: string, action: Busy, auto = false) {
   if (store.busy[key] || store.queue.some((q) => q.key === key)) return;
-  store.queue.push({ key, action });
+  store.queue.push({ key, action, auto });
   pump();
 }
 
@@ -323,7 +369,11 @@ async function pump() {
   const next = store.queue.shift();
   if (!next) return;
   const app = store.apps.find((a) => a.key === next.key);
-  if (app) await (next.action === 'install' ? runInstall(app) : runUninstall(app));
+  if (app) {
+    const ok = await (next.action === 'install' ? runInstall(app) : runUninstall(app));
+    // Don't retry an automatic update the user cancelled or that failed, until the app restarts.
+    if (next.auto && !ok) declinedUpdates.add(next.key);
+  }
   await recheckBlocked();
   // A cancelled or failed operation only ends itself; the queue carries on.
   pump();
@@ -375,4 +425,13 @@ export function visibleKits(view: View, query: string): KitInfo[] {
     if (!q) return true;
     return [kit.id, kit.description, kit.collection, ...kit.categories].some((s) => s.toLowerCase().includes(q));
   });
+}
+
+/** Install from a card: ask about optional dependencies first, if there are any left to choose. */
+export function requestInstall(app: AppInfo) {
+  const choice = app.dependencies.some(
+    (d) => !d.required && !isInstalled(d.key) && store.status[d.key] !== 'unavailable' && !isPending(d.key),
+  );
+  if (choice && store.status[app.key] !== 'needsUpdate') store.choosing = app.key;
+  else install(app);
 }

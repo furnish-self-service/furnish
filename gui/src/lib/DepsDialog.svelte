@@ -1,0 +1,66 @@
+<script lang="ts">
+  // Opens when installing an app with optional dependencies from a card: choose which to include.
+  import { store, appByKey, install, defaultDependencies } from './state.svelte';
+  import DependencyList from './DependencyList.svelte';
+
+  let dialog = $state<HTMLDialogElement>();
+  const app = $derived(store.choosing ? appByKey(store.choosing) : undefined);
+  let chosen = $state<string[]>([]);
+
+  $effect(() => {
+    if (app && dialog && !dialog.open) {
+      chosen = defaultDependencies(app);
+      dialog.showModal();
+    }
+  });
+
+  function close() {
+    store.choosing = null;
+    dialog?.close();
+  }
+  function confirm() {
+    if (app) install(app, chosen);
+    close();
+  }
+</script>
+
+<dialog bind:this={dialog} onclose={() => (store.choosing = null)} aria-labelledby="deps-title">
+  {#if app}
+    <h2 id="deps-title">Install {app.id}</h2>
+    <p>{app.id} comes with these apps. Deselect the optional ones you don't want.</p>
+    <DependencyList {app} bind:chosen />
+    <div class="actions">
+      <button class="secondary" onclick={close}>Cancel</button>
+      <button class="primary" onclick={confirm}>Install</button>
+    </div>
+  {/if}
+</dialog>
+
+<style>
+  dialog {
+    width: min(32rem, calc(100vw - 2rem));
+    padding: 1.5rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: var(--shadow-raised);
+  }
+  dialog::backdrop {
+    background: rgb(10 25 28 / 0.4);
+  }
+  h2 {
+    margin: 0;
+    font: 700 1.4rem var(--font-display);
+  }
+  p {
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+  }
+</style>

@@ -23,7 +23,8 @@ if ! $real; then
 #!/bin/sh
 case "\$1" in
   -Q) [ -f "$tmp/pkgs/\$2" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2")" ;;
-  -S) echo 1.0 > "$tmp/pkgs/\$4"; if [ "\$4" = brew ]; then cp "$tmp/fake-brew" "$tmp/bin/brew"; fi ;;
+  -Qu) [ -f "$tmp/pkgs/\$2.new" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2") -> \$(cat "$tmp/pkgs/\$2.new")" ;;
+  -S) if [ -f "$tmp/pkgs/\$4.new" ]; then mv "$tmp/pkgs/\$4.new" "$tmp/pkgs/\$4"; else echo 1.0 > "$tmp/pkgs/\$4"; fi; if [ "\$4" = brew ]; then cp "$tmp/fake-brew" "$tmp/bin/brew"; fi ;;
   -R) rm "$tmp/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$tmp/bin/brew"; fi ;;
 esac
 SH
@@ -140,6 +141,30 @@ if ! $real; then
     expect "$(step list)" "·  brew-only"   # brew is there now
     step uninstall brewed >/dev/null && step uninstall homebrew >/dev/null
     expect "$(step list)" "!  brew-only"
+fi
+
+# Dependencies and updates (fake package manager only).
+if ! $real; then
+    plan=$(step install devtool --without toolbox --dry-run)
+    expect "$plan" "First, dependency hyperfine"
+    if grep -q "dependency toolbox" <<<"$plan"; then echo "FAIL: deselected dependency planned" >&2; exit 1; fi
+    if step install devtool --without hyperfine >/dev/null 2>&1; then echo "FAIL: required dependency deselected" >&2; exit 1; fi
+    out=$(step install devtool --without toolbox)
+    expect "$out" "devtool needs hyperfine first"
+    expect "$out" "Installed devtool"
+    expect "$(step list)" "·  toolbox"
+    # An update the package manager knows about makes the app "update available".
+    echo 2.0 > "$tmp/pkgs/hyperfine.new"
+    expect "$(step list)" "↑  hyperfine"
+    expect "$(step install hyperfine --dry-run)" "Update hyperfine from 1.0 to 2.0"
+    step settings --no-auto-update hyperfine >/dev/null
+    expect "$(step upgrade)" "Not updated (automatic updates off): fixture/hyperfine"
+    expect "$(step list)" "↑  hyperfine"
+    step settings --auto-update hyperfine >/dev/null
+    expect "$(step upgrade)" "Installed hyperfine"
+    expect "$(step list)" "✓  hyperfine"
+    [ "$(cat "$tmp/pkgs/hyperfine")" = 2.0 ] || { echo "FAIL: update not applied" >&2; exit 1; }
+    step uninstall devtool >/dev/null && step uninstall hyperfine >/dev/null
 fi
 
 # Kits (fake package manager only: the fixture's packages don't exist for real).

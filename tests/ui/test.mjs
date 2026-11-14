@@ -195,6 +195,38 @@ const steps = [
     await waitFor('hyperfine installed', () => find(`${card('hyperfine')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('toolbox skipped', () => find(`${card('toolbox')}${button('Install')}`));
   }],
+  ['installing an app with optional dependencies lets users deselect them', async () => {
+    const dep = (app) => `//dialog[@open]//li[.//*[contains(@class,'name') and normalize-space()='${app}']]`;
+    await click(button('Discover'));
+    await click(`${card('devtool')}${button('Install')}`);
+    await waitFor('dependency dialog', () => find('//dialog[@open]'));
+    if (!(await text(dep('hyperfine'))).includes('Installed')) throw new Error('installed dependency not marked');
+    if (!(await prop(`${dep('toolbox')}//input`, 'checked'))) throw new Error('optional dependency not preselected');
+    await click(`${dep('toolbox')}//input`);
+    await click("//dialog[@open]//button[normalize-space()='Install']");
+    await waitFor('devtool installed', () => find(`${card('devtool')}//*[normalize-space()='Installed']`), 30000);
+    await waitFor('toolbox left out', () => find(`${card('toolbox')}${button('Install')}`));
+  }],
+  ['the detail page lists dependencies', async () => {
+    await click(`${card('devtool')}//button[@aria-label='Open devtool']`);
+    const t = await text("//section[contains(@class,'detail')]");
+    for (const s of ['Dependencies', 'hyperfine', 'toolbox', 'extras', 'Optional']) {
+      if (!t.includes(s)) throw new Error(`missing ${s}`);
+    }
+  }],
+  ['updates install automatically, except for apps where that is turned off', async () => {
+    writeFileSync(`${workDir}/pkgs/hyperfine.new`, '2.0\n');
+    writeFileSync(`${workDir}/pkgs/extras.new`, '2.0\n');
+    await click(button('Discover'));
+    await click(`${card('extras')}//button[@aria-label='Open extras']`);
+    await click("//label[contains(., 'Update automatically')]/input");
+    await waitFor('opt-out saved', () => log('data/settings.json').includes('fixture/extras'));
+    await click("//nav//button[starts-with(normalize-space(), 'Updates')]");
+    await click(button('Check for updates'));
+    await waitFor('hyperfine updated', () => log('pkgs/hyperfine').trim() === '2.0', 30000);
+    await waitFor('extras still waiting', () => find(card('extras')));
+    if (log('pkgs/extras').trim() === '2.0') throw new Error('extras was updated although turned off');
+  }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));
     await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);
