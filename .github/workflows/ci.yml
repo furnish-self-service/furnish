@@ -92,6 +92,17 @@ jobs:
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
 
+  service-macos:
+    name: service macos-latest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --release
+      - run: tests/service-macos.sh target/release/furnish
+
   service-windows:
     name: service windows-latest
     runs-on: windows-latest

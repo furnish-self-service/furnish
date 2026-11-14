@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The furnish service: installs your organization's apps for users without administrator
+     rights. Install to /Library/LaunchDaemons/ (owner root:wheel, mode 644), then:
+     sudo launchctl bootstrap system /Library/LaunchDaemons/io.github.furnish-self-service.furnish.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.furnish-self-service.furnish</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/furnish</string>
+    <string>service</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>Umask</key>
+  <integer>18</integer>
+  <key>StandardErrorPath</key>
+  <string>/var/log/furnish.log</string>
+</dict>
+</plist>

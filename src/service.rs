@@ -2,17 +2,17 @@
 //! without administrator rights. Enabled by a `service` section in the admin policy; without it,
 //! furnish runs everything as the user and asks for elevation per step (small orgs).
 //!
-//! `furnish service` runs as root (Linux: Unix socket `/run/furnish.sock`) or as the Windows
-//! service `furnish` under SYSTEM (named pipe `\\.\pipe\furnish`); `FURNISH_SOCKET` overrides the
-//! address. Clients send one JSON request per connection and get JSON lines back: progress and
+//! `furnish service` runs as root (Linux: systemd, Unix socket `/run/furnish.sock`; macOS: launchd
+//! daemon, `/var/run/furnish.sock`) or as the Windows service `furnish` under SYSTEM (named pipe
+//! `\\.\pipe\furnish`); `FURNISH_SOCKET` overrides the address. Clients send one JSON request per connection and get JSON lines back: progress and
 //! log lines, then the result. The trust boundary:
 //!
 //! - Requests name an app and option values, never files or DSC code. The service only runs
 //!   apps from its own clones of the preset collections, in its data directory (`system_dir`),
 //!   which users can read but not change; with `trustedKeys`, only signed commits.
 //! - Option values are checked against the app's declarations and the policy (`options::accept`).
-//! - Installing, uninstalling and stopping need authorization: root/SYSTEM or an elevated
-//!   administrator, a member of the policy's `allowedGroup`, or (Linux) what polkit allows for
+//! - Installing, uninstalling and stopping need authorization: root/SYSTEM (or, on Windows, an
+//!   elevated administrator), a member of the policy's `allowedGroup`, or (Linux) what polkit allows for
 //!   `io.github.furnish.install` (by default an administrator password). Updating the preset
 //!   collections is open to every local user.
 
@@ -64,7 +64,13 @@ enum Reply {
 }
 
 fn socket_path() -> std::path::PathBuf {
-    let default = if cfg!(windows) { r"\\.\pipe\furnish" } else { "/run/furnish.sock" };
+    let default = if cfg!(windows) {
+        r"\\.\pipe\furnish"
+    } else if cfg!(target_os = "macos") {
+        "/var/run/furnish.sock"
+    } else {
+        "/run/furnish.sock"
+    };
     std::env::var_os("FURNISH_SOCKET").map_or_else(|| default.into(), Into::into)
 }
 
@@ -149,7 +155,7 @@ fn send(out: &Out, reply: &Reply) {
     let _ = s.flush();
 }
 
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn start() {
     IN_SERVICE.store(true, Ordering::Relaxed);
     engine::capture_logs(|line| {
@@ -163,7 +169,7 @@ fn start() {
 }
 
 /// Answer one connection: read the request, check it, run it, send the result.
-#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
 fn handle(input: impl Read, out: Out, authorize: &dyn Fn() -> Result<()>) {
     let mut line = String::new();
     let reply = match BufReader::new(input.take(64 * 1024)).read_line(&mut line).context("reading the request").and_then(|_| {
@@ -231,17 +237,31 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Re
 
 const REFUSED: &str = "you aren't allowed to install your organization's apps on this computer; ask your administrator";
 
-/// Whether a user (name or uid) is in the policy's `allowedGroup`.
+/// Whether a user (uid) is in the policy's `allowedGroup`.
 #[cfg(target_os = "linux")]
-fn in_allowed_group(user: &str) -> Result<bool> {
+fn in_allowed_group(uid: u32) -> Result<bool> {
     let Some(group) = crate::policy::load().service.and_then(|s| s.allowed_group) else { return Ok(false) };
-    let groups = std::process::Command::new("id").args(["-nG", user]).output()?;
+    let groups = std::process::Command::new("id").args(["-nG", &uid.to_string()]).output()?;
     Ok(String::from_utf8_lossy(&groups.stdout).split_whitespace().any(|g| g == group))
 }
 
-// --- Service on Linux: Unix socket, caller from SO_PEERCRED
+/// Whether a user (uid) is in the policy's `allowedGroup`; dseditgroup also resolves nested and
+/// directory (e.g. Active Directory) groups.
+#[cfg(target_os = "macos")]
+fn in_allowed_group(uid: u32) -> Result<bool> {
+    let Some(group) = crate::policy::load().service.and_then(|s| s.allowed_group) else { return Ok(false) };
+    let name = std::process::Command::new("id").args(["-un", &uid.to_string()]).output()?;
+    let name = String::from_utf8_lossy(&name.stdout).trim().to_string();
+    let member = std::process::Command::new("dseditgroup")
+        .args(["-o", "checkmember", "-m", &name, &group])
+        .stdout(std::process::Stdio::null())
+        .status()?;
+    Ok(!name.is_empty() && member.success())
+}
 
-#[cfg(target_os = "linux")]
+// --- Service on Linux and macOS: Unix socket, caller from the kernel
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn serve() -> Result<()> {
     use std::os::unix::{fs::PermissionsExt, net::UnixListener};
     start();
@@ -272,10 +292,31 @@ pub fn serve() -> Result<()> {
 }
 
 /// Who is on the other end of the socket, as the kernel reports it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct Peer {
+    #[cfg(target_os = "linux")]
     pid: i32,
     uid: u32,
+}
+
+#[cfg(target_os = "macos")]
+fn peer(stream: &std::os::unix::net::UnixStream) -> Result<Peer> {
+    use std::os::fd::AsRawFd;
+    let (mut uid, mut gid) = (0, 0);
+    // SAFETY: getpeereid fills two integers.
+    if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } != 0 {
+        bail!("can't tell who is asking: {}", std::io::Error::last_os_error());
+    }
+    Ok(Peer { uid })
+}
+
+/// macOS: root (sudo) or a member of `allowedGroup`.
+#[cfg(target_os = "macos")]
+fn authorize(peer: &Peer) -> Result<()> {
+    if peer.uid == 0 || in_allowed_group(peer.uid)? {
+        return Ok(());
+    }
+    bail!(REFUSED)
 }
 
 #[cfg(target_os = "linux")]
@@ -295,7 +336,7 @@ fn peer(stream: &std::os::unix::net::UnixStream) -> Result<Peer> {
 
 #[cfg(target_os = "linux")]
 fn authorize(peer: &Peer) -> Result<()> {
-    if peer.uid == 0 || in_allowed_group(&peer.uid.to_string())? {
+    if peer.uid == 0 || in_allowed_group(peer.uid)? {
         return Ok(());
     }
     // polkit asks the user's session for a password if its rules say so (pid + start time, so a
@@ -324,7 +365,7 @@ pub fn serve() -> Result<()> {
 #[cfg(windows)]
 mod windows;
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn serve() -> Result<()> {
     bail!("the furnish service isn't available on this OS yet")
 }
