@@ -27,6 +27,19 @@ export interface LogLine {
   message: string;
 }
 
+export type Action = 'install' | 'remove' | 'change' | 'nothing' | 'skipped';
+
+export interface Step {
+  name: string;
+  type: string;
+  action: Action;
+  /** The resource's own description of what it would do, e.g. the exact command. */
+  details: string[];
+  changes: { property: string; before: unknown; after: unknown }[];
+}
+
+export const plan = (key: string, uninstall: boolean) => invoke<Step[]>('plan', { key, uninstall });
+
 export const onLog = (handler: (line: LogLine) => void) =>
   listen<LogLine>('furnish://log', (event) => handler(event.payload));
 

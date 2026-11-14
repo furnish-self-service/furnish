@@ -49,15 +49,19 @@ step() {
     echo "$out"
     return $rc
 }
-expect() { grep -q "$2" <<<"$1" || { echo "FAIL: expected '$2'" >&2; exit 1; }; }
+expect() { grep -q -- "$2" <<<"$1" || { echo "FAIL: expected '$2'" >&2; exit 1; }; }
 
 step collection add "$tmp/repo" --name fixture >/dev/null
 expect "$(step list)" "·  hyperfine"
 expect "$(step list)" "–  nowhere"
 if step install nowhere >/dev/null 2>&1; then echo "FAIL: installing an unavailable app succeeded" >&2; exit 1; fi
+expect "$(step install hyperfine --dry-run)" "+ install"
+expect "$(step list)" "·  hyperfine"   # a preview changes nothing
 expect "$(step install hyperfine)" "Installed hyperfine"
 expect "$(step list)" "✓  hyperfine"
 expect "$(step install fixture/hyperfine)" "already installed"
+expect "$(step uninstall hyperfine --dry-run)" "- remove"
+expect "$(step list)" "✓  hyperfine"
 expect "$(step uninstall hyperfine)" "Uninstalled hyperfine"
 expect "$(step list)" "·  hyperfine"
 step collection remove fixture >/dev/null

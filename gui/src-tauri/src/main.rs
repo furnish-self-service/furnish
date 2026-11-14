@@ -130,6 +130,12 @@ async fn uninstall(key: String) -> CmdResult<()> {
     blocking(move || engine::remove(&catalog::find_app(&key)?.doc)).await
 }
 
+/// Preview installing (or uninstalling) without changing anything (DSC what-if).
+#[tauri::command]
+async fn plan(key: String, uninstall: bool) -> CmdResult<Vec<engine::Step>> {
+    blocking(move || engine::plan(&catalog::find_app(&key)?.doc, uninstall)).await
+}
+
 #[tauri::command]
 async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
@@ -182,6 +188,7 @@ fn main() {
             app_status,
             install,
             uninstall,
+            plan,
             list_collections,
             add_collection,
             update_collection,

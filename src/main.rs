@@ -24,11 +24,17 @@ enum Command {
     Install {
         /// App name, or collection/app if the name is ambiguous
         app: String,
+        /// Only show what would happen
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Uninstall an app
     Uninstall {
         /// App name, or collection/app if the name is ambiguous
         app: String,
+        /// Only show what would happen
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Manage app collections (git repositories with apps)
     #[command(subcommand)]
@@ -71,7 +77,9 @@ fn main() -> ExitCode {
 fn run(command: Command) -> Result<()> {
     match command {
         Command::List => list(),
-        Command::Install { app } => {
+        Command::Install { app, dry_run: true } => print_plan(&catalog::find_app(&app)?, false),
+        Command::Uninstall { app, dry_run: true } => print_plan(&catalog::find_app(&app)?, true),
+        Command::Install { app, .. } => {
             let app = catalog::find_app(&app)?;
             match engine::status(&app.doc)? {
                 Status::Installed => {
@@ -86,7 +94,7 @@ fn run(command: Command) -> Result<()> {
             println!("✓ Installed {}", app.id);
             Ok(())
         }
-        Command::Uninstall { app } => {
+        Command::Uninstall { app, .. } => {
             let app = catalog::find_app(&app)?;
             if matches!(engine::status(&app.doc)?, Status::NotInstalled | Status::Unavailable) {
                 println!("✓ {} is not installed", app.id);
@@ -158,6 +166,29 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         CollectionCommand::Remove { name } => {
             catalog::remove(&name)?;
             println!("✓ Removed '{name}'. Apps installed from it stay installed.");
+        }
+    }
+    Ok(())
+}
+
+fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
+    use engine::Action;
+    let steps = engine::plan(&app.doc, uninstall)?;
+    println!("{} {} would:", if uninstall { "Uninstalling" } else { "Installing" }, app.id);
+    for step in &steps {
+        let label = match step.action {
+            Action::Install => "+ install",
+            Action::Remove => "- remove",
+            Action::Change => "~ change",
+            Action::Nothing => "= nothing to do",
+            Action::Skipped => "  skipped",
+        };
+        println!("\n  {label:<16} {}  ({})", step.name, step.kind);
+        for detail in &step.details {
+            println!("  {:<16} {detail}", "");
+        }
+        for c in &step.changes {
+            println!("  {:<16} {}: {} → {}", "", c.property, c.before, c.after);
         }
     }
     Ok(())

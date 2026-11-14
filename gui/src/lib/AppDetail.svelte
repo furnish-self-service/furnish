@@ -4,10 +4,13 @@
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import { highlightYaml } from './highlight';
+  import Plan from './Plan.svelte';
+  import { describeCondition } from './conditions';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
   let logList = $state<HTMLOListElement>();
+  let planOpen = $state(false);
 
   const lines = $derived(store.logs[app.key] ?? []);
   const busy = $derived(!!store.busy[app.key]);
@@ -63,13 +66,20 @@
         <span class="name">{resource.name}</span>
         <span class="mono type">{resource.type}</span>
         {#if resource.condition}
-          <span class="mono condition">only if {resource.condition}</span>
+          <span class="condition">{describeCondition(resource.condition) ?? 'Only if'}</span>
+          <span class="mono condition">{resource.condition}</span>
         {/if}
       </li>
     {/each}
   </ul>
 
   <!-- Expert details: collapsed by default, one click to reveal. -->
+  <details class="expert" bind:open={planOpen}>
+    <summary>What would happen <span class="hint">preview, changes nothing</span></summary>
+    <!-- Mounted only while open: the preview asks DSC, which takes a moment. -->
+    {#if planOpen}<Plan {app} />{/if}
+  </details>
+
   <details class="expert">
     <summary>
       Activity log

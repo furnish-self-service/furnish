@@ -13,10 +13,15 @@
   "set": {
     "executable": "furnish-package.dsc.resource.sh",
     "args": [
-      "set"
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
     ],
     "input": "env",
-    "handlesExist": true
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
   },
   "exitCodes": {
     "0": "Success",
@@ -46,6 +51,19 @@
         "_exist": {
           "type": "boolean",
           "description": "Whether the package should be installed"
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     }

@@ -5,8 +5,8 @@ use std::{env, fs, path::Path, path::PathBuf, sync::Mutex};
 
 use anyhow::Result;
 use dsc_lib::{
-    configure::{Configurator, config_result::ResourceTestResult},
-    dscresources::invoke_result::TestResult,
+    configure::{Configurator, config_doc::ExecutionKind, config_result::ResourceTestResult},
+    dscresources::invoke_result::{SetResult, TestResult},
     progress::ProgressFormat,
 };
 use serde_json::Value;
@@ -162,6 +162,11 @@ pub fn apply(doc: &Value) -> Result<()> {
 /// Apply the document with every resource flipped to `_exist: false`.
 // ponytail: assumes every resource of an app supports `_exist`; per-app uninstall docs if not.
 pub fn remove(doc: &Value) -> Result<()> {
+    apply(&removal(doc))
+}
+
+/// The document that uninstalls an app: every resource flipped to `_exist: false`, in reverse.
+fn removal(doc: &Value) -> Value {
     let mut doc = doc.clone();
     if let Some(resources) = doc["resources"].as_array_mut() {
         resources.reverse();
@@ -169,7 +174,92 @@ pub fn remove(doc: &Value) -> Result<()> {
             resource["properties"]["_exist"] = Value::Bool(false);
         }
     }
-    apply(&doc)
+    doc
+}
+
+/// What one resource would do, as previewed by DSC's what-if mode.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Step {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub action: Action,
+    /// The resource's own description of its steps (DSC's `_metadata.whatIf`), e.g. the exact command.
+    pub details: Vec<String>,
+    /// Properties that would change, other than presence (`_exist`).
+    pub changes: Vec<Change>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Action {
+    Install,
+    Remove,
+    Change,
+    Nothing,
+    /// Its `condition` excludes it on this machine.
+    Skipped,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Change {
+    pub property: String,
+    pub before: Value,
+    pub after: Value,
+}
+
+/// Preview installing (or uninstalling) an app without changing anything.
+pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
+    let doc = if uninstall { removal(doc) } else { doc.clone() };
+    let result = {
+        let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut configurator = configurator(&doc)?;
+        configurator.context.execution_type = ExecutionKind::WhatIf;
+        configurator.invoke_set(false)?
+    };
+    let steps = doc["resources"].as_array().into_iter().flatten().map(|resource| {
+        let name = resource["name"].as_str().unwrap_or_default().to_string();
+        let kind = resource["type"].as_str().unwrap_or_default().to_string();
+        // Skipped resources produce no result at all.
+        let Some(r) = result.results.iter().find(|r| r.name == name) else {
+            let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
+            return Step { name, kind, action: Action::Skipped, details, changes: vec![] };
+        };
+        let details = r.metadata.as_ref()
+            .and_then(|m| m.other.get("whatIf"))
+            .and_then(Value::as_array)
+            .map(|lines| lines.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let (before, after) = match &r.result {
+            SetResult::Resource(r) => (r.before_state.clone(), r.after_state.clone()),
+            SetResult::Group(_) => (Value::Null, Value::Null),
+        };
+        Step { name, kind, action: action(&before, &after), details, changes: changes(&before, &after) }
+    });
+    Ok(steps.collect())
+}
+
+fn exists(state: &Value) -> bool {
+    !(state["_exist"] == false || state["_exist"] == "false")
+}
+
+fn changes(before: &Value, after: &Value) -> Vec<Change> {
+    let Some(after_map) = after.as_object() else { return vec![] };
+    after_map.iter()
+        .filter(|(k, v)| !k.starts_with('_') && before.get(k.as_str()) != Some(*v))
+        .map(|(k, v)| Change { property: k.clone(), before: before.get(k.as_str()).cloned().unwrap_or(Value::Null), after: v.clone() })
+        .collect()
+}
+
+fn action(before: &Value, after: &Value) -> Action {
+    match (exists(before), exists(after)) {
+        (false, true) => Action::Install,
+        (true, false) => Action::Remove,
+        (false, false) => Action::Nothing,
+        (true, true) if changes(before, after).is_empty() => Action::Nothing,
+        (true, true) => Action::Change,
+    }
 }
 
 fn configurator(doc: &Value) -> Result<Configurator> {
@@ -218,6 +308,18 @@ mod tests {
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    #[test]
+    fn plan_actions_from_before_and_after_state() {
+        let missing = json!({"name": "x", "_exist": false});
+        let present = json!({"name": "x", "_exist": true, "version": "1"});
+        let newer = json!({"name": "x", "_exist": true, "version": "2"});
+        assert_eq!(action(&missing, &json!({"name": "x", "_exist": true})), Action::Install);
+        assert_eq!(action(&present, &missing), Action::Remove);
+        assert_eq!(action(&present, &present), Action::Nothing);
+        assert_eq!(action(&present, &newer), Action::Change);
+        assert_eq!(changes(&present, &newer)[0].property, "version");
     }
 
     #[test]

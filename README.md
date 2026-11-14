@@ -62,7 +62,13 @@ On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libweb
 
 `tests/ui/run.sh` runs UI tests against the real app: Ubuntu 24.04 in Docker, Xvfb, and `tauri-driver`, with a fake package manager. Without arguments it also builds the app in that container, so it works on any Linux host with Docker and Node.
 
-Each app's detail page has two collapsed sections for experts: **Activity log** shows each DSC step and the package manager's output during install, update or uninstall, and **DSC configuration** shows the app's file. The CLI shows the same log with `--verbose`.
+Each app's detail page has three collapsed sections for experts:
+
+- **What would happen** previews installing, updating or uninstalling, without changing anything. It lists each step, the exact command and whether it needs administrator rights.
+- **Activity log** shows each DSC step and the package manager's output during install, update or uninstall.
+- **DSC configuration** shows the app's file.
+
+The CLI has the same features: `furnish install <app> --dry-run` and `furnish uninstall <app> --dry-run` preview the steps, and `--verbose` shows the log.
 
 ## Example app definition
 

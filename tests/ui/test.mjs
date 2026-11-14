@@ -69,6 +69,19 @@ const steps = [
     await click(`${panel}/summary`);
     await waitFor('configuration shown', async () => (await isOpen(panel)) && (await text(`${panel}//pre`)).includes('Furnish/Package'));
   }],
+  ['preview lists the concrete steps and changes nothing', async () => {
+    const panel = "//details[summary[contains(., 'What would happen')]]";
+    if (await isOpen(panel)) throw new Error('preview open before click');
+    await click(`${panel}/summary`);
+    // Installed, so the preview shows uninstalling: the exact command and who runs it.
+    await waitFor('uninstall command in preview', async () => {
+      const t = await text(panel);
+      return t.includes('pacman -R --noconfirm hyperfine') && /runs as administrator/i.test(t);
+    });
+    if (log('pkexec.log').includes('-R')) throw new Error('the preview ran the removal');
+    await click(`${panel}//button[normalize-space()='Install']`);
+    await waitFor('install preview: nothing to do', async () => (await text(panel)).includes('change nothing'));
+  }],
   ['activity log shows what the install did, after one click', async () => {
     const lines = "//details[summary[contains(., 'Activity log')]]//ol";
     await click("//summary[contains(., 'Activity log')]");
