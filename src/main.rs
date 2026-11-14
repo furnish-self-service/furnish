@@ -8,6 +8,9 @@ use furnish::{catalog, engine, engine::Status};
 #[derive(Parser)]
 #[command(version)]
 struct Cli {
+    /// Show what DSC and the package manager are doing
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -52,6 +55,9 @@ enum CollectionCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.verbose {
+        engine::capture_logs(print_log_line);
+    }
     let result = engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command));
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -155,6 +161,21 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_log_line(line: engine::LogLine) {
+    use std::io::IsTerminal;
+    let color = match line.level {
+        "error" => "31",
+        "warn" => "33",
+        "info" => "36",
+        _ => "2", // resource output: dimmed
+    };
+    if std::io::stderr().is_terminal() {
+        eprintln!("\x1b[{color}m{:>6} │ {}\x1b[0m", line.level, line.message);
+    } else {
+        eprintln!("{:>6} │ {}", line.level, line.message);
+    }
 }
 
 fn row<const N: usize>(cells: [&str; N]) -> Vec<String> {

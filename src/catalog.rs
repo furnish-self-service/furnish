@@ -23,6 +23,8 @@ pub struct App {
     pub categories: Vec<String>,
     /// Optional icon image (`metadata.furnish.icon`, relative to the collection root).
     pub icon: Option<PathBuf>,
+    /// The app's DSC configuration file.
+    pub path: PathBuf,
     pub doc: Value,
 }
 
@@ -150,6 +152,7 @@ impl Collection {
                 .map(|c| c.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
+            path: path.to_path_buf(),
             doc,
         })
     }

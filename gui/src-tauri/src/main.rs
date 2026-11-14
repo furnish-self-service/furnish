@@ -11,7 +11,7 @@ use furnish::{
     engine::{self, Status},
 };
 use serde::Serialize;
-use tauri::async_runtime::spawn_blocking;
+use tauri::{Emitter, async_runtime::spawn_blocking};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -27,6 +27,8 @@ struct AppInfo {
     /// Data URL of the app's icon, if the collection provides one.
     icon: Option<String>,
     resources: Vec<ResourceInfo>,
+    /// The DSC configuration document as written in the collection, for experts to inspect.
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -80,6 +82,7 @@ fn app_info(app: &App) -> AppInfo {
         categories: app.categories.clone(),
         icon: app.icon.as_deref().and_then(icon_data_url),
         resources,
+        source: fs::read_to_string(&app.path).unwrap_or_default(),
     }
 }
 
@@ -156,12 +159,24 @@ async fn remove_collection(name: String) -> CmdResult<()> {
 }
 
 fn main() {
-    // Must run before Tauri starts any threads: it sets process environment variables.
+    // Must run before Tauri starts any threads: both set process environment variables.
+    // FURNISH_GRAPHICAL makes resources ask for admin rights with the system dialog (pkexec)
+    // instead of sudo in whatever terminal the app happened to be started from.
+    // SAFETY: still single-threaded here.
+    unsafe { std::env::set_var("FURNISH_GRAPHICAL", "1") };
     if let Err(err) = engine::init(&catalog::data_dir().join("resources")) {
         eprintln!("furnish: failed to prepare bundled resources: {err:#}");
         std::process::exit(1);
     }
     tauri::Builder::default()
+        .setup(|app| {
+            // Stream what installs are doing to the UI's activity log.
+            let handle = app.handle().clone();
+            engine::capture_logs(move |line| {
+                let _ = handle.emit("furnish://log", line);
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_apps,
             app_status,

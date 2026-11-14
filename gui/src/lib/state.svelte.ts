@@ -1,6 +1,6 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
-import type { AppInfo, CollectionInfo, Status } from './api';
+import type { AppInfo, CollectionInfo, LogLine, Status } from './api';
 
 export type View =
   | { page: 'discover' }
@@ -29,6 +29,18 @@ export const store = $state({
   view: { page: 'discover' } as View,
   query: '',
   toasts: [] as Toast[],
+  /** Activity log of the last install/update/uninstall per app (this session only). */
+  logs: {} as Record<string, LogLine[]>,
+});
+
+// Operations run one at a time, so log lines belong to whichever app is busy.
+// Lines from background status checks are not kept.
+api.onLog((line) => {
+  const key = Object.keys(store.busy)[0];
+  if (!key) return;
+  const lines = (store.logs[key] ??= []);
+  lines.push(line);
+  if (lines.length > 2000) lines.splice(0, lines.length - 2000);
 });
 
 let nextToast = 1;
@@ -68,6 +80,7 @@ export async function checkStatus(key: string) {
 
 export async function install(app: AppInfo) {
   const updating = store.status[app.key] === 'needsUpdate';
+  store.logs[app.key] = [];
   store.busy[app.key] = 'install';
   try {
     await api.install(app.key);
@@ -81,6 +94,7 @@ export async function install(app: AppInfo) {
 }
 
 export async function uninstall(app: AppInfo) {
+  store.logs[app.key] = [];
   store.busy[app.key] = 'uninstall';
   try {
     await api.uninstall(app.key);

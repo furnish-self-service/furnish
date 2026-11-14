@@ -14,6 +14,8 @@ dsc-lib = { git = "https://github.com/PowerShell/DSC", tag = "v3.3.0" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = "0.9.34"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 # dsc-lib's grammar crate is generated at build time upstream; use our vendored, pre-generated copy.
 [patch."https://github.com/PowerShell/DSC"]

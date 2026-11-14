@@ -7,10 +7,12 @@ set -eu
 # and DSC shows their stderr instead of a canned description.
 [ -n "${name:-}" ] || { echo '{"error":"property name is required"}' >&2; exit 10; }
 
-# Run privileged commands: directly as root, via passwordless or interactive sudo,
-# or via pkexec when there is no terminal (GUI sessions).
+# Run privileged commands: directly as root; from the GUI (FURNISH_GRAPHICAL) always via the
+# graphical pkexec dialog, even if a terminal exists; otherwise via sudo, or pkexec without a terminal.
 as_root() {
+    echo "{\"info\":\"Running as administrator: $*\"}" >&2
     if [ "$(id -u)" = 0 ]; then "$@"
+    elif [ -n "${FURNISH_GRAPHICAL:-}" ]; then pkexec "$@"
     elif sudo -n true 2>/dev/null; then sudo -n "$@"
     elif (: </dev/tty) 2>/dev/null; then sudo "$@" </dev/tty
     else pkexec "$@"

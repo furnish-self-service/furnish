@@ -1,5 +1,6 @@
 // Typed wrappers around the Rust commands in src-tauri/src/main.rs.
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable';
 
@@ -17,7 +18,17 @@ export interface AppInfo {
   categories: string[];
   icon: string | null;
   resources: Resource[];
+  /** The app's DSC configuration document, as written in the collection. */
+  source: string;
 }
+
+export interface LogLine {
+  level: 'error' | 'warn' | 'info' | 'output';
+  message: string;
+}
+
+export const onLog = (handler: (line: LogLine) => void) =>
+  listen<LogLine>('furnish://log', (event) => handler(event.payload));
 
 export interface CollectionInfo {
   name: string;

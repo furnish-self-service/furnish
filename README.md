@@ -58,7 +58,11 @@ npx tauri dev -- --profile fast   # development; the fast profile avoids DSC's p
 npx tauri build                   # release build with installers in target/release/bundle/
 ```
 
-On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libwebkit2gtk-4.1-dev` on Debian and Ubuntu. CI builds installers for Linux, macOS and Windows. `tests/gui-smoke.sh` starts the app in a container under Xvfb and saves a screenshot.
+On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libwebkit2gtk-4.1-dev` on Debian and Ubuntu. CI builds installers for Linux, macOS and Windows.
+
+`tests/ui/run.sh` runs UI tests against the real app: Ubuntu 24.04 in Docker, Xvfb, and `tauri-driver`, with a fake package manager. Without arguments it also builds the app in that container, so it works on any Linux host with Docker and Node.
+
+Each app's detail page has two collapsed sections for experts: **Activity log** shows each DSC step and the package manager's output during install, update or uninstall, and **DSC configuration** shows the app's file. The CLI shows the same log with `--verbose`.
 
 ## Example app definition
 

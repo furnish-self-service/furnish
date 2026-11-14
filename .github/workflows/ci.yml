@@ -92,11 +92,13 @@ jobs:
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis.
       - run: npx tauri build
         working-directory: gui
+      # Real app under Xvfb, driven via WebDriver; also checks GUI elevation never uses sudo.
       - if: runner.os == 'Linux'
-        run: tests/gui-smoke.sh target/release/furnish-gui target/gui-smoke.png
-      - uses: actions/upload-artifact@v4
+        run: tests/ui/run.sh target/release/furnish-gui
+      - if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: furnish-gui-${{ runner.os }}
           path: |
             target/release/bundle/
-            target/gui-smoke.png
+            target/ui-test.png

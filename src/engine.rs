@@ -41,6 +41,75 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
 // ponytail: one global lock; installs run one at a time, which is also what package managers want.
 static ENGINE: Mutex<()> = Mutex::new(());
 
+/// One line of what an operation is doing, for experts.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LogLine {
+    /// `error`, `warn`, `info`, `debug` or `output` (a line a resource process wrote, e.g. pacman).
+    pub level: &'static str,
+    pub message: String,
+}
+
+/// Send DSC's progress and every line resource processes print to `sink`.
+/// Call once at startup; later calls are ignored.
+pub fn capture_logs(sink: impl Fn(LogLine) + Send + Sync + 'static) {
+    use tracing_subscriber::prelude::*;
+    let _ = tracing_subscriber::registry().with(LogForwarder(Box::new(sink))).try_init();
+}
+
+struct LogForwarder(Box<dyn Fn(LogLine) + Send + Sync>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogForwarder {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        let meta = event.metadata();
+        if !meta.target().starts_with("dsc_lib") {
+            return;
+        }
+        let mut message = String::new();
+        event.record(&mut MessageVisitor(&mut message));
+        if let Some(line) = log_line(*meta.level(), &message) {
+            (self.0)(line);
+        }
+    }
+}
+
+struct MessageVisitor<'a>(&'a mut String);
+
+impl tracing::field::Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            *self.0 = format!("{value:?}");
+        }
+    }
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            *self.0 = value.to_string();
+        }
+    }
+}
+
+/// Decide what an expert sees: resource output ("PID n: ...") at any level, and DSC's own
+/// info/warn/error messages. DSC's internal debug/trace chatter (schemas, discovery) is dropped.
+fn log_line(level: tracing::Level, message: &str) -> Option<LogLine> {
+    use tracing::Level;
+    let from_resource = message
+        .strip_prefix("PID ")
+        .and_then(|rest| rest.split_once(": "))
+        .filter(|(pid, _)| pid.chars().all(|c| c.is_ascii_digit()))
+        .map(|(_, text)| text);
+    let (level, message) = match (from_resource, level) {
+        (Some(text), Level::ERROR) => ("error", text),
+        (Some(text), Level::WARN) => ("warn", text),
+        (Some(text), Level::INFO) => ("info", text),
+        (Some(text), _) => ("output", text),
+        (None, Level::ERROR) => ("error", message),
+        (None, Level::WARN) => ("warn", message),
+        (None, Level::INFO) => ("info", message),
+        (None, _) => return None,
+    };
+    let message = message.trim();
+    (!message.is_empty()).then(|| LogLine { level, message: message.to_string() })
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
@@ -149,5 +218,17 @@ mod tests {
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    #[test]
+    fn log_lines_keep_resource_output_and_dsc_progress_only() {
+        use tracing::Level;
+        let line = |level, msg| log_line(level, msg).map(|l| (l.level, l.message));
+        assert_eq!(line(Level::TRACE, "PID 42: resolving dependencies..."), Some(("output", "resolving dependencies...".into())));
+        assert_eq!(line(Level::INFO, "PID 42: Running as administrator: pacman -S x"), Some(("info", "Running as administrator: pacman -S x".into())));
+        assert_eq!(line(Level::ERROR, "PID 7: no supported package manager"), Some(("error", "no supported package manager".into())));
+        assert_eq!(line(Level::WARN, "Resource is deprecated"), Some(("warn", "Resource is deprecated".into())));
+        assert_eq!(line(Level::DEBUG, "Discovering resources in /tmp"), None);
+        assert_eq!(line(Level::TRACE, "PID 42:   "), None);
     }
 }
