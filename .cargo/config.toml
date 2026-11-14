@@ -2,3 +2,5 @@
 b = "build --profile fast"
 t = "test --profile fast"
 r = "run --profile fast --"
+# Check the Windows build from Linux (needs mingw-w64-gcc for tree-sitter's C code).
+cw = "clippy --profile fast --target x86_64-pc-windows-gnu --all-targets"

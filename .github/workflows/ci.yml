@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -76,6 +77,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
       - run: cargo build --release
       - if: runner.os == 'Windows'
         run: winget --version
@@ -88,6 +91,21 @@ jobs:
           "FURNISH_TEST_MSI=$((Get-Location).Path -replace '\\','/')/target/furnish-demo.msi" >> $env:GITHUB_ENV
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
+
+  service-windows:
+    name: service windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --release
+      - shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix build tests/fixtures/installers/demo.wxs -bindpath tests/fixtures/installers -o target/furnish-demo.msi
+          tests/service.ps1 -Furnish target/release/furnish.exe -Msi target/furnish-demo.msi
 
   gui:
     name: GUI ${{ matrix.os }}

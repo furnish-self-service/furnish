@@ -2,21 +2,26 @@
 //! without administrator rights. Enabled by a `service` section in the admin policy; without it,
 //! furnish runs everything as the user and asks for elevation per step (small orgs).
 //!
-//! `furnish service` runs as root and listens on a Unix socket (`/run/furnish.sock`;
-//! `FURNISH_SOCKET` overrides it). Clients send one JSON request per connection and get JSON
-//! lines back: progress and log lines, then the result. The trust boundary:
+//! `furnish service` runs as root (Linux: Unix socket `/run/furnish.sock`) or as the Windows
+//! service `furnish` under SYSTEM (named pipe `\\.\pipe\furnish`); `FURNISH_SOCKET` overrides the
+//! address. Clients send one JSON request per connection and get JSON lines back: progress and
+//! log lines, then the result. The trust boundary:
 //!
 //! - Requests name an app and option values, never files or DSC code. The service only runs
 //!   apps from its own clones of the preset collections, in its data directory (`system_dir`),
 //!   which users can read but not change; with `trustedKeys`, only signed commits.
 //! - Option values are checked against the app's declarations and the policy (`options::accept`).
-//! - Installing, uninstalling and stopping need authorization: root, a member of the policy's
-//!   `allowedGroup`, or what polkit allows for `io.github.furnish.install` (by default an
-//!   administrator password). Updating the preset collections is open to every local user.
+//! - Installing, uninstalling and stopping need authorization: root/SYSTEM or an elevated
+//!   administrator, a member of the policy's `allowedGroup`, or (Linux) what polkit allows for
+//!   `io.github.furnish.install` (by default an administrator password). Updating the preset
+//!   collections is open to every local user.
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::{Context, Result, bail};
@@ -59,7 +64,8 @@ enum Reply {
 }
 
 fn socket_path() -> std::path::PathBuf {
-    std::env::var_os("FURNISH_SOCKET").map_or_else(|| "/run/furnish.sock".into(), Into::into)
+    let default = if cfg!(windows) { r"\\.\pipe\furnish" } else { "/run/furnish.sock" };
+    std::env::var_os("FURNISH_SOCKET").map_or_else(|| default.into(), Into::into)
 }
 
 // --- Client
@@ -94,9 +100,8 @@ pub fn stop(force: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn call(request: &Request, report: &mut dyn FnMut(Progress)) -> Result<Reply> {
-    let mut stream = std::os::unix::net::UnixStream::connect(socket_path())
+    let mut stream = connect()
         .context("can't reach the furnish service, which installs your organization's apps; ask your administrator")?;
     stream.write_all(format!("{}\n", serde_json::to_string(request)?).as_bytes())?;
     for line in BufReader::new(stream).lines() {
@@ -111,130 +116,159 @@ fn call(request: &Request, report: &mut dyn FnMut(Progress)) -> Result<Reply> {
     bail!("the furnish service stopped before finishing")
 }
 
-#[cfg(not(unix))]
-fn call(_: &Request, _: &mut dyn FnMut(Progress)) -> Result<Reply> {
-    bail!("the furnish service isn't available on this OS yet")
+#[cfg(unix)]
+fn connect() -> std::io::Result<std::os::unix::net::UnixStream> {
+    std::os::unix::net::UnixStream::connect(socket_path())
 }
 
-// --- Service
+#[cfg(windows)]
+fn connect() -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new().read(true).write(true).open(socket_path())
+}
 
-#[cfg(target_os = "linux")]
-pub fn serve() -> Result<()> {
-    use std::{
-        os::unix::{fs::PermissionsExt, net::UnixListener},
-        sync::{Arc, Mutex},
-    };
+// --- Service: shared by the platforms
+
+/// Before anything writes to the system directory: make sure only the service can change it.
+pub fn prepare() -> Result<()> {
+    #[cfg(windows)]
+    windows::secure_system_dir(&crate::catalog::system_dir())?;
+    Ok(())
+}
+
+type Out = Arc<Mutex<Box<dyn Write + Send>>>;
+
+/// Where log lines of the running operation go: the client that started it.
+static CURRENT: Mutex<Option<Out>> = Mutex::new(None);
+/// One operation at a time.
+static RUNNING: Mutex<()> = Mutex::new(());
+
+fn send(out: &Out, reply: &Reply) {
+    let mut s = out.lock().unwrap_or_else(|e| e.into_inner());
+    // A client that went away doesn't stop the operation.
+    let _ = s.write_all(format!("{}\n", serde_json::to_string(reply).unwrap_or_default()).as_bytes());
+    let _ = s.flush();
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn start() {
     IN_SERVICE.store(true, Ordering::Relaxed);
+    engine::capture_logs(|line| {
+        if let Some(out) = CURRENT.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            send(out, &Reply::Log { level: line.level.into(), message: line.message });
+        }
+    });
     for problem in crate::catalog::ensure_presets() {
         eprintln!("warning: {problem}");
     }
+}
+
+/// Answer one connection: read the request, check it, run it, send the result.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+fn handle(input: impl Read, out: Out, authorize: &dyn Fn() -> Result<()>) {
+    let mut line = String::new();
+    let reply = match BufReader::new(input.take(64 * 1024)).read_line(&mut line).context("reading the request").and_then(|_| {
+        serde_json::from_str::<Request>(&line).context("invalid request")
+    }) {
+        Ok(request) => answer(request, &out, authorize).unwrap_or_else(|e| {
+            Reply::Error(if e.is::<engine::Cancelled>() { engine::CANCELLED.into() } else { format!("{e:#}") })
+        }),
+        Err(e) => Reply::Error(format!("{e:#}")),
+    };
+    send(&out, &reply);
+}
+
+fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Result<Reply> {
+    let app = |key: &str| -> Result<crate::catalog::App> {
+        let app = crate::catalog::find_app(key)?;
+        if !app.managed {
+            bail!("'{key}' isn't from a collection your organization provides");
+        }
+        Ok(app)
+    };
+    let accept = |app: &crate::catalog::App, values: &Map<String, Value>| crate::options::accept(&app.options(), values);
+    type Work<'a> = &'a dyn Fn(&mut dyn FnMut(Progress)) -> Result<()>;
+    let operation = |work: Work| -> Result<Reply> {
+        let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
+        let result = work(&mut |p| send(out, &Reply::Progress(p)));
+        *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        result.map(|()| Reply::Done)
+    };
+    match request {
+        Request::EnsurePresets => return Ok(Reply::Problems(crate::catalog::ensure_presets())),
+        Request::Update { collection } => {
+            let c = crate::catalog::get(&collection)?;
+            if !c.managed {
+                bail!("'{collection}' isn't a collection your organization provides");
+            }
+            let (old, new) = c.update()?;
+            return Ok(Reply::Updated { old, new });
+        }
+        _ => authorize()?,
+    }
+    match request {
+        Request::Install { app: key, values } => {
+            let app = app(&key)?;
+            let values = accept(&app, &values)?;
+            operation(&|report| app.install_with(&values, report))
+        }
+        Request::Uninstall { app: key } => {
+            let app = app(&key)?;
+            operation(&|report| app.uninstall(report))
+        }
+        Request::Reinstall { app: key, values } => {
+            let app = app(&key)?;
+            let values = accept(&app, &values)?;
+            operation(&|report| app.reinstall_with(&values, report))
+        }
+        Request::Stop { force } => {
+            if force { engine::force_stop() } else { engine::abort() }
+            Ok(Reply::Done)
+        }
+        Request::Update { .. } | Request::EnsurePresets => unreachable!("answered above"),
+    }
+}
+
+const REFUSED: &str = "you aren't allowed to install your organization's apps on this computer; ask your administrator";
+
+/// Whether a user (name or uid) is in the policy's `allowedGroup`.
+#[cfg(target_os = "linux")]
+fn in_allowed_group(user: &str) -> Result<bool> {
+    let Some(group) = crate::policy::load().service.and_then(|s| s.allowed_group) else { return Ok(false) };
+    let groups = std::process::Command::new("id").args(["-nG", user]).output()?;
+    Ok(String::from_utf8_lossy(&groups.stdout).split_whitespace().any(|g| g == group))
+}
+
+// --- Service on Linux: Unix socket, caller from SO_PEERCRED
+
+#[cfg(target_os = "linux")]
+pub fn serve() -> Result<()> {
+    use std::os::unix::{fs::PermissionsExt, net::UnixListener};
+    start();
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path).with_context(|| format!("listening on {}", path.display()))?;
     // Anyone may connect; each request is authorized by who sent it.
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666))?;
     eprintln!("furnish service listening on {}", path.display());
-
-    // Log lines of the running operation go to the client that started it.
-    type Out = Arc<Mutex<std::os::unix::net::UnixStream>>;
-    static CURRENT: Mutex<Option<Out>> = Mutex::new(None);
-    static RUNNING: Mutex<()> = Mutex::new(());
-    fn send(out: &Out, reply: &Reply) {
-        let mut s = out.lock().unwrap_or_else(|e| e.into_inner());
-        // A client that went away doesn't stop the operation.
-        let _ = s.write_all(format!("{}\n", serde_json::to_string(reply).unwrap_or_default()).as_bytes());
-    }
-    engine::capture_logs(|line| {
-        if let Some(out) = CURRENT.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-            send(out, &Reply::Log { level: line.level.into(), message: line.message });
-        }
-    });
-
-    fn handle(stream: std::os::unix::net::UnixStream) -> Result<()> {
-        let peer = peer(&stream)?;
-        let mut line = String::new();
-        BufReader::new((&stream).take(64 * 1024)).read_line(&mut line)?;
-        let out: Out = Arc::new(Mutex::new(stream));
-        let reply = match serde_json::from_str::<Request>(&line).context("invalid request") {
-            Ok(request) => answer(request, &peer, &out).unwrap_or_else(|e| {
-                Reply::Error(if e.is::<engine::Cancelled>() { engine::CANCELLED.into() } else { format!("{e:#}") })
-            }),
-            Err(e) => Reply::Error(format!("{e:#}")),
-        };
-        send(&out, &reply);
-        Ok(())
-    }
-
-    fn answer(request: Request, peer: &Peer, out: &Out) -> Result<Reply> {
-        let app = |key: &str| -> Result<crate::catalog::App> {
-            let app = crate::catalog::find_app(key)?;
-            if !app.managed {
-                bail!("'{key}' isn't from a collection your organization provides");
-            }
-            Ok(app)
-        };
-        let accept = |app: &crate::catalog::App, values: &Map<String, Value>| crate::options::accept(&app.options(), values);
-        type Work<'a> = &'a dyn Fn(&mut dyn FnMut(Progress)) -> Result<()>;
-        let operation = |work: Work| -> Result<Reply> {
-            let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-            *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
-            let result = work(&mut |p| send(out, &Reply::Progress(p)));
-            *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            result.map(|()| Reply::Done)
-        };
-        match request {
-            Request::EnsurePresets => return Ok(Reply::Problems(crate::catalog::ensure_presets())),
-            Request::Update { collection } => {
-                let c = crate::catalog::get(&collection)?;
-                if !c.managed {
-                    bail!("'{collection}' isn't a collection your organization provides");
-                }
-                let (old, new) = c.update()?;
-                return Ok(Reply::Updated { old, new });
-            }
-            _ => authorize(peer)?,
-        }
-        match request {
-            Request::Install { app: key, values } => {
-                let app = app(&key)?;
-                let values = accept(&app, &values)?;
-                operation(&|report| app.install_with(&values, report))
-            }
-            Request::Uninstall { app: key } => {
-                let app = app(&key)?;
-                operation(&|report| app.uninstall(report))
-            }
-            Request::Reinstall { app: key, values } => {
-                let app = app(&key)?;
-                let values = accept(&app, &values)?;
-                operation(&|report| app.reinstall_with(&values, report))
-            }
-            Request::Stop { force } => {
-                if force { engine::force_stop() } else { engine::abort() }
-                Ok(Reply::Done)
-            }
-            Request::Update { .. } | Request::EnsurePresets => unreachable!("answered above"),
-        }
-    }
-
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                std::thread::spawn(move || {
-                    if let Err(err) = handle(stream) {
-                        eprintln!("warning: {err:#}");
-                    }
-                });
+        let stream = match stream {
+            Ok(s) => s,
+            Err(err) => {
+                eprintln!("warning: {err}");
+                continue;
             }
-            Err(err) => eprintln!("warning: {err}"),
-        }
+        };
+        std::thread::spawn(move || {
+            let peer = peer(&stream);
+            let out: Out = match stream.try_clone() {
+                Ok(s) => Arc::new(Mutex::new(Box::new(s))),
+                Err(err) => return eprintln!("warning: {err}"),
+            };
+            handle(&stream, out, &|| authorize(peer.as_ref().map_err(|e| anyhow::anyhow!("{e:#}"))?));
+        });
     }
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn serve() -> Result<()> {
-    bail!("the furnish service isn't available on this OS yet")
 }
 
 /// Who is on the other end of the socket, as the kernel reports it.
@@ -261,14 +295,8 @@ fn peer(stream: &std::os::unix::net::UnixStream) -> Result<Peer> {
 
 #[cfg(target_os = "linux")]
 fn authorize(peer: &Peer) -> Result<()> {
-    if peer.uid == 0 {
+    if peer.uid == 0 || in_allowed_group(&peer.uid.to_string())? {
         return Ok(());
-    }
-    if let Some(group) = crate::policy::load().service.and_then(|s| s.allowed_group) {
-        let groups = std::process::Command::new("id").args(["-nG", &peer.uid.to_string()]).output()?;
-        if String::from_utf8_lossy(&groups.stdout).split_whitespace().any(|g| g == group) {
-            return Ok(());
-        }
     }
     // polkit asks the user's session for a password if its rules say so (pid + start time, so a
     // reused pid can't borrow another process's authorization).
@@ -281,7 +309,22 @@ fn authorize(peer: &Peer) -> Result<()> {
         .status()
         .is_ok_and(|s| s.success());
     if !allowed {
-        bail!("you aren't allowed to install your organization's apps on this computer; ask your administrator");
+        bail!(REFUSED);
     }
     Ok(())
+}
+
+// --- Service on Windows: a Windows service with a named pipe, caller from its token
+
+#[cfg(windows)]
+pub fn serve() -> Result<()> {
+    windows::serve()
+}
+
+#[cfg(windows)]
+mod windows;
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub fn serve() -> Result<()> {
+    bail!("the furnish service isn't available on this OS yet")
 }

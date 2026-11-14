@@ -117,6 +117,10 @@ fn main() -> ExitCode {
         // The service keeps its collections, resources and records in the system directory.
         // SAFETY: still single-threaded.
         unsafe { std::env::set_var("FURNISH_DATA_DIR", catalog::system_dir()) };
+        if let Err(err) = furnish::service::prepare() {
+            eprintln!("✗ {err:#}");
+            return ExitCode::FAILURE;
+        }
     }
     if cli.verbose {
         engine::capture_logs(print_log_line);

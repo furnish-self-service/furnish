@@ -77,10 +77,16 @@ function Write-State([string]$Version, [string[]]$WhatIf) {
     [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
 }
 
-# Runs elevated (UAC prompt unless already elevated) and waits. A declined prompt is a cancel.
+# Runs elevated (UAC prompt unless already elevated, e.g. as the furnish service) and waits.
+# A declined prompt is a cancel.
 function Invoke-Elevated([string[]]$Command) {
+    $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     try {
-        $p = Start-Process -FilePath $Command[0] -ArgumentList $Command[1] -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+        if ($elevated) {
+            $p = Start-Process -FilePath $Command[0] -ArgumentList $Command[1] -Wait -PassThru -WindowStyle Hidden
+        } else {
+            $p = Start-Process -FilePath $Command[0] -ArgumentList $Command[1] -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+        }
     } catch {
         [Console]::Error.WriteLine('{"warn":"administrator rights were not granted"}'); exit 12
     }

@@ -118,12 +118,16 @@ By default furnish runs as the user and asks for an administrator password when 
 }
 ```
 
-- The service (`furnish service`, as root) keeps its own copies of the preset collections in `/var/lib/furnish`, which users can read but not change. Collections users add still install as the user.
+- The service (`furnish service`, as root or SYSTEM) keeps its own copies of the preset collections (`/var/lib/furnish`, `C:\ProgramData\furnish`), which users can read but not change. Collections users add still install as the user.
 - Members of `allowedGroup` install without a password. Everyone else gets what polkit allows for `io.github.furnish.install`, by default an administrator password; grant groups with a polkit rule instead if you prefer ([example](packaging/linux/50-furnish.rules.example)).
 - Requests name an app and option values only. The service accepts only options the app declares, with the right type, never against a locked policy value, and no free-text strings (declare `allowedValues`).
 - With `trustedKeys`, preset collections only move to commits signed by one of these SSH keys (`git commit -S` with `gpg.format=ssh`). Without it, whoever can push to the repository can run code as root on every computer.
 
-Install on Linux: copy [`furnish.service`](packaging/linux/furnish.service) to `/etc/systemd/system/` and [`io.github.furnish.policy`](packaging/linux/io.github.furnish.policy) to `/usr/share/polkit-1/actions/`, then `systemctl enable --now furnish`. The service isn't available on macOS and Windows yet.
+Install the service:
+
+- **Linux:** copy [`furnish.service`](packaging/linux/furnish.service) to `/etc/systemd/system/` and [`io.github.furnish.policy`](packaging/linux/io.github.furnish.policy) to `/usr/share/polkit-1/actions/`, then `systemctl enable --now furnish`.
+- **Windows:** run [`install-service.ps1`](packaging/windows/install-service.ps1) as administrator. The service runs as SYSTEM, listens on `\\.\pipe\furnish` and keeps its collections in `C:\ProgramData\furnish`, which it creates readable but not writable for users. Elevated administrators and members of `allowedGroup` (a local or domain group name, or a SID) may install; there is no password fallback.
+- **macOS:** not available yet.
 
 On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
 

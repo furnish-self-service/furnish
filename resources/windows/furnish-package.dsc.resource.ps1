@@ -10,6 +10,12 @@ param([string]$Operation, [string]$Mode)
 $name = $env:name
 # Own exit codes start at 10; winget failures exit with winget's (unmapped) code so DSC shows stderr.
 if (-not $name) { [Console]::Error.WriteLine('{"error":"property name is required"}'); exit 10 }
+# SYSTEM (the furnish service) doesn't have winget on its PATH: use App Installer's copy.
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    $found = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue |
+        Sort-Object { [version]($_.Directory.Name -split '_')[1] } | Select-Object -Last 1
+    if ($found) { Set-Alias winget $found.FullName }
+}
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     # Plain text and an unmapped exit code: furnish shows "Needs winget" instead of a failure.
     [Console]::Error.WriteLine('furnish: needs winget (App Installer from the Microsoft Store)'); exit 11

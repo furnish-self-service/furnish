@@ -604,7 +604,7 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
         cmd.arg("-C").arg(dir);
         // The service's collections belong to root/SYSTEM; git refuses other users' repositories otherwise.
         if dir.starts_with(system_dir()) {
-            cmd.arg("-c").arg(format!("safe.directory={}", dir.display()));
+            cmd.args(["-c", "safe.directory=*"]);
         }
     }
     let output = cmd.args(args).output().context("failed to run git (is it installed?)")?;
