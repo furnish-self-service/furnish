@@ -120,14 +120,33 @@ async fn app_status(key: String) -> CmdResult<Status> {
     blocking(move || engine::status(&catalog::find_app(&key)?.doc)).await
 }
 
-#[tauri::command]
-async fn install(key: String) -> CmdResult<()> {
-    blocking(move || engine::apply(&catalog::find_app(&key)?.doc)).await
+/// A step progress event for the UI, tagged with the app it belongs to.
+#[derive(Clone, Serialize)]
+struct ProgressEvent {
+    key: String,
+    #[serde(flatten)]
+    progress: engine::Progress,
+}
+
+/// Run an install/update (or uninstall), streaming step progress as `furnish://progress` events.
+async fn run(app: tauri::AppHandle, key: String, uninstall: bool) -> CmdResult<()> {
+    blocking(move || {
+        let doc = catalog::find_app(&key)?.doc;
+        engine::run(&doc, uninstall, |progress| {
+            let _ = app.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-async fn uninstall(key: String) -> CmdResult<()> {
-    blocking(move || engine::remove(&catalog::find_app(&key)?.doc)).await
+async fn install(app: tauri::AppHandle, key: String) -> CmdResult<()> {
+    run(app, key, false).await
+}
+
+#[tauri::command]
+async fn uninstall(app: tauri::AppHandle, key: String) -> CmdResult<()> {
+    run(app, key, true).await
 }
 
 /// Preview installing (or uninstalling) without changing anything (DSC what-if).

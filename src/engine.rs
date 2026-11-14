@@ -153,31 +153,18 @@ pub fn status(doc: &Value) -> Result<Status> {
     Ok(classify(&states))
 }
 
+/// Install an app, or bring it up to date.
 pub fn apply(doc: &Value) -> Result<()> {
-    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
-    configurator(doc)?.invoke_set(false)?;
-    Ok(())
+    run(doc, false, |_| {})
 }
 
-/// Apply the document with every resource flipped to `_exist: false`.
+/// Uninstall an app: every resource set to `_exist: false`, in reverse install order.
 // ponytail: assumes every resource of an app supports `_exist`; per-app uninstall docs if not.
 pub fn remove(doc: &Value) -> Result<()> {
-    apply(&removal(doc))
+    run(doc, true, |_| {})
 }
 
-/// The document that uninstalls an app: every resource flipped to `_exist: false`, in reverse.
-fn removal(doc: &Value) -> Value {
-    let mut doc = doc.clone();
-    if let Some(resources) = doc["resources"].as_array_mut() {
-        resources.reverse();
-        for resource in resources {
-            resource["properties"]["_exist"] = Value::Bool(false);
-        }
-    }
-    doc
-}
-
-/// What one resource would do, as previewed by DSC's what-if mode.
+/// What one resource would do (DSC what-if), or did.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Step {
@@ -209,35 +196,155 @@ pub struct Change {
     pub after: Value,
 }
 
+/// Progress of an install/update/uninstall, reported while it runs.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "event", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Progress {
+    /// The steps that will run, in order (same as `plan`).
+    Planned { steps: Vec<Step> },
+    Started { index: usize, at_ms: u64 },
+    Finished { index: usize, at_ms: u64, duration_ms: u64, outcome: Outcome },
+}
+
+/// What a step actually did.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Outcome {
+    pub action: Action,
+    pub changes: Vec<Change>,
+    /// Set if the step failed; the run stops there.
+    pub error: Option<String>,
+}
+
 /// Preview installing (or uninstalling) an app without changing anything.
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
-    let doc = if uninstall { removal(doc) } else { doc.clone() };
-    let result = {
-        let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
-        let mut configurator = configurator(&doc)?;
-        configurator.context.execution_type = ExecutionKind::WhatIf;
-        configurator.invoke_set(false)?
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    step_docs(doc, uninstall)?.iter().map(preview).collect()
+}
+
+/// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
+/// furnish orchestrates the steps itself because DSC only reports per-resource progress on stderr.
+pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Result<()> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let docs = step_docs(doc, uninstall)?;
+    let steps = docs.iter().map(preview).collect::<Result<Vec<_>>>()?;
+    report(Progress::Planned { steps: steps.clone() });
+    for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
+        let started = now_ms();
+        if step.action == Action::Skipped {
+            let outcome = Outcome { action: Action::Skipped, changes: vec![], error: None };
+            report(Progress::Finished { index, at_ms: started, duration_ms: 0, outcome });
+            continue;
+        }
+        report(Progress::Started { index, at_ms: started });
+        let result = configurator(step_doc).and_then(|mut c| Ok(c.invoke_set(false)?));
+        let finished = now_ms();
+        let outcome = match &result {
+            Ok(r) => match r.results.first().map(|r| &r.result) {
+                Some(SetResult::Resource(r)) => Outcome {
+                    action: action(&r.before_state, &r.after_state),
+                    changes: changes(&r.before_state, &r.after_state),
+                    error: None,
+                },
+                _ => Outcome { action: Action::Skipped, changes: vec![], error: None },
+            },
+            Err(e) => Outcome { action: step.action, changes: vec![], error: Some(format!("{e:#}")) },
+        };
+        report(Progress::Finished { index, at_ms: finished, duration_ms: finished - started, outcome });
+        result?;
+    }
+    Ok(())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// One single-resource document per step, in run order. Uninstall flips `_exist` and runs the
+/// install order backwards, so dependents go before what they depend on.
+fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
+    let resources = doc["resources"].as_array().cloned().unwrap_or_default();
+    let mut order = invocation_order(&resources)?;
+    if uninstall {
+        order.reverse();
+    }
+    Ok(order
+        .into_iter()
+        .map(|i| {
+            let mut resource = resources[i].clone();
+            if let Some(r) = resource.as_object_mut() {
+                // Ordering is handled here; DSC would reject references to absent resources.
+                r.remove("dependsOn");
+            }
+            if uninstall {
+                resource["properties"]["_exist"] = Value::Bool(false);
+            }
+            let mut single = doc.clone();
+            single["resources"] = Value::Array(vec![resource]);
+            single
+        })
+        .collect())
+}
+
+/// DSC's order: document order, except that a dependency runs right before the first
+/// resource that needs it.
+fn invocation_order(resources: &[Value]) -> Result<Vec<usize>> {
+    fn visit(i: usize, resources: &[Value], order: &mut Vec<usize>, path: &mut Vec<usize>) -> Result<()> {
+        if order.contains(&i) {
+            return Ok(());
+        }
+        if path.contains(&i) {
+            anyhow::bail!("dependsOn cycle involving '{}'", resources[i]["name"].as_str().unwrap_or_default());
+        }
+        path.push(i);
+        for dep in dependencies(&resources[i]) {
+            let Some(d) = resources.iter().position(|r| r["name"] == dep.as_str()) else {
+                anyhow::bail!("'{}' depends on unknown resource '{dep}'", resources[i]["name"].as_str().unwrap_or_default());
+            };
+            visit(d, resources, order, path)?;
+        }
+        path.pop();
+        order.push(i);
+        Ok(())
+    }
+    let mut order = Vec::new();
+    for i in 0..resources.len() {
+        visit(i, resources, &mut order, &mut Vec::new())?;
+    }
+    Ok(order)
+}
+
+/// Names from `dependsOn: ["[resourceId('Type', 'name')]"]`.
+fn dependencies(resource: &Value) -> Vec<String> {
+    resource["dependsOn"].as_array().into_iter().flatten().filter_map(|d| {
+        let args = d.as_str()?.strip_prefix("[resourceId(")?.strip_suffix(")]")?;
+        let (_, name) = args.split_once(',')?;
+        Some(name.trim().trim_matches('\'').to_string())
+    }).collect()
+}
+
+/// What-if for one single-resource document.
+fn preview(doc: &Value) -> Result<Step> {
+    let resource = &doc["resources"][0];
+    let name = resource["name"].as_str().unwrap_or_default().to_string();
+    let kind = resource["type"].as_str().unwrap_or_default().to_string();
+    let mut configurator = configurator(doc)?;
+    configurator.context.execution_type = ExecutionKind::WhatIf;
+    let result = configurator.invoke_set(false)?;
+    // A resource skipped by its condition produces no result at all.
+    let Some(r) = result.results.first() else {
+        let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
+        return Ok(Step { name, kind, action: Action::Skipped, details, changes: vec![] });
     };
-    let steps = doc["resources"].as_array().into_iter().flatten().map(|resource| {
-        let name = resource["name"].as_str().unwrap_or_default().to_string();
-        let kind = resource["type"].as_str().unwrap_or_default().to_string();
-        // Skipped resources produce no result at all.
-        let Some(r) = result.results.iter().find(|r| r.name == name) else {
-            let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
-            return Step { name, kind, action: Action::Skipped, details, changes: vec![] };
-        };
-        let details = r.metadata.as_ref()
-            .and_then(|m| m.other.get("whatIf"))
-            .and_then(Value::as_array)
-            .map(|lines| lines.iter().filter_map(|l| l.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        let (before, after) = match &r.result {
-            SetResult::Resource(r) => (r.before_state.clone(), r.after_state.clone()),
-            SetResult::Group(_) => (Value::Null, Value::Null),
-        };
-        Step { name, kind, action: action(&before, &after), details, changes: changes(&before, &after) }
-    });
-    Ok(steps.collect())
+    let details = r.metadata.as_ref()
+        .and_then(|m| m.other.get("whatIf"))
+        .and_then(Value::as_array)
+        .map(|lines| lines.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let (before, after) = match &r.result {
+        SetResult::Resource(r) => (r.before_state.clone(), r.after_state.clone()),
+        SetResult::Group(_) => (Value::Null, Value::Null),
+    };
+    Ok(Step { name, kind, action: action(&before, &after), details, changes: changes(&before, &after) })
 }
 
 fn exists(state: &Value) -> bool {
@@ -308,6 +415,26 @@ mod tests {
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    #[test]
+    fn run_order_puts_dependencies_first_and_reverses_for_uninstall() {
+        let doc = json!({"resources": [
+            {"name": "app", "type": "T/X", "dependsOn": ["[resourceId('T/X', 'runtime')]"], "properties": {}},
+            {"name": "runtime", "type": "T/X", "properties": {}},
+            {"name": "shortcut", "type": "T/X", "properties": {}},
+        ]});
+        let names = |docs: Vec<Value>| docs.iter().map(|d| d["resources"][0]["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(names(step_docs(&doc, false).unwrap()), ["runtime", "app", "shortcut"]);
+        let uninstall = step_docs(&doc, true).unwrap();
+        assert_eq!(names(uninstall.clone()), ["shortcut", "app", "runtime"]);
+        assert_eq!(uninstall[0]["resources"][0]["properties"]["_exist"], false);
+        assert!(uninstall[1]["resources"][0].get("dependsOn").is_none());
+        let cycle = json!({"resources": [
+            {"name": "a", "dependsOn": ["[resourceId('T/X', 'b')]"]},
+            {"name": "b", "dependsOn": ["[resourceId('T/X', 'a')]"]},
+        ]});
+        assert!(step_docs(&cycle, false).is_err());
     }
 
     #[test]

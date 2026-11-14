@@ -38,6 +38,22 @@ export interface Step {
   changes: { property: string; before: unknown; after: unknown }[];
 }
 
+export interface Outcome {
+  action: Action;
+  changes: Step['changes'];
+  /** Set if the step failed; the run stops there. */
+  error: string | null;
+}
+
+export type Progress = { key: string } & (
+  | { event: 'planned'; steps: Step[] }
+  | { event: 'started'; index: number; atMs: number }
+  | { event: 'finished'; index: number; atMs: number; durationMs: number; outcome: Outcome }
+);
+
+export const onProgress = (handler: (p: Progress) => void) =>
+  listen<Progress>('furnish://progress', (event) => handler(event.payload));
+
 export const plan = (key: string, uninstall: boolean) => invoke<Step[]>('plan', { key, uninstall });
 
 export const onLog = (handler: (line: LogLine) => void) =>

@@ -90,7 +90,7 @@ fn run(command: Command) -> Result<()> {
                 Status::NotInstalled | Status::NeedsUpdate => {}
             }
             println!("⟳ Installing {}…", app.id);
-            engine::apply(&app.doc)?;
+            engine::run(&app.doc, false, print_progress())?;
             println!("✓ Installed {}", app.id);
             Ok(())
         }
@@ -101,7 +101,7 @@ fn run(command: Command) -> Result<()> {
                 return Ok(());
             }
             println!("⟳ Uninstalling {}…", app.id);
-            engine::remove(&app.doc)?;
+            engine::run(&app.doc, true, print_progress())?;
             println!("✓ Uninstalled {}", app.id);
             Ok(())
         }
@@ -169,6 +169,32 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Prints each step as it starts and finishes, with duration and result.
+fn print_progress() -> impl FnMut(engine::Progress) {
+    use engine::{Action, Progress};
+    let mut steps = Vec::new();
+    move |event| match event {
+        Progress::Planned { steps: planned } => steps = planned,
+        Progress::Started { index, .. } => {
+            let step: &engine::Step = &steps[index];
+            println!("  ▸ [{}/{}] {} …", index + 1, steps.len(), step.name);
+        }
+        Progress::Finished { index, duration_ms, outcome, .. } => {
+            let step = &steps[index];
+            let secs = duration_ms as f64 / 1000.0;
+            match (&outcome.error, outcome.action) {
+                (Some(err), _) => println!("  ✗ {} failed after {secs:.1}s: {}", step.name, err.lines().next().unwrap_or_default()),
+                (None, Action::Skipped) => println!("  – {} skipped: not for this system", step.name),
+                (None, Action::Nothing) => println!("  ✓ {} already as described ({secs:.1}s)", step.name),
+                (None, action) => {
+                    let what = match action { Action::Install => "installed", Action::Remove => "removed", _ => "changed" };
+                    println!("  ✓ {} {what} ({secs:.1}s)", step.name);
+                }
+            }
+        }
+    }
 }
 
 fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {

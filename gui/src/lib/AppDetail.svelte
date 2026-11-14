@@ -75,7 +75,7 @@
 
   <!-- Expert details: collapsed by default, one click to reveal. -->
   <details class="expert" bind:open={planOpen}>
-    <summary>What would happen <span class="hint">preview, changes nothing</span></summary>
+    <summary>Steps <span class="hint">preview and live progress</span></summary>
     <!-- Mounted only while open: the preview asks DSC, which takes a moment. -->
     {#if planOpen}<Plan {app} />{/if}
   </details>

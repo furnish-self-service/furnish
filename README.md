@@ -64,7 +64,7 @@ On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libweb
 
 Each app's detail page has three collapsed sections for experts:
 
-- **What would happen** previews installing, updating or uninstalling, without changing anything. It lists each step, the exact command and whether it needs administrator rights.
+- **Steps** previews installing, updating or uninstalling, without changing anything: each step, the exact command and whether it needs administrator rights. While an operation runs, it follows those steps live: done, current and upcoming steps, with start time, duration and result.
 - **Activity log** shows each DSC step and the package manager's output during install, update or uninstall.
 - **DSC configuration** shows the app's file.
 

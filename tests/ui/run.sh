@@ -33,7 +33,7 @@ cat > "$work/bin/pacman" <<SH
 #!/bin/sh
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
-  -S) echo 1.0 > "$work/pkgs/\$4" ;;
+  -S) sleep 2; echo 1.0 > "$work/pkgs/\$4" ;;  # slow enough to observe live progress
   -R) rm "$work/pkgs/\$3" ;;
 esac
 SH

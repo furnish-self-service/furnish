@@ -70,7 +70,7 @@ const steps = [
     await waitFor('configuration shown', async () => (await isOpen(panel)) && (await text(`${panel}//pre`)).includes('Furnish/Package'));
   }],
   ['preview lists the concrete steps and changes nothing', async () => {
-    const panel = "//details[summary[contains(., 'What would happen')]]";
+    const panel = "//details[summary[contains(., 'Steps')]]";
     if (await isOpen(panel)) throw new Error('preview open before click');
     await click(`${panel}/summary`);
     // Installed, so the preview shows uninstalling: the exact command and who runs it.
@@ -91,6 +91,17 @@ const steps = [
     await click(button('Uninstall'));
     await click("//button[contains(@class,'danger') and normalize-space()='Uninstall']");
     await waitFor('Not installed', () => find("//*[normalize-space()='Not installed']"), 30000);
+  }],
+  ['steps panel follows an install live: current step, then results with durations', async () => {
+    const panel = "//details[summary[contains(., 'Steps')]]";
+    if (!(await isOpen(panel))) await click(`${panel}/summary`);
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    await waitFor('a running step', () => find(`${panel}//li[contains(@class,'running')]`));
+    if (!/step \d of \d/.test(await text(`${panel}//p[contains(@class,'summary')]`))) throw new Error('no step counter');
+    await waitFor('run finished', async () => /Installed hyperfine in/.test(await text(`${panel}//p[contains(@class,'summary')]`)), 30000);
+    const done = await text(`${panel}//li[contains(@class,'done')]`);
+    if (!/Installed/.test(done) || !/\d+(\.\d)? (ms|s)/.test(done)) throw new Error(`done step lacks result/duration: ${done}`);
+    if (!(await findAll(`${panel}//li[contains(@class,'skipped')]`)).length) throw new Error('skipped step missing');
   }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));

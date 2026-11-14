@@ -524,7 +524,7 @@ Each of these was observed with the current furnish build.
 - `furnish install` prints "already installed".
 - *Fix:* if no resource ran, report "not available on this OS".
 
-**2. Uninstall runs in the wrong order when `dependsOn` is used.**
+**2. Uninstall runs in the wrong order when `dependsOn` is used.** *(Fixed: furnish now runs one resource at a time in its own computed order, reversed for uninstall; see `engine::run`.)*
 
 - `engine::remove` reverses the resource array. DSC still pulls dependencies in first (1.3), so
   for `b dependsOn a` the uninstall removed `a` before `b`.
