@@ -159,8 +159,12 @@
     display: flex;
     gap: 0.5rem;
   }
+  /* Same slot size as ActionButton's large variant, so swapping them never moves anything. */
   .large {
-    padding: 0.7rem 1.4rem;
+    box-sizing: border-box;
+    width: 10.5rem;
+    height: 2.75rem;
+    padding: 0 1rem;
     font-size: 1rem;
     border-radius: 999px;
   }

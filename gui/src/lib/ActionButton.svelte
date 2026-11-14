@@ -1,5 +1,8 @@
 <script lang="ts">
-  // The primary action for an app. While it runs, the button fills like a level.
+  // The primary action for an app. One fixed-size slot: idle it is a button (Install, Update,
+  // Uninstall); while running it turns, in place, into a progress pill that fills like a level,
+  // with an always-visible stop control inside it (app-store pattern: no layout shift, no
+  // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
   import { store, install, uninstall, stop } from './state.svelte';
 
@@ -9,31 +12,33 @@
   const busy = $derived(store.busy[app.key]);
   // Only one engine call runs at a time; other buttons wait instead of queueing silently.
   const engineBusy = $derived(Object.keys(store.busy).length > 0);
-
-  const label = $derived(
-    busy === 'install'
-      ? status === 'needsUpdate' ? 'Updating…' : 'Installing…'
-      : busy === 'uninstall'
-        ? 'Uninstalling…'
-        : status === 'installed'
-          ? 'Uninstall'
-          : status === 'needsUpdate'
-            ? 'Update'
-            : 'Install',
-  );
-  const quiet = $derived(!busy && status === 'installed');
   const stopping = $derived(busy ? store.runs[app.key]?.stopping : undefined);
 
-  // Abort first lets the current step finish; a second click (Force stop) interrupts it.
-  function halt(event: MouseEvent) {
-    event.stopPropagation();
-    stop(app.key, stopping ? 'force' : 'abort');
-  }
+  const label = $derived(
+    stopping
+      ? 'Stopping…'
+      : busy === 'install'
+        ? status === 'needsUpdate' ? 'Updating…' : 'Installing…'
+        : busy === 'uninstall'
+          ? 'Uninstalling…'
+          : status === 'installed'
+            ? 'Uninstall'
+            : status === 'needsUpdate'
+              ? 'Update'
+              : 'Install',
+  );
+  const quiet = $derived(!busy && status === 'installed');
+  const verb = $derived(busy === 'uninstall' ? 'uninstalling' : status === 'needsUpdate' ? 'updating' : 'installing');
 
   function run(event: MouseEvent) {
     event.stopPropagation();
     if (status === 'installed') uninstall(app);
     else install(app);
+  }
+
+  function halt(event: MouseEvent) {
+    event.stopPropagation();
+    stop(app.key, stopping ? 'force' : 'abort');
   }
 </script>
 
@@ -41,63 +46,51 @@
   <span class="checking" class:large>Checking…</span>
 {:else if status === 'error'}
   <span class="checking" class:large>Status unknown</span>
+{:else if busy}
+  <!-- Running: same slot, now progress + stop. -->
+  <div class="action busy" class:large role="group" aria-label="{label} {app.id}" aria-busy="true">
+    <span class="fill" aria-hidden="true"></span>
+    <span class="label">{label}</span>
+    <button
+      class="halt"
+      aria-label={stopping ? 'Force stop' : 'Abort'}
+      title={stopping ? `Interrupt the current step now` : `Stop ${verb} after the current step`}
+      disabled={stopping === 'force'}
+      onclick={halt}
+    >
+      {#if stopping}
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5" /></svg>
+      {:else}
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7m0-7l-7 7" /></svg>
+      {/if}
+    </button>
+  </div>
 {:else}
   <button
     class="action"
     class:large
     class:quiet
-    class:busy={!!busy}
     disabled={engineBusy}
-    title={engineBusy && !busy ? 'Waiting for the current installation to finish' : undefined}
-    aria-busy={!!busy}
+    title={engineBusy ? 'Waiting for the current installation to finish' : undefined}
     onclick={run}
   >
-    <span class="fill" aria-hidden="true"></span>
     <span class="label">{label}</span>
   </button>
-  {#if busy}
-    <button
-      class="stop"
-      class:large
-      class:force={!!stopping}
-      disabled={stopping === 'force'}
-      title={stopping ? 'Interrupt the current step now' : 'Stop after the current step'}
-      onclick={halt}
-    >
-      {stopping === 'force' ? 'Stopping…' : stopping ? 'Force stop' : 'Abort'}
-    </button>
-  {/if}
 {/if}
 
 <style>
-  .stop {
-    margin-left: 0.4rem;
-    padding: 0.42rem 0.85rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 600 0.85rem/1 var(--font-body);
-    cursor: pointer;
-  }
-  .stop:hover:not(:disabled) {
-    border-color: var(--danger);
-    color: var(--danger);
-  }
-  .stop.force {
-    border-color: var(--danger);
-    background: var(--danger);
-    color: var(--surface);
-  }
-  .stop.large {
-    padding: 0.7rem 1.2rem;
-    font-size: 1rem;
-  }
+  /* Fixed size: the slot never changes width, whatever it says or does. */
   .action {
+    flex: none; /* never squeezed by a crowded row */
     position: relative;
     overflow: hidden;
-    min-width: 6.5rem;
-    padding: 0.42rem 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 8.25rem;
+    height: 2.1rem;
+    padding: 0 1rem;
     border: 1px solid transparent;
     border-radius: 999px;
     font: 600 0.85rem/1 var(--font-body);
@@ -106,7 +99,12 @@
     cursor: pointer;
     transition: background 0.15s;
   }
-  .action:hover:not(:disabled) {
+  .large {
+    width: 10.5rem;
+    height: 2.75rem;
+    font-size: 1rem;
+  }
+  button.action:hover:not(:disabled) {
     background: var(--accent-strong);
   }
   .action.quiet {
@@ -114,51 +112,81 @@
     background: transparent;
     border-color: var(--line-strong);
   }
-  .action.quiet:hover:not(:disabled) {
+  button.action.quiet:hover:not(:disabled) {
     background: var(--danger-soft);
     border-color: var(--danger);
     color: var(--danger);
   }
-  .action:disabled:not(.busy) {
+  button.action:disabled {
     opacity: 0.45;
     cursor: default;
   }
-  .large {
-    min-width: 9rem;
-    padding: 0.7rem 1.4rem;
-    font-size: 1rem;
-  }
   .label {
     position: relative;
+    white-space: nowrap;
+  }
+  /* Running: leave room for the stop control on the right. */
+  .busy {
+    justify-content: flex-start;
+    padding: 0 2.3rem 0 1rem;
+    cursor: progress;
+  }
+  .large.busy {
+    padding-right: 2.9rem;
   }
   /* Signature: the fill rises and settles while the engine works. */
   .fill {
     position: absolute;
     inset: 0;
-    transform: translateY(100%);
     background: var(--accent-strong);
-  }
-  .busy .fill {
     animation: level 1.6s ease-in-out infinite alternate;
-  }
-  .busy,
-  .busy:disabled {
-    opacity: 1;
-    cursor: progress;
-  }
-  .quiet.busy {
-    color: var(--on-accent);
-    background: var(--accent);
   }
   @keyframes level {
     from { transform: translateY(85%); }
     to { transform: translateY(15%); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .busy .fill {
+    .fill {
       animation: none;
       transform: translateY(50%);
     }
+  }
+  .halt {
+    position: absolute;
+    right: 0.3rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: grid;
+    place-items: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 0.22);
+    color: inherit;
+    cursor: pointer;
+  }
+  .large .halt {
+    right: 0.4rem;
+    width: 2.1rem;
+    height: 2.1rem;
+  }
+  .halt:hover:not(:disabled),
+  .halt:focus-visible {
+    background: rgb(255 255 255 / 0.4);
+  }
+  .halt:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .halt svg {
+    width: 0.95rem;
+    height: 0.95rem;
+    fill: currentColor;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
   }
   .checking {
     font-size: 0.8rem;

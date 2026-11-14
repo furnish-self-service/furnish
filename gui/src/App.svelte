@@ -28,10 +28,10 @@
 
 <div class="shell">
   <nav aria-label="Sections">
-    <div class="brand">
+    <button class="brand" onclick={() => go({ page: 'discover' })} aria-label="furnish, go to Discover">
       <img src={logo} alt="" width="34" height="34" />
       <span>furnish</span>
-    </div>
+    </button>
 
     <button class:active={isActive('discover')} onclick={() => go({ page: 'discover' })}>Discover</button>
     <button class:active={isActive('installed')} onclick={() => go({ page: 'installed' })}>
@@ -110,11 +110,21 @@
     border-right: 1px solid var(--line);
     overflow-y: auto;
   }
+  nav button.brand {
+    justify-content: flex-start;
+    margin-bottom: 1.25rem;
+    padding: 0.25rem 0.5rem;
+    color: var(--ink);
+    font: 700 1.35rem var(--font-display);
+  }
+  nav button.brand:hover {
+    background: none;
+    color: var(--accent-ink);
+  }
   .brand {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    padding: 0 0.5rem 1.25rem;
     font: 700 1.35rem var(--font-display);
     letter-spacing: -0.02em;
   }
