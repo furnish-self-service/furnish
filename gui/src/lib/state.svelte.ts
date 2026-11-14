@@ -8,6 +8,7 @@ export type View =
   | { page: 'updates' }
   | { page: 'category'; name: string }
   | { page: 'collections' }
+  | { page: 'activity' }
   | { page: 'app'; key: string; back: View };
 
 export type Busy = 'install' | 'uninstall';
@@ -31,6 +32,11 @@ export interface Run {
   steps: RunStep[];
 }
 
+export interface Queued {
+  key: string;
+  action: Busy;
+}
+
 export interface Toast {
   id: number;
   kind: 'success' | 'error' | 'info';
@@ -52,6 +58,8 @@ export const store = $state({
   logs: {} as Record<string, LogLine[]>,
   /** Step progress of the current or last install/update/uninstall per app (this session only). */
   runs: {} as Record<string, Run>,
+  /** Operations waiting for the running one to finish, in order. */
+  queue: [] as Queued[],
   settings: null as Settings | null,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: { running: false, lastAt: null as number | null, error: null as string | null },
@@ -136,7 +144,7 @@ export async function checkStatus(key: string) {
   }
 }
 
-export async function install(app: AppInfo) {
+async function runInstall(app: AppInfo) {
   const updating = store.status[app.key] === 'needsUpdate';
   startRun(app.key, updating ? 'update' : 'install');
   store.busy[app.key] = 'install';
@@ -155,7 +163,7 @@ export async function install(app: AppInfo) {
   }
 }
 
-export async function uninstall(app: AppInfo) {
+async function runUninstall(app: AppInfo) {
   startRun(app.key, 'uninstall');
   store.busy[app.key] = 'uninstall';
   let cancelled = false;
@@ -259,4 +267,39 @@ export async function changeSettings(change: Partial<Settings>) {
   } catch (e) {
     toast('error', "Couldn't save the settings", message(e));
   }
+}
+
+/** Install or update an app: right away, or after what is already running and queued. */
+export function install(app: AppInfo) {
+  enqueue(app.key, 'install');
+}
+
+/** Uninstall an app: right away, or after what is already running and queued. */
+export function uninstall(app: AppInfo) {
+  enqueue(app.key, 'uninstall');
+}
+
+function enqueue(key: string, action: Busy) {
+  if (store.busy[key] || store.queue.some((q) => q.key === key)) return;
+  store.queue.push({ key, action });
+  pump();
+}
+
+export function dequeue(key: string) {
+  store.queue = store.queue.filter((q) => q.key !== key);
+}
+
+export function clearQueue() {
+  store.queue = [];
+}
+
+/** Start the next queued operation unless one is running. One at a time, in order. */
+async function pump() {
+  if (Object.keys(store.busy).length) return;
+  const next = store.queue.shift();
+  if (!next) return;
+  const app = store.apps.find((a) => a.key === next.key);
+  if (app) await (next.action === 'install' ? runInstall(app) : runUninstall(app));
+  // A cancelled or failed operation only ends itself; the queue carries on.
+  pump();
 }

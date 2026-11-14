@@ -49,8 +49,8 @@
           <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>Uninstall</button>
           <button class="secondary" onclick={() => (confirming = false)}>Cancel</button>
         </div>
-      {:else if status === 'installed' && !store.busy[app.key]}
-        <button class="secondary large" disabled={Object.keys(store.busy).length > 0} onclick={() => (confirming = true)}>Uninstall</button>
+      {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
+        <button class="secondary large" onclick={() => (confirming = true)}>Uninstall</button>
       {:else}
         <ActionButton {app} large />
       {/if}

@@ -1,0 +1,10 @@
+# One more installable app, so the UI tests can queue several installs.
+metadata:
+  furnish:
+    description: Extra command-line tools
+    categories: [Test]
+resources:
+  - name: extras
+    type: Furnish/Package
+    properties:
+      name: extras

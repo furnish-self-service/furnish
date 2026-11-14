@@ -141,6 +141,23 @@ const steps = [
     if (!(await findAll(`${panel}//li[contains(@class,'cancelled') and contains(., 'toolbox-b')]`)).length) throw new Error('step not marked cancelled');
     if (existsSync(`${workDir}/pkgs/toolbox-b`)) throw new Error('toolbox-b got installed anyway');
   }],
+  ['installs clicked in quick succession queue up; queued items can be removed', async () => {
+    await click(button('Discover'));
+    for (const app of ['toolbox', 'extras', 'fresh']) await click(`${card(app)}${button('Install')}`);
+    await waitFor('two queued', async () => (await findAll("//article//*[contains(@aria-label, 'is queued')]")).length === 2);
+    await click("//nav//button[starts-with(normalize-space(), 'Activity')]"); // label carries a count
+    // The queue drains as it runs, so check for the last item rather than a count.
+    const freshQueued = "//ol[contains(@class,'queue')]/li[.//*[normalize-space()='fresh']]";
+    await waitFor('fresh listed in the queue', () => find(freshQueued));
+    await click("//button[@aria-label='Remove fresh from the queue']");
+    await waitFor('fresh gone from the queue', async () => !(await findAll(freshQueued)).length);
+    await click(button('Discover'));
+    for (const app of ['toolbox', 'extras']) {
+      await waitFor(`${app} installed`, () => find(`${card(app)}//*[normalize-space()='Installed']`), 30000);
+    }
+    await waitFor('fresh still installable', () => find(`${card('fresh')}${button('Install')}`));
+    if (existsSync(`${workDir}/pkgs/fresh`)) throw new Error('removed item was installed');
+  }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));
     await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);

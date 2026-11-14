@@ -4,6 +4,7 @@
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
+  import Activity from './lib/Activity.svelte';
   import Toasts from './lib/Toasts.svelte';
 
   start();
@@ -13,6 +14,7 @@
     [...new Set(store.apps.filter((a) => store.status[a.key] !== 'unavailable').flatMap((a) => a.categories))].sort(),
   );
   const count = (page: 'installed' | 'updates') => visibleApps({ page }, '').length;
+  const activity = $derived(Object.keys(store.busy).length + store.queue.length);
   const apps = $derived(visibleApps(view, store.query));
   const detail = $derived(view.page === 'app' ? store.apps.find((a) => a.key === view.key) : undefined);
 
@@ -42,6 +44,11 @@
       {#if count('updates')}<span class="count pending">{count('updates')}</span>{/if}
     </button>
 
+    <button class:active={isActive('activity')} onclick={() => go({ page: 'activity' })}>
+      Activity
+      {#if activity}<span class="count running">{activity}</span>{/if}
+    </button>
+
     {#if categories.length}
       <h2>Categories</h2>
       {#each categories as name}
@@ -56,6 +63,8 @@
   <main>
     {#if view.page === 'collections'}
       <Collections />
+    {:else if view.page === 'activity'}
+      <Activity onopen={(key) => go({ page: 'app', key, back: view })} />
     {:else if view.page === 'app' && detail}
       <AppDetail app={detail} onback={() => view.page === 'app' && go(view.back)} />
     {:else}
@@ -169,6 +178,13 @@
     border-radius: 999px;
     background: var(--highlight);
     color: var(--on-highlight);
+    font-weight: 700;
+  }
+  .count.running {
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
     font-weight: 700;
   }
   .spacer {

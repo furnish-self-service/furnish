@@ -27,7 +27,7 @@
       <span class="collection">{app.collection}</span>
     {/if}
     <!-- Uninstalling is only offered on the detail page, behind a confirmation. -->
-    {#if status !== 'installed'}<ActionButton {app} />{/if}
+    {#if status !== 'installed' || store.busy[app.key] || store.queue.some((q) => q.key === app.key)}<ActionButton {app} />{/if}
   </footer>
 </article>
 

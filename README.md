@@ -68,6 +68,8 @@ Each app's detail page has three collapsed sections for experts:
 - **Activity log** shows each DSC step and the package manager's output during install, update or uninstall.
 - **DSC configuration** shows the app's file.
 
+Installs, updates and uninstalls run one at a time. Starting another while one runs queues it: its button shows "Queued" with a ✕ to remove it, and the **Activity** page lists what runs now and what is queued.
+
 While an install, update or uninstall runs, its button turns into a progress indicator with a stop control (✕) inside: the first click stops after the current step, the second (■) interrupts the current step. Dismissing the administrator password dialog cancels the operation instead of failing it.
 
 The app updates collections when it starts and every 30 minutes while it runs. Both are settings on the Collections page, in `settings.json` in furnish's data directory (admins can deploy it), and in the CLI: `furnish settings --update-on-launch false --update-interval 60` (`0` turns the interval off).

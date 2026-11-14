@@ -4,14 +4,16 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { store, install, uninstall, stop } from './state.svelte';
+  import { store, install, uninstall, stop, dequeue } from './state.svelte';
 
   let { app, large = false }: { app: AppInfo; large?: boolean } = $props();
 
   const status = $derived(store.status[app.key]);
   const busy = $derived(store.busy[app.key]);
-  // Only one engine call runs at a time; other buttons wait instead of queueing silently.
+  // Only one operation runs at a time; others wait in the queue (see the Activity page).
   const engineBusy = $derived(Object.keys(store.busy).length > 0);
+  const queued = $derived(store.queue.find((q) => q.key === app.key));
+  const position = $derived(store.queue.findIndex((q) => q.key === app.key) + 1);
   const stopping = $derived(busy ? store.runs[app.key]?.stopping : undefined);
 
   const label = $derived(
@@ -46,6 +48,19 @@
   <span class="checking" class:large>Checking…</span>
 {:else if status === 'error'}
   <span class="checking" class:large>Status unknown</span>
+{:else if queued}
+  <!-- Waiting: same slot, removable from the queue. -->
+  <div class="action queued" class:large role="group" aria-label="{app.id} is queued, position {position}">
+    <span class="label">Queued{store.queue.length > 1 ? ` · ${position}` : ''}</span>
+    <button
+      class="halt"
+      aria-label="Remove {app.id} from the queue"
+      title="Remove from the queue"
+      onclick={(e) => { e.stopPropagation(); dequeue(app.key); }}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7m0-7l-7 7" /></svg>
+    </button>
+  </div>
 {:else if busy}
   <!-- Running: same slot, now progress + stop. -->
   <div class="action busy" class:large role="group" aria-label="{label} {app.id}" aria-busy="true">
@@ -70,8 +85,7 @@
     class="action"
     class:large
     class:quiet
-    disabled={engineBusy}
-    title={engineBusy ? 'Waiting for the current installation to finish' : undefined}
+    title={engineBusy ? 'Starts after what is already running' : undefined}
     onclick={run}
   >
     <span class="label">{label}</span>
@@ -133,6 +147,25 @@
   }
   .large.busy {
     padding-right: 2.9rem;
+  }
+  .queued {
+    justify-content: flex-start;
+    padding: 0 2.3rem 0 1rem;
+    color: var(--ink-soft);
+    background: var(--hover);
+    border: 1px dashed var(--line-strong);
+    cursor: default;
+  }
+  .large.queued {
+    padding-right: 2.9rem;
+  }
+  .queued .halt {
+    background: rgb(0 0 0 / 0.06);
+  }
+  .queued .halt:hover,
+  .queued .halt:focus-visible {
+    background: var(--danger-soft);
+    color: var(--danger);
   }
   /* Signature: the fill rises and settles while the engine works. */
   .fill {
