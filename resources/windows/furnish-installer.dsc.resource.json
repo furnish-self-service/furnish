@@ -1,0 +1,100 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Installer",
+  "description": "Install an installer file from the collection (.msi, .exe)",
+  "version": "0.1.0",
+  "get": {
+    "executable": "powershell.exe",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "furnish-installer.dsc.resource.ps1",
+      "get"
+    ],
+    "input": "env"
+  },
+  "set": {
+    "executable": "powershell.exe",
+    "args": [
+      "-NoLogo",
+      "-NonInteractive",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "furnish-installer.dsc.resource.ps1",
+      "set",
+      {
+        "whatIfArg": "what-if"
+      }
+    ],
+    "input": "env",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "exitCodes": {
+    "0": "Success",
+    "10": "Invalid arguments",
+    "11": "Installer file or tool missing",
+    "12": "Cancelled: administrator rights were not granted"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Installer",
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Installer file, relative to the collection root"
+        },
+        "productCode": {
+          "type": "string",
+          "pattern": "^\\{[0-9A-Fa-f-]{36}\\}$",
+          "description": ".msi: product code; read from the file if omitted"
+        },
+        "displayName": {
+          "type": "string",
+          "description": ".exe: name as registered in Apps & features (wildcards allowed)"
+        },
+        "installArgs": {
+          "type": "string",
+          "description": ".exe: silent install switches, e.g. /S"
+        },
+        "uninstallArgs": {
+          "type": "string",
+          "description": ".exe: switches added to the registered uninstall command, if it has no quiet variant"
+        },
+        "version": {
+          "type": "string",
+          "readOnly": true
+        },
+        "_exist": {
+          "type": "boolean"
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

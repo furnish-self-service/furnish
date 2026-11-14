@@ -8,12 +8,13 @@ image=${1:?usage: $0 <image> <furnish-binary>}
 binary=$(realpath "${2:?usage: $0 <image> <furnish-binary>}")
 repo=$(cd "$(dirname "$0")/.." && pwd)
 
-# Minimal prerequisites per distro: git (collections are git repos) and bash (test script).
+# Prerequisites per distro: git (collections are git repos), git-lfs (LFS test), bash (test
+# script) and, for rpm distros, rpm-build to build the installer test file (.deb uses dpkg-deb).
 case "$image" in
-    ubuntu*|debian*) setup='apt-get update -qq && apt-get install -y -qq git >/dev/null' ;;
-    fedora*)         setup='dnf install -y -q git' ;;
-    opensuse*)       setup='zypper -n -q install git' ;;
-    archlinux*)      setup='pacman -Sy --noconfirm --needed -q git >/dev/null' ;;
+    ubuntu*|debian*) setup='apt-get update -qq && apt-get install -y -qq git git-lfs >/dev/null' ;;
+    fedora*)         setup='dnf install -y -q git git-lfs rpm-build' ;;
+    opensuse*)       setup='zypper -n -q install git git-lfs rpm-build' ;;
+    archlinux*)      setup='pacman -Sy --noconfirm --needed -q git git-lfs >/dev/null' ;;
     nixos/nix*)      setup='command -v git || nix-env -iA nixpkgs.git' ;;
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac

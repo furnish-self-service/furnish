@@ -22,14 +22,11 @@ use serde_json::Value;
 /// Same resource types on every OS, with OS-specific implementations.
 #[cfg(not(windows))]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
-    (
-        "furnish-package.dsc.resource.json",
-        include_str!("../resources/unix/furnish-package.dsc.resource.json"),
-    ),
-    (
-        "furnish-package.dsc.resource.sh",
-        include_str!("../resources/unix/furnish-package.dsc.resource.sh"),
-    ),
+    ("furnish-common.sh", include_str!("../resources/unix/furnish-common.sh")),
+    ("furnish-package.dsc.resource.json", include_str!("../resources/unix/furnish-package.dsc.resource.json")),
+    ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
+    ("furnish-installer.dsc.resource.json", include_str!("../resources/unix/furnish-installer.dsc.resource.json")),
+    ("furnish-installer.dsc.resource.sh", include_str!("../resources/unix/furnish-installer.dsc.resource.sh")),
 ];
 #[cfg(windows)]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
@@ -41,6 +38,8 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
         "furnish-package.dsc.resource.ps1",
         include_str!("../resources/windows/furnish-package.dsc.resource.ps1"),
     ),
+    ("furnish-installer.dsc.resource.json", include_str!("../resources/windows/furnish-installer.dsc.resource.json")),
+    ("furnish-installer.dsc.resource.ps1", include_str!("../resources/windows/furnish-installer.dsc.resource.ps1")),
 ];
 
 /// dsc-lib mutates the process environment (PATH) during resource discovery, so engine

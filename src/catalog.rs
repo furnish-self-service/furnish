@@ -80,7 +80,12 @@ pub fn add(url: &str, name: &str) -> Result<Collection> {
     }
     fs::create_dir_all(collections_dir())?;
     git(None, &["clone", "--quiet", url, &dir.to_string_lossy()])?;
-    Ok(Collection { name: name.to_string(), dir })
+    let collection = Collection { name: name.to_string(), dir };
+    if let Err(err) = collection.fetch_lfs_files() {
+        let _ = fs::remove_dir_all(&collection.dir); // no half-usable collection
+        return Err(err);
+    }
+    Ok(collection)
 }
 
 pub fn remove(name: &str) -> Result<()> {
@@ -102,6 +107,7 @@ impl Collection {
     pub fn update(&self) -> Result<(String, String)> {
         let old = self.revision()?;
         git(Some(&self.dir), &["pull", "--quiet", "--ff-only"])?;
+        self.fetch_lfs_files()?;
         Ok((old, self.revision()?))
     }
 
@@ -128,10 +134,29 @@ impl Collection {
             .collect()
     }
 
+    /// Collections may store installers with Git LFS; without it they'd hold pointer files.
+    // ponytail: downloads every LFS file; per-OS `lfs.fetchinclude` if collections get large.
+    fn fetch_lfs_files(&self) -> Result<()> {
+        let uses_lfs = fs::read_to_string(self.dir.join(".gitattributes")).is_ok_and(|a| a.contains("filter=lfs"));
+        if !uses_lfs {
+            return Ok(());
+        }
+        git(Some(&self.dir), &["lfs", "version"])
+            .map_err(|_| anyhow::anyhow!("collection '{}' stores files with Git LFS, but git-lfs is not installed", self.name))?;
+        git(Some(&self.dir), &["lfs", "install", "--local"])?;
+        git(Some(&self.dir), &["lfs", "pull"])?;
+        Ok(())
+    }
+
     /// Resolve a repo-relative path; `None` if missing or pointing outside the repo.
     fn file_in_repo(&self, relative: &str) -> Option<PathBuf> {
         let path = self.dir.join(relative).canonicalize().ok()?;
-        path.starts_with(self.dir.canonicalize().ok()?).then_some(path)
+        if !path.starts_with(self.dir.canonicalize().ok()?) {
+            return None;
+        }
+        // Windows canonical paths start with \\?\, which installers like msiexec reject.
+        let plain = path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from);
+        Some(plain.unwrap_or(path))
     }
 
     fn load_app(&self, path: &Path) -> Result<App> {
@@ -140,6 +165,18 @@ impl Collection {
         if doc.get("$schema").is_none() {
             // DSC requires it; don't make every app author repeat it.
             doc["$schema"] = DSC_SCHEMA.into();
+        }
+        // Installer files are given relative to the collection; resources need absolute paths.
+        for resource in doc["resources"].as_array_mut().into_iter().flatten() {
+            if resource["type"] != "Furnish/Installer" {
+                continue;
+            }
+            if let Some(file) = resource["properties"]["file"].as_str() {
+                let resolved = self
+                    .file_in_repo(file)
+                    .with_context(|| format!("installer '{file}' is missing or outside the collection"))?;
+                resource["properties"]["file"] = resolved.to_string_lossy().into_owned().into();
+            }
         }
         let meta = &doc["metadata"]["furnish"];
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();

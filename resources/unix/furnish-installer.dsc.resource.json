@@ -1,0 +1,82 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Installer",
+  "description": "Install an installer file from the collection (.deb, .rpm, .pkg, .dmg)",
+  "version": "0.1.0",
+  "get": {
+    "executable": "furnish-installer.dsc.resource.sh",
+    "args": [
+      "get"
+    ],
+    "input": "env"
+  },
+  "set": {
+    "executable": "furnish-installer.dsc.resource.sh",
+    "args": [
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
+    ],
+    "input": "env",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "exitCodes": {
+    "0": "Success",
+    "10": "Invalid arguments",
+    "11": "No supported package manager found",
+    "12": "Cancelled: administrator rights were not granted",
+    "13": "Cancelled: stopped by the user"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Installer",
+      "type": "object",
+      "required": [
+        "file"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Installer file, relative to the collection root"
+        },
+        "packageId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "description": ".pkg: the package identifier (pkgutil --pkgs)"
+        },
+        "app": {
+          "type": "string",
+          "pattern": "^[^/]+\\.app$",
+          "description": ".dmg: the app bundle to copy to /Applications"
+        },
+        "version": {
+          "type": "string",
+          "readOnly": true,
+          "description": "Installed version"
+        },
+        "_exist": {
+          "type": "boolean",
+          "description": "Whether it should be installed"
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

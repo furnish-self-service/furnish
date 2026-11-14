@@ -95,6 +95,27 @@ resources:
       name: cowsay
 ```
 
+### Installer files and Git LFS
+
+Collections can ship installers. Store them with [Git LFS](https://git-lfs.com) (`git lfs track "*.msi"`); furnish downloads LFS files when it adds or updates a collection, so users need `git-lfs` installed. Install a file with the bundled `Furnish/Installer` resource, giving the path relative to the collection root:
+
+| File | Platform | Extra properties |
+|---|---|---|
+| `.deb`, `.rpm` | Linux | none: the package name comes from the file |
+| `.pkg` | macOS | `packageId` (see `pkgutil --pkgs`) |
+| `.dmg` | macOS | `app`: the `.app` to copy to /Applications |
+| `.msi` | Windows | none: the product code comes from the file |
+| `.exe` | Windows | `installArgs` (silent switches), `displayName` (as in Apps & features) |
+
+```yaml
+resources:
+  - name: VPN client
+    type: Furnish/Installer
+    condition: "[equals(context().os.family, 'Windows')]"
+    properties:
+      file: installers/vpn-client.msi
+```
+
 See [self-service-example](https://github.com/furnish-self-service/self-service-example) for a complete collection.
 
 ## Writing apps and resources
