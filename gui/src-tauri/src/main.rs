@@ -255,12 +255,18 @@ async fn plan(key: String, uninstall: bool) -> CmdResult<Vec<engine::Step>> {
 #[tauri::command]
 fn abort() {
     engine::abort();
+    if let Err(err) = furnish::service::stop(false) {
+        eprintln!("warning: {err:#}");
+    }
 }
 
 /// Stop the running install/update/uninstall now, interrupting its current step.
 #[tauri::command]
 fn force_stop() {
     engine::force_stop();
+    if let Err(err) = furnish::service::stop(true) {
+        eprintln!("warning: {err:#}");
+    }
 }
 
 /// How often the load sampler measures; FURNISH_LOAD_SAMPLE_SECONDS overrides the default 10 s

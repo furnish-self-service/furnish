@@ -54,6 +54,18 @@ jobs:
           path: bin
       - run: chmod +x bin/furnish && tests/distro.sh "${{ matrix.image }}" bin/furnish
 
+  service:
+    name: service (users without admin rights)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/service.sh bin/furnish
+
   native:
     name: e2e ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

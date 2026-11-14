@@ -99,10 +99,22 @@ pub struct LogLine {
 /// Call once at startup; later calls are ignored.
 pub fn capture_logs(sink: impl Fn(LogLine) + Send + Sync + 'static) {
     use tracing_subscriber::prelude::*;
-    let _ = tracing_subscriber::registry().with(LogForwarder(Box::new(sink))).try_init();
+    if LOG_SINK.set(Box::new(sink)).is_ok() {
+        let _ = tracing_subscriber::registry().with(LogForwarder).try_init();
+    }
 }
 
-struct LogForwarder(Box<dyn Fn(LogLine) + Send + Sync>);
+static LOG_SINK: OnceLock<Box<dyn Fn(LogLine) + Send + Sync>> = OnceLock::new();
+
+/// Pass on a log line from elsewhere (the furnish service) as if DSC had logged it here.
+pub fn emit_log(level: &str, message: String) {
+    let level = ["error", "warn", "info", "debug", "output"].into_iter().find(|l| *l == level).unwrap_or("info");
+    if let Some(sink) = LOG_SINK.get() {
+        sink(LogLine { level, message });
+    }
+}
+
+struct LogForwarder;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogForwarder {
     fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
@@ -112,8 +124,8 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for LogForwarder {
         }
         let mut message = String::new();
         event.record(&mut MessageVisitor(&mut message));
-        if let Some(line) = log_line(*meta.level(), &message) {
-            (self.0)(line);
+        if let (Some(line), Some(sink)) = (log_line(*meta.level(), &message), LOG_SINK.get()) {
+            sink(line);
         }
     }
 }
@@ -241,7 +253,7 @@ pub fn remove(doc: &Value) -> Result<()> {
 }
 
 /// What one resource would do (DSC what-if), or did.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Step {
     pub name: String,
@@ -254,7 +266,7 @@ pub struct Step {
     pub changes: Vec<Change>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Action {
     Install,
@@ -265,7 +277,7 @@ pub enum Action {
     Skipped,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     pub property: String,
     pub before: Value,
@@ -273,7 +285,7 @@ pub struct Change {
 }
 
 /// Progress of an install/update/uninstall, reported while it runs.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Progress {
     /// The steps that will run, in order (same as `plan`).
@@ -283,7 +295,7 @@ pub enum Progress {
 }
 
 /// What a step actually did.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     pub action: Action,
     pub changes: Vec<Change>,

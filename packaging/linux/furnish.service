@@ -1,0 +1,15 @@
+# Installs your organization's apps for users without administrator rights (see README:
+# "Users without administrator rights"). Install to /etc/systemd/system/ (or
+# /usr/lib/systemd/system/), then: systemctl enable --now furnish
+[Unit]
+Description=furnish service: installs apps your organization provides
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/furnish service
+Restart=on-failure
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

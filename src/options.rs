@@ -17,7 +17,6 @@ use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::catalog::data_dir;
 
 /// An option as declared by a collection or an app.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -244,37 +243,57 @@ pub fn parse(text: &str, d: &Declaration) -> Result<Value> {
 
 // --- Values an app was installed with
 
-fn records_path() -> std::path::PathBuf {
-    data_dir().join("installed.json")
-}
+// Kept in the data directory of whoever installs: the user's, or the furnish service's.
 
-fn records() -> BTreeMap<String, Map<String, Value>> {
-    fs::read_to_string(records_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+fn records(dir: &Path) -> BTreeMap<String, Map<String, Value>> {
+    fs::read_to_string(dir.join("installed.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
 /// The option values an app (`collection/app`) was installed with, if furnish installed it.
-pub fn installed_with(app_key: &str) -> Option<Map<String, Value>> {
-    records().remove(app_key)
+pub fn installed_with(dir: &Path, app_key: &str) -> Option<Map<String, Value>> {
+    records(dir).remove(app_key)
 }
 
-pub fn remember(app_key: &str, values: &Map<String, Value>) -> Result<()> {
-    let mut all = records();
+pub fn remember(dir: &Path, app_key: &str, values: &Map<String, Value>) -> Result<()> {
+    let mut all = records(dir);
     all.insert(app_key.to_string(), values.clone());
-    write_records(&all)
+    write_records(dir, &all)
 }
 
-pub fn forget(app_key: &str) -> Result<()> {
-    let mut all = records();
+pub fn forget(dir: &Path, app_key: &str) -> Result<()> {
+    let mut all = records(dir);
     if all.remove(app_key).is_some() {
-        write_records(&all)?;
+        write_records(dir, &all)?;
     }
     Ok(())
 }
 
-fn write_records(all: &BTreeMap<String, Map<String, Value>>) -> Result<()> {
-    fs::create_dir_all(data_dir())?;
-    fs::write(records_path(), serde_json::to_string_pretty(all)? + "\n")?;
+fn write_records(dir: &Path, all: &BTreeMap<String, Map<String, Value>>) -> Result<()> {
+    fs::create_dir_all(dir)?;
+    fs::write(dir.join("installed.json"), serde_json::to_string_pretty(all)? + "\n")?;
     Ok(())
+}
+
+/// Values a client asks the furnish service to install with, checked against the app's options:
+/// only declared ones, of the right type, never against a policy lock, and no free text (it would
+/// reach resource commands that run as root). Options not asked for keep their resolved value.
+pub fn accept(resolved: &[Resolved], requested: &Map<String, Value>) -> Result<Map<String, Value>> {
+    let mut accepted = values(resolved);
+    for (name, value) in requested {
+        let r = resolved.iter().find(|r| &r.name == name).with_context(|| format!("unknown option '{name}'"))?;
+        if r.locked {
+            if r.value.as_ref() != Some(value) {
+                bail!("option '{name}' is set by your organization");
+            }
+            continue;
+        }
+        check(name, value, &r.declaration)?;
+        if r.declaration.kind == "string" && r.declaration.allowed_values.is_empty() {
+            bail!("option '{name}' takes free text, which system-wide installs don't accept (declare allowedValues)");
+        }
+        accepted.insert(name.clone(), value.clone());
+    }
+    Ok(accepted)
 }
 
 /// Whether a dependency's `condition` (a DSC expression) holds for these option values.
@@ -302,6 +321,32 @@ mod tests {
 
     fn entry(value: Value, locked: bool) -> crate::policy::Entry {
         crate::policy::Entry { value, locked }
+    }
+
+    #[test]
+    fn the_service_accepts_only_declared_typed_unlocked_choices() {
+        let option = |name: &str, kind: &str, allowed: Vec<Value>, value: Value, locked: bool| Resolved {
+            name: name.into(),
+            declaration: Declaration { kind: kind.into(), default: None, label: None, description: None, allowed_values: allowed },
+            value: Some(value),
+            source: if locked { Source::Policy } else { Source::Default },
+            locked,
+            own_value: None,
+        };
+        let resolved = [
+            option("userInstall", "bool", vec![], json!(false), false),
+            option("channel", "string", vec![json!("stable"), json!("beta")], json!("stable"), false),
+            option("prefix", "string", vec![], json!("/opt"), false),
+            option("proxy", "bool", vec![], json!(true), true),
+        ];
+        let ask = |v: Value| accept(&resolved, v.as_object().unwrap());
+        let ok = ask(json!({"userInstall": true, "channel": "beta", "proxy": true})).unwrap();
+        assert_eq!(Value::Object(ok), json!({"userInstall": true, "channel": "beta", "prefix": "/opt", "proxy": true}));
+        assert!(ask(json!({"other": 1})).is_err(), "undeclared");
+        assert!(ask(json!({"userInstall": "yes"})).is_err(), "wrong type");
+        assert!(ask(json!({"channel": "nightly"})).is_err(), "not allowed");
+        assert!(ask(json!({"prefix": "/tmp; rm -rf /"})).is_err(), "free text");
+        assert!(ask(json!({"proxy": false})).is_err(), "locked");
     }
 
     #[test]

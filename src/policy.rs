@@ -12,7 +12,8 @@
 //!
 //! ```json
 //! { "settings": { "updateIntervalMinutes": { "value": 60, "locked": true } },
-//!   "collections": { "preset": [{ "name": "acme-it", "url": "git@…" }], "usersCanAdd": false } }
+//!   "collections": { "preset": [{ "name": "acme-it", "url": "git@…" }], "usersCanAdd": false },
+//!   "service": { "allowedGroup": "staff" } }
 //! ```
 //!
 //! FURNISH_POLICY_FILE points to a JSON file instead (for tests).
@@ -34,6 +35,16 @@ pub struct Policy {
     pub collections: Collections,
     /// Option values (see `options`) by collection or `collection/app`: defaults or locked.
     pub parameters: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// Present: the furnish service installs the preset collections' apps (see `service`).
+    pub service: Option<Service>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Service {
+    /// Members of this group may install without a password. Others need what polkit allows
+    /// (`io.github.furnish.install`, by default an administrator password).
+    pub allowed_group: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -52,11 +63,13 @@ pub struct Collections {
     pub preset: Vec<Preset>,
     /// Whether users may add their own collections. If not, collections they added are ignored.
     pub users_can_add: bool,
+    /// SSH public keys (`ssh-ed25519 AAAA…`): preset collections only use commits signed by one.
+    pub trusted_keys: Vec<String>,
 }
 
 impl Default for Collections {
     fn default() -> Self {
-        Self { preset: Vec::new(), users_can_add: true }
+        Self { preset: Vec::new(), users_can_add: true, trusted_keys: Vec::new() }
     }
 }
 

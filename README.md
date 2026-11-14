@@ -104,6 +104,27 @@ Admins set policy where each OS keeps managed settings, which users can't write:
 
 Each setting is either a default the user can change, or `locked`. `parameters` sets [options](#options) the same way, for a collection (`acme-it`) or one app (`acme-it/kubectl`). Preset collections are cloned for every user and can't be removed; with `usersCanAdd: false`, users can't add others, and collections they added before are ignored. On macOS the plist dictionary has the same structure.
 
+### Users without administrator rights
+
+By default furnish runs as the user and asks for an administrator password when a step needs one, which suits small organizations where users are local admins. If users aren't admins, run the furnish service: it installs the apps of your preset collections system-wide on their behalf. Enable it with a `service` section in the policy:
+
+```json
+{
+  "collections": {
+    "preset": [{ "name": "acme-it", "url": "git@github.com:acme/it-apps.git" }],
+    "trustedKeys": ["ssh-ed25519 AAAAC3Nz… it-team"]
+  },
+  "service": { "allowedGroup": "staff" }
+}
+```
+
+- The service (`furnish service`, as root) keeps its own copies of the preset collections in `/var/lib/furnish`, which users can read but not change. Collections users add still install as the user.
+- Members of `allowedGroup` install without a password. Everyone else gets what polkit allows for `io.github.furnish.install`, by default an administrator password; grant groups with a polkit rule instead if you prefer ([example](packaging/linux/50-furnish.rules.example)).
+- Requests name an app and option values only. The service accepts only options the app declares, with the right type, never against a locked policy value, and no free-text strings (declare `allowedValues`).
+- With `trustedKeys`, preset collections only move to commits signed by one of these SSH keys (`git commit -S` with `gpg.format=ssh`). Without it, whoever can push to the repository can run code as root on every computer.
+
+Install on Linux: copy [`furnish.service`](packaging/linux/furnish.service) to `/etc/systemd/system/` and [`io.github.furnish.policy`](packaging/linux/io.github.furnish.policy) to `/usr/share/polkit-1/actions/`, then `systemctl enable --now furnish`. The service isn't available on macOS and Windows yet.
+
 On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
 
 The CLI has the same features: `furnish install <app> --dry-run` and `furnish uninstall <app> --dry-run` preview the steps, and `--verbose` shows the log.

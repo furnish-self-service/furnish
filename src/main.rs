@@ -17,6 +17,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the furnish service (as root): installs your organization's apps for users without
+    /// administrator rights. See the `service` section of the admin policy.
+    #[command(hide = true)]
+    Service,
     /// List all apps and their status
     #[command(visible_alias = "ls")]
     List,
@@ -109,6 +113,11 @@ enum CollectionCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if matches!(cli.command, Command::Service) {
+        // The service keeps its collections, resources and records in the system directory.
+        // SAFETY: still single-threaded.
+        unsafe { std::env::set_var("FURNISH_DATA_DIR", catalog::system_dir()) };
+    }
     if cli.verbose {
         engine::capture_logs(print_log_line);
     }
@@ -128,12 +137,13 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. }) {
+    if !matches!(command, Command::Settings { .. } | Command::Service) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
     }
     match command {
+        Command::Service => furnish::service::serve(),
         Command::List => list(),
         // Kits: names that are no app but a kit.
         Command::Install { app, dry_run, with, without } if is_kit(&app) => {

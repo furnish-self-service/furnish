@@ -1,0 +1,7 @@
+// /etc/polkit-1/rules.d/50-furnish.rules: members of "staff" install without a password,
+// from their active local session.
+polkit.addRule(function (action, subject) {
+    if (action.id == "io.github.furnish.install" && subject.isInGroup("staff") && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

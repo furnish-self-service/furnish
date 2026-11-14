@@ -97,6 +97,8 @@ pub struct App {
     pub dependencies: Vec<Item>,
     /// The collection's directory (for `collection.yaml`).
     pub collection_dir: PathBuf,
+    /// From a collection the admin policy presets.
+    pub managed: bool,
     pub doc: Value,
 }
 
@@ -107,27 +109,53 @@ pub fn data_dir() -> PathBuf {
         .unwrap_or_else(|| dirs::data_dir().expect("no data directory on this OS").join("furnish"))
 }
 
+/// Data directory of the furnish service (see `service`); `FURNISH_SYSTEM_DIR` overrides it.
+pub fn system_dir() -> PathBuf {
+    if let Some(dir) = env::var_os("FURNISH_SYSTEM_DIR") {
+        return dir.into();
+    }
+    if cfg!(windows) {
+        PathBuf::from(env::var_os("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into())).join("furnish")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support/furnish")
+    } else {
+        PathBuf::from("/var/lib/furnish")
+    }
+}
+
 fn collections_dir() -> PathBuf {
     data_dir().join("collections")
 }
 
+/// With the furnish service, the preset collections are its copies, which users can read but not change.
+fn preset_dir() -> PathBuf {
+    if crate::service::enabled() { system_dir().join("collections") } else { collections_dir() }
+}
+
 pub fn collections() -> Result<Vec<Collection>> {
-    let dir = collections_dir();
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
     let policy = crate::policy::load().collections;
     let preset = |name: &str| policy.preset.iter().any(|p| p.name == name);
-    let mut collections: Vec<_> = fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().join(".git").exists())
-        .map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            Collection { managed: preset(&name), name, dir: e.path() }
-        })
+    let in_dir = |dir: PathBuf| -> Result<Vec<Collection>> {
+        if !dir.exists() {
+            return Ok(vec![]);
+        }
+        Ok(fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join(".git").exists())
+            .map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                Collection { managed: preset(&name), name, dir: e.path() }
+            })
+            .collect())
+    };
+    let mut collections: Vec<_> = in_dir(collections_dir())?
+        .into_iter()
         // If users may not add collections, only the admin's count (others stay on disk, unused).
-        .filter(|c| policy.users_can_add || c.managed)
+        .filter(|c| (policy.users_can_add || c.managed) && (preset_dir() == collections_dir() || !c.managed))
         .collect();
+    if preset_dir() != collections_dir() {
+        collections.extend(in_dir(preset_dir())?.into_iter().filter(|c| c.managed));
+    }
     collections.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(collections)
 }
@@ -160,8 +188,16 @@ pub fn add(url: &str, name: &str) -> Result<Collection> {
 /// Clone the admin's preset collections this user doesn't have yet. Returns problems as messages
 /// (e.g. offline), so a missing preset doesn't stop furnish.
 pub fn ensure_presets() -> Vec<String> {
+    let presets = crate::policy::load().collections.preset;
+    if crate::service::enabled() {
+        // The service sets them up; ask it only if one is missing.
+        if presets.iter().all(|p| preset_dir().join(&p.name).join(".git").exists()) {
+            return vec![];
+        }
+        return crate::service::ensure_presets().unwrap_or_else(|err| vec![format!("{err:#}")]);
+    }
     let mut problems = Vec::new();
-    for preset in crate::policy::load().collections.preset {
+    for preset in presets {
         let dir = collections_dir().join(&preset.name);
         if dir.join(".git").exists() {
             match git(Some(&dir), &["remote", "get-url", "origin"]) {
@@ -190,9 +226,14 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
         bail!("a collection named '{name}' already exists");
     }
     fs::create_dir_all(collections_dir())?;
-    git(None, &["clone", "--quiet", url, &dir.to_string_lossy()])?;
+    git(None, &["clone", "--quiet", "--no-checkout", url, &dir.to_string_lossy()])?;
     let collection = Collection { name: name.to_string(), dir, managed };
-    if let Err(err) = collection.fetch_lfs_files() {
+    let checkout = || -> Result<()> {
+        collection.verify("HEAD")?;
+        git(Some(&collection.dir), &["reset", "--quiet", "--hard"])?;
+        collection.fetch_lfs_files()
+    };
+    if let Err(err) = checkout() {
         let _ = fs::remove_dir_all(&collection.dir); // no half-usable collection
         return Err(err);
     }
@@ -219,10 +260,31 @@ impl Collection {
 
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
+        if self.managed && crate::service::enabled() {
+            return crate::service::update(&self.name);
+        }
         let old = self.revision()?;
-        git(Some(&self.dir), &["pull", "--quiet", "--ff-only"])?;
+        git(Some(&self.dir), &["fetch", "--quiet"])?;
+        self.verify("@{upstream}")?;
+        git(Some(&self.dir), &["merge", "--quiet", "--ff-only", "@{upstream}"])?;
         self.fetch_lfs_files()?;
         Ok((old, self.revision()?))
+    }
+
+    /// For preset collections, when the policy lists trusted keys: refuse a commit that isn't
+    /// signed by one of them (SSH signatures). Whoever can push there controls what gets installed.
+    fn verify(&self, rev: &str) -> Result<()> {
+        let keys = crate::policy::load().collections.trusted_keys;
+        if !self.managed || keys.is_empty() {
+            return Ok(());
+        }
+        let signers = self.dir.join(".git").join("furnish-trusted-keys");
+        let lines: String = keys.iter().map(|k| format!("* namespaces=\"git\" {}\n", k.trim())).collect();
+        fs::write(&signers, lines)?;
+        let config = format!("gpg.ssh.allowedSignersFile={}", signers.display());
+        git(Some(&self.dir), &["-c", &config, "verify-commit", rev])
+            .with_context(|| format!("collection '{}': the latest commit isn't signed by a key your organization trusts", self.name))?;
+        Ok(())
     }
 
     /// Load `apps/*.dsc.yaml`. Invalid files are reported on stderr and skipped,
@@ -352,6 +414,7 @@ impl Collection {
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
             path: path.to_path_buf(),
             collection_dir: self.dir.clone(),
+            managed: self.managed,
             dependencies: match meta.get("dependencies") {
                 Some(deps) => serde_json::from_value(deps.clone()).context("metadata.furnish.dependencies")?,
                 None => Vec::new(),
@@ -379,14 +442,26 @@ impl App {
         crate::options::values(&self.options())
     }
 
+    /// Data directory of whoever installs this app (the user, or the furnish service), which
+    /// records the option values it was installed with.
+    fn state_dir(&self) -> PathBuf {
+        // Inside the service, data_dir() is the system directory too.
+        if self.remote() { system_dir() } else { data_dir() }
+    }
+
+    /// Installed through the furnish service.
+    fn remote(&self) -> bool {
+        self.managed && crate::service::enabled()
+    }
+
     /// Values for status, updates and uninstall: those it was installed with, else the current ones.
     pub fn installed_values(&self) -> serde_json::Map<String, Value> {
-        crate::options::installed_with(&self.key()).unwrap_or_else(|| self.current_values())
+        crate::options::installed_with(&self.state_dir(), &self.key()).unwrap_or_else(|| self.current_values())
     }
 
     /// Installed with option values that differ from the current ones (a reinstall applies them).
     pub fn options_differ(&self) -> bool {
-        let Some(installed) = crate::options::installed_with(&self.key()) else { return false };
+        let Some(installed) = crate::options::installed_with(&self.state_dir(), &self.key()) else { return false };
         self.current_values().iter().any(|(k, v)| installed.get(k) != Some(v))
     }
 
@@ -425,22 +500,38 @@ impl App {
     /// remember them.
     pub fn install(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         let values = self.installed_values();
-        crate::engine::run(&self.doc_for(&values), false, report)?;
-        crate::options::remember(&self.key(), &values)
+        if self.remote() {
+            return crate::service::run(&crate::service::Request::Install { app: self.key(), values }, report);
+        }
+        self.install_with(&values, report)
+    }
+
+    pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        crate::engine::run(&self.doc_for(values), false, report)?;
+        crate::options::remember(&self.state_dir(), &self.key(), values)
     }
 
     pub fn uninstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        if self.remote() {
+            return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
+        }
         crate::engine::run(&self.doc_for(&self.installed_values()), true, report)?;
-        crate::options::forget(&self.key())
+        crate::options::forget(&self.state_dir(), &self.key())
     }
 
     /// Apply changed options: uninstall with the old values, install with the current ones.
-    pub fn reinstall(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        crate::engine::run(&self.doc_for(&self.installed_values()), true, &mut report)?;
-        crate::options::forget(&self.key())?;
+    pub fn reinstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         let values = self.current_values();
-        crate::engine::run(&self.doc_for(&values), false, &mut report)?;
-        crate::options::remember(&self.key(), &values)
+        if self.remote() {
+            return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values }, report);
+        }
+        self.reinstall_with(&values, report)
+    }
+
+    pub fn reinstall_with(&self, values: &serde_json::Map<String, Value>, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        crate::engine::run(&self.doc_for(&self.installed_values()), true, &mut report)?;
+        crate::options::forget(&self.state_dir(), &self.key())?;
+        self.install_with(values, report)
     }
 }
 
@@ -511,6 +602,10 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
+        // The service's collections belong to root/SYSTEM; git refuses other users' repositories otherwise.
+        if dir.starts_with(system_dir()) {
+            cmd.arg("-c").arg(format!("safe.directory={}", dir.display()));
+        }
     }
     let output = cmd.args(args).output().context("failed to run git (is it installed?)")?;
     if !output.status.success() {
