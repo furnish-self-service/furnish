@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
   import { store, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending } from './state.svelte';
   import Options from './Options.svelte';
@@ -49,7 +50,7 @@
     <AppIcon {app} size={96} />
     <div class="heading">
       <h1>{app.id}</h1>
-      <p class="meta">{app.categories.join(' · ')}{app.categories.length ? ' — ' : ''}from {app.collection}</p>
+      <p class="meta">{app.categories.join(' · ')}{app.categories.length ? ' — ' : ''}from <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
       <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate' || status === 'blocked'}>{statusText}</p>
     </div>
     <div class="cta">

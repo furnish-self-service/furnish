@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
+  import { askQuestions } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
   const intervals = [
@@ -34,7 +35,10 @@
       return `Added ${c.name} with ${c.apps} app${c.apps === 1 ? '' : 's'}`;
     }, "Couldn't add the collection");
     adding = false;
-    if (ok) url = name = '';
+    if (ok) {
+      url = name = '';
+      askQuestions(true); // the new collection's required options
+    }
   }
 
   async function update(target: string) {
@@ -154,6 +158,7 @@
     <ul>
       {#each store.collections as c (c.name)}
         <li>
+          {#if c.icon}<img class="avatar" src={c.icon} alt="" width="36" height="36" />{/if}
           <div class="info">
             <span class="cname">{c.name}</span>
             <span class="mono">{c.url}</span>
@@ -183,7 +188,10 @@
           {/if}
           {#if c.options.length}
             <details class="copts">
-              <summary>Options for all {c.name} apps</summary>
+              <summary>
+                Options for all {c.name} apps
+                {#if c.options.some((o) => o.missing)}<span class="org">Needs your answer</span>{/if}
+              </summary>
               <Options target={c.name} options={c.options} scope="collection" />
             </details>
           {/if}
@@ -328,6 +336,9 @@
   }
   .copts {
     flex-basis: 100%;
+  }
+  .avatar {
+    border-radius: 9px;
   }
   .copts summary {
     cursor: pointer;

@@ -3,6 +3,7 @@
 metadata:
   furnish:
     description: Command-line benchmarking tool
+    recommended: true
     categories: [Test]
 resources:
   - name: hyperfine (winget)

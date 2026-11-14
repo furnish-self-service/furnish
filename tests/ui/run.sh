@@ -89,7 +89,8 @@ repo_from_fixture "$work/second"
 cat > "$work/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}},
  "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git"}]},
- "branding": {"name": "Acme Apps", "logo": "fixture/branding/logo.svg", "accent": "#e30613"}}
+ "branding": {"name": "Acme Apps", "logo": "fixture/branding/logo.svg", "accent": "#e30613"},
+ "parameters": {"fixture": {"role": {"value": "developer"}}}}
 JSON
 
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.

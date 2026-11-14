@@ -1,6 +1,16 @@
-# Options shared by the apps of this collection. An app uses one by declaring it in its DSC
-# `parameters` section; users and admins set it per collection or per app.
+# The collection's avatar, and options shared by its apps. An app uses an option by declaring it
+# in its DSC `parameters` section, or in `recommended`; users and admins set it per collection
+# or per app.
+icon: icon.svg
 parameters:
+  role:
+    type: string
+    required: true              # asked when the collection is added (or on the next launch)
+    label: What do you work on?
+    description: Recommends the apps for your role.
+    allowedValues:
+      - { value: developer, label: Software development }
+      - { value: design, label: Design }
   userInstall:
     type: bool
     default: false

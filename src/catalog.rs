@@ -269,6 +269,21 @@ impl Collection {
         git(Some(&self.dir), &["remote", "get-url", "origin"])
     }
 
+    /// The collection's own options (`collection.yaml`), resolved.
+    pub fn options(&self) -> Result<Vec<crate::options::Resolved>> {
+        Ok(crate::options::resolve_collection(&self.name, &crate::options::collection_declarations(&self.dir)?))
+    }
+
+    /// Required options nobody answered yet: its apps can't be installed until they are.
+    pub fn unanswered(&self) -> Vec<crate::options::Resolved> {
+        self.options().unwrap_or_default().into_iter().filter(|r| r.missing).collect()
+    }
+
+    /// The collection's avatar (`icon` in `collection.yaml`).
+    pub fn icon(&self) -> Option<PathBuf> {
+        self.file_in_repo(&crate::options::collection_icon(&self.dir)?)
+    }
+
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
         if self.managed && crate::service::enabled() {
@@ -453,6 +468,43 @@ impl App {
         crate::options::values(&self.options())
     }
 
+    /// Recommended for this user: `metadata.furnish.recommended`, `true` or a DSC expression over
+    /// the collection's and the app's options, e.g. `[equals(parameters('role'), 'developer')]`.
+    pub fn recommended(&self) -> bool {
+        match &self.doc["metadata"]["furnish"]["recommended"] {
+            Value::Bool(b) => *b,
+            Value::String(expr) => {
+                let dir = &self.collection_dir;
+                let shared = crate::options::collection_declarations(dir).unwrap_or_default();
+                let mut values = crate::options::values(&crate::options::resolve_collection(&self.collection, &shared));
+                values.extend(self.current_values());
+                // An unanswered option makes the expression fail: not recommended (yet).
+                crate::options::condition_holds(expr, &values).unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    /// Required collection options nobody answered yet (names); installing waits for them.
+    pub fn unanswered(&self) -> Vec<String> {
+        let shared = crate::options::collection_declarations(&self.collection_dir).unwrap_or_default();
+        crate::options::resolve_collection(&self.collection, &shared).into_iter().filter(|r| r.missing).map(|r| r.name).collect()
+    }
+
+    fn require_answers(&self) -> Result<()> {
+        let unanswered = self.unanswered();
+        if let Some(name) = unanswered.first() {
+            bail!(
+                "{} first needs your answer to its question{} ({}): furnish option set {} {name} <value>",
+                self.collection,
+                if unanswered.len() > 1 { "s" } else { "" },
+                unanswered.join(", "),
+                self.collection
+            );
+        }
+        Ok(())
+    }
+
     /// Installs into the user's account with these values: `metadata.furnish.perUser`, a DSC
     /// expression over the options (e.g. `[parameters('userInstall')]`) or `true`. Such installs
     /// never go through the furnish service: root or SYSTEM would install for the wrong account.
@@ -536,6 +588,7 @@ impl App {
 
     /// Install with these values: through the furnish service, or here.
     fn install_values(&self, values: serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        self.require_answers()?;
         if self.remote(&values) {
             return crate::service::run(&crate::service::Request::Install { app: self.key(), values }, report);
         }
@@ -560,6 +613,7 @@ impl App {
     /// Apply changed options: uninstall with the old values, install with the current ones.
     /// Moving between a system-wide and a per-user install takes both the service and this process.
     pub fn reinstall(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        self.require_answers()?;
         let (old, new) = (self.installed_values(), self.current_values());
         if self.remote(&old) && self.remote(&new) {
             return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new }, report);

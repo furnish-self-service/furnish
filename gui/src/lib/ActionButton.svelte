@@ -4,7 +4,7 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { store, requestInstall, uninstall, stop, dequeue } from './state.svelte';
+  import { store, requestInstall, uninstall, stop, dequeue, askQuestions } from './state.svelte';
 
   // `oninstall` replaces the default (asking about optional dependencies, then installing).
   let { app, large = false, oninstall }: { app: AppInfo; large?: boolean; oninstall?: () => void } = $props();
@@ -50,6 +50,9 @@
   <span class="checking" class:large>Checking…</span>
 {:else if status === 'error'}
   <span class="checking" class:large>Status unknown</span>
+{:else if app.unanswered.length && !busy && !queued && status !== 'installed' && status !== 'needsUpdate'}
+  <!-- The collection asks something first (e.g. your role); installing waits for the answer. -->
+  <button class="action" class:large onclick={(e) => { e.stopPropagation(); askQuestions(true); }}>Answer first</button>
 {:else if status === 'blocked' && !app.dependencies.some((d) => d.required || d.selected) && !busy && !queued}
   <!-- A tool this app needs is missing and the collection doesn't provide it. -->
   <span class="checking needs" class:large title="Needs {store.reasons[app.key]}">

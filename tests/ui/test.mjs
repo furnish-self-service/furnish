@@ -72,6 +72,15 @@ const steps = [
     });
     if (accent !== '#e30613') throw new Error(`accent: ${accent}`);
   }],
+  ['Discover recommends apps for the role; cards show the collection avatar', async () => {
+    // The policy answers the fixture collection's role question: developer.
+    const row = "//div[contains(@class,'grid') and contains(@class,'recommended')]";
+    // By the cards' headings in the DOM (WebKit's element text leaves them out).
+    const inRow = (app) => findAll(`${row}//h3[normalize-space()='${app}']`).then((l) => l.length > 0);
+    await waitFor('hyperfine and devtool recommended', async () => (await inRow('hyperfine')) && (await inRow('devtool')), 30000);
+    if (await inRow('toolbox')) throw new Error('toolbox recommended');
+    if (!(await findAll("//article//span[contains(@class,'collection')]//img")).length) throw new Error('no collection avatar on cards');
+  }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
   }],
@@ -292,6 +301,12 @@ const steps = [
     await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);
     await click(button('Add collection'));
     await waitFor('second collection listed', () => find("//li[.//*[normalize-space()='second']]"), 30000);
+    // Its required question comes up right away, as a dropdown with labels.
+    await waitFor('question dialog', () => find("//dialog[@open]//select[@data-question='role']"));
+    if (!(await text('//dialog[@open]')).includes('What do you work on?')) throw new Error('question text missing');
+    await click("//dialog[@open]//select[@data-question='role']/option[normalize-space()='Design']");
+    await click("//dialog[@open]//button[normalize-space()='Save answers']");
+    await waitFor('answer saved', () => /"second":\s*\{\s*"role":\s*"design"/.test(log('data/settings.json')));
     await click("//li[.//*[normalize-space()='second']]//button[normalize-space()='Remove']");
     await click("//button[contains(@class,'danger') and normalize-space()='Remove']");
     await waitFor('second collection gone', async () => !(await findAll("//li[.//*[normalize-space()='second']]")).length);

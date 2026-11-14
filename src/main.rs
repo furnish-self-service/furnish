@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use furnish::{catalog, engine, engine::Status};
 
@@ -113,6 +113,10 @@ enum CollectionCommand {
         /// Defaults to the last part of the URL
         #[arg(long)]
         name: Option<String>,
+        /// Answer one of the collection's options, e.g. --option role=developer (repeatable;
+        /// required ones not given are asked for)
+        #[arg(long = "option", value_name = "NAME=VALUE")]
+        options: Vec<String>,
     },
     /// List collections
     #[command(visible_alias = "ls")]
@@ -156,6 +160,12 @@ fn run(command: Command) -> Result<()> {
     if !matches!(command, Command::Settings { .. } | Command::Service { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
+        }
+        // Collections preset by the policy or added by hand may still have open questions.
+        if !matches!(command, Command::Option(_) | Command::Collection(CollectionCommand::Add { .. })) {
+            for collection in catalog::collections()? {
+                ask_unanswered(&collection)?;
+            }
         }
     }
     match command {
@@ -304,6 +314,9 @@ fn list() -> Result<()> {
         if app.options_differ() {
             description = format!("{description} (installed with other options: furnish reinstall {})", app.id);
         }
+        if app.recommended() {
+            description = format!("★ {description}");
+        }
         rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &description]));
     }
     print_table(&rows);
@@ -326,12 +339,19 @@ fn list() -> Result<()> {
 
 fn collection(cmd: CollectionCommand) -> Result<()> {
     match cmd {
-        CollectionCommand::Add { url, name } => {
+        CollectionCommand::Add { url, name, options } => {
             let name = name.unwrap_or_else(|| catalog::name_from_url(&url));
             let collection = catalog::add(&url, &name)?;
             let apps = collection.apps().len();
             println!("✓ Added '{name}' at revision {} with {apps} app(s)", collection.revision()?);
             println!("⚠ Apps run with administrator rights. Only add collections from authors you trust.");
+            let declared = collection.options()?;
+            for option in &options {
+                let (key, value) = option.split_once('=').with_context(|| format!("--option {option}: use NAME=VALUE"))?;
+                let r = declared.iter().find(|r| r.name == key).with_context(|| format!("{name} has no option '{key}'"))?;
+                furnish::options::set(&name, key, Some(furnish::options::parse(value, &r.declaration)?), &r.declaration)?;
+            }
+            ask_unanswered(&collection)?;
         }
         CollectionCommand::List => {
             let mut rows = vec![row(["Name", "Apps", "Revision", "URL", ""])];
@@ -402,6 +422,55 @@ fn target(name: &str) -> Result<(String, Vec<furnish::options::Resolved>)> {
         (None, Ok(a)) => Ok((a.key(), a.options())),
         (None, Err(_)) => anyhow::bail!("no collection or app named '{name}'"),
     }
+}
+
+/// Ask for the collection's required options that have no value yet. Without a terminal, say how
+/// to set them instead; the collection's apps can't be installed until then.
+fn ask_unanswered(collection: &catalog::Collection) -> Result<()> {
+    use std::io::{BufRead, IsTerminal, Write};
+    let unanswered = collection.unanswered();
+    if unanswered.is_empty() {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        for r in &unanswered {
+            eprintln!("⚠ {} asks: {}. Answer with: furnish option set {} {} <value>", collection.name, r.declaration.label.as_deref().unwrap_or(&r.name), collection.name, r.name);
+        }
+        return Ok(());
+    }
+    println!("{} asks {} question{} (Enter skips; its apps can't be installed until answered):", collection.name, unanswered.len(), if unanswered.len() > 1 { "s" } else { "" });
+    for r in unanswered {
+        println!("\n{}", r.declaration.label.as_deref().unwrap_or(&r.name));
+        if let Some(d) = &r.declaration.description {
+            println!("  {d}");
+        }
+        for (i, c) in r.choices.iter().enumerate() {
+            let value = c.value.as_str().map(String::from).unwrap_or_else(|| c.value.to_string());
+            println!("  {}) {}", i + 1, c.label.as_deref().unwrap_or(&value));
+        }
+        loop {
+            print!("{}> ", if r.declaration.kind == "bool" && r.choices.is_empty() { "(yes/no) " } else { "" });
+            std::io::stdout().flush()?;
+            let mut line = String::new();
+            if std::io::stdin().lock().read_line(&mut line)? == 0 {
+                return Ok(());
+            }
+            let answer = line.trim();
+            if answer.is_empty() {
+                break;
+            }
+            // A number picks a choice; anything else is the value itself.
+            let value = match answer.parse::<usize>().ok().and_then(|n| r.choices.get(n.wrapping_sub(1))) {
+                Some(choice) => Ok(choice.value.clone()),
+                None => furnish::options::parse(answer, &r.declaration),
+            };
+            match value.and_then(|v| furnish::options::set(&collection.name, &r.name, Some(v), &r.declaration)) {
+                Ok(()) => break,
+                Err(err) => println!("  {err:#}"),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn option(cmd: OptionCommand) -> Result<()> {

@@ -26,6 +26,10 @@ export interface AppInfo {
   options: Option[];
   /** Installed with other option values than the current ones: a reinstall applies them. */
   optionsDiffer: boolean;
+  /** Recommended for this user (the collection decides, e.g. by role). */
+  recommended: boolean;
+  /** Names of required collection options nobody answered yet: installing waits for them. */
+  unanswered: string[];
 }
 
 /** An option (DSC parameter) of an app or collection and where its value comes from. */
@@ -35,13 +39,18 @@ export interface Option {
   default?: unknown;
   label?: string;
   description?: string;
-  allowedValues?: unknown[];
+  /** The allowed values with what to show; empty: any value of the type. */
+  choices: { value: unknown; label: string | null }[];
+  /** Users must choose a value. */
+  required?: boolean;
   value: unknown;
   source: 'policy' | 'app' | 'collection' | 'default';
   /** The admin policy fixes the value. */
   locked: boolean;
   /** The user's own value at this level, if any. */
   ownValue: unknown;
+  /** Required, but nobody chose a value yet. */
+  missing: boolean;
 }
 
 /** An app a kit contains or an app depends on. */
@@ -118,6 +127,8 @@ export interface CollectionInfo {
   apps: number;
   /** Options shared by the collection's apps. */
   options: Option[];
+  /** Data URL of the collection's avatar. */
+  icon: string | null;
 }
 
 /** The organization's name, logo and colors (admin policy `branding`). */

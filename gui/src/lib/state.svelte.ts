@@ -76,6 +76,8 @@ export const store = $state({
   usersCanAddCollections: true,
   /** App whose optional dependencies the install dialog asks about. */
   choosing: null as string | null,
+  /** The dialog with the collections' unanswered required options is open. */
+  asking: false,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: {
     running: false,
@@ -151,6 +153,7 @@ export async function loadAll() {
   else toast('error', "Couldn't load the kits", message(kits.reason));
   if (collections.status === 'fulfilled') store.collections = collections.value;
   else toast('error', "Couldn't load the collections", message(collections.reason));
+  askQuestions(); // on launch, and when an update brings a new question
   store.loading = false;
   store.status = {};
   // The engine runs one check at a time anyway; sequential keeps the UI updating card by card.
@@ -386,6 +389,33 @@ export async function setOption(target: string, name: string, value: unknown) {
     await api.setOption(target, name, value);
   } catch (e) {
     toast('error', `Couldn't change ${name}`, message(e));
+  }
+  await reloadApps();
+}
+
+/** Collections with required options nobody answered yet. */
+export const unansweredCollections = () => store.collections.filter((c) => c.options.some((o) => o.missing));
+
+let postponed = false;
+/** Ask the collections' open questions, if there are any: on launch and when a collection is
+ *  added (`force`). After "Later", not again this session unless forced. */
+export function askQuestions(force = false) {
+  if (force) postponed = false;
+  if (!postponed && unansweredCollections().length) store.asking = true;
+}
+export function postponeQuestions() {
+  postponed = true;
+  store.asking = false;
+}
+
+/** Store answers to the collections' questions; recommendations and installs follow them. */
+export async function answerQuestions(answers: { collection: string; name: string; value: unknown }[]) {
+  for (const a of answers) {
+    try {
+      await api.setOption(a.collection, a.name, a.value);
+    } catch (e) {
+      toast('error', `Couldn't save the answer for ${a.collection}`, message(e));
+    }
   }
   await reloadApps();
 }

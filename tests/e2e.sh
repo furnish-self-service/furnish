@@ -116,7 +116,17 @@ step() {
 }
 expect() { grep -q -- "$2" <<<"$1" || { echo "FAIL: expected '$2'" >&2; exit 1; }; }
 
-step collection add "$tmp/repo" --name fixture >/dev/null
+# The collection asks a required question; without a terminal furnish says how to answer it,
+# and its apps wait for the answer.
+expect "$("$furnish" collection add "$tmp/repo" --name fixture 2>&1)" "furnish option set fixture role <value>"
+if step install hyperfine >/dev/null 2>&1; then echo "FAIL: installed before the question was answered" >&2; exit 1; fi
+if step option set fixture role "Design" >/dev/null 2>&1; then echo "FAIL: a label was accepted as a value" >&2; exit 1; fi
+step option set fixture role developer >/dev/null
+expect "$(step list)" "★ Command-line benchmarking tool"           # recommended for everyone
+expect "$(step list)" "★ A development tool"                         # recommended for developers
+step option set fixture role design >/dev/null
+if step list | grep -q "★ A development tool"; then echo "FAIL: still recommended for designers" >&2; exit 1; fi
+step option set fixture role developer >/dev/null
 expect "$(step list)" "·  hyperfine"
 expect "$(step list)" "–  nowhere"
 if step install nowhere >/dev/null 2>&1; then echo "FAIL: installing an unavailable app succeeded" >&2; exit 1; fi
@@ -169,11 +179,11 @@ fi
 
 # Options (DSC parameters): collection value, app value, reinstall (fake package managers only).
 if ! $real; then
-    expect "$(step option list fixture)" "userInstall  false  default"
+    expect "$(step option list fixture)" "userInstall *false *default"
     expect "$(step install cli-tool)" "Installed cli-tool"
     [ -f "$tmp/pkgs/cli-tool" ] || { echo "FAIL: not installed system-wide" >&2; exit 1; }
     step option set fixture userInstall true >/dev/null
-    expect "$(step option list cli-tool)" "userInstall  true   your value for the collection"
+    expect "$(step option list cli-tool)" "userInstall *true *your value for the collection"
     expect "$(step list)" "installed with other options"
     expect "$(step list)" "✓  cli-tool"   # still checked with the values it was installed with
     out=$(step reinstall cli-tool)
@@ -181,9 +191,9 @@ if ! $real; then
     expect "$out" "Reinstalled cli-tool"
     [ ! -f "$tmp/pkgs/cli-tool" ] && [ -f "$tmp/brew-pkgs/cli-tool" ] || { echo "FAIL: not moved to a user install" >&2; exit 1; }
     step option set cli-tool userInstall false >/dev/null
-    expect "$(step option list cli-tool)" "userInstall  false  your value for this app"
+    expect "$(step option list cli-tool)" "userInstall *false *your value for this app"
     step option reset cli-tool userInstall >/dev/null
-    expect "$(step option list cli-tool)" "userInstall  true   your value for the collection"
+    expect "$(step option list cli-tool)" "userInstall *true *your value for the collection"
     expect "$(step uninstall cli-tool)" "Uninstalled cli-tool"   # with the values it was installed with
     [ ! -f "$tmp/brew-pkgs/cli-tool" ] || { echo "FAIL: user install left behind" >&2; exit 1; }
     step option reset fixture userInstall >/dev/null
@@ -251,7 +261,7 @@ step collection remove lfs >/dev/null 2>&1 || true
 cat > "$tmp/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 60, "locked": true}},
  "collections": {"preset": [{"name": "org", "url": "$tmp/repo"}], "usersCanAdd": false},
- "parameters": {"org": {"userInstall": {"value": true, "locked": true}}}}
+ "parameters": {"org": {"userInstall": {"value": true, "locked": true}, "role": {"value": "developer"}}}}
 JSON
 policy_id=io.github.furnish-self-service.furnish
 if $real && [ "$(uname -s)" = Darwin ]; then
@@ -273,7 +283,8 @@ expect "$(step settings)" "every 60 minutes  (set by your organization)"
 if step settings --update-interval 5 >/dev/null 2>&1; then echo "FAIL: changed a locked setting" >&2; exit 1; fi
 if step collection remove org >/dev/null 2>&1; then echo "FAIL: removed a managed collection" >&2; exit 1; fi
 if step collection add "$tmp/repo" --name mine >/dev/null 2>&1; then echo "FAIL: added a collection against the policy" >&2; exit 1; fi
-expect "$(step option list org/cli-tool)" "userInstall  true   your organization (locked)"
+expect "$(step option list org/cli-tool)" "userInstall *true *your organization (locked)"
+if "$furnish" list 2>&1 | grep -q "org asks"; then echo "FAIL: asked although the policy answers" >&2; exit 1; fi
 if step option set org/cli-tool userInstall false >/dev/null 2>&1; then echo "FAIL: changed a locked option" >&2; exit 1; fi
 drop
 echo "e2e OK ($lfs, $n installer(s), policy from $store)" >&2

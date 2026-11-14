@@ -31,25 +31,60 @@ pub struct Declaration {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The only values allowed: plain values, or `{value, label}` (labels in `collection.yaml`
+    /// only; DSC wants plain values in app documents).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_values: Vec<Value>,
+    /// Users must choose a value (asked when the collection is added, or on the next launch).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
+/// One of an option's allowed values, with what to show for it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Choice {
+    pub value: Value,
+    pub label: Option<String>,
+}
+
+impl Declaration {
+    pub fn choices(&self) -> Vec<Choice> {
+        self.allowed_values
+            .iter()
+            .map(|entry| match entry.get("value") {
+                Some(value) => Choice { value: value.clone(), label: entry["label"].as_str().map(String::from) },
+                None => Choice { value: entry.clone(), label: None },
+            })
+            .collect()
+    }
+}
+
+/// `collection.yaml`: the collection's avatar and the options its apps share.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct CollectionFile {
     #[serde(default)]
     parameters: BTreeMap<String, Declaration>,
+    /// Image file in the collection (SVG, PNG, JPEG or WebP).
+    icon: Option<String>,
+}
+
+fn collection_file(dir: &Path) -> Result<CollectionFile> {
+    let path = dir.join("collection.yaml");
+    if !path.exists() {
+        return Ok(CollectionFile::default());
+    }
+    serde_yaml::from_str(&fs::read_to_string(&path)?).with_context(|| format!("{}", path.display()))
 }
 
 /// Options a collection declares in `collection.yaml` (none if the file is missing).
 pub fn collection_declarations(dir: &Path) -> Result<BTreeMap<String, Declaration>> {
-    let path = dir.join("collection.yaml");
-    if !path.exists() {
-        return Ok(BTreeMap::new());
-    }
-    let file: CollectionFile = serde_yaml::from_str(&fs::read_to_string(&path)?).with_context(|| format!("{}", path.display()))?;
-    Ok(file.parameters)
+    Ok(collection_file(dir)?.parameters)
+}
+
+/// The collection's avatar (`icon` in `collection.yaml`), relative to the collection.
+pub fn collection_icon(dir: &Path) -> Option<String> {
+    collection_file(dir).ok()?.icon
 }
 
 /// Options an app's DSC document declares (`parameters` section).
@@ -64,6 +99,7 @@ pub fn app_declarations(doc: &Value) -> BTreeMap<String, Declaration> {
                 label: None,
                 description: p["description"].as_str().map(String::from),
                 allowed_values: p["allowedValues"].as_array().cloned().unwrap_or_default(),
+                required: false,
             };
             (name.clone(), decl)
         })
@@ -93,6 +129,15 @@ pub struct Resolved {
     pub locked: bool,
     /// The user's own value at this level, if any.
     pub own_value: Option<Value>,
+    /// The allowed values with their labels (a dropdown); empty: any value of the type.
+    pub choices: Vec<Choice>,
+    /// Required, but nobody chose a value yet.
+    pub missing: bool,
+}
+
+/// The required options that still need a value.
+pub fn missing(resolved: &[Resolved]) -> Vec<&Resolved> {
+    resolved.iter().filter(|r| r.missing).collect()
 }
 
 /// Inputs to resolution: user values and policy entries keyed by "collection" or "collection/app".
@@ -126,9 +171,24 @@ fn resolve_app_with(l: &Layers, collection: &str, app: &str, doc: &Value, shared
         .map(|(name, own)| {
             // The collection's declaration (label, description, default) applies when it has one.
             let shared_decl = shared.get(&name);
+            // Allowed values: the app's own, labelled as the collection labels them.
+            let shared_choices = shared_decl.map(Declaration::choices).unwrap_or_default();
+            let allowed_values = if own.allowed_values.is_empty() {
+                shared_decl.map(|d| d.allowed_values.clone()).unwrap_or_default()
+            } else {
+                own.allowed_values
+                    .iter()
+                    .map(|v| match shared_choices.iter().find(|c| &c.value == v).and_then(|c| c.label.clone()) {
+                        Some(label) => serde_json::json!({ "value": v, "label": label }),
+                        None => v.clone(),
+                    })
+                    .collect()
+            };
             let declaration = Declaration {
                 label: shared_decl.and_then(|d| d.label.clone()).or(own.label.clone()),
                 description: own.description.clone().or(shared_decl.and_then(|d| d.description.clone())),
+                required: shared_decl.is_some_and(|d| d.required),
+                allowed_values,
                 ..own.clone()
             };
             let candidates = [
@@ -145,14 +205,27 @@ fn resolve_app_with(l: &Layers, collection: &str, app: &str, doc: &Value, shared
                 .into_iter()
                 .find(|(v, _, _)| v.is_some())
                 .unwrap_or((None, Source::Default, false));
-            Resolved { name: name.clone(), declaration, value, source, locked, own_value: l.user(&app_key, &name) }
+            let missing = declaration.required && value.is_none();
+            Resolved {
+                name: name.clone(),
+                choices: declaration.choices(),
+                declaration,
+                value,
+                source,
+                locked,
+                own_value: l.user(&app_key, &name),
+                missing,
+            }
         })
         .collect()
 }
 
 /// A collection's own options (from `collection.yaml`), resolved at collection level.
 pub fn resolve_collection(collection: &str, shared: &BTreeMap<String, Declaration>) -> Vec<Resolved> {
-    let l = layers();
+    resolve_collection_with(&layers(), collection, shared)
+}
+
+fn resolve_collection_with(l: &Layers, collection: &str, shared: &BTreeMap<String, Declaration>) -> Vec<Resolved> {
     shared
         .iter()
         .map(|(name, decl)| {
@@ -164,7 +237,16 @@ pub fn resolve_collection(collection: &str, shared: &BTreeMap<String, Declaratio
             ];
             let (value, source, locked) =
                 candidates.into_iter().find(|(v, _, _)| v.is_some()).unwrap_or((None, Source::Default, false));
-            Resolved { name: name.clone(), declaration: decl.clone(), value, source, locked, own_value: l.user(collection, name) }
+            Resolved {
+                name: name.clone(),
+                declaration: decl.clone(),
+                missing: decl.required && value.is_none(),
+                choices: decl.choices(),
+                value,
+                source,
+                locked,
+                own_value: l.user(collection, name),
+            }
         })
         .collect()
 }
@@ -222,8 +304,9 @@ fn check(name: &str, value: &Value, d: &Declaration) -> Result<()> {
     if !fits {
         bail!("option '{name}' needs a {} value", d.kind);
     }
-    if !d.allowed_values.is_empty() && !d.allowed_values.contains(value) {
-        bail!("option '{name}' must be one of {}", serde_json::to_string(&d.allowed_values)?);
+    let allowed: Vec<Value> = d.choices().into_iter().map(|c| c.value).collect();
+    if !allowed.is_empty() && !allowed.contains(value) {
+        bail!("option '{name}' must be one of {}", serde_json::to_string(&allowed)?);
     }
     Ok(())
 }
@@ -288,7 +371,7 @@ pub fn accept(resolved: &[Resolved], requested: &Map<String, Value>) -> Result<M
             continue;
         }
         check(name, value, &r.declaration)?;
-        if r.declaration.kind == "string" && r.declaration.allowed_values.is_empty() {
+        if r.declaration.kind == "string" && r.choices.is_empty() {
             bail!("option '{name}' takes free text, which system-wide installs don't accept (declare allowedValues)");
         }
         accepted.insert(name.clone(), value.clone());
@@ -324,10 +407,37 @@ mod tests {
     }
 
     #[test]
+    fn labelled_choices_and_required_options() {
+        let role: Declaration = serde_yaml::from_str(
+            "type: string\nrequired: true\nallowedValues: [{value: dev, label: Software developer}, ops]",
+        )
+        .unwrap();
+        assert_eq!(role.choices(), [
+            Choice { value: json!("dev"), label: Some("Software developer".into()) },
+            Choice { value: json!("ops"), label: None },
+        ]);
+        assert!(check("role", &json!("dev"), &role).is_ok());
+        assert!(check("role", &json!("Software developer"), &role).is_err(), "labels aren't values");
+        let shared = BTreeMap::from([("role".to_string(), role)]);
+        let empty = Layers { user: BTreeMap::new(), policy: BTreeMap::new() };
+        // Unanswered, the collection's option is missing; once the user answers, it isn't.
+        let r = &resolve_collection_with(&empty, "c", &shared)[0];
+        assert!(r.missing && r.value.is_none());
+        let answered = Layers { user: serde_json::from_value(json!({"c": {"role": "ops"}})).unwrap(), policy: BTreeMap::new() };
+        assert!(!resolve_collection_with(&answered, "c", &shared)[0].missing);
+        // An app declaring the option with plain values gets the collection's labels.
+        let doc = json!({"parameters": {"role": {"type": "string", "allowedValues": ["dev", "ops"]}}});
+        let app = &resolve_app_with(&answered, "c", "tool", &doc, &shared)[0];
+        assert_eq!(app.choices[0].label.as_deref(), Some("Software developer"));
+    }
+
+    #[test]
     fn the_service_accepts_only_declared_typed_unlocked_choices() {
         let option = |name: &str, kind: &str, allowed: Vec<Value>, value: Value, locked: bool| Resolved {
             name: name.into(),
-            declaration: Declaration { kind: kind.into(), default: None, label: None, description: None, allowed_values: allowed },
+            choices: allowed.iter().map(|v| Choice { value: v.clone(), label: None }).collect(),
+            missing: false,
+            declaration: Declaration { kind: kind.into(), default: None, label: None, description: None, allowed_values: allowed, required: false },
             value: Some(value),
             source: if locked { Source::Policy } else { Source::Default },
             locked,
@@ -354,7 +464,7 @@ mod tests {
         let doc = json!({"parameters": {"userInstall": {"type": "bool", "defaultValue": false}}});
         let shared = BTreeMap::from([(
             "userInstall".to_string(),
-            Declaration { kind: "bool".into(), default: Some(json!(false)), label: Some("Just for me".into()), description: None, allowed_values: vec![] },
+            Declaration { kind: "bool".into(), default: Some(json!(false)), label: Some("Just for me".into()), description: None, allowed_values: vec![], required: false },
         )]);
         let resolve = |user: Value, policy: Value| {
             let l = Layers {

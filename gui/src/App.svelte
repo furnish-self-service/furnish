@@ -2,6 +2,7 @@
   import logo from '../../logo.svg';
   import { store, start, visibleApps, visibleKits, checkForUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
+  import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
@@ -26,6 +27,12 @@
   const apps = $derived(visibleApps(view, store.query));
   const kits = $derived(visibleKits(view, store.query));
   const kit = $derived(view.page === 'kit' ? store.kits.find((k) => k.key === view.key) : undefined);
+  // On Discover, before the full catalog: what the collections recommend for this user.
+  const recommended = $derived(
+    view.page === 'discover' && !store.query
+      ? store.apps.filter((a) => a.recommended && store.status[a.key] !== 'unavailable')
+      : [],
+  );
   const detail = $derived(view.page === 'app' ? store.apps.find((a) => a.key === view.key) : undefined);
 
   const titles: Record<string, string> = { discover: 'Discover', installed: 'Installed', updates: 'Updates' };
@@ -120,9 +127,18 @@
         </div>
       {:else if !apps.length && !kits.length}
         <p class="empty">
-          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? 'All apps are up to date. ${store.brand.name} installs updates automatically unless you turn that off for an app.' : 'No apps here yet.'}
+          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? `All apps are up to date. ${store.brand.name} installs updates automatically unless you turn that off for an app.` : 'No apps here yet.'}
         </p>
       {:else}
+        {#if recommended.length}
+          <h2 class="row-title">Recommended for you</h2>
+          <div class="grid recommended">
+            {#each recommended as app (app.key)}
+              <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
+            {/each}
+          </div>
+          <h2 class="row-title">All apps</h2>
+        {/if}
         <div class="grid">
           {#each kits as k (k.key)}
             <KitCard kit={k} onopen={() => go({ page: 'kit', key: k.key, back: view })} />
@@ -138,6 +154,7 @@
 
 <Toasts />
 <DepsDialog />
+<QuestionsDialog />
 
 <style>
   .shell {
@@ -258,6 +275,13 @@
   }
   .search {
     width: min(20rem, 100%);
+  }
+  .row-title {
+    margin: 0 0 0.9rem;
+    font: 650 1.05rem var(--font-display);
+  }
+  .grid.recommended {
+    margin-bottom: 2rem;
   }
   .grid {
     display: grid;

@@ -238,10 +238,18 @@ If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the 
 
 Options let one app definition install in different ways, for example system-wide or just for the user, instead of shipping `kubectl` and `kubectl (user)`. An option is a [DSC parameter](https://learn.microsoft.com/powershell/dsc/concepts/configuration-functions/parameters): resources and dependencies use it in `condition`s and property expressions.
 
-A collection declares options its apps share in `collection.yaml`:
+A collection declares its avatar and the options its apps share in `collection.yaml`:
 
 ```yaml
+icon: icon.svg                 # the collection's avatar (SVG, PNG, JPEG or WebP in the repository)
 parameters:
+  role:
+    type: string
+    required: true             # asked when the collection is added, and on each launch until answered
+    label: What do you work on?
+    allowedValues:             # a dropdown; labels are optional
+      - { value: developer, label: Software development }
+      - { value: design, label: Design }
   userInstall:
     type: bool
     default: false
@@ -273,6 +281,18 @@ resources:
     condition: "[parameters('userInstall')]"
     properties: { name: kubectl, packageManager: brew }
 ```
+
+A required option needs an answer before the collection's apps can be installed. `furnish collection add <url> --option role=developer` answers on the command line; otherwise furnish asks: the CLI in a terminal, the desktop app in a dialog that can be postponed. That also happens on the next launch for collections the policy presets or that were added by hand. A value the admin policy sets counts as an answer.
+
+Apps can be recommended on the Discover page, for everyone or depending on the options:
+
+```yaml
+metadata:
+  furnish:
+    recommended: "[equals(parameters('role'), 'developer')]"   # or: true
+```
+
+The expression can use the collection's options and the app's own; `furnish list` marks recommended apps with ★.
 
 The value comes from, first match wins: a locked policy value (app, then collection), the user's value for the app, a policy default for the app, the user's value for the collection, a policy default for the collection, the collection's `default`, the app's `defaultValue`. Users set options on the app's page and, for all of a collection's apps, on the Collections page; in the CLI with `furnish option list|set|reset <collection or app> [name] [value]`.
 

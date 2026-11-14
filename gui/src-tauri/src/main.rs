@@ -35,6 +35,10 @@ struct AppInfo {
     options: Vec<options::Resolved>,
     /// Installed with other option values than the current ones: a reinstall applies them.
     options_differ: bool,
+    /// Recommended for this user (`metadata.furnish.recommended`).
+    recommended: bool,
+    /// Required collection options nobody answered yet: installing waits for them.
+    unanswered: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -76,8 +80,10 @@ struct CollectionInfo {
     url: String,
     revision: String,
     apps: usize,
-    /// Options shared by the collection's apps.
+    /// Options shared by the collection's apps; required ones without a value are `missing`.
     options: Vec<options::Resolved>,
+    /// Data URL of the collection's avatar (`icon` in collection.yaml).
+    icon: Option<String>,
 }
 
 /// The organization's branding (policy `branding`), checked: colors are `#rgb`/`#rrggbb`, theme
@@ -169,6 +175,8 @@ fn app_info(app: &App) -> AppInfo {
         dependencies: items(&app.collection, &app.dependencies_for(&app.current_values())),
         options: app.options(),
         options_differ: app.options_differ(),
+        recommended: app.recommended(),
+        unanswered: app.unanswered(),
     }
 }
 
@@ -201,7 +209,8 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         url: c.url().unwrap_or_else(unknown),
         revision: c.revision().unwrap_or_else(unknown),
         apps: c.apps().len(),
-        options: options::resolve_collection(&c.name, &options::collection_declarations(&c.dir)?),
+        options: c.options()?,
+        icon: c.icon().as_deref().and_then(icon_data_url),
     })
 }
 

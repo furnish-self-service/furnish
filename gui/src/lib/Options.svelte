@@ -7,13 +7,18 @@
   let { target, options, scope }: { target: string; options: Option[]; scope: 'app' | 'collection' } = $props();
 
   const show = (v: unknown) => (v === true ? 'Yes' : v === false ? 'No' : v == null ? 'not set' : String(v));
-  const choices = (o: Option): unknown[] => (o.type === 'bool' ? [true, false] : (o.allowedValues ?? []));
+  // A dropdown: the declared values with their labels, or yes/no.
+  const choices = (o: Option) =>
+    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: 'Yes' }, { value: false, label: 'No' }] : [];
+  /** A value as the user knows it: its label if it has one. */
+  const shown = (o: Option, v: unknown) => choices(o).find((c) => c.value === v)?.label ?? show(v);
 
   /** What the option follows when the user has no value of their own here. */
   function inherited(o: Option) {
     const what = scope === 'app' ? 'Same as the collection' : 'Default';
     // With an own value set, the value it would fall back to isn't known here.
-    return o.ownValue == null ? `${what} (${show(o.value)}${o.source === 'policy' ? ', from your organization' : ''})` : what;
+    if (o.missing) return 'Choose…';
+    return o.ownValue == null ? `${what} (${shown(o, o.value)}${o.source === 'policy' ? ', from your organization' : ''})` : what;
   }
 
   /** `raw` is JSON from a select, or the text of an input; empty goes back to the inherited value. */
@@ -31,7 +36,7 @@
         {#if o.description}<span class="desc">{o.description}</span>{/if}
       </label>
       {#if o.locked}
-        <span class="value">{show(o.value)} <span class="org">Set by your organization</span></span>
+        <span class="value">{shown(o, o.value)} <span class="org">Set by your organization</span></span>
       {:else if choices(o).length}
         <select
           id="opt-{target}-{o.name}"
@@ -40,7 +45,7 @@
           onchange={(e) => change(o, e.currentTarget.value, true)}
         >
           <option value="">{inherited(o)}</option>
-          {#each choices(o) as c}<option value={JSON.stringify(c)}>{show(c)}</option>{/each}
+          {#each choices(o) as c}<option value={JSON.stringify(c.value)}>{c.label ?? show(c.value)}</option>{/each}
         </select>
       {:else}
         <input

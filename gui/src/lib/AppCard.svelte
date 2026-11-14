@@ -3,6 +3,7 @@
   import { store } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
+  import CollectionAvatar from './CollectionAvatar.svelte';
 
   let { app, onopen }: { app: AppInfo; onopen: () => void } = $props();
   const status = $derived(store.status[app.key]);
@@ -14,6 +15,7 @@
     <AppIcon {app} />
     <div class="title">
       <h3>{app.id}</h3>
+      {#if app.recommended}<span class="recommended">Recommended</span>{/if}
       <p class="meta">{app.categories.join(' · ') || app.collection}</p>
     </div>
   </header>
@@ -24,7 +26,7 @@
     {:else if status === 'needsUpdate'}
       <span class="state update">Update available</span>
     {:else}
-      <span class="collection">{app.collection}</span>
+      <span class="collection"><CollectionAvatar name={app.collection} /> {app.collection}</span>
     {/if}
     <!-- Uninstalling is only offered on the detail page, behind a confirmation. -->
     {#if status !== 'installed' || store.busy[app.key] || store.queue.some((q) => q.key === app.key)}<ActionButton {app} />{/if}
@@ -131,5 +133,10 @@
   }
   .update {
     color: var(--highlight-ink);
+  }
+  .recommended {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--accent-ink);
   }
 </style>

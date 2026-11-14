@@ -62,7 +62,8 @@ mkdir -p /etc/furnish
 cat > /etc/furnish/policy.json <<JSON
 {"collections": {"preset": [{"name": "org", "url": "/srv/org"}], "usersCanAdd": false,
                  "trustedKeys": ["$(cat /root/signing.pub)"]},
- "service": {"allowedGroup": "staff"}}
+ "service": {"allowedGroup": "staff"},
+ "parameters": {"org": {"role": {"value": "developer"}}}}
 JSON
 
 echo "== service install/uninstall register it with systemd and polkit"

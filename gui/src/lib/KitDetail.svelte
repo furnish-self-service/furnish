@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CollectionAvatar from './CollectionAvatar.svelte';
   // A kit: choose which of its apps to install (required ones can't be deselected), or which
   // installed ones to uninstall (preselected: those no other installed kit needs).
   import type { KitInfo } from './api';
@@ -66,7 +67,7 @@
     <div class="heading">
       <p class="eyebrow">Kit · {count(kit.items.length)}</p>
       <h1>{kit.id}</h1>
-      <p class="meta">{kit.categories.join(' · ')}{kit.categories.length ? ' — ' : ''}from {kit.collection}</p>
+      <p class="meta">{kit.categories.join(' · ')}{kit.categories.length ? ' — ' : ''}from <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
     </div>
   </header>
   {#if kit.description}<p class="description">{kit.description}</p>{/if}
