@@ -1,11 +1,8 @@
-mod catalog;
-mod engine;
-
 use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use engine::Status;
+use furnish::{catalog, engine, engine::Status};
 
 /// Self-service app catalog: install apps your organization curated in git.
 #[derive(Parser)]

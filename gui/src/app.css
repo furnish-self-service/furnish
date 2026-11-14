@@ -1,0 +1,119 @@
+/* Design tokens: teal from the logo, amber from its sparkle (reserved for updates). */
+:root {
+  --canvas: #f4f7f7;
+  --sidebar: #eaf0f0;
+  --surface: #ffffff;
+  --ink: #10282e;
+  --ink-soft: #33494f;
+  --muted: #64797e;
+  --line: #dde6e6;
+  --line-strong: #c3d1d2;
+  --hover: #dde8e8;
+  --accent: #0f766e;
+  --accent-strong: #0b5c56;
+  --accent-soft: #d6f5f0;
+  --accent-ink: #0b5c56;
+  --on-accent: #ffffff;
+  --highlight: #f6c453;
+  --highlight-soft: #fdf0cc;
+  --highlight-ink: #7a5300;
+  --on-highlight: #3a2a00;
+  --danger: #b4322c;
+  --danger-soft: #fbe7e5;
+  --radius: 16px;
+  --shadow: 0 1px 2px rgb(16 40 46 / 0.05);
+  --shadow-raised: 0 10px 28px -10px rgb(16 40 46 / 0.22);
+  --font-display: 'Bricolage Grotesque Variable', system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #0d1a1d;
+    --sidebar: #0a1517;
+    --surface: #13262a;
+    --ink: #e4f1ef;
+    --ink-soft: #b8cbcc;
+    --muted: #84999d;
+    --line: #1f363b;
+    --line-strong: #2e4b51;
+    --hover: #172e33;
+    --accent: #2bb3a3;
+    --accent-strong: #3fd0be;
+    --accent-soft: #123b39;
+    --accent-ink: #6fe0d0;
+    --on-accent: #062321;
+    --highlight-soft: #3a2f12;
+    --highlight-ink: #f6c453;
+    --danger: #f0857d;
+    --danger-soft: #3b1715;
+    --shadow: none;
+    --shadow-raised: 0 12px 30px -12px rgb(0 0 0 / 0.6);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 0.92rem var(--font-body);
+}
+input:focus-visible {
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* Shared button styles for forms and toolbars (app actions use ActionButton). */
+.primary,
+.secondary,
+.danger {
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font: 600 0.88rem var(--font-body);
+  cursor: pointer;
+}
+.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+.secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+.danger {
+  background: var(--danger);
+  color: var(--surface);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

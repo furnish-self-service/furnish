@@ -4,7 +4,7 @@
 
 A self-service app catalog for Linux, macOS and Windows. Your organization lists apps in git, and users install them with one command.
 
-**Status:** early prototype. The CLI and the package resource work on Linux and macOS. There is no GUI and no Windows support yet. Apps run with administrator rights, so only add collections you trust.
+**Status:** early prototype. The CLI, the desktop app and the package resource work on Linux, macOS and Windows. Apps run with administrator rights, so only add collections you trust.
 
 ## What you get
 
@@ -46,6 +46,19 @@ furnish list
 
 ✓ installed  ↑ update available  · not installed  ? unknown
 ```
+
+## Desktop app
+
+`gui/` is a desktop app for the same features: browse and search the catalog, install, update and uninstall apps, and manage collections. It uses [Tauri 2](https://tauri.app) with a Svelte frontend and calls the furnish library directly, without going through the CLI.
+
+```sh
+cd gui
+npm ci
+npx tauri dev -- --profile fast   # development; the fast profile avoids DSC's pwsh build step
+npx tauri build                   # release build with installers in target/release/bundle/
+```
+
+On Linux you need WebKitGTK 4.1, for example `webkit2gtk-4.1` on Arch or `libwebkit2gtk-4.1-dev` on Debian and Ubuntu. CI builds installers for Linux, macOS and Windows. `tests/gui-smoke.sh` starts the app in a container under Xvfb and saves a screenshot.
 
 ## Example app definition
 

@@ -21,6 +21,8 @@ pub struct App {
     pub collection: String,
     pub description: String,
     pub categories: Vec<String>,
+    /// Optional icon image (`metadata.furnish.icon`, relative to the collection root).
+    pub icon: Option<PathBuf>,
     pub doc: Value,
 }
 
@@ -63,6 +65,13 @@ pub fn name_from_url(url: &str) -> String {
 }
 
 pub fn add(url: &str, name: &str) -> Result<Collection> {
+    // The name becomes a directory name: no separators, no `..`, no hidden dirs.
+    let valid = !name.is_empty()
+        && !name.starts_with('.')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if !valid {
+        bail!("invalid collection name '{name}': use letters, digits, '.', '_' and '-'");
+    }
     let dir = collections_dir().join(name);
     if dir.exists() {
         bail!("a collection named '{name}' already exists");
@@ -117,6 +126,12 @@ impl Collection {
             .collect()
     }
 
+    /// Resolve a repo-relative path; `None` if missing or pointing outside the repo.
+    fn file_in_repo(&self, relative: &str) -> Option<PathBuf> {
+        let path = self.dir.join(relative).canonicalize().ok()?;
+        path.starts_with(self.dir.canonicalize().ok()?).then_some(path)
+    }
+
     fn load_app(&self, path: &Path) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
@@ -134,6 +149,7 @@ impl Collection {
                 .as_array()
                 .map(|c| c.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
             doc,
         })
     }
@@ -184,5 +200,12 @@ mod tests {
         assert_eq!(name_from_url("https://gitlab.com/furnish-self-service/self-service-example.git"), "self-service-example");
         assert_eq!(name_from_url("git@gitlab.com:org/apps.git"), "apps");
         assert_eq!(name_from_url("/srv/git/apps/"), "apps");
+    }
+
+    #[test]
+    fn rejects_collection_names_that_escape_the_data_dir() {
+        for name in ["../evil", "a/b", "..", ".hidden", ""] {
+            assert!(add("https://example.com/x.git", name).is_err(), "{name} accepted");
+        }
     }
 }

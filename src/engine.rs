@@ -1,7 +1,7 @@
 //! Thin wrapper around the embedded DSC engine. The only module that touches dsc-lib,
 //! so upstream API churn stays contained here.
 
-use std::{env, fs, path::Path, path::PathBuf};
+use std::{env, fs, path::Path, path::PathBuf, sync::Mutex};
 
 use anyhow::Result;
 use dsc_lib::{
@@ -36,7 +36,13 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ),
 ];
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+/// dsc-lib mutates the process environment (PATH) during resource discovery, so engine
+/// calls must not overlap. The GUI runs them on worker threads.
+// ponytail: one global lock; installs run one at a time, which is also what package managers want.
+static ENGINE: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Status {
     Installed,
     NotInstalled,
@@ -71,6 +77,7 @@ pub fn init(dir: &Path) -> Result<()> {
 
 // DSC v3.3 reports resource failures as `Err`; `had_errors`/`messages` are never set.
 pub fn status(doc: &Value) -> Result<Status> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let result = configurator(doc)?.invoke_test()?;
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
@@ -78,6 +85,7 @@ pub fn status(doc: &Value) -> Result<Status> {
 }
 
 pub fn apply(doc: &Value) -> Result<()> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     configurator(doc)?.invoke_set(false)?;
     Ok(())
 }

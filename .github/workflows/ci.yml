@@ -69,3 +69,34 @@ jobs:
         run: winget --version
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
+
+  gui:
+    name: GUI ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: gui
+      # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis.
+      - run: npx tauri build
+        working-directory: gui
+      - if: runner.os == 'Linux'
+        run: tests/gui-smoke.sh target/release/furnish-gui target/gui-smoke.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-gui-${{ runner.os }}
+          path: |
+            target/release/bundle/
+            target/gui-smoke.png

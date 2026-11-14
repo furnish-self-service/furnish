@@ -3,11 +3,15 @@ name = "furnish"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [".", "gui/src-tauri"]
+
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 dirs = "7.0.0"
 dsc-lib = { git = "https://github.com/PowerShell/DSC", tag = "v3.3.0" }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = "0.9.34"
 
