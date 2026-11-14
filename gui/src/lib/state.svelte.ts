@@ -24,7 +24,7 @@ export interface RunStep {
 }
 
 export interface Run {
-  kind: 'install' | 'update' | 'uninstall';
+  kind: 'install' | 'update' | 'uninstall' | 'reinstall';
   startedAt: number;
   finishedAt?: number;
   /** Abort requested: 'abort' stops after the current step, 'force' interrupts it. */
@@ -35,7 +35,7 @@ export interface Run {
 
 export interface Queued {
   key: string;
-  action: Busy;
+  action: Busy | 'reinstall';
   /** Started by automatic updates, not by the user. */
   auto?: boolean;
 }
@@ -115,8 +115,6 @@ export async function stop(key: string, how: 'abort' | 'force') {
   await (how === 'force' ? api.forceStop() : api.abort());
 }
 
-const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall' } as const;
-
 // Operations run one at a time, so log lines belong to whichever app is busy.
 // Lines from background status checks are not kept.
 api.onLog((line) => {
@@ -167,44 +165,30 @@ export async function checkStatus(key: string) {
   }
 }
 
-async function runInstall(app: AppInfo): Promise<boolean> {
-  const updating = store.status[app.key] === 'needsUpdate';
-  startRun(app.key, updating ? 'update' : 'install');
-  store.busy[app.key] = 'install';
-  let cancelled = false;
-  let ok = false;
-  try {
-    await api.install(app.key);
-    ok = true;
-    toast('success', `${updating ? 'Updated' : 'Installed'} ${app.id}`);
-  } catch (e) {
-    cancelled = message(e) === api.CANCELLED;
-    if (cancelled) toast('info', `${kindNoun[updating ? 'update' : 'install']} of ${app.id} cancelled`);
-    else toast('error', `Couldn't ${updating ? 'update' : 'install'} ${app.id}`, message(e));
-  } finally {
-    endRun(app.key, cancelled);
-    delete store.busy[app.key];
-    await checkStatus(app.key);
-  }
-  return ok;
-}
+const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall', reinstall: 'Reinstall' } as const;
+const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled', reinstall: 'Reinstalled' } as const;
+const kindVerb = { install: 'install', update: 'update', uninstall: 'uninstall', reinstall: 'reinstall' } as const;
 
-async function runUninstall(app: AppInfo): Promise<boolean> {
-  startRun(app.key, 'uninstall');
-  store.busy[app.key] = 'uninstall';
+/** Run one queued operation; resolves to whether it succeeded. */
+async function runOperation(app: AppInfo, action: Queued['action']): Promise<boolean> {
+  const kind: Run['kind'] = action === 'install' && store.status[app.key] === 'needsUpdate' ? 'update' : action;
+  startRun(app.key, kind);
+  store.busy[app.key] = action === 'uninstall' ? 'uninstall' : 'install';
   let cancelled = false;
   let ok = false;
   try {
-    await api.uninstall(app.key);
+    await api[action](app.key);
     ok = true;
-    toast('success', `Uninstalled ${app.id}`);
+    toast('success', `${kindDone[kind]} ${app.id}`);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
-    if (cancelled) toast('info', `${kindNoun.uninstall} of ${app.id} cancelled`);
-    else toast('error', `Couldn't uninstall ${app.id}`, message(e));
+    if (cancelled) toast('info', `${kindNoun[kind]} of ${app.id} cancelled`);
+    else toast('error', `Couldn't ${kindVerb[kind]} ${app.id}`, message(e));
   } finally {
     endRun(app.key, cancelled);
     delete store.busy[app.key];
+    // Which options the app is installed with changed (they decide whether a reinstall is offered).
+    if (ok) await reloadApps();
     await checkStatus(app.key);
   }
   return ok;
@@ -377,6 +361,35 @@ export function install(app: AppInfo, chosen = defaultDependencies(app), seen = 
   enqueue(app.key, 'install');
 }
 
+/** Reinstall an app so its current options apply: uninstalls with the options it was installed
+ *  with, then installs with the current ones. Dependencies the new options need are queued first. */
+export function reinstall(app: AppInfo) {
+  for (const key of defaultDependencies(app)) {
+    const dep = store.apps.find((a) => a.key === key);
+    if (dep && !isInstalled(key) && store.status[key] !== 'unavailable') install(dep);
+  }
+  enqueue(app.key, 'reinstall');
+}
+
+/** Set an option for a collection or an app (`collection/app`); `null` goes back to the inherited value. */
+export async function setOption(target: string, name: string, value: unknown) {
+  try {
+    await api.setOption(target, name, value);
+  } catch (e) {
+    toast('error', `Couldn't change ${name}`, message(e));
+  }
+  await reloadApps();
+}
+
+/** Reload apps and collections (their options, dependencies) without rechecking every status. */
+async function reloadApps() {
+  try {
+    [store.apps, store.collections] = await Promise.all([api.listApps(), api.listCollections()]);
+  } catch (e) {
+    toast('error', "Couldn't load the apps", message(e));
+  }
+}
+
 /** Apps waiting for a missing tool may be installable now (e.g. Homebrew was just installed). */
 async function recheckBlocked() {
   for (const key of Object.keys(store.status)) {
@@ -389,7 +402,7 @@ export function uninstall(app: AppInfo) {
   enqueue(app.key, 'uninstall');
 }
 
-function enqueue(key: string, action: Busy, auto = false) {
+function enqueue(key: string, action: Queued['action'], auto = false) {
   if (store.busy[key] || store.queue.some((q) => q.key === key)) return;
   store.queue.push({ key, action, auto });
   pump();
@@ -410,7 +423,7 @@ async function pump() {
   if (!next) return;
   const app = store.apps.find((a) => a.key === next.key);
   if (app) {
-    const ok = await (next.action === 'install' ? runInstall(app) : runUninstall(app));
+    const ok = await runOperation(app, next.action);
     // Don't retry an automatic update the user cancelled or that failed, until the app restarts.
     if (next.auto && !ok) declinedUpdates.add(next.key);
   }

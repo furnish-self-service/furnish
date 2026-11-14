@@ -254,6 +254,28 @@ const steps = [
     await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
+  ['options change how an app installs; changing them later offers a reinstall', async () => {
+    const select = "//select[@data-option='userInstall']";
+    const choose = (label) => click(`${select}/option[normalize-space()='${label}']`);
+    await click(button('Discover'));
+    await click(`${card('cli-tool')}//button[@aria-label='Open cli-tool']`);
+    if (!(await text("//section[contains(@class,'detail')]")).includes('Install just for me')) throw new Error('option label missing');
+    await choose('Yes');
+    await waitFor('app value saved', () => log('data/settings.json').includes('fixture/cli-tool'));
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    await waitFor('installed for the user', () => existsSync(`${workDir}/brew-pkgs/cli-tool`), 30000);
+    if (existsSync(`${workDir}/pkgs/cli-tool`)) throw new Error('installed system-wide');
+    await choose('No');
+    await waitFor('app value changed', () => log('data/settings.json').includes('"userInstall": false'));
+    await click(button('Reinstall with these options'));
+    await waitFor('moved to a system-wide install', () => existsSync(`${workDir}/pkgs/cli-tool`) && !existsSync(`${workDir}/brew-pkgs/cli-tool`), 30000);
+    await waitFor('banner gone', async () => !(await findAll(button('Reinstall with these options'))).length);
+  }],
+  ['collection options apply to all its apps', async () => {
+    await click(button('Collections'));
+    await click("//summary[contains(., 'Options for all fixture apps')]");
+    await waitFor('collection option shown', async () => (await text("//details[contains(@class,'copts')]")).includes('Install just for me'));
+  }],
   ['collections: add a repository, see its apps, remove it again', async () => {
     await click(button('Collections'));
     await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);

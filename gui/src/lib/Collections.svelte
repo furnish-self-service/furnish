@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as api from './api';
+  import Options from './Options.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
   const intervals = [
@@ -180,6 +181,12 @@
               <button class="secondary" disabled={working !== null} onclick={() => (confirmRemove = c.name)}>Remove</button>
             </span>
           {/if}
+          {#if c.options.length}
+            <details class="copts">
+              <summary>Options for all {c.name} apps</summary>
+              <Options target={c.name} options={c.options} scope="collection" />
+            </details>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -318,6 +325,15 @@
     gap: 0.5rem 1.25rem;
     padding: 0.85rem 0;
     border-bottom: 1px solid var(--line);
+  }
+  .copts {
+    flex-basis: 100%;
+  }
+  .copts summary {
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--ink-soft);
   }
   .info {
     display: grid;

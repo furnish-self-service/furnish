@@ -63,9 +63,9 @@
     nothing: 'No change',
     skipped: 'Skipped',
   };
-  const kindVerb = { install: 'Installing', update: 'Updating', uninstall: 'Uninstalling' } as const;
-  const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled' } as const;
-  const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall' } as const;
+  const kindVerb = { install: 'Installing', update: 'Updating', uninstall: 'Uninstalling', reinstall: 'Reinstalling' } as const;
+  const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled', reinstall: 'Reinstalled' } as const;
+  const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall', reinstall: 'Reinstall' } as const;
 
   const active = $derived(rows.filter((r) => r.step.action !== 'skipped'));
   const changing = $derived(active.filter((r) => r.step.action !== 'nothing').length);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store, uninstall, install, defaultDependencies, setAutoUpdate, isLocked } from './state.svelte';
+  import { store, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending } from './state.svelte';
+  import Options from './Options.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
@@ -18,7 +19,6 @@
     chosen = defaultDependencies(app);
   });
   const autoUpdate = $derived(!store.settings?.noAutoUpdate.includes(app.key));
-  const installed = $derived(status === 'installed' || status === 'needsUpdate');
 
   const lines = $derived(store.logs[app.key] ?? []);
   const busy = $derived(!!store.busy[app.key]);
@@ -29,6 +29,7 @@
   });
 
   const status = $derived(store.status[app.key]);
+  const installed = $derived(status === 'installed' || status === 'needsUpdate');
   const statusText = $derived(
     ({
       installed: 'Installed and up to date',
@@ -78,6 +79,24 @@
   </header>
 
   <p class="description">{app.description || 'No description.'}</p>
+
+  {#if installed && app.optionsDiffer}
+    <div class="differ" role="status">
+      <span>{app.id} is installed with different options. Reinstall it to apply the current ones.</span>
+      <button class="secondary" disabled={isPending(app.key)} onclick={() => reinstall(app)}>
+        {isPending(app.key) ? 'Reinstalling…' : 'Reinstall with these options'}
+      </button>
+    </div>
+  {/if}
+
+  {#if app.options.length}
+    <h2>Options</h2>
+    <p class="lead">
+      {installed ? 'Changes apply when you reinstall.' : `Used when you install ${app.id}.`}
+      Options you don't set follow the {app.collection} collection.
+    </p>
+    <Options target={app.key} options={app.options} scope="app" />
+  {/if}
 
   {#if app.dependencies.length}
     <h2>Dependencies</h2>
@@ -204,6 +223,20 @@
   }
   .auto input {
     accent-color: var(--accent);
+  }
+  .differ {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    margin: -0.5rem 0 1.5rem;
+    padding: 0.8rem 1rem;
+    border-radius: 12px;
+    background: var(--hover);
+    color: var(--highlight-ink);
+    font-weight: 600;
+    font-size: 0.92rem;
   }
   .lead {
     margin: -0.4rem 0 0.6rem;

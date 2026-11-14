@@ -8,7 +8,7 @@ use std::{fs, path::Path};
 use base64::Engine as _;
 use furnish::{
     catalog::{self, App},
-    engine,
+    engine, options,
 };
 use serde::Serialize;
 use tauri::{Emitter, async_runtime::spawn_blocking};
@@ -29,8 +29,12 @@ struct AppInfo {
     resources: Vec<ResourceInfo>,
     /// The DSC configuration document as written in the collection, for experts to inspect.
     source: String,
-    /// Apps installed first: required ones always, optional ones if chosen.
+    /// Apps installed first: required ones always, optional ones if chosen (for the current options).
     dependencies: Vec<ItemInfo>,
+    /// Options the app declares, with their current values.
+    options: Vec<options::Resolved>,
+    /// Installed with other option values than the current ones: a reinstall applies them.
+    options_differ: bool,
 }
 
 #[derive(Serialize)]
@@ -72,6 +76,8 @@ struct CollectionInfo {
     url: String,
     revision: String,
     apps: usize,
+    /// Options shared by the collection's apps.
+    options: Vec<options::Resolved>,
 }
 
 #[derive(Serialize)]
@@ -110,7 +116,9 @@ fn app_info(app: &App) -> AppInfo {
         icon: app.icon.as_deref().and_then(icon_data_url),
         resources,
         source: fs::read_to_string(&app.path).unwrap_or_default(),
-        dependencies: items(&app.collection, &app.dependencies),
+        dependencies: items(&app.collection, &app.dependencies_for(&app.current_values())),
+        options: app.options(),
+        options_differ: app.options_differ(),
     }
 }
 
@@ -143,6 +151,7 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         url: c.url().unwrap_or_else(unknown),
         revision: c.revision().unwrap_or_else(unknown),
         apps: c.apps().len(),
+        options: options::resolve_collection(&c.name, &options::collection_declarations(&c.dir)?),
     })
 }
 
@@ -172,7 +181,7 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
 
 #[tauri::command]
 async fn app_status(key: String) -> CmdResult<engine::Check> {
-    blocking(move || engine::check(&catalog::find_app(&key)?.doc)).await
+    blocking(move || catalog::find_app(&key)?.check()).await
 }
 
 /// A step progress event for the UI, tagged with the app it belongs to.
@@ -183,31 +192,63 @@ struct ProgressEvent {
     progress: engine::Progress,
 }
 
-/// Run an install/update (or uninstall), streaming step progress as `furnish://progress` events.
-async fn run(app: tauri::AppHandle, key: String, uninstall: bool) -> CmdResult<()> {
+#[derive(Clone, Copy)]
+enum Action {
+    Install,
+    Uninstall,
+    Reinstall,
+}
+
+/// Run an install/update, uninstall or reinstall, streaming step progress as `furnish://progress` events.
+async fn run(handle: tauri::AppHandle, key: String, action: Action) -> CmdResult<()> {
     blocking(move || {
-        let doc = catalog::find_app(&key)?.doc;
-        engine::run(&doc, uninstall, |progress| {
-            let _ = app.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
-        })
+        let app = catalog::find_app(&key)?;
+        let report = |progress| {
+            let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
+        };
+        match action {
+            Action::Install => app.install(report),
+            Action::Uninstall => app.uninstall(report),
+            Action::Reinstall => app.reinstall(report),
+        }
     })
     .await
 }
 
 #[tauri::command]
 async fn install(app: tauri::AppHandle, key: String) -> CmdResult<()> {
-    run(app, key, false).await
+    run(app, key, Action::Install).await
 }
 
 #[tauri::command]
 async fn uninstall(app: tauri::AppHandle, key: String) -> CmdResult<()> {
-    run(app, key, true).await
+    run(app, key, Action::Uninstall).await
+}
+
+/// Uninstall with the options the app was installed with, then install with the current ones.
+#[tauri::command]
+async fn reinstall(app: tauri::AppHandle, key: String) -> CmdResult<()> {
+    run(app, key, Action::Reinstall).await
+}
+
+/// Set (or with `None`, reset) an option for a collection or an app (`collection/app`).
+#[tauri::command]
+async fn set_option(target: String, name: String, value: Option<serde_json::Value>) -> CmdResult<()> {
+    blocking(move || {
+        let resolved = match target.split_once('/') {
+            Some(_) => catalog::find_app(&target)?.options(),
+            None => options::resolve_collection(&target, &options::collection_declarations(&catalog::get(&target)?.dir)?),
+        };
+        let r = resolved.iter().find(|r| r.name == name).ok_or_else(|| anyhow::anyhow!("{target} has no option '{name}'"))?;
+        options::set(&target, &name, value, &r.declaration)
+    })
+    .await
 }
 
 /// Preview installing (or uninstalling) without changing anything (DSC what-if).
 #[tauri::command]
 async fn plan(key: String, uninstall: bool) -> CmdResult<Vec<engine::Step>> {
-    blocking(move || engine::plan(&catalog::find_app(&key)?.doc, uninstall)).await
+    blocking(move || catalog::find_app(&key)?.plan(uninstall)).await
 }
 
 /// Stop the running install/update/uninstall after its current step.
@@ -313,6 +354,8 @@ fn main() {
             app_status,
             install,
             uninstall,
+            reinstall,
+            set_option,
             plan,
             abort,
             force_stop,

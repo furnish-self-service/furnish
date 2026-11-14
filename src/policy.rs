@@ -32,6 +32,8 @@ pub struct Policy {
     /// Setting name (as in settings.json) → value and whether users may change it.
     pub settings: BTreeMap<String, Entry>,
     pub collections: Collections,
+    /// Option values (see `options`) by collection or `collection/app`: defaults or locked.
+    pub parameters: BTreeMap<String, BTreeMap<String, Entry>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

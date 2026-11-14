@@ -167,6 +167,29 @@ if ! $real; then
     step uninstall devtool >/dev/null && step uninstall hyperfine >/dev/null
 fi
 
+# Options (DSC parameters): collection value, app value, reinstall (fake package managers only).
+if ! $real; then
+    expect "$(step option list fixture)" "userInstall  false  default"
+    expect "$(step install cli-tool)" "Installed cli-tool"
+    [ -f "$tmp/pkgs/cli-tool" ] || { echo "FAIL: not installed system-wide" >&2; exit 1; }
+    step option set fixture userInstall true >/dev/null
+    expect "$(step option list cli-tool)" "userInstall  true   your value for the collection"
+    expect "$(step list)" "installed with other options"
+    expect "$(step list)" "✓  cli-tool"   # still checked with the values it was installed with
+    out=$(step reinstall cli-tool)
+    expect "$out" "cli-tool needs homebrew first"
+    expect "$out" "Reinstalled cli-tool"
+    [ ! -f "$tmp/pkgs/cli-tool" ] && [ -f "$tmp/brew-pkgs/cli-tool" ] || { echo "FAIL: not moved to a user install" >&2; exit 1; }
+    step option set cli-tool userInstall false >/dev/null
+    expect "$(step option list cli-tool)" "userInstall  false  your value for this app"
+    step option reset cli-tool userInstall >/dev/null
+    expect "$(step option list cli-tool)" "userInstall  true   your value for the collection"
+    expect "$(step uninstall cli-tool)" "Uninstalled cli-tool"   # with the values it was installed with
+    [ ! -f "$tmp/brew-pkgs/cli-tool" ] || { echo "FAIL: user install left behind" >&2; exit 1; }
+    step option reset fixture userInstall >/dev/null
+    step uninstall homebrew >/dev/null
+fi
+
 # Kits (fake package manager only: the fixture's packages don't exist for real).
 if ! $real; then
     expect "$(step list)" "·  starter"
@@ -219,7 +242,8 @@ fi
 step collection remove lfs >/dev/null 2>&1 || true
 cat > "$tmp/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 60, "locked": true}},
- "collections": {"preset": [{"name": "org", "url": "$tmp/repo"}], "usersCanAdd": false}}
+ "collections": {"preset": [{"name": "org", "url": "$tmp/repo"}], "usersCanAdd": false},
+ "parameters": {"org": {"userInstall": {"value": true, "locked": true}}}}
 JSON
 policy_id=io.github.furnish-self-service.furnish
 if $real && [ "$(uname -s)" = Darwin ]; then
@@ -241,6 +265,8 @@ expect "$(step settings)" "every 60 minutes  (set by your organization)"
 if step settings --update-interval 5 >/dev/null 2>&1; then echo "FAIL: changed a locked setting" >&2; exit 1; fi
 if step collection remove org >/dev/null 2>&1; then echo "FAIL: removed a managed collection" >&2; exit 1; fi
 if step collection add "$tmp/repo" --name mine >/dev/null 2>&1; then echo "FAIL: added a collection against the policy" >&2; exit 1; fi
+expect "$(step option list org/cli-tool)" "userInstall  true   your organization (locked)"
+if step option set org/cli-tool userInstall false >/dev/null 2>&1; then echo "FAIL: changed a locked option" >&2; exit 1; fi
 drop
 echo "e2e OK ($lfs, $n installer(s), policy from $store)" >&2
 echo "e2e OK ($($real && echo real || echo fake) package manager)"

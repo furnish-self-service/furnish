@@ -48,6 +48,11 @@ enum Command {
     /// Manage app collections (git repositories with apps)
     #[command(subcommand)]
     Collection(CollectionCommand),
+    /// Uninstall and install an app again, to apply options you changed
+    Reinstall { app: String },
+    /// Show or change options (DSC parameters such as userInstall) of a collection or an app
+    #[command(subcommand)]
+    Option(OptionCommand),
     /// Install available updates (apps with automatic updates on; --all: every app)
     Upgrade {
         /// Also update apps with automatic updates turned off
@@ -72,6 +77,16 @@ enum Command {
         #[arg(long, value_name = "MINUTES")]
         update_interval: Option<u32>,
     },
+}
+
+#[derive(Subcommand)]
+enum OptionCommand {
+    /// List the options of a collection or an app, their values and where those come from
+    List { target: String },
+    /// Set an option for a collection (all its apps) or for one app
+    Set { target: String, name: String, value: String },
+    /// Remove your value, so the collection's value or the default applies again
+    Reset { target: String, name: String },
 }
 
 #[derive(Subcommand)]
@@ -129,7 +144,7 @@ fn run(command: Command) -> Result<()> {
         Command::Install { app, dry_run: true, with, without } => {
             let app = catalog::find_app(&app)?;
             for dep in chosen_dependencies(&app, &with, &without)? {
-                if !matches!(engine::status(&dep.doc)?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
+                if !matches!(dep.status()?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
                     println!("First, dependency {}:", dep.id);
                     print_plan(&dep, false)?;
                 }
@@ -143,6 +158,24 @@ fn run(command: Command) -> Result<()> {
         Command::Uninstall { app, .. } => uninstall_app(&catalog::find_app(&app)?),
         Command::Collection(cmd) => collection(cmd),
         Command::Upgrade { all } => upgrade(all),
+        Command::Reinstall { app } => {
+            let app = catalog::find_app(&app)?;
+            // The current options may need other dependencies (e.g. Homebrew for a user install).
+            let siblings = catalog::get(&app.collection)?.apps();
+            for name in catalog::default_selection(&app.dependencies_for(&app.current_values())) {
+                if let Some(dep) = siblings.iter().find(|a| a.id == name)
+                    && !matches!(dep.status()?, Status::Installed | Status::NeedsUpdate | Status::Unavailable)
+                {
+                    println!("{} needs {} first", app.id, dep.id);
+                    install_app(dep)?;
+                }
+            }
+            println!("⟳ Reinstalling {} with its current options…", app.id);
+            app.reinstall(print_progress())?;
+            println!("✓ Reinstalled {}", app.id);
+            Ok(())
+        }
+        Command::Option(cmd) => option(cmd),
         Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates } => {
             use furnish::settings::set;
             if let Some(v) = update_on_launch {
@@ -204,7 +237,7 @@ fn list() -> Result<()> {
     let mut rows = vec![row(["", "App", "Collection", "Categories", "Description"])];
     let mut installed = std::collections::HashSet::new();
     for app in &apps {
-        let check = engine::check(&app.doc);
+        let check = app.check();
         if matches!(check, Ok(engine::Check { status: Status::Installed | Status::NeedsUpdate, .. })) {
             installed.insert((app.collection.clone(), app.id.clone()));
         }
@@ -217,7 +250,8 @@ fn list() -> Result<()> {
                 Status::Unavailable => "–",
                 Status::Blocked => {
                     let needs = c.reason.unwrap_or_default();
-                    let deps = catalog::default_selection(&app.dependencies);
+                    let deps_now = app.dependencies_for(&app.current_values());
+                    let deps = catalog::default_selection(&deps_now);
                     description = if deps.is_empty() {
                         format!("needs {needs}")
                     } else {
@@ -231,6 +265,9 @@ fn list() -> Result<()> {
                 "?"
             }
         };
+        if app.options_differ() {
+            description = format!("{description} (installed with other options: furnish reinstall {})", app.id);
+        }
         rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &description]));
     }
     print_table(&rows);
@@ -319,11 +356,65 @@ fn print_progress() -> impl FnMut(engine::Progress) {
     }
 }
 
+/// The key and resolved options of an option target: a collection, or an app (`app` or `collection/app`).
+fn target(name: &str) -> Result<(String, Vec<furnish::options::Resolved>)> {
+    use furnish::options;
+    let collection = if name.contains('/') { None } else { catalog::get(name).ok() };
+    match (collection, catalog::find_app(name)) {
+        (Some(_), Ok(_)) => anyhow::bail!("'{name}' is a collection and an app; use collection/{name} for the app"),
+        (Some(c), _) => Ok((c.name.clone(), options::resolve_collection(&c.name, &options::collection_declarations(&c.dir)?))),
+        (None, Ok(a)) => Ok((a.key(), a.options())),
+        (None, Err(_)) => anyhow::bail!("no collection or app named '{name}'"),
+    }
+}
+
+fn option(cmd: OptionCommand) -> Result<()> {
+    use furnish::options::{self, Source};
+    let (key, resolved) = match &cmd {
+        OptionCommand::List { target: t } | OptionCommand::Set { target: t, .. } | OptionCommand::Reset { target: t, .. } => target(t)?,
+    };
+    let find = |name: &str| {
+        resolved.iter().find(|r| r.name == name).ok_or_else(|| anyhow::anyhow!("{key} has no option '{name}'"))
+    };
+    match cmd {
+        OptionCommand::List { .. } => {
+            if resolved.is_empty() {
+                println!("{key} has no options.");
+            }
+            let mut rows = vec![row(["Option", "Value", "From", "Description"])];
+            for r in &resolved {
+                let value = r.value.as_ref().map_or("-".to_string(), |v| v.to_string());
+                let from = match (r.source, r.locked) {
+                    (Source::Policy, true) => "your organization (locked)",
+                    (Source::Policy, false) => "your organization",
+                    (Source::App, _) => "your value for this app",
+                    (Source::Collection, _) => "your value for the collection",
+                    (Source::Default, _) => "default",
+                };
+                let text = [r.declaration.label.clone(), r.declaration.description.clone()].into_iter().flatten().collect::<Vec<_>>().join(": ");
+                rows.push(row([&r.name, &value, from, &text]));
+            }
+            print_table(&rows);
+        }
+        OptionCommand::Set { name, value, .. } => {
+            let r = find(&name)?;
+            options::set(&key, &name, Some(options::parse(&value, &r.declaration)?), &r.declaration)?;
+            println!("✓ {name} = {value} for {key}");
+        }
+        OptionCommand::Reset { name, .. } => {
+            let r = find(&name)?;
+            options::set(&key, &name, None, &r.declaration)?;
+            println!("✓ {name} for {key} follows the collection or default again");
+        }
+    }
+    Ok(())
+}
+
 fn upgrade(all: bool) -> Result<()> {
     let settings = furnish::settings::load();
     let (mut updated, mut skipped) = (0, Vec::new());
     for app in catalog::all_apps()? {
-        if engine::status(&app.doc).ok() != Some(Status::NeedsUpdate) {
+        if app.status().ok() != Some(Status::NeedsUpdate) {
             continue;
         }
         let key = format!("{}/{}", app.collection, app.id);
@@ -353,7 +444,9 @@ fn install_app(app: &catalog::App) -> Result<()> {
 
 /// The app's dependencies to install: required ones, selected optional ones, `with`, minus `without`.
 fn chosen_dependencies(app: &catalog::App, with: &[String], without: &[String]) -> Result<Vec<catalog::App>> {
-    let names = catalog::choose(&app.dependencies, with, without, &format!("the dependencies of {}", app.id))?;
+    // Dependencies whose condition holds for the values this install uses.
+    let deps = app.dependencies_for(&app.installed_values());
+    let names = catalog::choose(&deps, with, without, &format!("the dependencies of {}", app.id))?;
     let siblings = catalog::get(&app.collection)?.apps();
     names
         .into_iter()
@@ -373,13 +466,13 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
     path.push(app.id.clone());
     for dep in chosen_dependencies(app, with, without)? {
         // Installed (even if outdated) is enough; dependencies not for this OS don't apply.
-        if !matches!(engine::status(&dep.doc)?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
+        if !matches!(dep.status()?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
             println!("{} needs {} first", app.id, dep.id);
             install_with_dependencies(&dep, &[], &[], path)?;
         }
     }
     path.pop();
-    let check = engine::check(&app.doc)?;
+    let check = app.check()?;
     match check.status {
         Status::Installed => {
             println!("✓ {} is already installed and up to date", app.id);
@@ -390,18 +483,18 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
         Status::NotInstalled | Status::NeedsUpdate => {}
     }
     println!("⟳ Installing {}…", app.id);
-    engine::run(&app.doc, false, print_progress())?;
+    app.install(print_progress())?;
     println!("✓ Installed {}", app.id);
     Ok(())
 }
 
 fn uninstall_app(app: &catalog::App) -> Result<()> {
-    if matches!(engine::status(&app.doc)?, Status::NotInstalled | Status::Unavailable) {
+    if matches!(app.status()?, Status::NotInstalled | Status::Unavailable) {
         println!("✓ {} is not installed", app.id);
         return Ok(());
     }
     println!("⟳ Uninstalling {}…", app.id);
-    engine::run(&app.doc, true, print_progress())?;
+    app.uninstall(print_progress())?;
     println!("✓ Uninstalled {}", app.id);
     Ok(())
 }
@@ -444,7 +537,7 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
         let mut installed = std::collections::HashSet::new();
         for k in &kits {
             for a in kit_apps(k)? {
-                if matches!(engine::status(&a.doc), Ok(Status::Installed | Status::NeedsUpdate)) {
+                if matches!(a.status(), Ok(Status::Installed | Status::NeedsUpdate)) {
                     installed.insert((k.collection.clone(), a.id.clone()));
                 }
             }
@@ -467,7 +560,7 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
 
 fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
     use engine::Action;
-    let steps = engine::plan(&app.doc, uninstall)?;
+    let steps = app.plan(uninstall)?;
     println!("{} {} would:", if uninstall { "Uninstalling" } else { "Installing" }, app.id);
     for step in &steps {
         let label = match step.action {

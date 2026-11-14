@@ -28,7 +28,7 @@
         <span class="text">
           <span class="name">{running.id}</span>
           <span class="meta">
-            {run ? `${{ install: 'Installing', update: 'Updating', uninstall: 'Uninstalling' }[run.kind]}` : 'Starting'}
+            {run ? `${{ install: 'Installing', update: 'Updating', uninstall: 'Uninstalling', reinstall: 'Reinstalling' }[run.kind]}` : 'Starting'}
             {#if run?.steps.length} · step {Math.min(done + 1, run.steps.length)} of {run.steps.length}{/if}
           </span>
         </span>

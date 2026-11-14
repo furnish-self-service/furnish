@@ -22,6 +22,8 @@ pub struct Settings {
     /// Postpone automatic updates while the computer is busy (5-minute averages over `load_limits`).
     pub load_aware_updates: bool,
     pub load_limits: crate::load::Limits,
+    /// The user's option values (see `options`), keyed by collection or `collection/app`.
+    pub parameters: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 }
 
 impl Default for Settings {
@@ -32,6 +34,7 @@ impl Default for Settings {
             no_auto_update: Vec::new(),
             load_aware_updates: true,
             load_limits: crate::load::Limits::default(),
+            parameters: Default::default(),
         }
     }
 }

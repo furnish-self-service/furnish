@@ -1,0 +1,8 @@
+# Options shared by the apps of this collection. An app uses one by declaring it in its DSC
+# `parameters` section; users and admins set it per collection or per app.
+parameters:
+  userInstall:
+    type: bool
+    default: false
+    label: Install just for me
+    description: Installs into your user account; no administrator rights needed.

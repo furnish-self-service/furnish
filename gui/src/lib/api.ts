@@ -22,6 +22,26 @@ export interface AppInfo {
   source: string;
   /** Apps installed first: required ones always, optional ones if the user keeps them selected. */
   dependencies: Item[];
+  /** Options the app declares, with their current values. */
+  options: Option[];
+  /** Installed with other option values than the current ones: a reinstall applies them. */
+  optionsDiffer: boolean;
+}
+
+/** An option (DSC parameter) of an app or collection and where its value comes from. */
+export interface Option {
+  name: string;
+  type: 'bool' | 'string' | 'int';
+  default?: unknown;
+  label?: string;
+  description?: string;
+  allowedValues?: unknown[];
+  value: unknown;
+  source: 'policy' | 'app' | 'collection' | 'default';
+  /** The admin policy fixes the value. */
+  locked: boolean;
+  /** The user's own value at this level, if any. */
+  ownValue: unknown;
 }
 
 /** An app a kit contains or an app depends on. */
@@ -96,6 +116,8 @@ export interface CollectionInfo {
   url: string;
   revision: string;
   apps: number;
+  /** Options shared by the collection's apps. */
+  options: Option[];
 }
 
 export const listApps = () => invoke<AppInfo[]>('list_apps');
@@ -104,6 +126,10 @@ export const listKits = () => invoke<KitInfo[]>('list_kits');
 export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null }>('app_status', { key });
 export const install = (key: string) => invoke<void>('install', { key });
 export const uninstall = (key: string) => invoke<void>('uninstall', { key });
+export const reinstall = (key: string) => invoke<void>('reinstall', { key });
+/** Set an option of a collection or an app (`collection/app`); null resets it. */
+export const setOption = (target: string, name: string, value: unknown) =>
+  invoke<void>('set_option', { target, name, value });
 export const listCollections = () => invoke<CollectionInfo[]>('list_collections');
 export const addCollection = (url: string, name: string | null) =>
   invoke<CollectionInfo>('add_collection', { url, name });

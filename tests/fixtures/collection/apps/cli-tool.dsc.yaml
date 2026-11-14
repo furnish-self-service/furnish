@@ -1,0 +1,26 @@
+# One app, two ways to install it, chosen by the userInstall option. A user install needs
+# Homebrew, so that dependency only applies then.
+parameters:
+  userInstall:
+    type: bool
+    defaultValue: false
+metadata:
+  furnish:
+    description: A command-line tool, system-wide or just for you
+    categories: [Test]
+    dependencies:
+      - app: homebrew
+        required: true
+        condition: "[parameters('userInstall')]"
+resources:
+  - name: cli-tool (system-wide)
+    type: Furnish/Package
+    condition: "[and(not(parameters('userInstall')), not(equals(context().os.family, 'Windows')))]"
+    properties:
+      name: cli-tool
+  - name: cli-tool (just for you)
+    type: Furnish/Package
+    condition: "[and(parameters('userInstall'), not(equals(context().os.family, 'Windows')))]"
+    properties:
+      name: cli-tool
+      packageManager: brew

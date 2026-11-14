@@ -29,7 +29,7 @@ pub struct Kit {
 }
 
 /// An app a kit contains, or an app depends on.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Item {
     /// App id in the same collection.
@@ -40,6 +40,10 @@ pub struct Item {
     /// For optional items: preselected when the user installs.
     #[serde(default = "yes")]
     pub selected: bool,
+    /// Only for dependencies: a DSC expression over the app's options, e.g.
+    /// "[parameters('userInstall')]"; the dependency applies only when it is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
 }
 
 /// What installing starts with: required items and optional items selected by default.
@@ -91,6 +95,8 @@ pub struct App {
     pub path: PathBuf,
     /// Apps of the same collection installed first (`metadata.furnish.dependencies`), e.g. Homebrew.
     pub dependencies: Vec<Item>,
+    /// The collection's directory (for `collection.yaml`).
+    pub collection_dir: PathBuf,
     pub doc: Value,
 }
 
@@ -345,12 +351,96 @@ impl Collection {
                 .unwrap_or_default(),
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
             path: path.to_path_buf(),
+            collection_dir: self.dir.clone(),
             dependencies: match meta.get("dependencies") {
                 Some(deps) => serde_json::from_value(deps.clone()).context("metadata.furnish.dependencies")?,
                 None => Vec::new(),
             },
             doc,
         })
+    }
+}
+
+impl App {
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.collection, self.id)
+    }
+
+    /// The app's options, resolved (see `options`).
+    pub fn options(&self) -> Vec<crate::options::Resolved> {
+        let shared = crate::options::collection_declarations(&self.collection_dir).unwrap_or_else(|err| {
+            eprintln!("warning: ignoring collection.yaml of {}: {err:#}", self.collection);
+            Default::default()
+        });
+        crate::options::resolve_app(&self.collection, &self.id, &self.doc, &shared)
+    }
+
+    pub fn current_values(&self) -> serde_json::Map<String, Value> {
+        crate::options::values(&self.options())
+    }
+
+    /// Values for status, updates and uninstall: those it was installed with, else the current ones.
+    pub fn installed_values(&self) -> serde_json::Map<String, Value> {
+        crate::options::installed_with(&self.key()).unwrap_or_else(|| self.current_values())
+    }
+
+    /// Installed with option values that differ from the current ones (a reinstall applies them).
+    pub fn options_differ(&self) -> bool {
+        let Some(installed) = crate::options::installed_with(&self.key()) else { return false };
+        self.current_values().iter().any(|(k, v)| installed.get(k) != Some(v))
+    }
+
+    pub fn doc_for(&self, values: &serde_json::Map<String, Value>) -> Value {
+        crate::options::apply(&self.doc, values)
+    }
+
+    /// Dependencies whose `condition` holds for these option values.
+    pub fn dependencies_for(&self, values: &serde_json::Map<String, Value>) -> Vec<Item> {
+        self.dependencies
+            .iter()
+            .filter(|d| match &d.condition {
+                None => true,
+                Some(c) => crate::options::condition_holds(c, values).unwrap_or_else(|err| {
+                    eprintln!("warning: {}: dependency {} condition: {err:#}", self.id, d.app);
+                    false
+                }),
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn check(&self) -> Result<crate::engine::Check> {
+        crate::engine::check(&self.doc_for(&self.installed_values()))
+    }
+
+    pub fn status(&self) -> Result<crate::engine::Status> {
+        Ok(self.check()?.status)
+    }
+
+    pub fn plan(&self, uninstall: bool) -> Result<Vec<crate::engine::Step>> {
+        crate::engine::plan(&self.doc_for(&self.installed_values()), uninstall)
+    }
+
+    /// Install or update, with the values it was installed with (else the current ones), and
+    /// remember them.
+    pub fn install(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let values = self.installed_values();
+        crate::engine::run(&self.doc_for(&values), false, report)?;
+        crate::options::remember(&self.key(), &values)
+    }
+
+    pub fn uninstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        crate::engine::run(&self.doc_for(&self.installed_values()), true, report)?;
+        crate::options::forget(&self.key())
+    }
+
+    /// Apply changed options: uninstall with the old values, install with the current ones.
+    pub fn reinstall(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        crate::engine::run(&self.doc_for(&self.installed_values()), true, &mut report)?;
+        crate::options::forget(&self.key())?;
+        let values = self.current_values();
+        crate::engine::run(&self.doc_for(&values), false, &mut report)?;
+        crate::options::remember(&self.key(), &values)
     }
 }
 
@@ -447,7 +537,7 @@ mod tests {
             description: String::new(),
             categories: vec![],
             icon: None,
-            items: items.iter().map(|(app, required)| Item { app: (*app).into(), required: *required, selected: true }).collect(),
+            items: items.iter().map(|(app, required)| Item { app: (*app).into(), required: *required, selected: true, condition: None }).collect(),
         }
     }
 

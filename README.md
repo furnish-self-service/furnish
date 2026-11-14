@@ -95,11 +95,14 @@ Admins set policy where each OS keeps managed settings, which users can't write:
   "collections": {
     "preset": [{ "name": "acme-it", "url": "git@github.com:acme/it-apps.git" }],
     "usersCanAdd": false
+  },
+  "parameters": {
+    "acme-it": { "userInstall": { "value": true, "locked": true } }
   }
 }
 ```
 
-Each setting is either a default the user can change, or `locked`. Preset collections are cloned for every user and can't be removed; with `usersCanAdd: false`, users can't add others, and collections they added before are ignored. On macOS the plist dictionary has the same structure.
+Each setting is either a default the user can change, or `locked`. `parameters` sets [options](#options) the same way, for a collection (`acme-it`) or one app (`acme-it/kubectl`). Preset collections are cloned for every user and can't be removed; with `usersCanAdd: false`, users can't add others, and collections they added before are ignored. On macOS the plist dictionary has the same structure.
 
 On Linux desktops, `tauri dev` builds get furnish's icon only with a desktop entry: run `gui/scripts/dev-desktop-entry.sh` once (`--remove` undoes it). Installed packages include one.
 
@@ -145,6 +148,49 @@ resources:
 ```
 
 If a resource needs a tool that isn't installed, such as Homebrew on a Mac, the app shows what it needs ("Needs Homebrew") instead of failing; a dependency can provide it. Resources report a missing tool by printing `furnish: needs <what>` to stderr and exiting with code 11.
+
+### Options
+
+Options let one app definition install in different ways, for example system-wide or just for the user, instead of shipping `kubectl` and `kubectl (user)`. An option is a [DSC parameter](https://learn.microsoft.com/powershell/dsc/concepts/configuration-functions/parameters): resources and dependencies use it in `condition`s and property expressions.
+
+A collection declares options its apps share in `collection.yaml`:
+
+```yaml
+parameters:
+  userInstall:
+    type: bool
+    default: false
+    label: Install just for me
+    description: Installs into your user account; no administrator rights needed.
+```
+
+An app uses an option by declaring it in its DSC `parameters` (with its own `defaultValue`, used when the collection doesn't declare it):
+
+```yaml
+parameters:
+  userInstall:
+    type: bool
+    defaultValue: false
+metadata:
+  furnish:
+    dependencies:
+      - app: homebrew
+        required: true
+        condition: "[parameters('userInstall')]"   # only needed for a user install
+resources:
+  - name: kubectl (system-wide)
+    type: Furnish/Package
+    condition: "[not(parameters('userInstall'))]"
+    properties: { name: kubectl }
+  - name: kubectl (just for you)
+    type: Furnish/Package
+    condition: "[parameters('userInstall')]"
+    properties: { name: kubectl, packageManager: brew }
+```
+
+The value comes from, first match wins: a locked policy value (app, then collection), the user's value for the app, a policy default for the app, the user's value for the collection, a policy default for the collection, the collection's `default`, the app's `defaultValue`. Users set options on the app's page and, for all of a collection's apps, on the Collections page; in the CLI with `furnish option list|set|reset <collection or app> [name] [value]`.
+
+furnish remembers the values an app was installed with: status checks, updates and uninstalls use them. When the current values differ, the app offers a reinstall (`furnish reinstall <app>`), which uninstalls with the old values and installs with the new ones, installing new dependencies first.
 
 ### Updates
 
