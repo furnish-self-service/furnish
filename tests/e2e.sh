@@ -39,7 +39,16 @@ git -C "$tmp/repo" init -q
 git -C "$tmp/repo" add -A
 git -C "$tmp/repo" -c user.name=t -c user.email=t@t commit -qm init
 
-step() { echo "+ furnish $*" >&2; "$furnish" "$@" | tee /dev/stderr; }
+# Echo each command and its output to stderr (logs), return the output for checks.
+# No `tee /dev/stderr`: Git Bash on Windows has no /dev/stderr.
+step() {
+    echo "+ furnish $*" >&2
+    local out rc=0
+    out=$("$furnish" "$@") || rc=$?
+    echo "$out" >&2
+    echo "$out"
+    return $rc
+}
 expect() { grep -q "$2" <<<"$1" || { echo "FAIL: expected '$2'" >&2; exit 1; }; }
 
 step collection add "$tmp/repo" --name fixture >/dev/null
