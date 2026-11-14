@@ -131,9 +131,12 @@ jobs:
           key: jammy-${{ hashFiles('Cargo.lock') }}
           restore-keys: jammy-
       - run: |
+          # Builds of main are alpha releases: 0.1.0+alpha.<run>, rising with every run.
+          version=$(jq -r .version gui/src-tauri/tauri.conf.json)
+          if [ "$GITHUB_REF" = refs/heads/main ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
-            -e HOST_UID=$(id -u) ubuntu:22.04 packaging/linux/build.sh
+            -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" ubuntu:22.04 packaging/linux/build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-packages
@@ -156,6 +159,52 @@ jobs:
           name: furnish-linux-packages
           path: bundle
       - run: tests/packages.sh "${{ matrix.image }}" bundle
+
+  # The alpha channel of the package repository (GitHub Pages), from main once everything passed.
+  publish-alpha:
+    name: publish alpha packages
+    if: github.ref == 'refs/heads/main'
+    needs: [check, linux, service, native, service-macos, service-windows, packages, gui]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency: pages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-packages
+          path: new
+      - run: sudo apt-get install -y -qq apt-utils createrepo-c
+      - run: echo "$REPO_SIGNING_KEY" | gpg --batch --import
+        env:
+          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+      - run: |
+          packaging/repo/fetch.sh "$BASE_URL" site
+          packaging/repo/publish.sh alpha new site
+        env:
+          BASE_URL: https://furnish-self-service.github.io/furnish
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  repository:
+    name: install from the repository on ${{ matrix.image }}
+    needs: publish-alpha
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10]
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/repo.sh "${{ matrix.image }}" https://furnish-self-service.github.io/furnish alpha
 
   gui:
     name: GUI ${{ matrix.os }}

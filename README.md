@@ -27,7 +27,25 @@ Admins publish apps in a git repository, called a *collection*. Each app is one 
 
 ## Start here
 
-You need git and Rust 1.85 or later.
+On Linux, install furnish (desktop app and CLI) from its package repository. Only the `alpha` channel exists so far: builds of the main branch, versioned `0.1.0+alpha.<build>`. The repository is signed with the key [`gpg-key.asc`](packaging/repo/gpg-key.asc) (fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`).
+
+```sh
+# Debian, Ubuntu, Mint
+sudo install -d /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/furnish.asc https://furnish-self-service.github.io/furnish/gpg-key.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-service.github.io/furnish/alpha/furnish.list
+sudo apt update && sudo apt install furnish
+
+# Fedora, Enterprise Linux 10 (with EPEL and CRB)
+sudo curl -fsSLo /etc/yum.repos.d/furnish.repo https://furnish-self-service.github.io/furnish/alpha/furnish.repo
+sudo dnf install furnish
+
+# openSUSE
+sudo zypper addrepo https://furnish-self-service.github.io/furnish/alpha/furnish.repo
+sudo zypper install furnish
+```
+
+Updates then arrive with the system's own updates. To build from source instead, you need git and Rust 1.85 or later:
 
 ```sh
 git clone git@github.com:furnish-self-service/furnish.git

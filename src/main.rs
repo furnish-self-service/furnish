@@ -6,7 +6,8 @@ use furnish::{catalog, engine, engine::Status};
 
 /// Self-service app catalog: install apps your organization curated in git.
 #[derive(Parser)]
-#[command(version)]
+// FURNISH_VERSION at build time: the package version of alpha builds (e.g. 0.1.0+alpha.42).
+#[command(version = option_env!("FURNISH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))]
 struct Cli {
     /// Show what DSC and the package manager are doing
     #[arg(short, long, global = true)]
