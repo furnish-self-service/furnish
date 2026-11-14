@@ -1,0 +1,22 @@
+# Generated from PowerShell/DSC grammars/tree-sitter-dscexpression (v3.3.0) with tree-sitter-cli 0.25.10.
+# Upstream does not commit generated sources, so dsc-lib can't build as a plain git dependency.
+# Regenerate with scripts/vendor-dsc-grammar.sh when bumping the DSC tag.
+[package]
+name = "tree-sitter-dscexpression"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+build = "bindings/rust/build.rs"
+
+[lib]
+path = "bindings/rust/lib.rs"
+doctest = false
+
+[dependencies]
+tree-sitter-language = "0.1.8"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tree-sitter = "0.27.0"

@@ -1,0 +1,4 @@
+[alias]
+b = "build --profile fast"
+t = "test --profile fast"
+r = "run --profile fast --"
