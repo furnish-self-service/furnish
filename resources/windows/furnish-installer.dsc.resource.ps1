@@ -34,8 +34,10 @@ if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
     # Until then the app counts as not installed, and only an actual install needs the file.
     if ($Operation -eq 'get') { Write-State ''; exit 0 }
     if ($Operation -eq 'set' -and $Mode -eq 'what-if') {
-        $step = if ($env:_exist -ne 'false') { "Download $subject from the collection, then install it as administrator" } else { "$subject is not installed" }
-        Write-State '' @($step); exit 0
+        # The state after the step: installed, like the Unix resource's what-if reports.
+        if ($env:_exist -ne 'false') { Write-State '?' @("Download $subject from the collection, then install it as administrator") }
+        else { Write-State '' @("$subject is not installed") }
+        exit 0
     }
     Fail 11 "installer not found: $file"
 }
