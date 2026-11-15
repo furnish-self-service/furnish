@@ -128,7 +128,11 @@ restore() { for f in $own; do sudo mv "$f.off" "$f"; done; }
 sudo sh -c '
     owner=$1 furnish=$2; shift 2
     for f do mv "$f" "$f.off"; done
-    if sudo -u "$owner" sudo -n true 2>/dev/null; then echo "$owner can still use sudo" >&2; exit 1; fi
+    sudo -u "$owner" sudo -K  # sudo also accepts a recent use instead of a password
+    if sudo -u "$owner" sudo -n true 2>/dev/null; then
+        echo "$owner can still use sudo:" >&2; sudo -l -U "$owner" >&2; grep -v "^#" /etc/sudoers | grep . >&2
+        for f do mv "$f.off" "$f"; done; exit 1
+    fi
     "$furnish" service install --homebrew-sudo
 ' sh "$brew_owner" "$furnish" $own || { sudo sh -c 'for f do mv "$f.off" "$f"; done' sh $own; fail "service install --homebrew-sudo failed"; }
 trap restore EXIT
