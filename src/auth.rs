@@ -65,6 +65,10 @@ pub fn store(url: &str, username: &str, password: &str) -> Result<()> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
         bail!("usernames and passwords are for HTTPS URLs; SSH uses your keys and agent");
     }
+    // Over plain http anyone on the way could read them.
+    if !crate::endpoint::secure_url(url) {
+        bail!("furnish only sends a username and password over https; use the https URL of {url}");
+    }
     let secret = serde_json::to_string(&(username, password))?;
     if use_keyring() {
         keyring::Entry::new(KEYRING_SERVICE, &key(url))?.set_password(&secret).context("saving the credentials in the credential store")?;
@@ -74,13 +78,38 @@ pub fn store(url: &str, username: &str, password: &str) -> Result<()> {
     let mut all = file_entries();
     all.insert(key(url), secret);
     std::fs::create_dir_all(crate::catalog::data_dir())?;
-    std::fs::write(file(), serde_json::to_string_pretty(&all)?)?;
+    write_private(&file(), serde_json::to_string_pretty(&all)?.as_bytes())?;
+    Ok(())
+}
+
+/// Write a file only the user can read (on Unix: created with mode 0600, and an existing file is
+/// restricted before anything is written to it).
+pub fn write_private(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = open_private(path, false)?;
+    file.set_len(0)?;
+    file.write_all(contents)
+}
+
+/// Open a file for writing (appending or not) that only the user can read; see `write_private`.
+pub fn open_private(path: &std::path::Path, append: bool) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true);
+    if append {
+        options.append(true);
+    } else {
+        options.write(true);
+    }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(file(), std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o600);
+        let file = options.open(path)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        Ok(file)
     }
-    Ok(())
+    #[cfg(not(unix))]
+    options.open(path)
 }
 
 fn file_entries() -> BTreeMap<String, String> {
@@ -105,7 +134,7 @@ pub fn forget(url: &str) {
     }
     let mut all = file_entries();
     if all.remove(&key(url)).is_some() {
-        let _ = std::fs::write(file(), serde_json::to_string_pretty(&all).unwrap_or_default());
+        let _ = write_private(&file(), serde_json::to_string_pretty(&all).unwrap_or_default().as_bytes());
     }
 }
 
@@ -191,6 +220,22 @@ mod tests {
             // Other URLs get nothing but the no-prompt setting.
             assert_eq!(git_env("https://elsewhere.tld/x.git").unwrap(), [("GIT_TERMINAL_PROMPT".to_string(), "0".to_string())]);
         });
+    }
+
+    #[test]
+    fn private_files_are_private_from_the_start() {
+        let dir = std::env::temp_dir().join(format!("furnish-private-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("secret");
+        std::fs::write(&path, "old, longer contents").unwrap(); // e.g. 0644 from an earlier version
+        write_private(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

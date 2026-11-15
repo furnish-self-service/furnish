@@ -37,6 +37,12 @@ export function parts(text: string): { text: string; tag: 'b' | 'code' | null }[
   return out;
 }
 
+/** `parts` of an entry, then its `{name}` placeholders filled in: marks in the values (an address
+ *  from a link, say) stay text. */
+export function markedParts(template: string, params: Params): { text: string; tag: 'b' | 'code' | null }[] {
+  return parts(template).map((p) => ({ ...p, text: p.text.replace(/\{(\w+)\}/g, (all, name) => (name in params ? String(params[name]) : all)) }));
+}
+
 /** The `{name}` placeholders of an entry, sorted, for checking that translations keep them. */
 export function placeholders(entry: Entry): string[] {
   const texts = typeof entry === 'string' ? [entry] : Object.values(entry);

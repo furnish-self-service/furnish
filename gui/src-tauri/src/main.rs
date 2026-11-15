@@ -369,8 +369,11 @@ fn version() -> &'static str {
 fn open_licenses(app: tauri::AppHandle) -> CmdResult<()> {
     use tauri::Manager;
     let bundled = app.path().resolve("THIRD-PARTY-LICENSES.html", tauri::path::BaseDirectory::Resource).ok().filter(|p| p.is_file());
-    let target = bundled.map_or_else(|| "https://furnish-self-service.github.io/licenses.html".into(), |p| p.to_string_lossy().into_owned());
-    furnish::endpoint::open_browser(&target).map_err(|e| format!("{e:#}"))
+    match bundled {
+        Some(path) => furnish::endpoint::open_file(&path),
+        None => furnish::endpoint::open_browser("https://furnish-self-service.github.io/licenses.html"),
+    }
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Change one setting for one collection; `null` returns it to the general setting.
@@ -460,6 +463,20 @@ async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
 }
 
+/// Tell the UI the sign-in page's URL (in case the browser doesn't open) and which address it is for.
+fn sign_in_event(app: &tauri::AppHandle, origin: &str) -> impl Fn(&str) {
+    let (app, origin) = (app.clone(), origin.to_string());
+    move |url| {
+        let _ = app.emit("furnish://sign-in", SignInStarted { url: url.to_string(), origin: origin.clone() });
+    }
+}
+
+#[derive(Serialize, Clone)]
+struct SignInStarted {
+    url: String,
+    origin: String,
+}
+
 /// Add a git collection, or an organization's furnish address (`furnish.myorg.tld`): then sign
 /// in in the browser (its URL comes as a `furnish://sign-in` event) and add all its collections.
 #[tauri::command]
@@ -472,9 +489,7 @@ async fn add_collection(
 ) -> CmdResult<Vec<CollectionInfo>> {
     blocking(move || {
         if let Some(origin) = furnish::endpoint::origin(&url) {
-            let added = catalog::add_endpoint(&origin, |u| {
-                let _ = app.emit("furnish://sign-in", u.to_string());
-            })?;
+            let added = catalog::add_endpoint(&origin, sign_in_event(&app, &origin))?;
             return added.iter().map(collection_info).collect();
         }
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| catalog::name_from_url(&url));
@@ -482,6 +497,33 @@ async fn add_collection(
         Ok(vec![collection_info(&catalog::add(url.trim(), name.trim(), credentials)?)?])
     })
     .await
+}
+
+/// A furnish link (`furnish://add?endpoint=…`): the furnish address it names and what adding it
+/// would do, for the user to confirm. Anything but a furnish address (git URLs, paths) is refused.
+#[tauri::command]
+async fn link_preview(link: String) -> CmdResult<furnish::endpoint::Preview> {
+    blocking(move || {
+        let origin = furnish::endpoint::link_origin(&link).ok_or_else(|| anyhow::anyhow!("the link doesn't name a furnish address"))?;
+        furnish::endpoint::preview(&origin)
+    })
+    .await
+}
+
+/// Add a furnish address the user confirmed (see `link_preview`): sign in, add its collections.
+#[tauri::command]
+async fn add_endpoint(app: tauri::AppHandle, origin: String) -> CmdResult<Vec<CollectionInfo>> {
+    blocking(move || {
+        let origin = valid_origin(&origin)?;
+        let added = catalog::add_endpoint(&origin, sign_in_event(&app, &origin))?;
+        added.iter().map(collection_info).collect()
+    })
+    .await
+}
+
+/// An origin exactly as `endpoint::origin` returns it (`https://furnish.myorg.tld`).
+fn valid_origin(origin: &str) -> anyhow::Result<String> {
+    furnish::endpoint::origin(origin).filter(|o| o == origin).ok_or_else(|| anyhow::anyhow!("'{origin}' isn't a furnish address"))
 }
 
 /// An organization's furnish address and whether the user is signed in to it.
@@ -508,10 +550,9 @@ async fn endpoints() -> CmdResult<Vec<EndpointInfo>> {
 #[tauri::command]
 async fn sign_in(app: tauri::AppHandle, origin: String) -> CmdResult<Vec<String>> {
     blocking(move || {
+        let origin = valid_origin(&origin)?;
         let description = furnish::endpoint::discover(&origin)?;
-        furnish::endpoint::login(&origin, &description, |u| {
-            let _ = app.emit("furnish://sign-in", u.to_string());
-        })?;
+        furnish::endpoint::login(&origin, &description, sign_in_event(&app, &origin))?;
         Ok(catalog::ensure_presets())
     })
     .await
@@ -645,6 +686,8 @@ fn main() {
             ensure_presets,
             list_collections,
             add_collection,
+            link_preview,
+            add_endpoint,
             update_collection,
             remove_collection
         ])

@@ -323,8 +323,16 @@ export const en = {
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.title': "Add your organization's apps?",
-  'link.text': "A link wants to add <b>{origin}</b>. You'll sign in there with your organization's account, and its apps show up here.",
-  'link.warning': 'Only continue if the link comes from your organization: its apps can change this computer.',
+  'link.text': 'A link wants to add <b>{name}</b> at <b>{origin}</b>. After you sign in, its apps show up here.',
+  'link.checking': 'Checking the address…',
+  'link.invalid': "This link can't be used:",
+  'link.collections': 'Collections: {names}',
+  'link.autoInstall': 'Installs right away: {apps}',
+  'link.reportsErrors': 'Turns on reports about failed installs, updates and removals of its apps.',
+  'link.reportsAll': 'Turns on reports about installs, updates and removals of its apps, and which of its apps are installed.',
+  'link.branding': 'Shows furnish under its name and colors.',
+  'signIn.at': 'You sign in at <b>{host}</b> for <b>{origin}</b>.',
+  'link.warning': 'Only continue if the link comes from your organization and you know the sign-in page: its apps can change this computer.',
   'link.add': 'Sign in and add',
   'link.addFailed': "Couldn't add {origin}",
   'signIn.finish': "Finish signing in in your browser. If it didn't open, copy this address into it:",

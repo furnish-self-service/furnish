@@ -144,7 +144,8 @@ fn write_choices(choices: &Map<String, Value>) -> Result<()> {
     let dir = data_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join("settings.json");
-    fs::write(&path, serde_json::to_string_pretty(choices)? + "\n").with_context(|| format!("writing {}", path.display()))
+    // Option values may be personal: only the user can read them.
+    crate::auth::write_private(&path, (serde_json::to_string_pretty(choices)? + "\n").as_bytes()).with_context(|| format!("writing {}", path.display()))
 }
 
 /// The settings for one collection: the policy's value for the collection if it is locked; a

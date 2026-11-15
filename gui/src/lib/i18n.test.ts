@@ -1,7 +1,7 @@
 // node --test --experimental-strip-types src/lib/i18n.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dictionaries, parts, placeholders, resolve, translate } from './i18n.ts';
+import { dictionaries, markedParts, parts, placeholders, resolve, translate } from './i18n.ts';
 
 const { en, de } = dictionaries;
 
@@ -34,6 +34,14 @@ test('parameters and plurals', () => {
   assert.equal(translate('de', 'common.apps', { n: 0 }), '0 Apps');
   assert.equal(translate('de', 'kit.install', { n: 1 }), '1 App installieren');
   assert.equal(translate('de', 'nav.home', { brand: 'Acme Apps' }), 'Acme Apps, zu Entdecken wechseln');
+});
+
+test('marks in filled-in values stay text', () => {
+  assert.deepEqual(markedParts('add <b>{origin}</b>?', { origin: 'x</b><code>y</code>' }), [
+    { text: 'add ', tag: null },
+    { text: 'x</b><code>y</code>', tag: 'b' },
+    { text: '?', tag: null },
+  ]);
 });
 
 test('marked text splits into parts without becoming markup', () => {

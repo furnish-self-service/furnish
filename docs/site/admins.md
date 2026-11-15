@@ -65,11 +65,24 @@ The address serves a description at `https://furnish.myorg.tld/.well-known/furni
 }
 ```
 
-furnish signs people in with OpenID Connect (authorization code with PKCE; the client is public, furnish holds no secret), keeps the sign-in in the system's credential store, and renews it. It sends the token only to the address. Its `branding`, `settings`, `parameters` and `autoInstall` work like the policy's, as defaults; the policy wins where both set something. To make the address's collections presets, list it in the policy: `"endpoints": ["furnish.myorg.tld"]`.
+furnish signs people in with OpenID Connect (authorization code with PKCE; the client is public, furnish holds no secret), keeps the sign-in in the system's credential store, and renews it. It sends the token only to the address. The address must use https, and so must the identity provider; its `/.well-known/openid-configuration` must name exactly the `issuer` of `furnish.json`. A sign-in belongs to the issuer and client ID it came from: if `furnish.json` names another one later, people sign in again.
+
+To make the address's collections presets, list it in the policy: `"endpoints": ["furnish.myorg.tld"]`. With `"usersCanAdd": false` in `collections`, people can only add the addresses the policy lists, and furnish ignores others they added before.
+
+What an address sets works like the policy's settings, as defaults that never lock anything; the policy wins where both set something. An address only sets things for its own collections, the ones its `furnish.json` lists:
+
+| Field | What it may set |
+|---|---|
+| `autoInstall` | apps of its own collections (`acme/vpn`) |
+| `parameters` | values for its own collections and their apps |
+| `settings` | `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname` and `language` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
+| `branding` | the app's name and colors, and a logo from one of its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
+
+An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.
+
+A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and asks before adding anything. The dialog shows the address, where people sign in (the identity provider's host), the apps the address installs right away, whether it turns reports on, and whether it changes the app's name and colors. Links only add furnish addresses, never git URLs or folders. `furnish collection add furnish.myorg.tld` prints the same before signing in.
 
 Behind the address runs a reverse proxy: it checks the token with oauth2-proxy and forwards only git's two read requests for each collection to exactly one repository on your git server, with a read-only deploy token. The [reference setup](https://github.com/furnish-self-service/furnish/tree/main/packaging/endpoint) contains the configuration for Caddy and oauth2-proxy, and the tests that show what it lets through.
-
-A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and starts the sign-in after the person confirms.
 
 ## Reports
 
@@ -95,7 +108,7 @@ To turn reports on for everyone, set it in the policy, and lock it if people mus
 { "settings": { "reporting": { "value": "errors", "locked": true }, "reportHostname": { "value": false } } }
 ```
 
-The address's `furnish.json` names where reports go, on the address itself: `"events": "https://furnish.myorg.tld/events"`. furnish keeps reports in `reports/queue.ndjson` in its data folder until the address accepts them, at most 5 MB, so computers that are offline report later.
+The address's `furnish.json` names where reports go, on the address itself: `"events": "https://furnish.myorg.tld/events"`. Each address gets only the reports about its own collections, and the daily list of installed apps only with its apps; with several addresses, each sees its part. Error messages go out without passwords or tokens: furnish replaces credentials in URLs (`https://user:password@host`), `Bearer` and `Basic` credentials and JWTs with `***`. furnish keeps reports in `reports/queue.ndjson` in its data folder, readable only by the person, until the address accepts them, at most 5 MB, so computers that are offline report later.
 
 Each report is one JSON object:
 

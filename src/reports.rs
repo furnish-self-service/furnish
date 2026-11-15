@@ -5,7 +5,8 @@
 //! The setting `reporting` decides what is recorded: `off` (default), `errors` (failures and
 //! fallbacks) or `all` (also successes and a daily inventory). Events wait in
 //! `reports/queue.ndjson` in the data directory until an endpoint accepts them, so offline
-//! computers report later. Users can read that file; `furnish reports` shows it.
+//! computers report later. Users can read that file; `furnish reports` shows it. Each endpoint gets
+//! only the reports about its own collections (see `policy::speaking_for_own`).
 
 use std::{
     cell::Cell,
@@ -168,19 +169,75 @@ fn append(event: &Event) -> Result<()> {
         os: std::env::consts::OS.into(),
         os_version: sysinfo::System::os_version().unwrap_or_default(),
         furnish: version(),
-        event,
+        event: &Event { error: event.error.as_deref().map(redact), ..event.clone() },
     };
-    fs::create_dir_all(dir())?;
+    private_dir()?;
     let path = queue_path();
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut file = crate::auth::open_private(&path, true)?;
     writeln!(file, "{}", serde_json::to_string(&report)?)?;
     if file.metadata()?.len() > MAX_QUEUE {
         let text = fs::read_to_string(&path)?;
         let keep = &text[text.len() / 2..];
         let keep = keep.find('\n').map_or("", |i| &keep[i + 1..]);
-        fs::write(&path, keep)?;
+        crate::auth::write_private(&path, keep.as_bytes())?;
     }
     Ok(())
+}
+
+/// The reports directory, which only the user can open (on Unix).
+fn private_dir() -> Result<()> {
+    fs::create_dir_all(dir())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir(), fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// An error message without secrets: credentials in URLs (`https://user:token@host`, as git
+/// prints them), `Bearer`/`Basic` credentials and anything that looks like a JWT become `***`.
+pub fn redact(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        let lower = rest.to_ascii_lowercase();
+        // Userinfo after a scheme: up to the last '@' before the host ends.
+        if let Some(after) = rest.strip_prefix("://") {
+            let end = after.find(|c: char| c == '/' || c.is_whitespace() || "'\"<>".contains(c)).unwrap_or(after.len());
+            out.push_str("://");
+            match after[..end].rfind('@') {
+                Some(at) => {
+                    out.push_str("***");
+                    out.push_str(&after[at..end]);
+                }
+                None => out.push_str(&after[..end]),
+            }
+            rest = &after[end..];
+            continue;
+        }
+        let scheme = ["bearer ", "basic "].into_iter().find(|s| lower.starts_with(s));
+        if let Some(scheme) = scheme {
+            let after = &rest[scheme.len()..];
+            let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || "-._~+/=".contains(c))).unwrap_or(after.len());
+            out.push_str(&rest[..scheme.len()]);
+            out.push_str(if end > 0 { "***" } else { "" });
+            rest = &after[end..];
+            continue;
+        }
+        if rest.starts_with("eyJ") && (out.is_empty() || !out.ends_with(|c: char| c.is_ascii_alphanumeric())) {
+            let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || "-_.".contains(c))).unwrap_or(rest.len());
+            if rest[..end].matches('.').count() >= 2 {
+                out.push_str("***");
+                rest = &rest[end..];
+                continue;
+            }
+        }
+        let c = rest.chars().next().expect("not empty");
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
 }
 
 /// A random ID for this computer and user, kept in the data directory. Not derived from hardware.
@@ -192,15 +249,16 @@ fn device_id() -> Result<String> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no random numbers: {e}"))?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    fs::create_dir_all(dir())?;
-    fs::write(&path, &id)?;
+    private_dir()?;
+    crate::auth::write_private(&path, id.as_bytes())?;
     Ok(id)
 }
 
-/// Where reports go: the `events` URL of each known endpoint, if it is on the endpoint itself (the
-/// user's token only ever goes there).
+/// Where reports go: the `events` URL of each endpoint whose defaults apply, if it is on the
+/// endpoint itself (the user's token only ever goes there), and the collections it gets reports
+/// about.
 fn destinations() -> Vec<(String, crate::endpoint::Description, String)> {
-    crate::endpoint::known()
+    crate::policy::endpoints_in_effect()
         .into_iter()
         .filter_map(|(origin, d)| {
             let url = d.events.clone()?;
@@ -234,25 +292,54 @@ pub fn send() {
             return;
         }
         for (origin, description, url) in &targets {
+            let own: Vec<&str> = description.collections.iter().map(|c| c.name.as_str()).collect();
+            let theirs = about(batch, &own);
+            if theirs.is_empty() {
+                continue;
+            }
             let Ok(token) = crate::endpoint::token(origin, description) else { return };
             let sent = crate::endpoint::http()
                 .post(url)
                 .header("Authorization", &format!("Bearer {token}"))
                 .header("Content-Type", "application/x-ndjson")
-                .send(batch);
+                .send(&theirs);
             if let Err(err) = sent {
                 eprintln!("warning: couldn't send reports to {}: {err}", description.name);
                 return;
             }
         }
-        // Drop what was sent; reports queued meanwhile stay.
+        // Drop what was sent (reports about no endpoint's collections go nowhere); reports queued
+        // meanwhile stay.
         let Ok(now) = fs::read_to_string(queue_path()) else { return };
         if let Some(rest) = now.strip_prefix(batch)
-            && fs::write(queue_path(), rest).is_err()
+            && crate::auth::write_private(&queue_path(), rest.as_bytes()).is_err()
         {
             return;
         }
     }
+}
+
+/// The reports of a batch about these collections: events about one of them, and inventories
+/// with only their apps.
+fn about(batch: &str, collections: &[&str]) -> String {
+    let ours = |app: &str| collections.contains(&app.split('/').next().unwrap_or_default());
+    let mut out = String::new();
+    for line in batch.lines() {
+        let Ok(mut report) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if let Some(apps) = report.get_mut("apps").and_then(|a| a.as_array_mut()) {
+            apps.retain(|a| a["app"].as_str().is_some_and(ours));
+            if apps.is_empty() {
+                continue;
+            }
+            out.push_str(&report.to_string());
+        } else if report["collection"].as_str().is_some_and(|c| collections.contains(&c)) {
+            out.push_str(line);
+        } else {
+            continue;
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// A lock file; a lock older than 10 minutes was left by a process that ended without cleaning up.
@@ -303,7 +390,7 @@ pub fn inventory_due() -> bool {
 pub fn inventory(apps: Vec<Installed>) {
     record(Event { event: "inventory", outcome: "reported", apps: Some(apps), ..Default::default() });
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let _ = fs::write(dir().join("inventory-at"), now.to_string());
+    let _ = private_dir().and_then(|()| Ok(crate::auth::write_private(&dir().join("inventory-at"), now.to_string().as_bytes())?));
 }
 
 /// Seconds since 1970 as `2026-11-15T08:03:06Z`.
@@ -331,6 +418,38 @@ mod tests {
         assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(rfc3339(1_794_729_786), "2026-11-15T08:03:06Z");
+    }
+
+    #[test]
+    fn each_endpoint_gets_reports_about_its_collections_only() {
+        let batch = concat!(
+            r#"{"event":"install","collection":"acme","app":"acme/vpn"}"#, "\n",
+            r#"{"event":"install","collection":"other","app":"other/x"}"#, "\n",
+            r#"{"event":"inventory","apps":[{"app":"acme/vpn","status":"installed"},{"app":"other/x","status":"installed"}]}"#, "\n",
+            r#"{"event":"inventory","apps":[{"app":"other/x","status":"installed"}]}"#, "\n",
+        );
+        assert_eq!(
+            about(batch, &["acme"]),
+            concat!(
+                r#"{"event":"install","collection":"acme","app":"acme/vpn"}"#, "\n",
+                r#"{"event":"inventory","apps":[{"app":"acme/vpn","status":"installed"}]}"#, "\n",
+            )
+        );
+        assert_eq!(about(batch, &[]), "");
+    }
+
+    #[test]
+    fn secrets_in_errors_are_redacted() {
+        assert_eq!(
+            redact("fatal: unable to access 'https://alice:s3cret@git.acme.tld/it/apps.git/': 401"),
+            "fatal: unable to access 'https://***@git.acme.tld/it/apps.git/': 401"
+        );
+        assert_eq!(redact("https://ghp_abc@github.com/x"), "https://***@github.com/x");
+        assert_eq!(redact("Authorization: Bearer abc.def-ghi"), "Authorization: Bearer ***");
+        assert_eq!(redact("authorization: basic eDp5== rest"), "authorization: basic *** rest");
+        assert_eq!(redact("token eyJhbGciOi.eyJzdWIi.c2ln was rejected"), "token *** was rejected");
+        assert_eq!(redact("https://git.acme.tld/x.git: not found"), "https://git.acme.tld/x.git: not found");
+        assert_eq!(redact("Grüße, user@example.com"), "Grüße, user@example.com");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // The current language and the functions components translate and format with. Changing the
 // language re-renders every text that uses `t`, without a restart.
-import { resolve, translate, type Key, type Lang, type Params } from './i18n.ts';
+import { markedParts, resolve, translate, type Key, type Lang, type Params } from './i18n.ts';
 
 export { parts } from './i18n.ts';
 
@@ -16,6 +16,11 @@ export function setLanguage(choice: 'system' | Lang | undefined) {
 export const lang = () => current.lang;
 
 export const t = (key: Key, params?: Params) => translate(current.lang, key, params);
+
+/** A text with `<b>`/`<code>` marks as parts, with the values filled in afterwards, so marks in a
+ *  value (e.g. from a link) never count as marks. */
+export const tparts = (key: Key, params: Params = {}) =>
+  markedParts(translate(current.lang, key, 'n' in params ? { n: params.n } : {}), params);
 
 /** A time of day, e.g. 14:05. */
 export const formatTime = (ms: number, seconds = false) =>

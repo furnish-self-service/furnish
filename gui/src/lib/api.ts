@@ -203,7 +203,31 @@ export const endpoints = () => invoke<Endpoint[]>('endpoints');
 /** Sign in again in the browser; returns problems setting up its collections. */
 export const signIn = (origin: string) => invoke<string[]>('sign_in', { origin });
 /** The sign-in page's URL, in case the browser doesn't open. */
-export const onSignIn = (handler: (url: string) => void) => listen<string>('furnish://sign-in', (e) => handler(e.payload));
+export interface SignInStarted {
+  url: string;
+  /** The furnish address the sign-in is for. */
+  origin: string;
+}
+export const onSignIn = (handler: (started: SignInStarted) => void) =>
+  listen<SignInStarted>('furnish://sign-in', (e) => handler(e.payload));
+/** What adding a furnish address from a link would do (the link must name a furnish address). */
+export interface LinkPreview {
+  /** The address, normalized: https://furnish.myorg.tld */
+  origin: string;
+  name: string;
+  /** Where the user enters their password. */
+  signInHost: string;
+  collections: string[];
+  /** Apps it installs right away. */
+  autoInstall: string[];
+  /** Reports it turns on: errors or all; null: none. */
+  reporting: 'errors' | 'all' | null;
+  /** Whether it gives furnish its name and colors. */
+  branding: boolean;
+}
+export const linkPreview = (link: string) => invoke<LinkPreview>('link_preview', { link });
+/** Add a furnish address the user confirmed: sign in, then add its collections. */
+export const addEndpoint = (origin: string) => invoke<CollectionInfo[]>('add_endpoint', { origin });
 /** furnish:// links (e.g. furnish://add?endpoint=furnish.myorg.tld): the one furnish started with, then events. */
 export const pendingLink = () => invoke<string | null>('pending_link');
 export const onLink = (handler: (url: string) => void) => listen<string>('furnish://link', (e) => handler(e.payload));

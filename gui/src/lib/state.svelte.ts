@@ -85,8 +85,10 @@ export const store = $state({
   endpoints: [] as api.Endpoint[],
   /** While signing in: the sign-in page, in case the browser didn't open. */
   signInUrl: null as string | null,
-  /** A furnish:// link's address waiting for the user's yes. */
-  linkOrigin: null as string | null,
+  /** The furnish address the sign-in in progress is for. */
+  signInOrigin: null as string | null,
+  /** A furnish:// link waiting for the user's yes: what it would add, or why it can't. */
+  link: null as { preview: api.LinkPreview | null; error: string | null } | null,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: {
     running: false,
@@ -368,7 +370,10 @@ export async function start() {
   else updateApps();
 }
 
-api.onSignIn((url) => (store.signInUrl = url));
+api.onSignIn((started) => {
+  store.signInUrl = started.url;
+  store.signInOrigin = started.origin;
+});
 
 export async function refreshEndpoints() {
   store.endpoints = await api.endpoints().catch(() => []);
@@ -388,10 +393,20 @@ export async function signIn(origin: string) {
   await loadAll();
 }
 
-/** A furnish://add?endpoint=… link: ask before adding anything (a link can come from anyone). */
+/** A furnish://add?endpoint=… link: show what it would add and ask before adding anything (a link
+ *  can come from anyone). Only furnish addresses, never git URLs or paths. */
+let linkSeq = 0;
 function openLink(url: string) {
-  const match = url.match(/^furnish:\/\/add\?endpoint=([^&#]+)/);
-  if (match) store.linkOrigin = decodeURIComponent(match[1]);
+  const seq = ++linkSeq; // a newer link replaces this one
+  store.link = { preview: null, error: null };
+  api
+    .linkPreview(url)
+    .then((preview) => {
+      if (seq === linkSeq && store.link) store.link = { preview, error: null };
+    })
+    .catch((e) => {
+      if (seq === linkSeq && store.link) store.link = { preview: null, error: message(e) };
+    });
 }
 
 /** Apps the organization installs on first launch (e.g. its VPN client), once each: an app the

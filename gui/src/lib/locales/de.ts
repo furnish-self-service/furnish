@@ -324,8 +324,16 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.title': 'Apps Ihrer Organisation hinzufügen?',
-  'link.text': 'Ein Link möchte <b>{origin}</b> hinzufügen. Sie melden sich dort mit dem Konto Ihrer Organisation an, und deren Apps erscheinen dann hier.',
-  'link.warning': 'Fahren Sie nur fort, wenn der Link von Ihrer Organisation stammt: Deren Apps können diesen Computer verändern.',
+  'link.text': 'Ein Link möchte <b>{name}</b> unter <b>{origin}</b> hinzufügen. Nach der Anmeldung erscheinen die Apps dieser Adresse hier.',
+  'link.checking': 'Die Adresse wird geprüft…',
+  'link.invalid': 'Dieser Link kann nicht verwendet werden:',
+  'link.collections': 'Sammlungen: {names}',
+  'link.autoInstall': 'Wird sofort installiert: {apps}',
+  'link.reportsErrors': 'Schaltet Berichte über fehlgeschlagene Installationen, Updates und Deinstallationen ihrer Apps ein.',
+  'link.reportsAll': 'Schaltet Berichte über Installationen, Updates und Deinstallationen ihrer Apps ein, dazu welche ihrer Apps installiert sind.',
+  'link.branding': 'Zeigt furnish mit ihrem Namen und ihren Farben.',
+  'signIn.at': 'Sie melden sich bei <b>{host}</b> für <b>{origin}</b> an.',
+  'link.warning': 'Fahren Sie nur fort, wenn der Link von Ihrer Organisation stammt und Sie die Anmeldeseite kennen: Deren Apps können diesen Computer verändern.',
   'link.add': 'Anmelden und hinzufügen',
   'link.addFailed': '{origin} konnte nicht hinzugefügt werden',
   'signIn.finish': 'Schließen Sie die Anmeldung in Ihrem Browser ab. Falls er sich nicht geöffnet hat, kopieren Sie diese Adresse hinein:',

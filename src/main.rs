@@ -289,7 +289,7 @@ fn run(command: Command) -> Result<()> {
         Command::Login { endpoint } => {
             let origin = endpoint_origin(&endpoint)?;
             let description = furnish::endpoint::discover(&origin)?;
-            furnish::endpoint::login(&origin, &description, print_sign_in_url)?;
+            furnish::endpoint::login(&origin, &description, |url| print_sign_in_url(&origin, url))?;
             println!("✓ Signed in to {}", description.name);
             for problem in catalog::ensure_presets() {
                 eprintln!("warning: {problem}");
@@ -508,7 +508,8 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         // An organization's furnish address: sign in, then add all of its collections.
         CollectionCommand::Add { url, .. } if furnish::endpoint::origin(&url).is_some() => {
             let origin = furnish::endpoint::origin(&url).expect("checked");
-            let added = catalog::add_endpoint(&origin, print_sign_in_url)?;
+            print_preview(&furnish::endpoint::preview(&origin)?);
+            let added = catalog::add_endpoint(&origin, |url| print_sign_in_url(&origin, url))?;
             for c in &added {
                 println!("✓ Added '{}' with {} app(s)", c.name, c.apps().len());
                 ask_unanswered(c)?;
@@ -645,8 +646,28 @@ fn url_with_user(url: &str, user: Option<&str>) -> String {
     }
 }
 
-fn print_sign_in_url(url: &str) {
+/// Where people sign in, so a lookalike address (one using another organization's sign-in)
+/// stands out, and the URL in case the browser doesn't open.
+fn print_sign_in_url(origin: &str, url: &str) {
+    let host = |u: &str| furnish::endpoint::url_host(u);
+    println!("You sign in at {} for {}.", host(url), host(origin));
     println!("Signing in in your browser. If it doesn't open, go to:\n  {url}");
+}
+
+/// What adding a furnish address changes, before signing in.
+fn print_preview(p: &furnish::endpoint::Preview) {
+    println!("{} ({}): {}", p.name, furnish::endpoint::url_host(&p.origin), p.collections.join(", "));
+    if !p.auto_install.is_empty() {
+        println!("  Installs right away: {}", p.auto_install.join(", "));
+    }
+    match p.reporting.as_deref() {
+        Some("all") => println!("  Turns on reports about its apps: installs, updates and removals, and the installed apps"),
+        Some(_) => println!("  Turns on reports about its apps: failed installs, updates and removals"),
+        None => {}
+    }
+    if p.branding {
+        println!("  Shows furnish under its name and colors");
+    }
 }
 
 fn endpoint_origin(input: &str) -> Result<String> {

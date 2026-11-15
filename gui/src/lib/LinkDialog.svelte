@@ -1,45 +1,63 @@
 <script lang="ts">
   // A furnish://add?endpoint=… link: add an organization's furnish address only with the user's
-  // yes, since anyone can send a link.
+  // yes, since anyone can send a link. The dialog shows where the user will sign in and what the
+  // address does, so a lookalike address stands out.
   import * as api from './api';
   import { store, collectionAction, refreshEndpoints, askQuestions } from './state.svelte';
-  import { t, parts } from './i18n.svelte';
+  import { t, tparts } from './i18n.svelte';
 
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
-    if (store.linkOrigin && dialog && !dialog.open) dialog.showModal();
+    if (store.link && dialog && !dialog.open) dialog.showModal();
   });
+  const preview = $derived(store.link?.preview ?? null);
+  const host = (origin: string) => origin.replace(/^https?:\/\//, '');
 
   function close() {
-    store.linkOrigin = null;
+    store.link = null;
     dialog?.close();
   }
   async function add() {
-    const origin = store.linkOrigin;
+    const p = preview;
     close();
-    if (!origin) return;
+    if (!p) return;
     const ok = await collectionAction(async () => {
-      const added = await api.addCollection(origin, null);
+      const added = await api.addEndpoint(p.origin);
       return added.length ? t('collections.added', { names: added.map((c) => c.name).join(', ') }) : t('collections.signedInAlready');
-    }, t('link.addFailed', { origin }));
+    }, t('link.addFailed', { origin: host(p.origin) }));
     store.signInUrl = null;
     await refreshEndpoints();
     if (ok) askQuestions(true);
   }
 </script>
 
-<dialog bind:this={dialog} onclose={() => (store.linkOrigin = null)} aria-labelledby="link-title">
+{#snippet marked(key: Parameters<typeof tparts>[0], params: Record<string, string>)}
+  {#each tparts(key, params) as p}{#if p.tag}<strong>{p.text}</strong>{:else}{p.text}{/if}{/each}
+{/snippet}
+
+<dialog bind:this={dialog} onclose={() => (store.link = null)} aria-labelledby="link-title">
   <h2 id="link-title">{t('link.title')}</h2>
-  <p>
-    {#each parts(t('link.text', { origin: store.linkOrigin ?? '' })) as p}{#if p.tag}<strong>{p.text}</strong>{:else}{p.text}{/if}{/each}
-  </p>
-  <p class="warning">{t('link.warning')}</p>
+  {#if preview}
+    <p>{@render marked('link.text', { name: preview.name, origin: host(preview.origin) })}</p>
+    <p class="sign-in">{@render marked('signIn.at', { host: preview.signInHost, origin: host(preview.origin) })}</p>
+    <ul>
+      {#if preview.collections.length}<li>{t('link.collections', { names: preview.collections.join(', ') })}</li>{/if}
+      {#if preview.autoInstall.length}<li>{t('link.autoInstall', { apps: preview.autoInstall.join(', ') })}</li>{/if}
+      {#if preview.reporting === 'all'}<li>{t('link.reportsAll')}</li>{:else if preview.reporting}<li>{t('link.reportsErrors')}</li>{/if}
+      {#if preview.branding}<li>{t('link.branding')}</li>{/if}
+    </ul>
+    <p class="warning">{t('link.warning')}</p>
+  {:else if store.link?.error}
+    <p>{t('link.invalid')}</p>
+    <p class="error">{store.link.error}</p>
+  {:else}
+    <p aria-busy="true">{t('link.checking')}</p>
+  {/if}
   <div class="actions">
     <button class="secondary" onclick={close}>{t('common.cancel')}</button>
-    <button class="primary" onclick={add}>{t('link.add')}</button>
+    {#if preview}<button class="primary" onclick={add}>{t('link.add')}</button>{/if}
   </div>
 </dialog>
-
 <style>
   dialog {
     width: min(30rem, calc(100vw - 2rem));
@@ -64,6 +82,19 @@
   .warning {
     font-size: 0.88rem;
     color: var(--muted);
+  }
+  .sign-in {
+    color: var(--ink);
+  }
+  ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+  .error {
+    overflow-wrap: anywhere;
+    font: 0.85rem var(--font-mono);
   }
   .actions {
     display: flex;
