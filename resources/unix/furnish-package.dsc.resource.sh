@@ -112,7 +112,15 @@ use_nix() {
     upgrade_desc="nix profile remove $profile $entry && nix profile install $profile $ref#$name"
     # The version in the referenced nixpkgs, if it differs from the installed one.
     newer_version() {
-        available=$(nix eval --raw "$ref#$name.version" 2>/dev/null) || return 0
+        # Offline, say, the check fails: the app counts as up to date, and the activity log says why.
+        # Errors go to a private file (mktemp: random name, only ours), warnings on success are dropped.
+        err=$(mktemp) || return 0
+        if ! available=$(nix eval --raw "$ref#$name.version" 2>"$err"); then
+            echo "{\"warn\":$(json "couldn't check $ref for a newer $name: $(tail -n1 "$err")")}" >&2
+            rm -f "$err"
+            return 0
+        fi
+        rm -f "$err"
         [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
     }
 }

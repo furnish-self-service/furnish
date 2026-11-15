@@ -327,7 +327,7 @@ jobs:
           cache: npm
           cache-dependency-path: gui/package-lock.json
       - uses: Swatinem/rust-cache@v2
-      - run: npm ci && npm test
+      - run: npm ci && npm test && npx svelte-check --threshold error
         working-directory: gui
       # Builds of main are alpha releases (see linux-packages); the bundled CLI reports it.
       - shell: bash

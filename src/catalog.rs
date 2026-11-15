@@ -1010,7 +1010,6 @@ impl App {
         let collection = self.collection_handle();
         let relative = self.relative_path();
         let state = self.state_dir(values);
-        // ponytail: version folders stay after the app is uninstalled; prune them if they pile up.
         let dir = version_dir(&state, &self.collection, &version.commit);
         if !dir.join(&relative).exists() {
             let _ = fs::remove_dir_all(&dir);

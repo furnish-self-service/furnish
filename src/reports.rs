@@ -215,13 +215,14 @@ pub fn destination_names() -> Vec<String> {
 }
 
 /// Send queued reports. Reports the endpoints didn't accept stay queued for the next time.
-/// ponytail: one sender at a time per process; two processes may both send a batch (duplicates).
 pub fn send() {
     static SENDING: Mutex<()> = Mutex::new(());
     let Ok(_one) = SENDING.try_lock() else { return };
     if IN_SERVICE.load(Ordering::Relaxed) {
         return;
     }
+    // One sender across processes too (the desktop app and the CLI), so no batch goes twice.
+    let Some(_lock) = Lock::take(dir().join("sending")) else { return };
     let targets = destinations();
     if targets.is_empty() {
         return;
@@ -251,6 +252,29 @@ pub fn send() {
         {
             return;
         }
+    }
+}
+
+/// A lock file; a lock older than 10 minutes was left by a process that ended without cleaning up.
+struct Lock(PathBuf);
+
+impl Lock {
+    fn take(path: PathBuf) -> Option<Lock> {
+        let stale = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() > 600));
+        if stale {
+            let _ = fs::remove_file(&path);
+        }
+        fs::create_dir_all(path.parent()?).ok()?;
+        fs::OpenOptions::new().write(true).create_new(true).open(&path).ok()?;
+        Some(Lock(path))
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 

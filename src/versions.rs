@@ -43,13 +43,36 @@ pub fn get(dir: &Path, app_key: &str) -> Record {
 pub fn installed(dir: &Path, app_key: &str, commit: &str, held: Option<Held>) -> Result<()> {
     let mut records = all(dir);
     records.insert(app_key.to_string(), Record { good: Some(commit.to_string()), held });
-    write(dir, &records)
+    write(dir, &records)?;
+    prune(dir, &records);
+    Ok(())
 }
 
 pub fn forget(dir: &Path, app_key: &str) -> Result<()> {
     let mut records = all(dir);
     if records.remove(app_key).is_some() {
         write(dir, &records)?;
+        prune(dir, &records);
     }
     Ok(())
+}
+
+/// Delete the files of earlier versions (`versions/<collection>/<commit>/`, see
+/// `catalog::version_dir`) that no app is held at anymore.
+fn prune(dir: &Path, records: &BTreeMap<String, Record>) {
+    let held: Vec<(String, String)> = records
+        .iter()
+        .filter_map(|(key, r)| Some((key.split('/').next()?.to_string(), r.held.as_ref()?.commit.clone())))
+        .collect();
+    let Ok(collections) = fs::read_dir(dir.join("versions")) else { return };
+    for collection in collections.flatten() {
+        let name = collection.file_name().to_string_lossy().into_owned();
+        for version in fs::read_dir(collection.path()).into_iter().flatten().flatten() {
+            let commit = version.file_name().to_string_lossy().into_owned();
+            if !held.iter().any(|(c, h)| *c == name && *h == commit) {
+                let _ = fs::remove_dir_all(version.path());
+            }
+        }
+        let _ = fs::remove_dir(collection.path()); // only if empty
+    }
 }

@@ -91,6 +91,7 @@ deb 4.0; app installers/tool.deb; commit "v4, fixed"
 furnish collection update org >/dev/null
 furnish list | grep "tool" | grep -q "held" && fail "still held"
 furnish install tool >/dev/null && [ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 4.0 ] || fail "4.0 not installed"
+[ -z "$(ls "$FURNISH_DATA_DIR/versions/org" 2>/dev/null)" ] || fail "files of the earlier version left behind: $(ls "$FURNISH_DATA_DIR/versions/org")"
 
 echo "== first install, automatic: the app's version before its latest change"
 deb 1.0 fresh fresh1.deb; app installers/fresh1.deb fresh; commit "fresh 1"

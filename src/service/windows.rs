@@ -111,7 +111,10 @@ fn service_main(_: Vec<OsString>) {
 fn log_to_file() {
     use std::os::windows::io::IntoRawHandle;
     let path = crate::catalog::system_dir().join("service.log");
-    // ponytail: appends forever; rotate if it grows (it gets a few lines per start and problem).
+    // Above 1 MiB the old log becomes service.log.1, replacing the one before.
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+        let _ = std::fs::rename(&path, path.with_extension("log.1"));
+    }
     let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else { return };
     // SAFETY: the handle stays open for the life of the process (into_raw_handle leaks it).
     unsafe { windows_sys::Win32::System::Console::SetStdHandle(windows_sys::Win32::System::Console::STD_ERROR_HANDLE, file.into_raw_handle()) };
