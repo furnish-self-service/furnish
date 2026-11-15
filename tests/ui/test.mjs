@@ -79,7 +79,8 @@ const steps = [
     const inRow = (app) => findAll(`${row}//h3[normalize-space()='${app}']`).then((l) => l.length > 0);
     await waitFor('hyperfine and devtool recommended', async () => (await inRow('hyperfine')) && (await inRow('devtool')), 30000);
     if (await inRow('toolbox')) throw new Error('toolbox recommended');
-    if (!(await findAll("//article//span[contains(@class,'collection')]//img")).length) throw new Error('no collection avatar on cards');
+    // Avatars come with the collection list, which loads separately (and again after the update on launch).
+    await waitFor('collection avatar on cards', async () => (await findAll("//article//span[contains(@class,'collection')]//img")).length > 0);
   }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
