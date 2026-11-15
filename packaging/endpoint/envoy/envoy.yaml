@@ -16,10 +16,33 @@
 #
 # No admin listener: it would show the deploy tokens in /config_dump.
 
+# Limits for the whole process: stop accepting connections beyond 5000, and stop taking requests
+# when the heap reaches 98% of 1 GiB.
+overload_manager:
+  refresh_interval: 0.25s
+  resource_monitors:
+  - name: envoy.resource_monitors.fixed_heap
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.resource_monitors.fixed_heap.v3.FixedHeapConfig
+      max_heap_size_bytes: 1073741824
+  - name: envoy.resource_monitors.global_downstream_max_connections
+    typed_config:
+      "@type": type.googleapis.com/envoy.extensions.resource_monitors.downstream_connections.v3.DownstreamConnectionsConfig
+      max_active_downstream_connections: 5000
+  actions:
+  - name: envoy.overload_actions.shrink_heap
+    triggers: [{name: envoy.resource_monitors.fixed_heap, threshold: {value: 0.95}}]
+  - name: envoy.overload_actions.stop_accepting_requests
+    triggers: [{name: envoy.resource_monitors.fixed_heap, threshold: {value: 0.98}}]
+
 static_resources:
   listeners:
   - name: https
     address: {socket_address: {address: 0.0.0.0, port_value: 443}}
+    # Little data per connection and stream before Envoy stops reading from the client, as in
+    # Envoy's edge proxy recommendations; with the HTTP/2 limits below, a client that isn't signed
+    # in can't make Envoy hold more than about 1 MiB per connection.
+    per_connection_buffer_limit_bytes: 32768
     filter_chains:
     - transport_socket:
         name: envoy.transport_sockets.tls
@@ -38,6 +61,17 @@ static_resources:
           stat_prefix: https
           codec_type: AUTO
           use_remote_address: true
+          # Request headers within 10 s; streams without traffic for 5 minutes are closed.
+          request_headers_timeout: 10s
+          stream_idle_timeout: 300s
+          common_http_protocol_options:
+            idle_timeout: 120s
+            # X_Furnish_User must not pass for X-Furnish-User further on.
+            headers_with_underscores_action: DROP_HEADER
+          http2_protocol_options:
+            max_concurrent_streams: 100
+            initial_stream_window_size: 65536
+            initial_connection_window_size: 1048576
           # Routes compare the raw request URI, so Envoy must not rewrite it first: with these
           # defaults changed, "..", "%2e", "%2f" and "//" stay as sent and match no route.
           normalize_path: false
@@ -57,13 +91,8 @@ static_resources:
                 - remove: x-furnish-user
                 - remove: x-auth-request-email
           # Every route needs a valid sign-in unless it turns this off (furnish.json, 401, 404).
-          # Turned on only for POST /events: reports are at most 1 MiB (413 above). Before the
-          # token check, so Envoy collects the body under this limit from the first byte; placed
-          # after it, a body that arrives in one piece while the check runs would pass unchecked.
-          - name: envoy.filters.http.buffer
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
-              max_request_bytes: 1048576
+          # Envoy reads no request body before the check: ext_authz doesn't ask for it, and the
+          # filters that do come after it.
           - name: envoy.filters.http.ext_authz
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
@@ -88,6 +117,20 @@ static_resources:
                   # On denial, pass back only the status and body.
                   allowed_client_headers:
                     patterns: [{exact: content-type, ignore_case: true}]
+          # Turned on only for the GitLab routes: requests per signed-in user (see git_rate).
+          - name: envoy.filters.http.local_ratelimit
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+              stat_prefix: git_rate
+          # Turned on for POST /events (1 MiB) and git-upload-pack (32 MiB): collects the body and
+          # answers 413 above the limit. After the token check, so only signed-in users' bodies
+          # are collected. While the check runs, Envoy reads at most per_connection_buffer_limit_bytes
+          # (32 KiB) of the body, so a body over the limit always reaches this filter in pieces
+          # and is counted.
+          - name: envoy.filters.http.buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+              max_request_bytes: 1048576
           # Turned on only for the GitLab routes: if GitLab rejects the deploy token, say so
           # instead of making git ask the user for a password.
           - name: envoy.filters.http.custom_response
@@ -107,8 +150,17 @@ static_resources:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                   disabled: true
               # Evaluated after the routes' own header changes, so a route can still copy
-              # x-auth-request-email before it is dropped here.
-              request_headers_to_remove: [x-auth-request-email, cookie]
+              # x-auth-request-email before it is dropped here. What GitLab and Vector learn about
+              # the client comes from the connection, not from the client (Envoy itself sets
+              # x-forwarded-proto); removing happens before adding.
+              request_headers_to_remove: [x-auth-request-email, cookie, x-forwarded-for, x-real-ip, x-forwarded-host, forwarded, x-forwarded-port, x-forwarded-prefix]
+              request_headers_to_add:
+              - header: {key: x-forwarded-for, value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"}
+                append_action: OVERWRITE_IF_EXISTS_OR_ADD
+              - header: {key: x-real-ip, value: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"}
+                append_action: OVERWRITE_IF_EXISTS_OR_ADD
+              - header: {key: x-forwarded-host, value: "${FURNISH_HOST}"}
+                append_action: OVERWRITE_IF_EXISTS_OR_ADD
               routes:
               # Discovery document for furnish; public, no sign-in needed.
               - match: {path: /.well-known/furnish.json}
@@ -144,7 +196,9 @@ static_resources:
                   # GitLab (the query is kept, and the match above allows only this one).
                   regex_rewrite: {pattern: {regex: ".*"}, substitution: /it/catalog.git/info/refs}
                   host_rewrite_literal: "${GITLAB_AUTHORITY}"
-                  timeout: 0s
+                  # A clone may take up to an hour; GitLab silent for 5 minutes ends it earlier.
+                  timeout: 3600s
+                  idle_timeout: 300s
                 # Replace the user's ID token with the read-only deploy token (base64 of
                 # "username:token").
                 request_headers_to_add: &acme_auth
@@ -153,8 +207,24 @@ static_resources:
                 # Drop other ways the client could present GitLab credentials of its own.
                 request_headers_to_remove: &gitlab_drop [private-token, job-token, deploy-token]
                 response_headers_to_remove: &gitlab_drop_down [set-cookie, www-authenticate]
-                typed_per_filter_config: &gitlab_filters
-                  envoy.filters.http.custom_response:
+                typed_per_filter_config:
+                  # Git requests per signed-in user (the e-mail from the token check): 2 a second on
+                  # average, bursts of up to 60 (a clone or fetch takes 2 to 4 requests); more get 429.
+                  envoy.filters.http.local_ratelimit: &git_rate
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+                    stat_prefix: git_rate
+                    # Requests without a user (none get this far) share this generous bucket.
+                    token_bucket: {max_tokens: 10000, tokens_per_fill: 10000, fill_interval: 1s}
+                    filter_enabled: {default_value: {numerator: 100, denominator: HUNDRED}, runtime_key: git_rate.enabled}
+                    filter_enforced: {default_value: {numerator: 100, denominator: HUNDRED}, runtime_key: git_rate.enforced}
+                    descriptors:
+                    - entries: [{key: user}]
+                      token_bucket: {max_tokens: 60, tokens_per_fill: 2, fill_interval: 1s}
+                    max_dynamic_descriptors: 10000
+                    rate_limits:
+                    - actions:
+                      - request_headers: {header_name: x-auth-request-email, descriptor_key: user}
+                  envoy.filters.http.custom_response: &gitlab_denied_502
                     "@type": type.googleapis.com/envoy.extensions.filters.http.custom_response.v3.CustomResponse
                     # Local replies (ext_authz's 401/403) pass through this filter as well;
                     # x-envoy-upstream-service-time is set only on responses from GitLab.
@@ -193,14 +263,30 @@ static_resources:
                   cluster: gitlab
                   regex_rewrite: {pattern: {regex: ".*"}, substitution: /it/catalog.git/git-upload-pack}
                   host_rewrite_literal: "${GITLAB_AUTHORITY}"
-                  timeout: 0s
+                  timeout: 3600s
+                  idle_timeout: 300s
                 request_headers_to_add: *acme_auth
                 request_headers_to_remove: *gitlab_drop
                 response_headers_to_remove: *gitlab_drop_down
-                typed_per_filter_config: *gitlab_filters
+                typed_per_filter_config:
+                  envoy.filters.http.local_ratelimit: *git_rate
+                  envoy.filters.http.custom_response: *gitlab_denied_502
+                  # git's upload-pack requests are small (the commits the client wants and has).
+                  envoy.filters.http.buffer:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
+                    buffer: {max_request_bytes: 33554432}
 
               # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the
-              # user's e-mail.
+              # user's e-mail. A declared length over 1 MiB gets 413 right away; the buffer filter
+              # counts the body itself.
+              - match:
+                  path: /events
+                  headers:
+                  - {name: ":method", string_match: {exact: POST}}
+                  - {name: ":path", string_match: {exact: /events}}
+                  - {name: content-length, range_match: {start: 1048577, end: 9223372036854775807}}
+                direct_response: {status: 413}
+                typed_per_filter_config: *public
               - match:
                   path: /events
                   headers:
@@ -227,6 +313,8 @@ static_resources:
   # X-Auth-Request-Email. 401 and 403 pass through unchanged.
   - name: auth_hop
     address: {socket_address: {address: 127.0.0.1, port_value: 10000}}
+    # Not counted against the 5000 connections, so the check works when the limit is reached.
+    ignore_global_conn_limit: true
     filter_chains:
     - filters:
       - name: envoy.filters.network.http_connection_manager

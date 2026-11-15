@@ -62,6 +62,12 @@ Traefik has no handler that answers with a fixed status. The 401 and 502 answers
 `errors` middleware rewriting the status of the built-in `noop@internal` service or of GitLab's
 answer; they have an empty body.
 
+The `events-size` buffering middleware, which enforces the 1 MiB limit on reports, comes after
+the token check, so Traefik doesn't read the body of a request that isn't signed in. Git requests
+pass a `rateLimit` middleware keyed on the `Authorization` header (2 a second on average, bursts of
+up to 60) and, for `git-upload-pack`, a buffering middleware with a 32 MiB limit. Traefik keeps
+request bodies over 1 MiB in `/tmp`, a memory file system in the container.
+
 ## Limits of this variant
 
 - Traefik decodes percent-encoded unreserved characters (letters, digits, `-`, `.`, `_`, `~`) in

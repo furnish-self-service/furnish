@@ -6,13 +6,26 @@
 # oauth2-proxy (or checks the token itself) whether the user's ID token is valid, and forwards git
 # requests to GitLab with a read-only deploy token. GitLab stays internal: only the proxy reaches
 # it. Settings come from .env next to this file (see .env.example and README.md).
+#
+# Networks: only the proxy is on "edge", the network with the published ports. "backend" connects
+# the proxy with oauth2-proxy and Vector (and is how they reach the identity provider, GitLab and
+# your log system). reports/compose.yml adds the networks between Vector, Loki and Grafana.
 name: furnish-endpoint
+
+x-hardened: &hardened
+  # No capabilities, no privilege escalation through setuid binaries, a read-only file system.
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  read_only: true
 
 services:
   # Not published: only the proxy reaches it, and only its /oauth2/auth check is used.
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6
     restart: unless-stopped
+    <<: *hardened
+    networks: [backend]
+    secrets: [oauth2_proxy_cookie_secret]
     environment:
       OAUTH2_PROXY_PROVIDER: oidc
       OAUTH2_PROXY_OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL}
@@ -21,13 +34,18 @@ services:
       # furnish is a public client. oauth2-proxy insists on a secret but never uses it
       # for bearer-token checks, so any placeholder works.
       OAUTH2_PROXY_CLIENT_SECRET: unused-public-client
-      # Required by oauth2-proxy even though no cookie session is ever created here.
-      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET (openssl rand -base64 32 | tr -- +/ -_)}
+      # Required by oauth2-proxy even though no cookie session is ever created here. A file
+      # (Compose secret), so it doesn't show up in the container's environment.
+      OAUTH2_PROXY_COOKIE_SECRET_FILE: /run/secrets/oauth2_proxy_cookie_secret
       OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
       # An invalid bearer token gets 403, not a redirect to a login page.
       OAUTH2_PROXY_BEARER_TOKEN_LOGIN_FALLBACK: "false"
-      # Restrict by the token's e-mail domain; "*" accepts every user of the IdP.
-      OAUTH2_PROXY_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-*}
+      # Who may sign in: e-mail domains of the token's "email" claim ("*" for any), and, if
+      # ALLOWED_GROUPS is set, membership in one of these groups (the token's "groups" claim).
+      # oauth2-proxy rejects "email_verified": false but accepts a token without the claim, so
+      # e-mail domains only restrict with an IdP that sets it (see the endpoint setup).
+      OAUTH2_PROXY_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:?set ALLOWED_EMAIL_DOMAINS, e.g. myorg.tld, or * for every user of the IdP}
+      OAUTH2_PROXY_ALLOWED_GROUPS: ${ALLOWED_GROUPS:-}
       # The answer names the user (X-Auth-Request-Email), which the proxy passes on with reports.
       OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
       OAUTH2_PROXY_UPSTREAMS: static://202
@@ -39,5 +57,18 @@ services:
   vector:
     image: timberio/vector:0.60.0-alpine
     restart: unless-stopped
+    <<: *hardened
+    networks: [backend]
+    # Vector's buffers and checkpoints; reports pass through without being kept here.
+    tmpfs: [/var/lib/vector, /tmp]
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+
+networks:
+  edge:
+  backend:
+
+# Secrets are files in SECRETS_DIR (default ./secrets); see .env.example.
+secrets:
+  oauth2_proxy_cookie_secret:
+    file: ${SECRETS_DIR:-./secrets}/oauth2_proxy_cookie_secret

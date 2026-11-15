@@ -24,11 +24,15 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=furnish-test-ca -key
 openssl req -newkey rsa:2048 -nodes -subj /CN=furnish.test -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.csr" 2>/dev/null
 printf 'subjectAltName=DNS:furnish.test\nextendedKeyUsage=serverAuth\n' > "$TLS_DIR/ext"
 openssl x509 -req -in "$TLS_DIR/tls.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial -days 2 -extfile "$TLS_DIR/ext" -out "$TLS_DIR/tls.crt" 2>/dev/null
-chmod 644 "$TLS_DIR"/*
+# The containers' root has no capability to bypass file permissions (cap_drop: ALL), so like
+# an admin's root-owned files, these must be readable by their user.
+chmod 644 "$TLS_DIR"/* && chmod 755 "$TLS_DIR"
 export OIDC_ISSUER_URL=http://mock-oidc:8080/acme OIDC_CLIENT_ID=furnish ALLOWED_EMAIL_DOMAINS=myorg.tld
-OAUTH2_PROXY_COOKIE_SECRET=$(rand)                  # 32 hex characters = 32 bytes
+SECRETS_DIR=$TLS_DIR/secrets; export SECRETS_DIR
+mkdir -p "$SECRETS_DIR" && rand > "$SECRETS_DIR/oauth2_proxy_cookie_secret"   # 32 hex characters = 32 bytes
+chmod 644 "$SECRETS_DIR/oauth2_proxy_cookie_secret"
 DEPLOY_USER=gitlab+deploy-token-1 DEPLOY_TOKEN=gldt-$(rand)
-export OAUTH2_PROXY_COOKIE_SECRET DEPLOY_USER DEPLOY_TOKEN
+export DEPLOY_USER DEPLOY_TOKEN
 ACME_GITLAB_AUTH=$(printf '%s:%s' "$DEPLOY_USER" "$DEPLOY_TOKEN" | base64 | tr -d '\n'); export ACME_GITLAB_AUTH
 
 dc() { docker compose -p "$project" --project-directory "$root/packaging/endpoint" -f "$root/packaging/endpoint/docker-compose.yml" \
@@ -39,7 +43,7 @@ trap 'exit 130' INT TERM
 dc --profile client build -q
 # Optional per-proxy preparation (e.g. HAProxy needs the IdP's public key), sourced here.
 [ -f "$here/$PROXY.sh" ] && . "$here/$PROXY.sh"
-dc up -d --quiet-pull proxy oauth2-proxy vector mock-oidc gitlab 2>/dev/null
+dc up -d --quiet-pull proxy oauth2-proxy vector mock-oidc gitlab 2>$TLS_DIR/up.log || { cat $TLS_DIR/up.log >&2; exit 1; }
 echo "proxy: $PROXY"
 
 failed=0
@@ -60,6 +64,11 @@ echo "$log" | grep -vq ' auth=Basic ' && bad "upstream got a request without the
     || ok "upstream got the deploy token (Basic) on every request, never the client's bearer"
 echo "$log" | grep -q 'proto="version=2"' && ok "Git-Protocol: version=2 header reached upstream" || bad "no protocol v2 request upstream"
 echo "$log" | grep -q ' 401 ' && bad "upstream rejected a request" || ok "upstream accepted the deploy token"
+# What the proxy tells GitLab about the client: from the connection, never what the client sent.
+spoofed=$(echo "$log" | grep -E '6\.6\.6\.6|evil\.example|spoofed|6666' || true)
+[ -z "$spoofed" ] && ok "spoofed X-Forwarded-*, X-Real-IP and Forwarded never reached upstream" || bad "upstream got spoofed client headers: $spoofed"
+unset_fwd=$(echo "$log" | grep -vE ' xff="[0-9.]+" xri="[0-9.]+" xfh="furnish\.test" xfp="https" ' || true)
+[ -z "$unset_fwd" ] && ok "upstream got X-Forwarded-For, X-Real-IP, -Host and -Proto from the connection" || bad "upstream without the proxy's forwarding headers: $(echo "$unset_fwd" | head -3)"
 
 # What Vector received (checks.sh sent reports, with and without attempts to pose as someone else).
 reports=$(dc logs --no-color --no-log-prefix vector | grep '"event"' || true)
@@ -75,8 +84,10 @@ if [ -n "${FURNISH_BIN:-}" ]; then
 fi
 
 # Misconfigured deploy token: GitLab answers 401, the client must get 502 and no Basic challenge.
+# The token check now also requires a group (502 = a token passed it).
 ACME_GITLAB_AUTH=$(printf 'gitlab+deploy-token-1:wrong' | base64 | tr -d '\n')
-dc up -d proxy 2>/dev/null
+export ALLOWED_GROUPS=furnish-users
+dc up -d proxy oauth2-proxy 2>/dev/null
 dc run --rm -T -e READY_STATUS=502 client sh /checks.sh upstream-rejects || failed=1
 
 if [ $failed -ne 0 ]; then

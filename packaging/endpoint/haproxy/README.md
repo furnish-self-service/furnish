@@ -8,8 +8,16 @@ token handling and the same `POST /events` forwarding to Vector. The configurati
 The difference is the token check. HAProxy cannot ask oauth2-proxy about a request, so it
 verifies the ID token itself with its built-in JWT converters: RS256 signature with the IdP's
 public key, `iss` equal to `OIDC_ISSUER_URL`, `aud` equal to (or, for an array, containing)
-`OIDC_CLIENT_ID`, `exp` in the future, `email_verified` true, and the `email` domain in
-`ALLOWED_EMAIL_DOMAINS` unless that is `*`. oauth2-proxy from `docker-compose.yml` still starts
+`OIDC_CLIENT_ID`, `exp` in the future, `nbf` (if present) at most 5 minutes ahead, the `email`
+domain in `ALLOWED_EMAIL_DOMAINS` unless that is `*`, and either `email_verified` true or, if
+`ALLOWED_GROUPS` is set, one of those groups in the `groups` claim.
+
+HAProxy is stricter about `email_verified` than oauth2-proxy, which only refuses
+`email_verified: false`. Without `ALLOWED_GROUPS`, HAProxy refuses a token without the claim or
+with the string `"true"`, because the e-mail domain is then all that decides who signs in, and an
+address the identity provider doesn't vouch for proves nothing. With `ALLOWED_GROUPS`, the group
+decides, and a token without the claim passes, as with Microsoft Entra ID, which never sends
+it. oauth2-proxy from `docker-compose.yml` still starts
 but receives no requests. It still needs `OAUTH2_PROXY_COOKIE_SECRET` set, because Compose
 checks the whole file.
 
@@ -90,15 +98,21 @@ rotation at the IdP locks everyone out until you export the new key. There is no
 second key during the switch.
 
 Tokens cannot be revoked at the endpoint, as with oauth2-proxy: a valid ID token works until its
-`exp`. Keep the IdP's ID token lifetime short. `nbf`, `iat` and `azp` are not checked, and there is
-no allowance for clock skew on `exp`.
+`exp`. Keep the IdP's ID token lifetime short. `iat` and `azp` are not checked. Like oauth2-proxy,
+HAProxy allows no clock skew on `exp` and 5 minutes on `nbf`.
 
 An `aud` array is matched in the JSON text HAProxy's `json_query` returns, which keeps the
 token's spacing. If an IdP wrote `["other", "furnish"]` with a space after the comma, the client
 ID would only be found as the first element; the IdPs we know write compact JSON. HAProxy also
-treats `1` and `"1"` like `true` for `email_verified`. Tokens that fail any check get 401
-(signature, issuer, audience, expiry) or 403 (e-mail).
+treats `1` and `"1"` like `true` for `email_verified`. The `groups` claim is matched the same
+way: as a string, or as an element of the array's JSON text. Tokens that fail any check get 401
+(signature, issuer, audience, expiry, `nbf`) or 403 (e-mail, groups).
 
 The 1 MiB limit on reports is checked against `Content-Length`, because HAProxy streams request
 bodies. `POST /events` without exactly one `Content-Length` header gets 411; furnish always sends
-one. HAProxy itself rejects a body longer than its declared length.
+one. HAProxy itself rejects a body longer than its declared length. The 32 MiB limit on
+`git-upload-pack` is checked the same way, but git sends requests over 1 MiB without a length
+(chunked), and HAProxy has no native way to count those bytes, so they pass without a limit.
+
+Git requests are limited per user: a stick table counts each e-mail address's requests, and more
+than 80 in 10 seconds get 429.

@@ -31,5 +31,12 @@ For a Let's Encrypt certificate, ports 80 and 443 must be reachable from the int
    `furnish.json`.
 5. Run the `up -d` command again.
 
+## Limits
+
+Caddy has no rate limit without a plugin, and the official image has none, so this variant
+doesn't limit how many git requests a user makes. The other four proxies allow 2 a second on
+average, in bursts of up to 60. If you need a limit with Caddy, build an image with
+[caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) or put a limit in front of it.
+
 If GitLab uses a certificate from a private CA, mount the CA into the container and add
 `transport http { tls_trust_pool file /path/ca.pem }` to the `reverse_proxy` block.

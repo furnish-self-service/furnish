@@ -5,6 +5,12 @@ services:
   proxy:
     image: haproxy:3.2.26-alpine
     restart: unless-stopped
+    # Runs as the haproxy user; binding ports 80 and 443 needs no capability in a container.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [edge, backend]
     ports:
       - "80:80"
       - "443:443"
@@ -14,7 +20,8 @@ services:
       GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-furnish}
-      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-*}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:?set ALLOWED_EMAIL_DOMAINS, e.g. myorg.tld, or * for every user of the IdP}
+      ALLOWED_GROUPS: ${ALLOWED_GROUPS:-}
       # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
       ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
     volumes:

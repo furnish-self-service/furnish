@@ -1,13 +1,36 @@
 # Loaded by Vector together with vector/vector.yaml when reports/compose.yml is used: sends the
 # reports to Loki as well. Labels are the few values the dashboard filters by; everything else,
-# such as user, device and app, stays in the JSON line and is read with LogQL's `| json`.
+# such as user, device, app and collection, stays in the JSON line and is read with LogQL's
+# `| json`.
+#
+# Each distinct set of labels is a stream in Loki, and Loki refuses reports once there are too
+# many (5000 by default). A report's fields come from the client, so the labels only take the
+# values furnish sends (see "Reports" in the admins' docs) and "other" for anything else.
 transforms:
+  # At most 10000 reports per user and minute go to Loki, so one user can't use up what Loki
+  # accepts per second. furnish sends at most its 5 MB queue at once.
+  loki_throttle:
+    type: throttle
+    inputs: [reports]
+    key_field: "{{ user }}"
+    threshold: 10000
+    window_secs: 60
+
   loki_labels:
     type: remap
-    inputs: [reports]
+    inputs: [loki_throttle]
     source: |
-      # In metadata, so the JSON line stays as it was. Inventories have no collection.
-      %loki.collection = string(.collection) ?? ""
+      # In metadata, so the JSON line stays as it was.
+      event = string(.event) ?? ""
+      if !includes(["install", "update", "uninstall", "reinstall", "fallback", "collectionUpdate", "inventory"], event) {
+        event = "other"
+      }
+      outcome = string(.outcome) ?? ""
+      if !includes(["succeeded", "failed", "cancelled", "reported"], outcome) {
+        outcome = "other"
+      }
+      %loki.event = event
+      %loki.outcome = outcome
 
 sinks:
   loki:
@@ -17,6 +40,5 @@ sinks:
     encoding: { codec: json }
     labels:
       job: furnish
-      event: "{{ event }}"
-      outcome: "{{ outcome }}"
-      collection: "{{ %loki.collection }}"
+      event: "{{ %loki.event }}"
+      outcome: "{{ %loki.outcome }}"

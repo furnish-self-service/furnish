@@ -16,12 +16,16 @@ dashboard=$endpoint/reports/grafana/dashboards/furnish-reports.json
 project=furnish-reports-test-$(date +%s)-$$
 
 # docker-compose.yml requires these for oauth2-proxy, which this test doesn't start.
-export OIDC_ISSUER_URL=http://unused OAUTH2_PROXY_COOKIE_SECRET=unused
-GRAFANA_ADMIN_PASSWORD=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n'); export GRAFANA_ADMIN_PASSWORD
+export OIDC_ISSUER_URL=http://unused ALLOWED_EMAIL_DOMAINS=unused
+SECRETS_DIR=$(mktemp -d); export SECRETS_DIR
+GRAFANA_ADMIN_PASSWORD=$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+printf %s "$GRAFANA_ADMIN_PASSWORD" > "$SECRETS_DIR/grafana_admin_password"
+printf unused > "$SECRETS_DIR/oauth2_proxy_cookie_secret"
+chmod 644 "$SECRETS_DIR"/*
 
 dc() { docker compose -p "$project" --project-directory "$endpoint" -f "$endpoint/docker-compose.yml" \
     -f "$endpoint/reports/compose.yml" -f "$here/compose.yml" "$@"; }
-trap 'dc down -v -t 2 --remove-orphans >/dev/null 2>&1 || true' EXIT
+trap 'dc down -v -t 2 --remove-orphans >/dev/null 2>&1 || true; rm -rf "$SECRETS_DIR"' EXIT
 trap 'exit 130' INT TERM
 
 failed=0
@@ -63,7 +67,7 @@ stored() { [ "$(loki 'sum(count_over_time({job="furnish"}[10m]))')" = "=$expecte
 wait_for 30 stored && ok "Loki stored all $expected reports" || bad "Loki has $(loki 'sum(count_over_time({job="furnish"}[10m]))') of $expected reports"
 
 labels=$(curl -s "$loki/loki/api/v1/labels" | jq -r '.data | sort | join(" ")')
-[ "$labels" = "collection event job outcome service_name" ] && ok "Loki labels are only: $labels" || bad "unexpected Loki labels: $labels"
+[ "$labels" = "event job outcome service_name" ] && ok "Loki labels are only: $labels" || bad "unexpected Loki labels: $labels"
 [ "$(loki 'count(sum by (user) (count_over_time({job="furnish"} | json user | user=~".+@myorg.tld" [10m])))')" = "=5" ] \
     && ok "reports carry the user from X-Furnish-User" || bad "reports without the user from X-Furnish-User"
 
@@ -140,6 +144,23 @@ unnamed=$(jq -r '.panels[] | select(.type == "table") | .title as $t
     | ([.transformations[]? | select(.id == "organize") | .options.renameByName | keys[]]) as $renamed
     | .targets[] | "Value #\(.refId)" | select(. as $v | $renamed | index($v) | not) | "\($t): \(.)"' "$dashboard")
 [ -z "$unnamed" ] && ok "every table names its value columns" || bad "table columns without a name: $unnamed"
+
+# Made-up values in the fields Loki uses as labels: each new value would be a new stream, and Loki
+# refuses reports once there are too many. They are stored, with "other" as label.
+made_up=$(i=0; while [ $i -lt 200 ]; do
+    printf '{"time":"%s","device":"ffff-mallory","event":"ev%d","outcome":"out%d","collection":"c%d","check":"labels"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" $i $i $i
+    i=$((i + 1)); done)
+printf '%s\n' "$made_up" | curl -sf -H "X-Furnish-User: mallory@myorg.tld" --data-binary @- "$vector/events" || bad "Vector rejected the made-up reports"
+others() { [ "$(loki 'sum(count_over_time({job="furnish", event="other", outcome="other"}[10m]))')" = "=200" ]; }
+wait_for 30 others && ok "reports with made-up event and outcome are stored under \"other\"" \
+    || bad "made-up reports: $(loki 'sum by (event, outcome) (count_over_time({job="furnish"}[10m]))')"
+events=$(curl -s "$loki/loki/api/v1/label/event/values" | jq -r '.data | sort | join(" ")')
+outcomes=$(curl -s "$loki/loki/api/v1/label/outcome/values" | jq -r '.data | sort | join(" ")')
+[ "$events" = "collectionUpdate fallback install inventory other reinstall uninstall update" ] && ok "event labels: $events" || bad "event labels: $events"
+[ "$outcomes" = "cancelled failed other reported succeeded" ] && ok "outcome labels: $outcomes" || bad "outcome labels: $outcomes"
+streams=$(curl -s -G "$loki/loki/api/v1/series" --data-urlencode 'match[]={job="furnish"}' | jq '.data | length')
+[ "$streams" -le 40 ] && ok "Loki streams: $streams" || bad "Loki streams: $streams, want at most 40"
 
 if [ $failed -ne 0 ]; then
     echo "--- container logs ---"

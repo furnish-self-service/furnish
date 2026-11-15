@@ -5,9 +5,14 @@
 #
 # Vector then reads reports/vector.yaml as well as vector/vector.yaml and sends every report to
 # Loki in addition to its log output. Settings come from .env (see reports/README.md).
+#
+# Networks: Vector reaches Loki on "loki-ingest", Grafana reaches Loki on "loki-query"; both are
+# internal (no way out). Grafana's port is published from the "grafana" network, which only
+# Grafana is on. So neither the proxy nor oauth2-proxy can reach Loki or Grafana.
 services:
   vector:
     command: ["--config", "/etc/vector/vector.yaml", "--config", "/etc/vector/loki.yaml"]
+    networks: [backend, loki-ingest]
     volumes:
       - ./reports/vector.yaml:/etc/vector/loki.yaml:ro
     depends_on: [loki]
@@ -16,6 +21,11 @@ services:
   loki:
     image: grafana/loki:3.7.9
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    networks: [loki-ingest, loki-query]
     command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
     environment:
       # How long reports are kept, such as 30d or 365d.
@@ -27,6 +37,12 @@ services:
   grafana:
     image: grafana/grafana:13.3.0
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp, /var/log/grafana]
+    networks: [grafana, loki-query]
+    secrets: [grafana_admin_password]
     # Only on this host: open http://127.0.0.1:3000 here or through an SSH tunnel
     # (ssh -L 3000:127.0.0.1:3000 <host>). To reach it from other computers, put it behind the
     # proxy or publish it, and sign people in with your identity provider (Grafana's generic
@@ -48,7 +64,8 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD, e.g. openssl rand -base64 24}
+      # A file (Compose secret), so it doesn't show up in the container's environment.
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -68,3 +85,12 @@ services:
 volumes:
   loki-data:
   grafana-data:
+
+networks:
+  loki-ingest: {internal: true}
+  loki-query: {internal: true}
+  grafana:
+
+secrets:
+  grafana_admin_password:
+    file: ${SECRETS_DIR:-./secrets}/grafana_admin_password

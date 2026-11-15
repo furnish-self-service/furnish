@@ -59,7 +59,15 @@ The proxy resolves `oauth2-proxy`, `vector` and the GitLab host through Docker's
 (`resolver 127.0.0.11`) at request time. If GitLab's name is only resolvable through another
 DNS server, change the `resolver` line.
 
-Git requests have no body size limit, as with Caddy. Reports are limited to 1 MiB.
+A `git-upload-pack` request may be at most 32 MiB, a report at most 1 MiB. Git requests are
+limited to 2 a second on average, in bursts of up to 60, per token (`limit_req` with the
+`Authorization` header as key), so people behind one address don't share a limit. nginx applies
+the limit before the token check, so tokens that fail the check count too, each under its own
+key.
+
+The image renders the template into `/etc/nginx/conf.d`, which `compose.yml` mounts as a
+memory file system that only root may enter: the rendered file holds the deploy tokens, and
+only the nginx master process, which runs as root, reads it.
 
 Git requests pass through a second server inside the container on `127.0.0.1:8081`. That
 server talks to GitLab and turns GitLab's 401 or 403 into 502. It exists because nginx keeps

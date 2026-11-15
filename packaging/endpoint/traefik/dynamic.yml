@@ -51,7 +51,7 @@ http:
     {{ $name }}-refs:
       rule: '{{ $refs }} && {{ $bearer }}'
       priority: 200
-      middlewares: [uri-mismatch-404, uri-only-service-query, signed-in, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-refs]
+      middlewares: [uri-mismatch-404, uri-only-service-query, signed-in, git-rate, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-refs]
       service: gitlab
     {{ $name }}-refs-401:
       rule: '{{ $refs }}'
@@ -61,7 +61,7 @@ http:
     {{ $name }}-pack:
       rule: '{{ $pack }} && {{ $bearer }}'
       priority: 200
-      middlewares: [uri-mismatch-404, uri-no-query, signed-in, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-pack]
+      middlewares: [uri-mismatch-404, uri-no-query, signed-in, git-rate, git-size, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-pack]
       service: gitlab
     {{ $name }}-pack-401:
       rule: '{{ $pack }}'
@@ -71,10 +71,11 @@ http:
 {{- end }}
 
     # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
+    # The size check reads the body, so it comes after the sign-in check.
     events:
       rule: '{{ $host }} && Method(`POST`) && Path(`/events`) && {{ $bearer }}'
       priority: 200
-      middlewares: [uri-mismatch-404, uri-no-query, events-size, events-signed-in, events-user, events-headers]
+      middlewares: [uri-mismatch-404, uri-no-query, events-signed-in, events-size, events-user, events-headers]
       service: vector
     events-401:
       rule: '{{ $host }} && Method(`POST`) && Path(`/events`)'
@@ -127,6 +128,19 @@ http:
         maxResponseBodySize: 65536
         authRequestHeaders: [Authorization]
 
+    # Git requests per sign-in: 2 a second on average, bursts of up to 60 (a clone or fetch takes 2
+    # to 4 requests); more get 429. The key is the client's token, so people behind one address
+    # don't share a limit.
+    git-rate:
+      rateLimit:
+        average: 2
+        period: 1s
+        burst: 60
+        sourceCriterion: { requestHeaderName: Authorization }
+    # git's upload-pack requests are small (the commits the client wants and has): at most 32 MiB.
+    git-size:
+      buffering: { maxRequestBodyBytes: 33554432 }
+
     # If GitLab rejects the deploy token, say so instead of making git ask the user for a password.
     # The rejected response, with its WWW-Authenticate, is dropped.
     gitlab-denied-502:
@@ -149,6 +163,10 @@ http:
           Private-Token: ""
           Job-Token: ""
           Deploy-Token: ""
+          # Traefik sets X-Forwarded-For, -Host, -Proto and X-Real-Ip from the connection; drop
+          # the rest of what a client says about itself.
+          Forwarded: ""
+          X-Forwarded-Prefix: ""
         customResponseHeaders:
           Set-Cookie: ""
           WWW-Authenticate: ""
@@ -192,12 +210,20 @@ http:
         servers: [{ url: "http://files:8080" }]
     gitlab:
       loadBalancer:
+        serversTransport: gitlab
         # Send GitLab's own host name, not the endpoint's.
         passHostHeader: false
         servers: [{ url: '{{ env "GITLAB_URL" }}' }]
     vector:
       loadBalancer:
         servers: [{ url: "http://vector:8080" }]
+
+  serversTransports:
+    # Give up on GitLab if it doesn't connect within 5 s or doesn't answer within 5 minutes.
+    gitlab:
+      forwardingTimeouts:
+        dialTimeout: 5s
+        responseHeaderTimeout: 300s
 
 tls:
   certificates:

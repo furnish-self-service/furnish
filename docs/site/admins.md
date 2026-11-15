@@ -82,7 +82,7 @@ An address the person added doesn't count as owning a collection the policy pres
 
 A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and asks before adding anything. The dialog shows the address, where people sign in (the identity provider's host), the apps the address installs right away, whether it turns reports on, and whether it changes the app's name and colors. Links only add furnish addresses, never git URLs or folders. `furnish collection add furnish.myorg.tld` prints the same before signing in.
 
-Behind the address runs a reverse proxy: it checks the token with oauth2-proxy and forwards only git's two read requests for each collection to exactly one repository on your git server, with a read-only deploy token. The [reference setup](https://github.com/furnish-self-service/furnish/tree/main/packaging/endpoint) contains the configuration for Caddy and oauth2-proxy, and the tests that show what it lets through.
+Behind the address runs a reverse proxy: it checks the token and forwards only git's two read requests for each collection to exactly one repository on your git server, with a read-only deploy token. The [endpoint setup](endpoint.md) contains the configuration for Caddy, nginx, Traefik, Envoy and HAProxy, and the tests that show what they let through. Decide who may sign in by e-mail domain only if your identity provider marks addresses as verified (`email_verified`); with Microsoft Entra ID, use groups.
 
 ## Reports
 
@@ -125,6 +125,8 @@ Each report is one JSON object:
 | `trigger` | `user`, `update` (automatic updates) or `autoInstall` |
 | `error`, `durationMs` | The error message of a failure, and how long it took |
 | `apps` | For an inventory: each installed app with `installed` or `needsUpdate` |
+
+Loki, in the endpoint's reports add-on, indexes `event` and `outcome` and files values other than these under `other`, because a client could otherwise create so many streams that Loki stops taking reports.
 
 Reports about the software people install are personal data, and in Germany a works council has a say before they are collected (§ 87 (1) 6 BetrVG). `errors` without host names collects the least that helps fix broken apps. To send reports without user names, remove the line that sets `X-Furnish-User` from the proxy's configuration.
 

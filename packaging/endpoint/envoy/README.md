@@ -50,6 +50,18 @@ Envoy marks as work in progress and logs a warning about it at start. Local repl
 filter too, so it only acts on responses that carry Envoy's `x-envoy-upstream-service-time`
 header, which only upstream responses have; the header reaches the client.
 
+Envoy checks the token before any filter reads the body. The `buffer` filter, which enforces
+the 1 MiB limit on reports and the 32 MiB limit on `git-upload-pack`, comes after `ext_authz`.
+While the check runs, Envoy reads at most 32 KiB per connection
+(`per_connection_buffer_limit_bytes`) and, over HTTP/2, at most 64 KiB per stream and 1 MiB per
+connection, with at most 100 streams per connection. A body over the limit therefore always
+reaches the buffer filter in pieces and gets 413; a report that declares more than 1 MiB gets
+413 at once. The overload manager stops accepting connections beyond 5000 and stops taking
+requests when Envoy's heap reaches 98% of 1 GiB.
+
+Git requests are limited per user with the `local_ratelimit` filter: it keys on the e-mail
+address from the token check and allows 2 requests a second on average, in bursts of up to 60.
+
 `furnish.json` is read when Envoy starts. Restart the proxy after changing it:
 `docker compose -f docker-compose.yml -f envoy/compose.yml restart proxy`.
 

@@ -26,19 +26,21 @@ Each collection gets a public path for exactly one GitLab repository. For the co
 Besides those, it serves `GET /.well-known/furnish.json` to everyone and accepts `POST /events` from signed-in people.
 
 - The proxy compares the request exactly as sent. `..`, `%2e`, `%2f`, `//`, extra path segments or query parameters, other methods, pushes and every other path get 404, and nothing from the client's path reaches GitLab.
-- Only `Authorization: Bearer <ID token>` signs in. The token must come from your issuer, carry your client ID as audience, be unexpired, have `email_verified` set and, if you set `ALLOWED_EMAIL_DOMAINS`, an e-mail address in one of them. Cookies and tokens sent as a Basic password don't count.
+- Only `Authorization: Bearer <ID token>` signs in. The token must come from your issuer, carry your client ID as audience, be unexpired and not dated more than 5 minutes ahead (`nbf`), have an e-mail address in one of `ALLOWED_EMAIL_DOMAINS` (unless that is `*`) and, if you set `ALLOWED_GROUPS`, one of those groups in its `groups` claim. A token with `email_verified: false` is refused; see [Limits](#limits) for a token without the claim. Cookies and tokens sent as a Basic password don't count.
+- The proxy checks the token before it reads a request body, so a client that isn't signed in can't make it hold one.
 - The proxy replaces the person's token with the deploy token and removes other GitLab credentials the client sends. If GitLab rejects the deploy token, the client gets 502, so git doesn't ask the person for a password.
-- Reports may be at most 1 MiB per request. The proxy names the user in `X-Furnish-User` from the checked token; a name the client sends is dropped.
+- GitLab gets the client's address and the endpoint's host name in `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host` and `X-Forwarded-Proto` from the proxy. What a client sends under these names, or in `Forwarded`, is replaced or dropped.
+- Git requests are limited per signed-in user: 2 a second on average, in bursts of up to 60, with 429 for the rest (Caddy has no limit, see [Pick a proxy](#pick-a-proxy)). A `git-upload-pack` request may be at most 32 MiB, a report request at most 1 MiB. The proxy names the user of a report in `X-Furnish-User` from the checked token; a name the client sends is dropped.
 
 ## Before you start
 
-1. **Register furnish at your identity provider** as a public client (no secret): client ID `furnish`, authorization code with PKCE (`S256`), redirect URI `http://127.0.0.1/callback` on any port, scopes `openid email`. In Keycloak, the valid redirect URI is `http://127.0.0.1/*`. In Microsoft Entra ID, add the platform "Mobile and desktop applications" with `http://127.0.0.1/callback`.
+1. **Register furnish at your identity provider** as a public client (no secret): client ID `furnish`, authorization code with PKCE (`S256`), redirect URI `http://127.0.0.1/callback` on any port, scopes `openid email`. In Keycloak, the valid redirect URI is `http://127.0.0.1/*`. In Microsoft Entra ID, add the platform "Mobile and desktop applications" with `http://127.0.0.1/callback`, add the `groups` claim to the ID token (Token configuration → Add groups claim) and decide who may sign in by group (see [Limits](#limits)).
 2. **Create a deploy token** in each GitLab project behind a collection: Settings → Repository → Deploy tokens, scope `read_repository`.
 3. **Get a certificate** for the address: `tls.crt`, with intermediates, and `tls.key` in a folder `certs` next to the configuration. Caddy can get one from Let's Encrypt instead.
 
 ## Configure
 
-Download the folder [`packaging/endpoint`](https://github.com/furnish-self-service/furnish/tree/main/packaging/endpoint). Copy `.env.example` to `.env`, fill it in and make it readable by admins only (`chmod 600 .env`):
+Download the folder [`packaging/endpoint`](https://github.com/furnish-self-service/furnish/tree/main/packaging/endpoint). Copy `.env.example` to `.env`, fill it in and make it readable by admins only (`chmod 600 .env`). Create the folder `secrets` as the comments in the file say:
 
 @include packaging/endpoint/.env.example
 
@@ -55,6 +57,8 @@ Edit `furnish.json`: your organization's name, the issuer, the client ID, one en
 `docker-compose.yml` holds what every proxy uses: oauth2-proxy, which checks tokens for the proxies that ask it, and Vector, which receives the reports. Each proxy has its own folder with its configuration and a second compose file.
 
 @include packaging/endpoint/docker-compose.yml
+
+Every container runs without capabilities (apart from what the proxy needs to start), with a read-only file system and `no-new-privileges`. The containers are on separate networks: only the proxy is on `edge`, the network with the published ports; the proxy reaches oauth2-proxy and Vector on `backend`; Vector reaches Loki and Grafana reaches Loki on two internal networks of their own. So a weakness in the proxy doesn't give access to Loki or Grafana, and Grafana can't reach the proxy, oauth2-proxy or the internet. With your own certificate, the files in `TLS_DIR` must be readable by root in the container without special rights: owned by root, or readable by everyone in a folder only admins can open.
 
 ## Reports with Vector
 
@@ -80,11 +84,23 @@ All five do the same and pass the same tests. Pick the one your team already run
 
 | Proxy | Checks the token | Certificate | Differences |
 |---|---|---|---|
-| [Caddy](#caddy) | asks oauth2-proxy | Let's Encrypt, or your own | the shortest configuration |
+| [Caddy](#caddy) | asks oauth2-proxy | Let's Encrypt, or your own | the shortest configuration; no rate limit |
 | [nginx](#nginx) | asks oauth2-proxy (`auth_request`) | your own | the allowlist is a list of regular expressions |
 | [Traefik](#traefik) | asks oauth2-proxy (`forwardAuth`) | your own | needs a small extra container; treats `%65` in a path like `e` |
 | [Envoy](#envoy) | asks oauth2-proxy (`ext_authz`) | your own | answers 502 for a rejected deploy token with a filter Envoy calls work in progress |
-| [HAProxy](#haproxy) | itself (`jwt_verify`) | your own | needs the identity provider's signing key as a file, renewed when the provider changes it |
+| [HAProxy](#haproxy) | itself (`jwt_verify`) | your own | needs the identity provider's signing key as a file, renewed when the provider changes it; requires `email_verified` |
+
+Where they differ in the checks:
+
+| | Caddy | nginx | Traefik | Envoy | HAProxy |
+|---|---|---|---|---|---|
+| Token without `email_verified` | accepted | accepted | accepted | accepted | refused, unless `ALLOWED_GROUPS` is set |
+| `email_verified: "true"` (a string) | accepted | accepted | accepted | accepted | refused |
+| Rate limit on git requests, per | none | token | token | user | user |
+| 32 MiB limit on `git-upload-pack` | counted | counted | counted | counted | declared length only |
+| 1 MiB limit on reports | counted | counted | counted | counted | declared length; no length: 411 |
+
+"Counted" means the proxy counts the bytes it receives. HAProxy streams bodies and checks only `Content-Length`; git sends `git-upload-pack` requests over 1 MiB without one, and HAProxy lets those through without a limit. The limit per token in nginx and Traefik applies to one sign-in: a person who signs in again starts with a new allowance.
 
 ## Caddy
 
@@ -147,10 +163,13 @@ curl https://furnish.myorg.tld/.well-known/furnish.json
 curl -i https://furnish.myorg.tld/git/acme.git/info/refs?service=git-upload-pack   # 401: no sign-in
 ```
 
-Then add the address in furnish. [`tests/endpoint/run.sh`](https://github.com/furnish-self-service/furnish/blob/main/tests/endpoint/run.sh) runs these configurations against a test identity provider and a test GitLab, with about 120 checks: clone and fetch, refused tokens and pushes, the allowlist, the deploy token never reaching a client, and reports arriving with the right user. `PROXY=nginx tests/endpoint/run.sh` tests one proxy.
+Then add the address in furnish. [`tests/endpoint/run.sh`](https://github.com/furnish-self-service/furnish/blob/main/tests/endpoint/run.sh) runs these configurations against a test identity provider and a test GitLab, with about 150 checks: clone and fetch, refused tokens and pushes, the allowlist, the deploy token never reaching a client, forwarding headers, size and rate limits, request bodies of clients that aren't signed in, and reports arriving with the right user. `PROXY=nginx tests/endpoint/run.sh` tests one proxy.
 
 ## Limits
 
 - A token stays valid until it expires: the proxy checks it without asking the identity provider, so revoking a session doesn't stop it. Keep the ID token lifetime short.
-- Everyone who passes the checks gets every collection of the address. Restrict who signs in with `ALLOWED_EMAIL_DOMAINS`, or with oauth2-proxy's `OAUTH2_PROXY_ALLOWED_GROUPS` if your identity provider puts groups into the ID token.
+- Everyone who passes the checks gets every collection of the address. `ALLOWED_EMAIL_DOMAINS` and `ALLOWED_GROUPS` decide who that is.
+- `ALLOWED_EMAIL_DOMAINS` only restricts if the identity provider vouches for the e-mail address with `email_verified: true` in the ID token. Keycloak, Google and Okta do. oauth2-proxy refuses a token with `email_verified: false` but accepts one without the claim, and has no setting to require it; HAProxy requires it unless `ALLOWED_GROUPS` is set.
+- Microsoft Entra ID sends no `email_verified`, and its `email` claim is an address that can be set without proof that the user owns it. With Entra ID, set `ALLOWED_EMAIL_DOMAINS=*`, add the `groups` claim to the ID token and put the IDs of the groups that may sign in into `ALLOWED_GROUPS`. Turning on "Assignment required" for the enterprise application and assigning those groups also keeps everyone else from getting a token.
 - Any token from the issuer with your client ID as audience counts, also one issued to another client whose `aud` lists `furnish`. That includes a token furnish got for another address: someone who runs a lookalike address (`furnish-acme.tld`) can name your issuer and client ID in its `furnish.json`, and people who add it sign in at your identity provider and send their token to the lookalike, which can use it at your address. furnish shows where people sign in before they do, and your policy can allow only your addresses (`"usersCanAdd": false` with `endpoints`), but the proxy can't tell such a token apart. Where your identity provider supports it, give each address its own client ID or audience, so a token for one address doesn't count at another.
+- The rate limit protects GitLab from one user, not the proxy from a flood of requests without sign-in; those cost the proxy a token check each. Put a firewall or your provider's flood protection in front for that.

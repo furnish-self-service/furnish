@@ -42,6 +42,12 @@ map $http_authorization $furnish_bearer {
     "~^Bearer [!-~]+$" 1;
 }
 
+# Git requests per sign-in (limit_req in /_furnish_gitlab): 2 a second on average, bursts of up to
+# 60 (a clone or fetch takes 2 to 4 requests). The key is the client's token, so people behind one
+# address don't share a limit.
+limit_req_zone $http_authorization zone=furnish_git:10m rate=2r/s;
+limit_req_status 429;
+
 # Docker's DNS. proxy_pass with variables resolves at request time, so containers that restart
 # with a new address are found again.
 resolver 127.0.0.11 valid=10s ipv6=off;
@@ -76,8 +82,9 @@ server {
     ssl_certificate_key /certs/tls.key;
     ssl_protocols       TLSv1.2 TLSv1.3;
 
-    # git's upload-pack requests have no fixed size limit (Caddy sets none either); the body is
-    # only read after authentication. /events sets its own limit.
+    # Request headers within 10 s. Bodies are only read after authentication; each location sets
+    # its size limit.
+    client_header_timeout 10s;
     client_max_body_size 0;
 
     # A request with two Authorization headers gets 400 from nginx itself, before any location runs.
@@ -104,6 +111,9 @@ server {
 
     location = /_furnish_gitlab {
         internal;
+        # git's upload-pack requests are small (the commits the client wants and has).
+        client_max_body_size 32m;
+        limit_req zone=furnish_git burst=60 nodelay;
         if ($furnish_bearer = 0) {
             return 401;
         }
@@ -124,6 +134,14 @@ server {
         proxy_set_header Deploy-Token "";
         proxy_set_header X-Furnish-User "";
         proxy_set_header X-Auth-Request-Email "";
+        # What GitLab learns about the client comes from the connection, not from the client.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-Port "";
+        proxy_set_header X-Forwarded-Prefix "";
         proxy_hide_header Set-Cookie;
         proxy_hide_header WWW-Authenticate;
         # Stream packs instead of buffering them to disk.
@@ -149,6 +167,9 @@ server {
         proxy_set_header X-Auth-Request-Email "";
         proxy_set_header Authorization "";
         proxy_set_header Cookie "";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Forwarded "";
     }
 
     # The token check. Subrequests carry the client's headers but no body.
@@ -175,6 +196,10 @@ server {
     location / {
         proxy_pass ${GITLAB_URL}$request_uri;
         proxy_http_version 1.1;
+        # Give up on GitLab if it doesn't connect within 5 s or stays silent for 5 minutes.
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
         proxy_set_header Host $proxy_host;
         proxy_buffering off;
         proxy_request_buffering off;

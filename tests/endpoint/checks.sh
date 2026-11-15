@@ -41,7 +41,13 @@ token() {
         | sed -n "s/.*\"$4\" *: *\"\([^\"]*\)\".*/\1/p"
 }
 
-ALICE='{"email":"alice@myorg.tld","email_verified":true}'
+ALICE='{"email":"alice@myorg.tld","email_verified":true,"groups":["staff","furnish-users"]}'
+# by_proxy <default> <proxy>=<value>...: the value for this proxy.
+by_proxy() {
+    v=$1; shift
+    for kv in "$@"; do [ "${kv%%=*}" = "${PROXY:-}" ] && v=${kv#*=}; done
+    echo "$v"
+}
 
 # --- wait for the stack ------------------------------------------------------------------------
 i=0; until [ -s $CA ] && curl -fsS --cacert $CA -o /dev/null $E/.well-known/furnish.json 2>/dev/null; do
@@ -52,13 +58,19 @@ REFS="$E/git/acme.git/info/refs?service=git-upload-pack"
 i=0; until [ "$(curl -s --cacert $CA -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GOOD" "$REFS")" = "${READY_STATUS:-200}" ]; do
     i=$((i + 1)); [ $i -gt 60 ] && { bad "oauth2-proxy did not accept the token in time"; break; }; sleep 1; done
 
-# checks.sh upstream-rejects: run.sh restarted Caddy with a wrong deploy token.
+# checks.sh upstream-rejects: run.sh restarted the proxy with a wrong deploy token, and the token
+# check with ALLOWED_GROUPS=furnish-users. 502 means a token passed the check.
 if [ "${1:-}" = upstream-rejects ]; then
     req "upstream rejects the deploy token: 502, no password prompt" 502 -H "Authorization: Bearer $GOOD" "$REFS"
     grep -qi '^www-authenticate' $OUT/$n.head && bad "upstream WWW-Authenticate reached the client" \
         || ok "no WWW-Authenticate passed on from upstream"
     git -c http.extraHeader="Authorization: Bearer $GOOD" clone -q $E/git/acme.git /tmp/w/x >$OUT/x.log 2>&1 \
         && bad "git clone must fail when upstream rejects" || ok "git clone fails without prompting"
+    req "ALLOWED_GROUPS: token without groups" "401 403" -H "Authorization: Bearer $(token acme furnish '{"email":"alice@myorg.tld","email_verified":true}' id_token)" "$REFS"
+    req "ALLOWED_GROUPS: token with other groups" "401 403" -H "Authorization: Bearer $(token acme furnish '{"email":"alice@myorg.tld","email_verified":true,"groups":["staff"]}' id_token)" "$REFS"
+    req "ALLOWED_GROUPS: the group as a string" 502 -H "Authorization: Bearer $(token acme furnish '{"email":"alice@myorg.tld","email_verified":true,"groups":"furnish-users"}' id_token)" "$REFS"
+    req "ALLOWED_GROUPS: member, no email_verified (Entra ID)" 502 -H "Authorization: Bearer $(token acme furnish '{"email":"alice@myorg.tld","groups":["furnish-users"]}' id_token)" "$REFS"
+    req "ALLOWED_GROUPS: member, email_verified=false" "401 403" -H "Authorization: Bearer $(token acme furnish '{"email":"alice@myorg.tld","email_verified":false,"groups":["furnish-users"]}' id_token)" "$REFS"
     exit $failed
 fi
 
@@ -71,6 +83,10 @@ EXPIRED=$(token acme furnish "{\"email\":\"alice@myorg.tld\",\"email_verified\":
 WRONG_DOMAIN=$(token acme furnish '{"email":"mallory@elsewhere.tld","email_verified":true}' id_token)
 UNVERIFIED=$(token acme furnish '{"email":"alice@myorg.tld","email_verified":false}' id_token)
 NO_EMAIL=$(token acme furnish '{}' id_token)
+NO_EV=$(token acme furnish '{"email":"alice@myorg.tld"}' id_token)
+EV_STRING=$(token acme furnish '{"email":"alice@myorg.tld","email_verified":"true"}' id_token)
+NOT_YET=$(token acme furnish "{\"email\":\"alice@myorg.tld\",\"email_verified\":true,\"nbf\":$(($(date +%s) + 600))}" id_token)
+NBF_SKEW=$(token acme furnish "{\"email\":\"alice@myorg.tld\",\"email_verified\":true,\"nbf\":$(($(date +%s) + 60))}" id_token)
 h=${GOOD%%.*}; rest=${GOOD#*.}; p=${rest%%.*}; s=${rest#*.}
 TAMPERED="$h.$(printf '{"sub":"admin","aud":"furnish","iss":"%s/acme","email":"alice@myorg.tld","email_verified":true,"exp":9999999999}' $ISS | b64url).$s"
 ALG_NONE="$(printf '{"alg":"none","typ":"JWT"}' | b64url).$p."
@@ -111,6 +127,12 @@ req "access token (aud is not the client ID)" "401 403" -H "Authorization: Beare
 req "e-mail outside ALLOWED_EMAIL_DOMAINS" "401 403" -H "Authorization: Bearer $WRONG_DOMAIN" "$REFS"
 req "email_verified=false" "401 403" -H "Authorization: Bearer $UNVERIFIED" "$REFS"
 req "no e-mail claim" "401 403" -H "Authorization: Bearer $NO_EMAIL" "$REFS"
+# oauth2-proxy rejects only "email_verified": false and has no setting to require the claim;
+# HAProxy requires JSON true unless ALLOWED_GROUPS is set (see docs/site/endpoint.md, Limits).
+req "no email_verified claim" "$(by_proxy 200 haproxy=403)" -H "Authorization: Bearer $NO_EV" "$REFS"
+req "email_verified=\"true\" (a string)" "$(by_proxy 200 haproxy=403)" -H "Authorization: Bearer $EV_STRING" "$REFS"
+req "nbf 10 minutes ahead" "401 403" -H "Authorization: Bearer $NOT_YET" "$REFS"
+req "nbf 1 minute ahead (clock skew)" 200 -H "Authorization: Bearer $NBF_SKEW" "$REFS"
 req "JWT sent as Basic password" 401 -u "x:$GOOD" "$REFS"
 # Two Authorization headers: refused (nginx answers 400 itself before any configuration runs).
 BASIC_JWT="Authorization: Basic $(printf 'x:%s' "$GOOD" | openssl base64 -A)"
@@ -215,6 +237,10 @@ req "no token: GET /git/secret.git/info/refs" "404" --path-as-is "$E/git/secret.
 req "no token: GET /api/v4/projects" "404" "$E/api/v4/projects"
 # The client's own GitLab-style credentials must not get anything extra either.
 req "Private-Token header on allowed path" 200 -H "$AUTH" -H "Private-Token: glpat-x" "$REFS"
+# What the client says about itself never reaches GitLab (run.sh checks GitLab's log).
+req "spoofed X-Forwarded-*, X-Real-IP, Forwarded" 200 -H "$AUTH" -H 'X-Forwarded-For: 6.6.6.6' -H 'X-Real-IP: 6.6.6.6' \
+    -H 'X-Forwarded-Host: evil.example' -H 'X-Forwarded-Proto: spoofed' -H 'Forwarded: for=6.6.6.6;host=evil.example' \
+    -H 'X-Forwarded-Port: 6666' -H 'X-Forwarded-Prefix: /spoofed' "$REFS"
 # Requests Caddy cannot route to the site at all may get an empty 200 from Caddy; the body check
 # in req and the upstream log check in run.sh make sure nothing was proxied.
 req "Host header for another site" "200 404 421" --http1.1 -H "$AUTH" -H "Host: gitlab" "$REFS"
@@ -238,11 +264,52 @@ req "report naming another user in a header" "200 204" -X POST -H "$AUTH" -H 'X-
     -H 'X-Auth-Request-Email: mallory@myorg.tld' --data-binary "$EV" $E/events
 req "report naming another user in its fields" "200 204" -X POST -H "$AUTH" \
     --data-binary '{"event":"install","check":"events","user":"mallory@myorg.tld","X-Furnish-User":"mallory@myorg.tld"}' $E/events
-head -c 1200000 /dev/zero | tr '\0' 'x' > /tmp/big
-req "report over 1 MiB" 413 -X POST -H "$AUTH" --data-binary @/tmp/big $E/events
+# report_of_size <bytes> <file>: one valid report line of exactly that many bytes.
+report_of_size() {
+    { printf '{"event":"x","check":"size","pad":"'; head -c $(($1 - 38)) /dev/zero | tr '\0' 'x'; printf '"}\n'; } > "$2"
+}
+report_of_size 1015812 /tmp/r1; report_of_size 1048576 /tmp/r2; report_of_size 1048577 /tmp/r3
+[ "$(wc -c < /tmp/r3)" = 1048577 ] || bad "report_of_size makes the wrong size"
+req "report of 1,015,812 bytes" "200 204" -X POST -H "$AUTH" --data-binary @/tmp/r1 $E/events
+req "report of 1 MiB" "200 204" -X POST -H "$AUTH" --data-binary @/tmp/r2 $E/events
+req "report of 1 MiB + 1 byte" 413 -X POST -H "$AUTH" --data-binary @/tmp/r3 $E/events
+# Without a length (chunked): HAProxy only checks the declared length and refuses the request.
+req "report of 1 MiB + 1 byte, chunked" "$(by_proxy 413 haproxy=411)" --http1.1 -X POST -H "$AUTH" -H 'Transfer-Encoding: chunked' --data-binary @/tmp/r3 $E/events
+head -c 33554433 /dev/zero > /tmp/pack
+req "git-upload-pack request over 32 MiB" 413 -X POST -H "$AUTH" -H 'Content-Type: application/x-git-upload-pack-request' --data-binary @/tmp/pack $E/git/acme.git/git-upload-pack
+rm -f /tmp/r1 /tmp/r2 /tmp/r3 /tmp/pack
 req "GET /events" "404 405" -H "$AUTH" $E/events
 req "POST /events/x" 404 -X POST -H "$AUTH" --data-binary "$EV" $E/events/x
 req "POST /events?x=1" 404 -X POST -H "$AUTH" --data-binary "$EV" "$E/events?x=1"
+
+# --- 9. bodies of requests that aren't signed in are never read -----------------------------------
+# A client that isn't signed in and sends 1 MB at 20 KB/s must get its 401 at once: the proxy may
+# not wait for (and hold) the body before checking the token.
+head -c 1000000 /dev/zero > /tmp/slow
+for http in --http1.1 --http2; do
+    for path in /events /git/acme.git/git-upload-pack; do
+        n=$((n + 1)); t0=$(date +%s)
+        code=$(curl -sS --cacert $CA -m 8 $http --limit-rate 20k -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.e30.x' --data-binary @/tmp/slow "$E$path" 2>>$OUT/$n.err)
+        case $code in 401|403) ok "unsigned $http POST $path with a slow body: $code after $(($(date +%s) - t0)) s" ;;
+                      *) bad "unsigned $http POST $path with a slow body: got $code, want 401 or 403 before the body arrives" ;; esac
+    done
+done
+rm -f /tmp/slow
+
+# --- 10. rate limit on git requests (last: it uses up bob's allowance) -------------------------
+BOB=$(token acme furnish '{"email":"bob@myorg.tld","email_verified":true,"groups":["furnish-users"]}' id_token)
+urls=$(i=0; while [ $i -lt 100 ]; do echo "-o /dev/null $REFS"; i=$((i + 1)); done)
+codes=$(curl -sS --cacert $CA -m 60 -H "Authorization: Bearer $BOB" -w '%{http_code}\n' $urls 2>>$OUT/rate.err)
+first=$(echo "$codes" | head -40 | sort -u | tr '\n' ' ')
+limited=$(echo "$codes" | grep -c '^429$')
+[ "$first" = "200 " ] && ok "rate limit: the first 40 git requests in a row pass" || bad "rate limit: first 40 requests got $first"
+if [ "${PROXY:-}" = caddy ]; then
+    # Caddy has no rate limit without a plugin (packaging/endpoint/caddy/README.md).
+    [ "$limited" = 0 ] && ok "rate limit: none with Caddy" || bad "rate limit: Caddy answered 429"
+else
+    [ "$limited" -gt 0 ] && ok "rate limit: $limited of 100 git requests in a row got 429" || bad "rate limit: no 429 for 100 git requests in a row"
+fi
 
 echo "$n HTTP requests checked"
 exit $failed

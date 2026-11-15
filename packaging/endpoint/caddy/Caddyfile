@@ -10,6 +10,18 @@
 #   FURNISH_TLS    an e-mail address for Let's Encrypt/ACME, or "/certs/tls.crt /certs/tls.key"
 #   GITLAB_URL     internal GitLab base URL, e.g. https://gitlab.myorg.internal
 #   <collection credentials>  one variable per collection, named in its `import collection` line
+#
+# Caddy has no rate limit without a plugin, so this variant has none (see caddy/README.md).
+
+{
+	servers {
+		# Finite limits for slow clients: request headers within 10 s, idle connections 2 min.
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
 
 # A collection: one public, read-only path mapped to exactly one upstream repository.
 #   import collection <public name> <upstream repository path> <credentials variable>
@@ -35,6 +47,10 @@
 (gitlab) {
 	# Without route, Caddy would reorder these directives; inside route they run top to bottom.
 	route {
+		# git's upload-pack requests are small (the commits the client wants and has); at most 32 MiB.
+		request_body {
+			max_size 32MiB
+		}
 		# Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take a JWT
 		# sent as a Basic password, or a session cookie; neither is needed, so neither is allowed.)
 		@no_bearer not header_regexp Authorization `^Bearer \S+$`
@@ -61,12 +77,23 @@
 			header_up -Private-Token
 			header_up -Job-Token
 			header_up -Deploy-Token
+			# Caddy sets X-Forwarded-For, -Proto and -Host from the connection; the rest of what a
+			# client says about itself is replaced or dropped too.
+			header_up X-Real-IP {remote_host}
+			header_up -Forwarded
+			header_up -X-Forwarded-Port
+			header_up -X-Forwarded-Prefix
 			header_down -Set-Cookie
 			header_down -WWW-Authenticate
 			# If GitLab rejects the deploy token, say so instead of making git ask the user for a password.
 			@denied status 401 403
 			handle_response @denied {
 				respond "upstream rejected the endpoint's deploy token" 502
+			}
+			# Give up on GitLab if it doesn't answer within 5 minutes.
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 300s
 			}
 		}
 	}
@@ -94,7 +121,7 @@
 	@events expression `{method} == "POST" && {uri} == "/events"`
 	handle @events {
 		request_body {
-			max_size 1MB
+			max_size 1MiB
 		}
 		route {
 			@no_bearer not header_regexp Authorization `^Bearer \S+$`
@@ -110,6 +137,8 @@
 				rewrite /events
 				header_up -Authorization
 				header_up -Cookie
+				header_up X-Real-IP {remote_host}
+				header_up -Forwarded
 			}
 		}
 	}

@@ -15,6 +15,14 @@ entryPoints:
     address: ":443"
     # Routers without entryPoints (all in dynamic.yml) only serve HTTPS.
     asDefault: true
+    # Without forwardedHeaders.trustedIPs, Traefik replaces the client's X-Forwarded-* headers.
+    http2:
+      maxConcurrentStreams: 100
+    transport:
+      respondingTimeouts:
+        # The whole request, body included, within 60 s; idle connections closed after 2 min.
+        readTimeout: 60s
+        idleTimeout: 120s
     http:
       tls: {}
       # Keep /./, /../ and // in the path, so a router's Path() only matches the exact path.

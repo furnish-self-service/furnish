@@ -18,7 +18,7 @@ case $hostport in
 esac
 GITLAB_HOST=$hostport
 
-# ALLOWED_EMAIL_DOMAINS=a.tld,b.tld → "@a.tld @b.tld" for an ends-with match; "*" (default) → any.
+# ALLOWED_EMAIL_DOMAINS=a.tld,b.tld → "@a.tld @b.tld" for an ends-with match; "*" → any.
 set -f
 domains=$(printf '%s' "${ALLOWED_EMAIL_DOMAINS:-*}" | tr 'A-Z,' 'a-z ')
 EMAIL_ANY_DOMAIN=0 EMAIL_SUFFIXES=
@@ -30,5 +30,18 @@ EMAIL_SUFFIXES=${EMAIL_SUFFIXES# }
 [ -n "$EMAIL_SUFFIXES" ] || EMAIL_ANY_DOMAIN=1
 set +f
 
-export GITLAB_TLS GITLAB_ADDR GITLAB_SNI GITLAB_HOST EMAIL_ANY_DOMAIN EMAIL_SUFFIXES
+# ALLOWED_GROUPS=a,b → patterns for the "groups" claim, as a string (groups.str) or in the JSON
+# text of an array (groups.sub): ["a"], ["a",...], [...,"a",...], [...,"a"].
+mkdir -p /tmp/haproxy
+: > /tmp/haproxy/groups.str
+: > /tmp/haproxy/groups.sub
+GROUPS_REQUIRED=0
+printf '%s\n' "${ALLOWED_GROUPS:-}" | tr ',' '\n' | while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    printf '%s\n' "$g" >> /tmp/haproxy/groups.str
+    printf '["%s"]\n["%s",\n,"%s",\n,"%s"]\n' "$g" "$g" "$g" "$g" >> /tmp/haproxy/groups.sub
+done
+[ -s /tmp/haproxy/groups.str ] && GROUPS_REQUIRED=1
+
+export GITLAB_TLS GITLAB_ADDR GITLAB_SNI GITLAB_HOST EMAIL_ANY_DOMAIN EMAIL_SUFFIXES GROUPS_REQUIRED
 exec haproxy -W -db -f /usr/local/etc/haproxy/haproxy.cfg "$@"
