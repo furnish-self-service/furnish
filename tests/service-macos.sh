@@ -11,7 +11,8 @@ set -eu
 binary=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 label=io.github.furnish-self-service.furnish
 fail() { echo "FAIL: $*" >&2; sudo cat /var/log/furnish.log >&2 || true; exit 1; }
-as() { user=$1; shift; sudo -u "$user" env FURNISH_DATA_DIR="/tmp/$user-data" HOME=/tmp "$@"; }
+# Through root: furnish's Homebrew rule (below) lets the runner run commands as root only.
+as() { user=$1; shift; sudo sudo -u "$user" env FURNISH_DATA_DIR="/tmp/$user-data" HOME=/tmp "$@"; }
 # The service runs only a binary that root owns, in folders only root (or admins) can change.
 furnish=/Library/furnish-test/furnish
 installed() { pkgutil --pkg-info io.github.furnish-self-service.demo >/dev/null 2>&1; }
@@ -144,7 +145,7 @@ sudo sh -c '
 trap restore EXIT
 [ "$(stat -f '%Su:%Sg %Lp' "$rule")" = "root:wheel 440" ] || fail "$rule has owner and mode $(stat -f '%Su:%Sg %Lp' "$rule")"
 sudo grep -qx "$brew_owner ALL = (root) NOPASSWD: ALL" "$rule" || fail "unexpected rule: $(sudo cat "$rule")"
-sudo -u "$brew_owner" sudo -n true || fail "the rule doesn't work"
+sudo sudo -u "$brew_owner" sudo -n true || fail "the rule doesn't work"
 for _ in $(seq 100); do [ -S /var/run/furnish.sock ] && break; sleep 0.3; done
 as alice "$furnish" -v install brewdemo || fail "alice couldn't install the cask"
 brew_installed || fail "the cask's package isn't installed"
