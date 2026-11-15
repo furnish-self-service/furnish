@@ -12,7 +12,7 @@ use std::{
 use anyhow::Result;
 use serde_json::{Map, Value};
 
-use crate::catalog::{App, Collection};
+use crate::catalog::{App, Collection, RESOURCE_TYPES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -40,7 +40,6 @@ pub struct Item {
 
 /// The systems an app can be for, as `context().os.family` names them.
 pub const SYSTEMS: [&str; 3] = ["Windows", "macOS", "Linux"];
-const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", "Furnish/Installer"];
 const INSTALLER_TYPES: [&str; 6] = ["deb", "rpm", "pkg", "dmg", "msi", "exe"];
 
 fn error(message: impl Into<String>) -> Finding {
@@ -149,8 +148,13 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         let kind = r["type"].as_str().unwrap_or_default();
         // DSC matches resource types ignoring case, so `furnish/installer` is Furnish/Installer.
         let kind = RESOURCE_TYPES.iter().copied().find(|t| t.eq_ignore_ascii_case(kind)).unwrap_or(kind);
+        // Another DSC resource may be installed where the app runs, just not here.
         if !RESOURCE_TYPES.contains(&kind) {
-            findings.push(warning(format!("{name}: {kind} is not a furnish resource; it runs only where DSC finds it")));
+            match crate::engine::available(kind) {
+                Ok(true) => {}
+                Ok(false) => findings.push(warning(format!("{name}: DSC doesn't find the resource {kind} on this computer; the app needs it where it is installed"))),
+                Err(err) => findings.push(error(format!("{name}: {err:#}"))),
+            }
         }
         if kind == "Furnish/Package" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/Package needs properties.name")));

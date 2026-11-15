@@ -24,7 +24,8 @@ An admin policy decides which collections people get and what they can change. f
   },
   "parameters": { "acme-it": { "role": { "value": "developer" } } },
   "collectionSettings": { "acme-it": { "fallback": { "value": "off", "locked": true } } },
-  "autoInstall": ["acme-it/vpn"]
+  "autoInstall": ["acme-it/vpn"],
+  "allowedResourceTypes": ["Microsoft.Windows/Registry"]
 }
 ```
 
@@ -34,6 +35,7 @@ An admin policy decides which collections people get and what they can change. f
 - `parameters`: values for options and answers to questions, per collection or per app (`acme-it/gimp`), as defaults or `locked`. A question answered here isn't asked.
 - `collectionSettings`: values for one collection of the settings in [Disk use and earlier versions](#disk-use-and-earlier-versions), as defaults or `locked`.
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
+- `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own `Furnish/Package` and `Furnish/Installer`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
 ## Disk use and earlier versions
 
@@ -165,6 +167,8 @@ The service runs git from the system: `/usr/bin/git` on Linux and macOS (on NixO
 Everyone can ask the service to set up and update the preset collections. When that fails, only people who may install see why; others get a short message, and the details go to the service's log: the journal of the `furnish` unit on Linux, `/var/log/furnish.log` on macOS, `C:\ProgramData\furnish\service.log` on Windows. The macOS and Windows logs are readable by administrators only.
 
 On Windows, the service manager restarts the service when it crashes or stops with an error. The service refuses to start when `C:\ProgramData\furnish` exists but wasn't created by it: when it is a link, or when anyone besides SYSTEM and Administrators can change it. Remove the folder and start the service again.
+
+The service finds DSC resources only in folders that people without administrator rights can't change. A folder counts if it and every folder above it belong to root (on Windows: SYSTEM, Administrators or TrustedInstaller) and nobody else can write to it, the same rule as for the furnish binary. The service looks in the folders on its `PATH` and where DSC is installed, and drops the others. A resource in `/opt/homebrew/bin` or in a folder of a user's own `PATH` would otherwise run with full rights. The service also runs programs only from these folders.
 
 The service accepts an app's name and option values, nothing else, and checks the values against the app's declared options and the policy. Apps that install into the user's account (`perUser` in their metadata) still install as the user.
 

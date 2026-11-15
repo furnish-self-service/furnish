@@ -13,8 +13,11 @@ use std::{
 use anyhow::Result;
 use dsc_lib::{
     configure::{Configurator, config_doc::ExecutionKind, config_result::ResourceTestResult},
+    discovery::{Discovery, command_discovery::ImportedManifest, discovery_trait::{DiscoveryFilter, DiscoveryKind}},
+    dscerror::DscError,
     dscresources::invoke_result::{SetResult, TestResult},
     progress::ProgressFormat,
+    types::{FullyQualifiedTypeName, TypeNameFilter},
 };
 use serde_json::Value;
 
@@ -195,7 +198,11 @@ pub fn missing_reason(error: &str) -> Option<String> {
     Some(rest.lines().next().unwrap_or_default().trim().to_string())
 }
 
-/// Write the bundled resources to `dir` and restrict DSC resource discovery to it.
+/// Where furnish wrote its own resources (see `init`).
+static BUNDLED_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Write the bundled resources to `dir` and point DSC's resource discovery at them, then at the
+/// folders DSC normally searches (see `search_dirs`).
 /// Must run before any other thread starts, since it mutates the process environment.
 pub fn init(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)?;
@@ -208,16 +215,134 @@ pub fn init(dir: &Path) -> Result<()> {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
         }
     }
-    let mut path: Vec<PathBuf> = vec![dir.to_path_buf()];
-    path.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    let _ = BUNDLED_DIR.set(dir.to_path_buf());
+    let path: Vec<PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_default()).collect();
+    let in_service = crate::service::in_service();
+    let mut dirs = vec![dir.to_path_buf()];
+    dirs.extend(search_dirs(&path, in_service, crate::service::admin_only));
+    let dirs = env::join_paths(dirs)?;
     let stop_file = STOP_FILE.get_or_init(|| dir.join(".stop"));
     // SAFETY: called once at startup from main, before any threads are spawned.
     unsafe {
-        env::set_var("DSC_RESOURCE_PATH", dir);
-        env::set_var("PATH", env::join_paths(path)?);
+        // DSC searches DSC_RESOURCE_PATH instead of PATH, and finds resources' programs on PATH,
+        // then in the resource's folder. The same list for both, furnish's own resources first.
+        env::set_var("DSC_RESOURCE_PATH", &dirs);
+        env::set_var("PATH", &dirs);
         env::set_var("FURNISH_STOP_FILE", stop_file);
     }
     Ok(())
+}
+
+/// The folders DSC searches for resources besides furnish's own: PATH, as DSC does, and where DSC
+/// itself is installed, since its built-in resources (Microsoft.Windows/Registry,
+/// RunCommandOnSet, the PowerShell adapters, ...) ship next to the `dsc` program.
+///
+/// In the furnish service (root or SYSTEM), only folders that just administrators can change
+/// (`admin_only`): the folder and every folder above it belong to root (Windows: SYSTEM,
+/// Administrators or TrustedInstaller) and nobody else may write to it. A resource is a program
+/// the service runs with full rights, so a resource from a folder a user can write, such as
+/// /opt/homebrew/bin or a user's own PATH entry, would let that user run anything as root. This
+/// rule beats a fixed list of system folders: it keeps working folders that admins add to the
+/// system PATH (for example PowerShell's), and it drops system folders an installer left
+/// writable. The service also finds programs on this filtered PATH only, since DSC looks up a
+/// resource's program on PATH before its own folder.
+fn search_dirs(path: &[PathBuf], in_service: bool, admin_only: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = path.to_vec();
+    dirs.extend(dsc_install_dirs(path));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()));
+    if in_service {
+        dirs.retain(|d| admin_only(d));
+    }
+    dirs
+}
+
+/// Where DSC is installed: the real folder of `dsc` on PATH (the Linux packages link
+/// /usr/bin/dsc to /opt/dsc/dsc), its Linux packages' folder, and on Windows its MSIX package.
+fn dsc_install_dirs(path: &[PathBuf]) -> Vec<PathBuf> {
+    let program = if cfg!(windows) { "dsc.exe" } else { "dsc" };
+    let mut dirs: Vec<PathBuf> = path
+        .iter()
+        .map(|d| d.join(program))
+        .find(|p| p.is_file())
+        .and_then(|p| p.canonicalize().ok())
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .into_iter()
+        .collect();
+    if cfg!(target_os = "linux") {
+        dirs.push(PathBuf::from("/opt/dsc"));
+    }
+    // ponytail: users can't list WindowsApps, so for them the MSIX install counts only if its
+    // folder is on PATH; the service (SYSTEM) finds it here. Resolving the `dsc` app execution
+    // alias would find it for users too.
+    if cfg!(windows) {
+        let apps = PathBuf::from(env::var_os("ProgramFiles").unwrap_or_else(|| r"C:\Program Files".into())).join("WindowsApps");
+        let mut packages: Vec<PathBuf> = fs::read_dir(apps)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Microsoft.DesiredStateConfiguration")))
+            .collect();
+        packages.sort();
+        dirs.extend(packages.into_iter().rev());
+    }
+    dirs
+}
+
+/// furnish's resource types must come from furnish: DSC uses the manifest with the highest
+/// version of a type from all folders it searches (the first one found if versions are equal),
+/// so a manifest elsewhere that declares Furnish/Package could take its place. Checked once, on
+/// DSC's first full discovery, which DSC then keeps for the life of the process.
+fn ensure_own_resources() -> Result<()> {
+    static CHECKED: OnceLock<Result<(), String>> = OnceLock::new();
+    let Some(bundled) = BUNDLED_DIR.get() else { return Ok(()) };
+    CHECKED
+        .get_or_init(|| {
+            // Unfiltered, so that DSC's cache holds every resource type afterwards.
+            let found = Discovery::new().list_available(&DiscoveryKind::Resource, &TypeNameFilter::default(), None, ProgressFormat::None);
+            let manifests: Vec<(String, PathBuf)> = found
+                .into_iter()
+                .filter_map(|m| match m {
+                    ImportedManifest::Resource(r) => Some((r.type_name.to_string(), r.path)),
+                    ImportedManifest::Extension(_) => None,
+                })
+                .collect();
+            match foreign_furnish_manifests(&manifests, bundled).first() {
+                Some((kind, path)) => Err(format!(
+                    "{} declares the resource type {kind}, which only furnish provides. Remove it, or remove its folder from PATH",
+                    path.display()
+                )),
+                None => Ok(()),
+            }
+        })
+        .clone()
+        .map_err(anyhow::Error::msg)
+}
+
+/// Manifests (type, path) of furnish's resource types that aren't furnish's own, in `bundled`.
+fn foreign_furnish_manifests(manifests: &[(String, PathBuf)], bundled: &Path) -> Vec<(String, PathBuf)> {
+    let bundled = bundled.canonicalize().unwrap_or_else(|_| bundled.to_path_buf());
+    manifests
+        .iter()
+        .filter(|(kind, _)| crate::catalog::RESOURCE_TYPES.iter().any(|t| t.eq_ignore_ascii_case(kind)))
+        .filter(|(_, path)| {
+            let dir = path.parent().map(|d| d.canonicalize().unwrap_or_else(|_| d.to_path_buf()));
+            dir.as_deref() != Some(bundled.as_path())
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether DSC finds a resource of this type on this computer.
+pub fn available(kind: &str) -> Result<bool> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    ensure_own_resources()?;
+    let Ok(kind) = kind.parse::<FullyQualifiedTypeName>() else { return Ok(false) };
+    let filter = DiscoveryFilter::new(&kind, None, None);
+    let mut discovery = Discovery::new();
+    discovery.find_resources(std::slice::from_ref(&filter), ProgressFormat::None)?;
+    Ok(discovery.find_resource(&filter)?.is_some())
 }
 
 // DSC v3.3 reports resource failures as `Err`; `had_errors`/`messages` are never set.
@@ -229,16 +354,72 @@ pub fn status(doc: &Value) -> Result<Status> {
 pub fn check(doc: &Value) -> Result<Check> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
-    let result = match configurator(doc).and_then(|mut c| Ok(c.invoke_test()?)) {
+    let Some(doc) = applicable(doc) else {
+        return Ok(Check { status: Status::Unavailable, reason: None });
+    };
+    let result = match configurator(&doc).and_then(|mut c| Ok(c.invoke_test()?)) {
         Ok(result) => result,
         Err(e) => {
-            let reason = missing_reason(&format!("{e:#}")).ok_or(e)?;
+            let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
             return Ok(Check { status: Status::Blocked, reason: Some(reason) });
         }
     };
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
     Ok(Check { status: classify(&states), reason: None })
+}
+
+/// A resource type DSC doesn't find on this computer, e.g. "the DSC resource Microsoft.Windows/Registry".
+fn missing_resource(error: &anyhow::Error) -> Option<String> {
+    match error.downcast_ref::<DscError>()? {
+        DscError::ResourceNotFound(kind, _) => Some(format!("the DSC resource {kind}")),
+        _ => None,
+    }
+}
+
+/// The document without the resources whose `condition` is false here, and without
+/// `dependsOn` entries naming those; `None` if no resource is left. furnish skips them itself
+/// because DSC wants every resource type of a document installed, also those it would skip,
+/// e.g. a Windows-only resource on Linux.
+fn applicable(doc: &Value) -> Option<Value> {
+    let resources = doc["resources"].as_array().cloned().unwrap_or_default();
+    let (kept, dropped): (Vec<Value>, Vec<Value>) = resources.into_iter().partition(|r| applies_here(r, doc));
+    if kept.is_empty() {
+        return None;
+    }
+    let dropped: Vec<&str> = dropped.iter().filter_map(|r| r["name"].as_str()).collect();
+    let mut doc = doc.clone();
+    doc["resources"] = kept
+        .into_iter()
+        .map(|mut r| {
+            if let Some(deps) = r["dependsOn"].as_array_mut() {
+                deps.retain(|d| dependency(d).is_none_or(|n| !dropped.contains(&n.as_str())));
+            }
+            r
+        })
+        .collect();
+    Some(doc)
+}
+
+/// Whether a resource's `condition` holds on this computer with the document's parameter values.
+/// A condition furnish can't evaluate is left to DSC.
+fn applies_here(resource: &Value, doc: &Value) -> bool {
+    let Some(condition) = resource["condition"].as_str() else { return true };
+    let values: serde_json::Map<String, Value> = doc["parameters"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, p)| {
+            let value = match &p["defaultValue"] {
+                // `options::apply` escapes a leading `[` as `[[`, as DSC expects.
+                Value::String(s) if s.starts_with("[[") => Value::String(s[1..].to_string()),
+                Value::Null => return None,
+                v => v.clone(),
+            };
+            Some((name.clone(), value))
+        })
+        .collect();
+    crate::options::condition_holds(condition, &values).unwrap_or(true)
 }
 
 /// Install an app, or bring it up to date.
@@ -424,11 +605,14 @@ fn invocation_order(resources: &[Value]) -> Result<Vec<usize>> {
 
 /// Names from `dependsOn: ["[resourceId('Type', 'name')]"]`.
 fn dependencies(resource: &Value) -> Vec<String> {
-    resource["dependsOn"].as_array().into_iter().flatten().filter_map(|d| {
-        let args = d.as_str()?.strip_prefix("[resourceId(")?.strip_suffix(")]")?;
-        let (_, name) = args.split_once(',')?;
-        Some(name.trim().trim_matches('\'').to_string())
-    }).collect()
+    resource["dependsOn"].as_array().into_iter().flatten().filter_map(dependency).collect()
+}
+
+/// The name in `[resourceId('Type', 'name')]`.
+fn dependency(entry: &Value) -> Option<String> {
+    let args = entry.as_str()?.strip_prefix("[resourceId(")?.strip_suffix(")]")?;
+    let (_, name) = args.split_once(',')?;
+    Some(name.trim().trim_matches('\'').to_string())
 }
 
 /// What-if for one single-resource document.
@@ -436,24 +620,50 @@ fn preview(doc: &Value) -> Result<Step> {
     let resource = &doc["resources"][0];
     let name = resource["name"].as_str().unwrap_or_default().to_string();
     let kind = resource["type"].as_str().unwrap_or_default().to_string();
+    let skipped = || {
+        let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
+        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, changes: vec![] }
+    };
+    if !applies_here(resource, doc) {
+        return Ok(skipped());
+    }
     let mut configurator = configurator(doc)?;
     configurator.context.execution_type = ExecutionKind::WhatIf;
     let result = configurator.invoke_set(false)?;
     // A resource skipped by its condition produces no result at all.
     let Some(r) = result.results.first() else {
-        let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
-        return Ok(Step { name, kind, action: Action::Skipped, details, changes: vec![] });
+        return Ok(skipped());
     };
-    let details = r.metadata.as_ref()
+    let mut details: Vec<String> = r.metadata.as_ref()
         .and_then(|m| m.other.get("whatIf"))
         .and_then(Value::as_array)
         .map(|lines| lines.iter().filter_map(|l| l.as_str().map(String::from)).collect())
         .unwrap_or_default();
+    // furnish's resources describe their exact commands; for others, show what they are given.
+    if !crate::catalog::RESOURCE_TYPES.contains(&kind.as_str()) {
+        details.extend(property_lines(&resource["properties"]));
+    }
     let (before, after) = match &r.result {
         SetResult::Resource(r) => (r.before_state.clone(), r.after_state.clone()),
         SetResult::Group(_) => (Value::Null, Value::Null),
     };
     Ok(Step { name, kind, action: action(&before, &after), details, changes: changes(&before, &after) })
+}
+
+/// One line per property, `name: value`, shortened to a line's length.
+fn property_lines(properties: &Value) -> Vec<String> {
+    const MAX: usize = 200;
+    properties.as_object().into_iter().flatten()
+        .filter(|(k, _)| !k.starts_with('_'))
+        .map(|(k, v)| {
+            let value = match v { Value::String(s) => s.clone(), v => v.to_string() };
+            let line = format!("{k}: {}", value.replace('\n', " ⏎ "));
+            match line.char_indices().nth(MAX) {
+                Some((cut, _)) => format!("{}…", &line[..cut]),
+                None => line,
+            }
+        })
+        .collect()
 }
 
 fn exists(state: &Value) -> bool {
@@ -478,12 +688,24 @@ fn action(before: &Value, after: &Value) -> Action {
     }
 }
 
-/// Whether DSC accepts the document (parses it, runs no resource).
+/// Whether DSC accepts the document (parses it, runs no resource). A resource type that isn't
+/// on this computer is fine: it may be where the app is installed (see `available`).
 pub fn validate(doc: &Value) -> Result<()> {
-    configurator(doc).map(drop)
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    match configurator(doc) {
+        Err(e) if missing_resource(&e).is_some() => Ok(()),
+        result => result.map(drop),
+    }
 }
 
 fn configurator(doc: &Value) -> Result<Configurator> {
+    ensure_own_resources()?;
+    let mut doc = doc.clone();
+    // DSC would discover resources again while running, after `ensure_own_resources` checked
+    // them; furnish skips resources by their condition itself (see `applicable`).
+    if let Some(directives) = doc["directives"].as_object_mut() {
+        directives.remove("resourceDiscovery");
+    }
     let mut configurator = Configurator::new(&doc.to_string(), ProgressFormat::None)?;
     configurator.set_context(None)?;
     Ok(configurator)
@@ -500,7 +722,8 @@ fn flatten(results: &[ResourceTestResult], out: &mut Vec<(bool, Value)>) {
 }
 
 /// Everything in desired state → installed; anything missing → not installed; else drifted.
-/// No states at all means every resource was skipped by its `condition`.
+/// A resource that doesn't report `_exist` (not all DSC resources do) counts as missing when it
+/// isn't in the desired state. No states at all means every resource was skipped by its `condition`.
 fn classify(states: &[(bool, Value)]) -> Status {
     if states.is_empty() {
         return Status::Unavailable;
@@ -508,7 +731,7 @@ fn classify(states: &[(bool, Value)]) -> Status {
     let drifted: Vec<_> = states.iter().filter(|(ok, _)| !ok).map(|(_, actual)| actual).collect();
     if drifted.is_empty() {
         Status::Installed
-    } else if drifted.iter().any(|a| matches!(&a["_exist"], Value::Bool(false)) || a["_exist"] == "false") {
+    } else if drifted.iter().any(|a| matches!(&a["_exist"], Value::Bool(false) | Value::Null) || a["_exist"] == "false") {
         Status::NotInstalled
     } else {
         Status::NeedsUpdate
@@ -528,6 +751,8 @@ mod tests {
         assert_eq!(classify(&[(true, present.clone()), (false, missing)]), Status::NotInstalled);
         assert_eq!(classify(&[(false, json!({"_exist": "false"}))]), Status::NotInstalled);
         assert_eq!(classify(&[(false, present)]), Status::NeedsUpdate);
+        // Resources without `_exist`, e.g. a script resource whose test failed: not installed yet.
+        assert_eq!(classify(&[(false, json!({"name": "Acme VPN"}))]), Status::NotInstalled);
         assert_eq!(classify(&[]), Status::Unavailable);
     }
 
@@ -580,5 +805,82 @@ mod tests {
         assert_eq!(line(Level::WARN, "Resource is deprecated"), Some(("warn", "Resource is deprecated".into())));
         assert_eq!(line(Level::DEBUG, "Discovering resources in /tmp"), None);
         assert_eq!(line(Level::TRACE, "PID 42:   "), None);
+    }
+
+    #[test]
+    fn furnish_types_from_elsewhere_are_refused() {
+        let bundled = env::temp_dir().join(format!("furnish-bundled-{}", std::process::id()));
+        fs::create_dir_all(&bundled).unwrap();
+        let own = |file: &str| bundled.join(file);
+        let manifests = vec![
+            ("Furnish/Package".to_string(), own("furnish-package.dsc.resource.json")),
+            ("Furnish/Installer".to_string(), own("furnish-installer.dsc.resource.json")),
+            ("Microsoft.Windows/Registry".to_string(), PathBuf::from("/opt/dsc/registry.dsc.resource.json")),
+        ];
+        assert!(foreign_furnish_manifests(&manifests, &bundled).is_empty());
+        // Any version, any case: DSC would prefer a higher version, or the first found if equal.
+        let mut shadowed = manifests.clone();
+        shadowed.push(("furnish/package".into(), PathBuf::from("/opt/homebrew/bin/evil.dsc.resource.json")));
+        let foreign = foreign_furnish_manifests(&shadowed, &bundled);
+        assert_eq!(foreign.len(), 1);
+        assert_eq!(foreign[0].1, PathBuf::from("/opt/homebrew/bin/evil.dsc.resource.json"));
+        fs::remove_dir_all(bundled).unwrap();
+    }
+
+    #[test]
+    fn the_service_searches_only_folders_admins_control() {
+        let path = vec![PathBuf::from("/usr/bin"), PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/bin"), PathBuf::new()];
+        let admin_only = |d: &Path| d != Path::new("/opt/homebrew/bin");
+        let user = search_dirs(&path, false, admin_only);
+        assert_eq!(user[..2], [PathBuf::from("/usr/bin"), PathBuf::from("/opt/homebrew/bin")]);
+        assert_eq!(user.iter().filter(|d| *d == Path::new("/usr/bin")).count(), 1, "duplicates");
+        let service = search_dirs(&path, true, admin_only);
+        assert!(service.contains(&PathBuf::from("/usr/bin")));
+        assert!(!service.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert!(service.iter().all(|d| !d.as_os_str().is_empty()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folders_users_can_write_are_not_admin_only() {
+        assert!(crate::service::admin_only(Path::new("/")));
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } != 0 {
+            let mine = env::temp_dir().join(format!("furnish-admin-only-{}", std::process::id()));
+            fs::create_dir_all(&mine).unwrap();
+            assert!(!crate::service::admin_only(&mine));
+            fs::remove_dir_all(mine).unwrap();
+        }
+        assert!(!crate::service::admin_only(Path::new("/nonexistent/furnish")));
+    }
+
+    #[test]
+    fn resources_for_other_systems_are_dropped_before_dsc_sees_them() {
+        let other = if cfg!(windows) { "Linux" } else { "Windows" };
+        let doc = json!({
+            "parameters": { "vpn": { "type": "bool", "defaultValue": true } },
+            "resources": [
+                {"name": "client", "type": "Furnish/Package", "properties": {"name": "acme-vpn"}},
+                {"name": "elsewhere", "type": "Some.Other/Resource", "condition": format!("[equals(context().os.family, '{other}')]")},
+                {"name": "profile", "type": "Microsoft.Windows/Registry", "condition": "[parameters('vpn')]",
+                 "dependsOn": ["[resourceId('Some.Other/Resource', 'elsewhere')]", "[resourceId('Furnish/Package', 'client')]"]},
+            ]
+        });
+        let kept = applicable(&doc).unwrap();
+        let names: Vec<_> = kept["resources"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["client", "profile"]);
+        assert_eq!(kept["resources"][1]["dependsOn"], json!(["[resourceId('Furnish/Package', 'client')]"]));
+        let none = json!({"resources": [{"name": "x", "type": "T/X", "condition": format!("[equals(context().os.family, '{other}')]")}]});
+        assert!(applicable(&none).is_none());
+    }
+
+    #[test]
+    fn other_resources_preview_their_properties() {
+        let lines = property_lines(&json!({"keyPath": "HKLM\\Software\\Acme", "valueData": {"String": "x"}, "_exist": true, "script": "a\nb"}));
+        assert!(lines.contains(&"keyPath: HKLM\\Software\\Acme".to_string()), "{lines:?}");
+        assert!(lines.contains(&r#"valueData: {"String":"x"}"#.to_string()), "{lines:?}");
+        assert!(lines.contains(&"script: a ⏎ b".to_string()), "{lines:?}");
+        assert!(lines.iter().all(|l| !l.starts_with("_exist")));
+        assert!(property_lines(&json!({"long": "x".repeat(500)}))[0].chars().count() <= 201);
     }
 }

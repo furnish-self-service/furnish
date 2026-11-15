@@ -565,6 +565,12 @@ mod windows;
 mod install;
 pub use install::{install, uninstall};
 
+/// Only administrators can change this folder or what is in it: the same rule as for the furnish
+/// binary that `service install` registers. Unreadable counts as changeable.
+pub fn admin_only(dir: &std::path::Path) -> bool {
+    matches!(install::changeable(dir), Ok(None))
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn serve() -> Result<()> {
     bail!("the furnish service isn't available on this OS yet")

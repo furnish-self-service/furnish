@@ -42,7 +42,7 @@ fn exe() -> Result<std::path::PathBuf> {
 /// others (except the admin group; and folders above its own with the sticky bit, like /tmp,
 /// where others can't rename what isn't theirs).
 #[cfg(unix)]
-fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
+pub(super) fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
     use std::os::unix::fs::MetadataExt;
     for (level, path) in exe.ancestors().enumerate() {
         let meta = std::fs::metadata(path).with_context(|| format!("reading {}", path.display()))?;
@@ -62,7 +62,7 @@ fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
 /// Windows: only SYSTEM, Administrators and TrustedInstaller may change the file or add files
 /// to its folder (furnish runs git from there), or rename what the folders above contain.
 #[cfg(windows)]
-fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
+pub(super) fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
     use super::windows::{CHANGE, REPLACE, changeable_by};
     for (level, path) in exe.ancestors().enumerate() {
         if let Some(who) = changeable_by(path, if level < 2 { CHANGE } else { REPLACE })? {
@@ -73,7 +73,7 @@ fn changeable(exe: &std::path::Path) -> Result<Option<String>> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn changeable(_: &std::path::Path) -> Result<Option<String>> {
+pub(super) fn changeable(_: &std::path::Path) -> Result<Option<String>> {
     Ok(None)
 }
 

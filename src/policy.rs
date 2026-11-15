@@ -13,7 +13,8 @@
 //! ```json
 //! { "settings": { "updateIntervalMinutes": { "value": 60, "locked": true } },
 //!   "collections": { "preset": [{ "name": "acme-it", "url": "git@…" }], "usersCanAdd": false },
-//!   "service": { "allowedGroup": "staff" } }
+//!   "service": { "allowedGroup": "staff" },
+//!   "allowedResourceTypes": ["Microsoft.Windows/Registry"] }
 //! ```
 //!
 //! FURNISH_POLICY_FILE points to a JSON file instead (for tests).
@@ -45,6 +46,8 @@ pub struct Policy {
     pub endpoints: Vec<String>,
     /// Apps (`collection/app`) installed on first launch, e.g. a VPN client.
     pub auto_install: Vec<String>,
+    /// Set: apps may use only these DSC resource types (ignoring case), besides furnish's own.
+    pub allowed_resource_types: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]

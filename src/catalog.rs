@@ -652,9 +652,10 @@ impl Collection {
             .collect();
         paths.sort();
         let held: Vec<_> = self.held_dirs().into_iter().map(|d| (crate::versions::all(&d), d)).collect();
+        let allowed = allowed_resource_types();
         paths
             .iter()
-            .filter_map(|path| match self.load_app(path) {
+            .filter_map(|path| match self.load_app_allowing(path, allowed.as_deref()) {
                 Ok(app) => Some(self.with_hold(app, &held)),
                 Err(err) => {
                     eprintln!("warning: skipping {}: {err:#}", path.display());
@@ -810,22 +811,61 @@ impl Collection {
     }
 
     pub(crate) fn load_app(&self, path: &Path) -> Result<App> {
+        self.load_app_allowing(path, allowed_resource_types().as_deref())
+    }
+
+    /// Load an app whose resources are of furnish's types or, with `allowed` (the admin policy's
+    /// `allowedResourceTypes`), only of those.
+    pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
         if doc.get("$schema").is_none() {
             // DSC requires it; don't make every app author repeat it.
             doc["$schema"] = DSC_SCHEMA.into();
         }
-        for resource in doc["resources"].as_array_mut().into_iter().flatten() {
-            // DSC matches types ignoring case. furnish only finds its own resources, so anything
-            // else couldn't run, and its checks below must see every Furnish/Installer.
-            let kind = resource["type"].as_str().unwrap_or_default();
-            let Some(canonical) = RESOURCE_TYPES.iter().find(|t| t.eq_ignore_ascii_case(kind)) else {
-                let name = resource["name"].as_str().unwrap_or("?");
-                bail!("resource '{name}': type '{kind}' is not a furnish resource ({})", RESOURCE_TYPES.join(", "));
-            };
-            resource["type"] = (*canonical).into();
-            if *canonical != INSTALLER_TYPE {
+        self.check_resources(&mut doc["resources"], allowed)?;
+        let meta = &doc["metadata"]["furnish"];
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        Ok(App {
+            id: file_name.trim_end_matches(".dsc.yaml").to_string(),
+            collection: self.name.clone(),
+            description: meta["description"].as_str().unwrap_or_default().trim().to_string(),
+            categories: meta["categories"]
+                .as_array()
+                .map(|c| c.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
+            path: path.to_path_buf(),
+            collection_dir: self.dir.clone(),
+            managed: self.managed,
+            dependencies: match meta.get("dependencies") {
+                Some(deps) => serde_json::from_value(deps.clone()).context("metadata.furnish.dependencies")?,
+                None => Vec::new(),
+            },
+            doc,
+            held: None,
+        })
+    }
+
+    /// Check the resources of a document, and those nested in groups and adapters
+    /// (`properties.resources`): types the policy allows, and installer files in the collection.
+    fn check_resources(&self, resources: &mut Value, allowed: Option<&[String]>) -> Result<()> {
+        for resource in resources.as_array_mut().into_iter().flatten() {
+            let name = resource["name"].as_str().unwrap_or("?").to_string();
+            let kind = resource["type"].as_str().unwrap_or_default().to_string();
+            // DSC matches types ignoring case. The checks below must see every Furnish/Installer.
+            let canonical = RESOURCE_TYPES.iter().find(|t| t.eq_ignore_ascii_case(&kind));
+            if let Some(canonical) = canonical {
+                resource["type"] = (*canonical).into();
+            } else if let Some(allowed) = allowed
+                && !allowed.iter().any(|t| t.eq_ignore_ascii_case(&kind))
+            {
+                bail!("resource '{name}': type '{kind}' isn't allowed by your organization (allowed: {}, {})", RESOURCE_TYPES.join(", "), allowed.join(", "));
+            }
+            if resource["properties"]["resources"].is_array() {
+                self.check_resources(&mut resource["properties"]["resources"], allowed)?;
+            }
+            if canonical != Some(&INSTALLER_TYPE) {
                 continue;
             }
             // Windows passes properties as environment variables, whose names ignore case.
@@ -849,32 +889,17 @@ impl Collection {
                 bail!("installer file must be a path in the collection");
             }
         }
-        let meta = &doc["metadata"]["furnish"];
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-        Ok(App {
-            id: file_name.trim_end_matches(".dsc.yaml").to_string(),
-            collection: self.name.clone(),
-            description: meta["description"].as_str().unwrap_or_default().trim().to_string(),
-            categories: meta["categories"]
-                .as_array()
-                .map(|c| c.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default(),
-            icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
-            path: path.to_path_buf(),
-            collection_dir: self.dir.clone(),
-            managed: self.managed,
-            dependencies: match meta.get("dependencies") {
-                Some(deps) => serde_json::from_value(deps.clone()).context("metadata.furnish.dependencies")?,
-                None => Vec::new(),
-            },
-            doc,
-            held: None,
-        })
+        Ok(())
     }
 }
 
-/// The resources furnish ships (see `engine::init`), the only ones DSC finds.
-const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", INSTALLER_TYPE];
+/// The resource types the admin policy allows apps to use besides furnish's own; `None`: any.
+pub(crate) fn allowed_resource_types() -> Option<Vec<String>> {
+    crate::policy::load_native().allowed_resource_types
+}
+
+/// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
+pub const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", INSTALLER_TYPE];
 const INSTALLER_TYPE: &str = "Furnish/Installer";
 
 /// Whether two resolved paths are the same (Windows: ignoring case, like its file systems).
@@ -1565,20 +1590,43 @@ mod tests {
     }
 
     #[test]
-    fn resource_types_ignore_case_and_only_furnish_resources_load() {
+    fn resource_types_ignore_case_and_installer_checks_hold() {
         let app = |kind: &str, file: &str| format!("resources:\n  - name: x\n    type: {kind}\n    properties: {{ file: '{file}' }}\n");
         let (c, dir) = collection_with(&[
             ("apps/lower.dsc.yaml", &app("furnish/installer", "/etc/passwd")),
             ("apps/upper.dsc.yaml", &app("FURNISH/INSTALLER", "i/x.deb")),
-            ("apps/other.dsc.yaml", &app("Microsoft.DSC/Include", "x")),
             ("apps/case.dsc.yaml", "resources:\n  - name: x\n    type: Furnish/Installer\n    properties: { File: 'C:/x.msi' }\n"),
         ]);
         assert!(c.load_app(&dir.join("apps/lower.dsc.yaml")).is_err(), "absolute file accepted");
         let upper = c.load_app(&dir.join("apps/upper.dsc.yaml")).unwrap();
         assert_eq!(upper.doc["resources"][0]["type"], "Furnish/Installer");
         assert!(upper.doc["resources"][0]["properties"]["file"].as_str().unwrap().starts_with(&*dir.canonicalize().unwrap().to_string_lossy()));
-        assert!(c.load_app(&dir.join("apps/other.dsc.yaml")).is_err());
         assert!(c.load_app(&dir.join("apps/case.dsc.yaml")).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn any_resource_type_loads_unless_the_policy_narrows_them() {
+        let vpn = "resources:\n  - name: vpn\n    type: Microsoft.Windows/Registry\n    properties: { keyPath: 'HKLM\\\\Software\\\\Acme' }\n";
+        // Nested in a group: the policy and the installer checks apply there too.
+        let group = "resources:\n  - name: g\n    type: Microsoft.DSC/Group\n    properties:\n      resources:\n        - name: tool\n          type: furnish/package\n          properties: { name: tool }\n        - name: cmd\n          type: Microsoft.DSC.Transitional/RunCommandOnSet\n          properties: { executable: sh }\n        - name: setup\n          type: Furnish/Installer\n          properties: { file: /etc/passwd }\n";
+        let (c, dir) = collection_with(&[("apps/vpn.dsc.yaml", vpn), ("apps/group.dsc.yaml", group)]);
+        let path = dir.join("apps/vpn.dsc.yaml");
+        let app = c.load_app_allowing(&path, None).unwrap();
+        assert_eq!(app.doc["resources"][0]["type"], "Microsoft.Windows/Registry");
+        // Allowed types ignore case; furnish's own are always allowed.
+        assert!(c.load_app_allowing(&path, Some(&["microsoft.windows/registry".into()])).is_ok());
+        let err = c.load_app_allowing(&path, Some(&[])).err().unwrap().to_string();
+        assert!(err.contains("type 'Microsoft.Windows/Registry' isn't allowed by your organization"), "{err}");
+        let group = dir.join("apps/group.dsc.yaml");
+        let err = c.load_app_allowing(&group, None).err().unwrap().to_string();
+        assert!(err.contains("outside the collection"), "nested installer not checked: {err}");
+        fs::write(&group, fs::read_to_string(&group).unwrap().replace("/etc/passwd", "i/x.deb")).unwrap();
+        let app = c.load_app_allowing(&group, None).unwrap();
+        assert_eq!(app.doc["resources"][0]["properties"]["resources"][0]["type"], "Furnish/Package");
+        let narrowed = Some(&["Microsoft.DSC/Group".to_string()][..]);
+        let err = c.load_app_allowing(&group, narrowed).err().unwrap().to_string();
+        assert!(err.contains("RunCommandOnSet' isn't allowed"), "nested type not narrowed: {err}");
         fs::remove_dir_all(dir).unwrap();
     }
 

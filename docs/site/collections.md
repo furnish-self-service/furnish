@@ -38,7 +38,7 @@ resources:
       name: GIMP.GIMP.3
 ```
 
-Resources are of the types `Furnish/Package` and `Furnish/Installer`; furnish refuses an app with any other type. furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`.
+furnish ships two resources, `Furnish/Package` and `Furnish/Installer`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`.
 
 ### Furnish/Package
 
@@ -63,6 +63,30 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 ```
 
 `file` is a path inside the collection. furnish refuses a path that leads outside it, also through a symbolic link, and the resource refuses to install a symbolic link.
+
+### Other DSC resources
+
+An app can also use resources that DSC finds on the computer: the ones that come with DSC, such as `Microsoft.Windows/Registry` or `Microsoft.DSC.Transitional/RunCommandOnSet`, and resources installed elsewhere. An app that sets up a VPN connection or a setting needs no package at all.
+
+```yaml
+- name: Acme proxy
+  type: Microsoft.Windows/Registry
+  condition: "[equals(context().os.family, 'Windows')]"
+  properties:
+    keyPath: HKCU\Software\Acme
+    valueName: Proxy
+    valueData: { String: proxy.acme.example }
+```
+
+furnish looks for resources where DSC does: in the folders on `PATH` and where DSC is installed. A resource the computer doesn't have makes the app show "Needs the DSC resource ...". So install DSC, or the resource, on the computers that need it, for example as a dependency. A resource whose `condition` is false on a computer doesn't need to be there.
+
+furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Uninstalling sets `_exist: false`, so an app whose resources don't support `_exist` can't be uninstalled with furnish. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell.
+
+For `--dry-run` and the steps preview, furnish's own resources show their exact commands. Other resources show their type and properties.
+
+No other resource may declare `Furnish/Package` or `Furnish/Installer`. furnish refuses to run when DSC finds one, whatever its version.
+
+Your organization can limit which resource types apps may use (see [For admins](admins.md#the-policy)).
 
 ### Dependencies
 
@@ -135,7 +159,7 @@ Recommended apps appear first on Discover. The expression can use the collection
 
 ## Check a collection
 
-`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
+`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. A resource type that DSC doesn't find on the computer running the check is a warning, since it may be installed where the app runs. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
 
 ```
 $ furnish check
