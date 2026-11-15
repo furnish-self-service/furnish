@@ -1387,6 +1387,11 @@ pub fn git_command() -> Command {
         let git = env::current_exe().ok()?.parent()?.join("git").join("cmd").join("git.exe");
         git.is_file().then_some(git)
     });
+    // The service runs as root: git from the system, not from a folder on PATH that a user may own
+    // (e.g. Homebrew's). NixOS has none in /usr/bin; there the service's PATH is the system's.
+    if !cfg!(windows) && crate::service::in_service() && Path::new("/usr/bin/git").is_file() {
+        return Command::new("/usr/bin/git");
+    }
     let Some(git) = bundled else { return Command::new("git") };
     let mut cmd = Command::new(git);
     // furnish asks for logins itself; the bundled credential manager mustn't open windows.
