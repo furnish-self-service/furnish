@@ -19,6 +19,8 @@ function Fail([string]$Message) {
         git -c safe.directory=* -C $org ls-files -t | Select-Object -First 10
         git -c safe.directory=* -C $org status --short | Select-Object -First 10
     }
+    Write-Host '--- git processes still running (the service waiting on one?)'
+    Get-CimInstance Win32_Process -Filter "Name like 'git%' or Name = 'furnish.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }
     Get-WinEvent -LogName System -MaxEvents 20 -ErrorAction SilentlyContinue | Where-Object ProviderName -eq 'Service Control Manager' | Format-List TimeCreated, Message
     exit 1
 }

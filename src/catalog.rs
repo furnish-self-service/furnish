@@ -641,7 +641,11 @@ impl Collection {
             }
             if let Some(file) = resource["properties"]["file"].as_str() {
                 // Not checked out yet (blobs_on_demand): installing the app checks it out.
-                let later = || Path::new(file).components().all(|c| matches!(c, Component::Normal(_))).then(|| self.dir.join(file));
+                // Joined part by part: Windows programs such as msiexec reject paths with a `/`.
+                let later = || {
+                    let parts = Path::new(file).components();
+                    parts.clone().all(|c| matches!(c, Component::Normal(_))).then(|| parts.fold(self.dir.clone(), |p, c| p.join(c)))
+                };
                 let resolved = self
                     .file_in_repo(file)
                     .or_else(later)

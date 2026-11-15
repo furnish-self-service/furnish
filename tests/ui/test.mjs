@@ -88,7 +88,8 @@ const steps = [
     await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
   }],
   ['apps without a resource for this OS are hidden', async () => {
-    if ((await findAll(card('nowhere'))).length) throw new Error('nowhere is shown');
+    // Cards show until the app's status arrives; "not available here" then hides it.
+    await waitFor('nowhere hidden', async () => !(await findAll(card('nowhere'))).length);
   }],
   ['a missing tool shows what is needed; prerequisites install first', async () => {
     await waitFor('brew-only shows what it needs', async () => (await text(card('brew-only'))).includes('Needs Homebrew'));
