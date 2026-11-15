@@ -70,7 +70,10 @@ use_zypper() {
 use_brew() {
     have brew || return 1
     via=Homebrew admin=false # Homebrew refuses to run as root
-    installed_version() { brew list --versions "$name" 2>/dev/null | cut -d' ' -f2; }
+    # A cask (an app such as tunnelblick) is listed only with --cask when it is named.
+    installed_version() {
+        { brew list --versions "$name" || brew list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
+    }
     do_install() { run_step brew install "$name"; }
     do_remove() { run_step brew uninstall "$name"; }
     install_desc="brew install $name" remove_desc="brew uninstall $name"
