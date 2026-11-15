@@ -253,7 +253,7 @@ export interface Settings {
   /** Include this computer's name in reports. */
   reportHostname: boolean;
   /** The app's language; `system` follows the system language. */
-  language: 'system' | 'en' | 'de';
+  language: 'system' | import('./i18n.ts').Lang;
 }
 
 export interface Load {

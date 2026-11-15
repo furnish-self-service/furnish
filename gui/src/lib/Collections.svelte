@@ -5,6 +5,7 @@
   import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
   import { t, parts, formatTime } from './i18n.svelte';
+  import { languages, type Lang } from './i18n.ts';
 
   const intervals = $derived([
     [15, t('collections.every15')],
@@ -233,12 +234,11 @@
           id="language"
           value={store.settings.language}
           disabled={isLocked('language')}
-          onchange={(e) => changeSettings({ language: e.currentTarget.value as 'system' | 'en' | 'de' })}
+          onchange={(e) => changeSettings({ language: e.currentTarget.value as 'system' | Lang })}
         >
           <option value="system">{t('collections.languageSystem')}</option>
           <!-- Each language in its own words, so people find theirs whatever is shown. -->
-          <option value="en" lang="en">English</option>
-          <option value="de" lang="de">Deutsch</option>
+          {#each Object.entries(languages) as [code, name]}<option value={code} lang={code}>{name}</option>{/each}
         </select>
         {#if isLocked('language')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>

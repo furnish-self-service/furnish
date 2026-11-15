@@ -2,25 +2,46 @@
 // `Intl.PluralRules`. The reactive part (the current language) is in i18n.svelte.ts.
 import { en } from './locales/en.ts';
 import { de } from './locales/de.ts';
+import { fr } from './locales/fr.ts';
+import { es } from './locales/es.ts';
+import { it } from './locales/it.ts';
+import { pl } from './locales/pl.ts';
+import { pt } from './locales/pt.ts';
+import { nl } from './locales/nl.ts';
 
-/** A text, or one per plural category ("one", "other", …) chosen by the `n` parameter. */
-export type Entry = string | { one: string; other: string };
+/** A text, or one per plural category the language uses ("one", "few", "many", "other"), chosen
+ *  by the `n` parameter; a missing category falls back to "other". */
+export type Entry = string | ({ other: string } & Partial<Record<Intl.LDMLPluralRule, string>>);
 export type Key = keyof typeof en;
-export type Lang = 'en' | 'de';
 export type Params = Record<string, string | number>;
 
-export const dictionaries: Record<Lang, Record<Key, Entry>> = { en, de };
+/** The app's languages, and each one's name in itself (for the language menu). */
+export const languages = {
+  en: 'English',
+  de: 'Deutsch',
+  fr: 'Français',
+  es: 'Español',
+  it: 'Italiano',
+  pl: 'Polski',
+  pt: 'Português',
+  nl: 'Nederlands',
+} as const;
+export type Lang = keyof typeof languages;
 
-/** The language for the setting: German for a German system language, else English. */
+export const dictionaries: Record<Lang, Record<Key, Entry>> = { en, de, fr, es, it, pl, pt, nl };
+
+const isLang = (code: string | undefined): code is Lang => !!code && code in languages;
+
+/** The language for the setting: the system's if furnish has it, else English. */
 export function resolve(choice: 'system' | Lang | undefined, systemLanguage: string | undefined): Lang {
-  if (choice === 'en' || choice === 'de') return choice;
-  return systemLanguage?.slice(0, 2).toLowerCase() === 'de' ? 'de' : 'en';
+  if (choice && choice !== 'system' && isLang(choice)) return choice;
+  const system = systemLanguage?.slice(0, 2).toLowerCase();
+  return isLang(system) ? system : 'en';
 }
 
 export function translate(lang: Lang, key: Key, params: Params = {}): string {
   const entry = dictionaries[lang][key] ?? en[key];
-  const text =
-    typeof entry === 'string' ? entry : entry[new Intl.PluralRules(lang).select(Number(params.n)) === 'one' ? 'one' : 'other'];
+  const text = typeof entry === 'string' ? entry : (entry[new Intl.PluralRules(lang).select(Number(params.n))] ?? entry.other);
   return text.replace(/\{(\w+)\}/g, (all, name) => (name in params ? String(params[name]) : all));
 }
 

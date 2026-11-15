@@ -39,7 +39,7 @@ pub struct Settings {
     pub report_hostname: bool,
     /// The user's values for the four settings above for single collections, keyed by collection.
     pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
-    /// The desktop app's language: the system's, English or German.
+    /// The desktop app's language: the system's, or one the app has.
     pub language: Language,
 }
 
@@ -47,10 +47,16 @@ pub struct Settings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Language {
-    /// German if the system language is German, else English.
+    /// The system's language if the app has it, else English.
     System,
     En,
     De,
+    Fr,
+    Es,
+    It,
+    Pl,
+    Pt,
+    Nl,
 }
 
 /// What furnish does when installing or updating an app fails.
@@ -324,6 +330,6 @@ mod tests {
         assert_eq!(e.settings.language, Language::En);
         assert_eq!(e.locked, ["language"]);
         // Unknown languages are rejected.
-        assert!(strict_merge(&Policy::default(), json!({"language": "fr"}).as_object().unwrap()).is_err());
+        assert!(strict_merge(&Policy::default(), json!({"language": "xx"}).as_object().unwrap()).is_err());
     }
 }

@@ -1,28 +1,35 @@
 // node --test --experimental-strip-types src/lib/i18n.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dictionaries, markedParts, parts, placeholders, resolve, translate } from './i18n.ts';
+import { dictionaries, markedParts, parts, placeholders, resolve, translate, type Lang } from './i18n.ts';
 
-const { en, de } = dictionaries;
+const { en } = dictionaries;
+const others = Object.entries(dictionaries).filter(([lang]) => lang !== 'en') as [Lang, typeof en][];
 
-test('both languages have the same keys', () => {
-  assert.deepEqual(Object.keys(de).sort(), Object.keys(en).sort());
-});
-
-test('translations keep the placeholders, plural forms and marks of the English text', () => {
-  const marks = (e: string | object) => JSON.stringify(e).match(/<\/?(b|code)>/g)?.length ?? 0;
-  for (const key of Object.keys(en) as (keyof typeof en)[]) {
-    assert.deepEqual(placeholders(de[key]), placeholders(en[key]), `placeholders of ${key}`);
-    assert.equal(typeof de[key], typeof en[key], `plural forms of ${key}`);
-    assert.equal(marks(de[key]), marks(en[key]), `<b>/<code> marks of ${key}`);
-  }
-});
+// One test per language, so a translation's problems show under its own name.
+for (const [lang, d] of others) {
+  test(`${lang}: the English keys, with their placeholders, marks and the plural forms ${lang} needs`, () => {
+    assert.deepEqual(Object.keys(d).sort(), Object.keys(en).sort(), 'keys');
+    const marks = (e: string | object) => JSON.stringify(e).match(/<\/?(b|code)>/g)?.length ?? 0;
+    // The plural categories whole numbers take in this language (Polish: one, few, many, other).
+    const rules = new Intl.PluralRules(lang);
+    const needed = [...new Set(Array.from({ length: 1001 }, (_, n) => rules.select(n)))].sort();
+    for (const key of Object.keys(en) as (keyof typeof en)[]) {
+      assert.deepEqual(placeholders(d[key]), placeholders(en[key]), `placeholders of ${key}`);
+      assert.equal(typeof d[key], typeof en[key], `plural or not: ${key}`);
+      if (typeof d[key] === 'object') assert.deepEqual(Object.keys(d[key]).sort(), needed, `plural forms of ${key}`);
+      assert.equal(marks(d[key]), marks(en[key]), `<b>/<code> marks of ${key}`);
+    }
+  });
+}
 
 test('the system language decides unless the setting names one', () => {
   assert.equal(resolve('system', 'de-AT'), 'de');
   assert.equal(resolve('system', 'de'), 'de');
   assert.equal(resolve('system', 'en-US'), 'en');
-  assert.equal(resolve('system', 'fr-FR'), 'en');
+  assert.equal(resolve('system', 'fr-FR'), 'fr');
+  assert.equal(resolve('system', 'nl-BE'), 'nl');
+  assert.equal(resolve('system', 'sv-SE'), 'en');
   assert.equal(resolve(undefined, undefined), 'en');
   assert.equal(resolve('en', 'de-DE'), 'en');
   assert.equal(resolve('de', 'en-US'), 'de');
