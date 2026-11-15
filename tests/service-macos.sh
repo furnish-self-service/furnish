@@ -120,21 +120,27 @@ if out=$(sudo "$furnish" service install --homebrew-sudo 2>&1); then fail "rule 
 sudo chown "$brew_owner" "$(brew --repository)"
 echo "$out" | grep -q "bob, who isn't an administrator" || fail "unexpected refusal: $out"
 [ ! -e "$rule" ] || fail "rule written anyway"
-# The runner's own passwordless sudo goes away, so brew's sudo can only work through furnish's
-# rule. In one root shell, since the runner can't use sudo in between.
-own=$(sudo grep -lE "^[[:space:]]*$brew_owner[[:space:]]" /etc/sudoers.d/* 2>/dev/null | grep -v "$rule" || true)
-[ -n "$own" ] || { sudo grep -n "$brew_owner\|NOPASSWD" /etc/sudoers; sudo ls -la /etc/sudoers.d; fail "where does $brew_owner's sudo rule live?"; }
-restore() { for f in $own; do sudo mv "$f.off" "$f"; done; }
+# The runner's own passwordless sudo (for the group admin, in /etc/sudoers) goes away, so brew's
+# sudo can only work through furnish's rule. In one root shell, since the runner can't use sudo
+# in between; restore() needs furnish's rule.
+sudo grep -qE '^%admin[[:space:]]+ALL[[:space:]]*=[[:space:]]*\(ALL\)[[:space:]]+NOPASSWD:[[:space:]]*ALL' /etc/sudoers \
+    || { sudo grep -v '^#' /etc/sudoers | grep .; sudo ls -la /etc/sudoers.d; fail "where does $brew_owner's sudo rule live?"; }
+restore() { sudo sh -c 'cp /etc/sudoers.furnish-test /etc/sudoers; mv /etc/sudoers.furnish-saved/* /etc/sudoers.d/ 2>/dev/null; true'; }
 sudo sh -c '
-    owner=$1 furnish=$2; shift 2
-    for f do mv "$f" "$f.off"; done
+    owner=$1 furnish=$2
+    undo() { cp /etc/sudoers.furnish-test /etc/sudoers; mv /etc/sudoers.furnish-saved/* /etc/sudoers.d/ 2>/dev/null; }
+    cp -p /etc/sudoers /etc/sudoers.furnish-test
+    mkdir -p /etc/sudoers.furnish-saved
+    for f in $(grep -lE "^[[:space:]]*$owner[[:space:]]" /etc/sudoers.d/* 2>/dev/null); do mv "$f" /etc/sudoers.furnish-saved/; done
+    sed "s/^%admin\([[:space:]].*\)NOPASSWD:[[:space:]]*ALL/%admin\1ALL/" /etc/sudoers.furnish-test > /etc/sudoers.new
+    chmod 440 /etc/sudoers.new && visudo -c -q -f /etc/sudoers.new && mv /etc/sudoers.new /etc/sudoers || exit 1
     sudo -u "$owner" sudo -K  # sudo also accepts a recent use instead of a password
     if sudo -u "$owner" sudo -n true 2>/dev/null; then
-        echo "$owner can still use sudo:" >&2; sudo -l -U "$owner" >&2; grep -v "^#" /etc/sudoers | grep . >&2
-        for f do mv "$f.off" "$f"; done; exit 1
+        echo "$owner can still use sudo:" >&2; sudo -l -U "$owner" >&2
+        undo; exit 1
     fi
-    "$furnish" service install --homebrew-sudo
-' sh "$brew_owner" "$furnish" $own || { sudo sh -c 'for f do mv "$f.off" "$f"; done' sh $own; fail "service install --homebrew-sudo failed"; }
+    "$furnish" service install --homebrew-sudo || { undo; exit 1; }
+' sh "$brew_owner" "$furnish" || fail "service install --homebrew-sudo failed"
 trap restore EXIT
 [ "$(stat -f '%Su:%Sg %Lp' "$rule")" = "root:wheel 440" ] || fail "$rule has owner and mode $(stat -f '%Su:%Sg %Lp' "$rule")"
 sudo grep -qx "$brew_owner ALL = (root) NOPASSWD: ALL" "$rule" || fail "unexpected rule: $(sudo cat "$rule")"

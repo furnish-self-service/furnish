@@ -96,6 +96,16 @@ use_brew() {
     installed_version() {
         { run_brew command list --versions "$name" || run_brew command list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
     }
+    # Someone else's Homebrew (a user whose apps the service installs): brew fails for them, as
+    # it can't write its caches and locks there. Its folders tell what is installed: opt/<name>
+    # links to Cellar/<formula>/<version> (also for a formula's other names), Caskroom/<cask>/
+    # holds a folder per version.
+    if [ -z "${brew_user:-}" ] && prefix=$(brew --prefix 2>/dev/null) && [ ! -w "$prefix" ]; then
+        installed_version() {
+            v=$(readlink "$prefix/opt/$name" 2>/dev/null) && { echo "${v##*/}"; return; }
+            ls -1 "$prefix/Caskroom/$name" 2>/dev/null | grep -v '^\.' | tail -n 1
+        }
+    fi
     do_install() { run_brew run_step install "$name"; }
     do_remove() { run_brew run_step uninstall "$name"; }
     install_desc="brew install $name" remove_desc="brew uninstall $name"
