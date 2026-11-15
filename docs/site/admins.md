@@ -85,7 +85,11 @@ The setting `reporting` decides what furnish sends:
 | `errors` | failed installs, updates and uninstalls, failed collection updates, and installs of an earlier version after a failure |
 | `all` | also successful ones, and once a day the list of installed apps |
 
-People see the setting under Reports to your organization on the Collections page, and `furnish reports` shows what is waiting to be sent. To turn reports on for everyone, set it in the policy, and lock it if people mustn't turn it off:
+People see the setting under Reports to your organization on the Collections page, and `furnish reports` shows what is waiting to be sent.
+
+![The Reports to your organization section, set to send failures and fallbacks.](images/reports-setting.webp)
+
+To turn reports on for everyone, set it in the policy, and lock it if people mustn't turn it off:
 
 ```json
 { "settings": { "reporting": { "value": "errors", "locked": true }, "reportHostname": { "value": false } } }

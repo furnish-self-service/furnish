@@ -1,6 +1,8 @@
 // Takes the website's and docs' screenshots of the real furnish app (see run.sh), one scene per
-// app start: `main` (furnish's look), `branded` (an organization's), `dark`.
+// app start: `main` (furnish's look), `branded` (an organization's), `dark`, `endpoint`, `reports`,
+// `fallback` (German, collection settings, an earlier app version).
 import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const DRIVER = 'http://127.0.0.1:4444';
 const [scene, , out] = process.argv.slice(2);
@@ -51,25 +53,35 @@ async function shot(name) {
   console.log(`  ${name}`);
 }
 /** For phones: also save just the element that matters as <name>-mobile.png (a whole window
- *  shrunk to a phone's width has unreadable text). */
-async function crop(name, xpath) {
+ *  shrunk to a phone's width has unreadable text). Several XPaths: the area around all of them. */
+async function crop(name, ...xpaths) {
   // The app's narrowest window (minWidth in tauri.conf.json): fewer columns, narrower crops.
   await wd('POST', s('/window/rect'), { width: 720, height: 790 });
   await sleep(800);
-  const id = await find(xpath);
-  await wd('POST', s('/execute/sync'), { script: 'arguments[0].scrollIntoView({block: "nearest"})', args: [{ [ELEMENT]: id }] });
+  const ids = [];
+  for (const xpath of xpaths) ids.push({ [ELEMENT]: await find(xpath) });
+  await wd('POST', s('/execute/sync'), { script: 'arguments[0].scrollIntoView({block: "nearest"})', args: [ids[0]] });
   await sleep(400);
-  // A window screenshot cut to the element (run.sh crops it): WebKit's element screenshots
+  // A window screenshot cut to the elements (run.sh crops it): WebKit's element screenshots
   // come out black for elements in scrolling containers.
   const r = await wd('POST', s('/execute/sync'), {
-    script: 'const b = arguments[0].getBoundingClientRect(), k = devicePixelRatio; return [b.width, b.height, b.left, b.top].map((v) => Math.round(v * k));',
-    args: [{ [ELEMENT]: id }],
+    script: `const bs = [...arguments].map((e) => e.getBoundingClientRect()), k = devicePixelRatio;
+      const l = Math.min(...bs.map((b) => b.left)), t = Math.min(...bs.map((b) => b.top));
+      const w = Math.max(...bs.map((b) => b.right)) - l, h = Math.max(...bs.map((b) => b.bottom)) - t;
+      return [w, h, l, t].map((v) => Math.round(v * k));`,
+    args: ids,
   });
   writeFileSync(`${out}/${name}-mobile.png`, Buffer.from(await wd('GET', s('/screenshot')), 'base64'));
   writeFileSync(`${out}/${name}-mobile.crop`, `${r[0]}x${r[1]}+${r[2]}+${r[3]}`);
   console.log(`  ${name}-mobile`);
   await wd('POST', s('/window/rect'), { width: 1180, height: 760 });
   await sleep(800);
+}
+
+/** Close the toasts that stay (errors) and wait until the others are gone. */
+async function noToasts() {
+  for (const id of await findAll("//button[@aria-label='Dismiss']")) await wd('POST', s(`/element/${id}/click`), {}).catch(() => {});
+  await waitFor('toasts gone', async () => !(await findAll("//button[@aria-label='Dismiss']")).length, 15000);
 }
 
 /** Wait until every app's status is known (no "Checking…" left). */
@@ -152,6 +164,59 @@ const scenes = {
     await shot('private-collection');
     await crop('private-collection', '//form');
   },
+  async reports() {
+    await settled();
+    await click(nav('Collections'));
+    const section = "//section[@aria-labelledby='reports-title']";
+    await waitFor('reports section', () => find(section));
+    await js(`document.evaluate("${section}", document, null, 9, null).singleNodeValue.scrollIntoView({block: "center"})`);
+    await shot('reports-setting');
+    await crop('reports-setting', section);
+  },
+  async fallback() {
+    await settled();
+    // Discover in German, then back to the system's language.
+    await click(nav('Collections'));
+    await click("//select[@id='language']/option[@value='de']");
+    await click(nav('Entdecken'));
+    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='gimp']"));
+    await settled();
+    await js('window.scrollTo(0, 0)');
+    await shot('discover-de');
+    await crop('discover-de', "//div[contains(@class,'recommended')]");
+    await click(nav('Sammlungen'));
+    await click("//select[@id='language']/option[@value='system']");
+    await waitFor('English', () => find(nav('Discover')));
+
+    // A collection's downloads and earlier versions.
+    await click("//summary[normalize-space()='Downloads and earlier versions']");
+    const row = "//li[.//summary[normalize-space()='Downloads and earlier versions']]";
+    await waitFor('collection settings', () => find(`${row}//ul[contains(@class,'settings')]`));
+    await js(`document.evaluate("${row}", document, null, 9, null).singleNodeValue.scrollIntoView({block: "start"})`);
+    await shot('collection-settings');
+    await crop('collection-settings', row);
+
+    // Installing cowsay fails (the collection's latest change); its earlier version is offered.
+    await click(nav('Discover'));
+    await click(`${card('cowsay')}//button[@aria-label='Open cowsay']`);
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    const header = "//section[contains(@class,'detail')]/header";
+    const offer = "//div[contains(@class,'differ')][.//button[starts-with(normalize-space(), 'Install the version from')]]";
+    await waitFor('earlier version offered', () => find(offer), 60000);
+    await noToasts();
+    await js('window.scrollTo(0, 0)');
+    await shot('fallback');
+    await crop('fallback', header, offer);
+    // Installing that version holds cowsay there.
+    await click(`${offer}//button`);
+    const held = "//div[contains(@class,'differ')][.//button[normalize-space()='Try the current version']]";
+    await waitFor('held', () => find(held), 60000);
+    await waitFor('installed', () => find("//*[normalize-space()='Installed and up to date']"), 60000);
+    await noToasts();
+    await js('window.scrollTo(0, 0)');
+    await shot('held');
+    await crop('held', header, held);
+  },
   async dark() {
     await settled();
     await shot('discover-dark');
@@ -172,6 +237,11 @@ try {
   await wd('POST', s('/window/rect'), { width: 1180, height: 760 });
   console.log(`scene ${scene}`);
   await scenes[scene]();
+} catch (e) {
+  // What the window showed when the scene failed.
+  const file = `${tmpdir()}/furnish-screenshots-failed-${scene}.png`;
+  await wd('GET', s('/screenshot')).then((png) => (writeFileSync(file, Buffer.from(png, 'base64')), console.error(`window at the failure: ${file}`))).catch(() => {});
+  throw e;
 } finally {
   await wd('DELETE', s('')).catch(() => {});
 }

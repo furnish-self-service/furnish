@@ -44,9 +44,15 @@ Installs run one at a time. Clicking Install on more apps adds them to a queue, 
 
 If installing or updating an app fails, furnish offers an earlier version of it: the one that last installed on this computer, else the version before the collection's latest change to the app. The app's page shows Install the version from, with the day of that version.
 
+![cowsay's page after a failed install, offering its version from an earlier day.](images/fallback.webp)
+
 furnish then keeps the app at that version, and its updates don't retry the failed one. When the collection changes the app again, furnish installs the new version with the next update. Try the current version on the app's page installs the collection's version right away.
 
+![cowsay's page saying it is held at an earlier version, with the button Try the current version.](images/held.webp)
+
 On the Collections page, Downloads and earlier versions sets this per collection: offer the previous version, install it without asking, or neither, and how much older it may be. Your organization may set these.
+
+![The example collection's Downloads and earlier versions section on the Collections page.](images/collection-settings.webp)
 
 ## Updates
 
@@ -59,3 +65,9 @@ furnish checks for updates when it starts and every 30 minutes, and installs the
 Some apps can be installed in more than one way, for example for all users or only for you. An app's page shows its options; the Collections page shows the options that apply to all apps of a collection. Your organization may set some of them. If you change an option of an installed app, its page offers Reinstall with these options.
 
 ![The Collections page with the example collection's options open.](images/collections.webp)
+
+## Language
+
+furnish is available in English and German. It follows the system language; Language on the Collections page sets one of them instead.
+
+![The Discover page in German.](images/discover-de.webp)
