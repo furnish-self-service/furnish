@@ -106,6 +106,14 @@ enum Command {
     },
     /// Show the reports waiting to be sent to your organization, and where they go
     Reports,
+    /// Check a collection (a checkout of its repository) before people install from it: every
+    /// file loads, installers and icons exist, expressions evaluate; shows which resources run on
+    /// Linux, macOS and Windows. Exits with 1 on errors. Installs nothing.
+    Check {
+        /// The collection's directory
+        #[arg(default_value = ".")]
+        dir: std::path::PathBuf,
+    },
 }
 
 /// Settings that can differ per collection (`furnish collection settings`).
@@ -254,7 +262,7 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::Reports | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
+    if !matches!(command, Command::Settings { .. } | Command::Reports | Command::Check { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
@@ -349,6 +357,7 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Option(cmd) => option(cmd),
         Command::Reports => reports(),
+        Command::Check { dir } => check(&dir),
         Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname } => {
             if let Some(v) = reporting {
                 furnish::settings::set("reporting", v.into())?;
@@ -755,6 +764,41 @@ fn upgrade(all: bool) -> Result<()> {
     }
     if !skipped.is_empty() {
         println!("Not updated (automatic updates off): {}. Use --all to update them too.", skipped.join(", "));
+    }
+    Ok(())
+}
+
+/// `furnish check`: one line per app and kit, its findings below it, a summary; errors fail.
+fn check(dir: &std::path::Path) -> Result<()> {
+    use furnish::check::Severity;
+    let items = furnish::check::collection(dir)?;
+    let width = items.iter().map(|i| i.name.len()).max().unwrap_or(0);
+    for item in &items {
+        let worst = item.findings.iter().map(|f| f.severity).max();
+        let symbol = match worst {
+            Some(Severity::Error) => "✗",
+            Some(Severity::Warning) => "!",
+            None => "✓",
+        };
+        let systems: Vec<String> = item
+            .systems
+            .iter()
+            .map(|(system, runs)| if runs.is_empty() { format!("{system}: –") } else { format!("{system}: {}", runs.join(", ")) })
+            .collect();
+        println!("{symbol} {:width$}  {}{}", item.name, item.kind, if systems.is_empty() { String::new() } else { format!("  {}", systems.join(" · ")) });
+        for finding in &item.findings {
+            let label = if finding.severity == Severity::Error { "error" } else { "warning" };
+            println!("    {label}: {}", finding.message);
+        }
+    }
+    let count = |s| items.iter().flat_map(|i| &i.findings).filter(|f| f.severity == s).count();
+    let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+    let apps = items.iter().filter(|i| i.kind == "app").count();
+    let kits = items.iter().filter(|i| i.kind == "kit").count();
+    let n = |count: usize, word: &str| format!("{count} {word}{}", if count == 1 { "" } else { "s" });
+    println!("\n{}, {}: {}, {}", n(apps, "app"), n(kits, "kit"), n(errors, "error"), n(warnings, "warning"));
+    if errors > 0 {
+        anyhow::bail!("the collection has errors");
     }
     Ok(())
 }

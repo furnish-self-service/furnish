@@ -1,0 +1,34 @@
+# furnish check for a collection's repository (GitHub Actions, Linux runners):
+#
+#   steps:
+#     - uses: actions/checkout@v4
+#     - uses: furnish-self-service/furnish/check@main
+#
+# Fails the job when an app or kit has errors; prints which resources run on each system.
+name: furnish check
+description: Check a furnish collection (apps, kits, installers, expressions) before people install from it
+inputs:
+  path:
+    description: The collection's directory
+    default: .
+  channel:
+    description: Which furnish build to use
+    default: alpha
+  furnish:
+    description: A furnish binary to use instead of downloading one
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        COLLECTION: ${{ inputs.path }}
+        CHANNEL: ${{ inputs.channel }}
+        FURNISH: ${{ inputs.furnish }}
+      run: |
+        if [ -z "$FURNISH" ]; then
+          FURNISH="$RUNNER_TEMP/furnish"
+          curl -fsSL "https://furnish-self-service.github.io/furnish/$CHANNEL/furnish-linux-x86_64" -o "$FURNISH"
+          chmod +x "$FURNISH"
+        fi
+        "$FURNISH" check "$COLLECTION"

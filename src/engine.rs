@@ -478,6 +478,11 @@ fn action(before: &Value, after: &Value) -> Action {
     }
 }
 
+/// Whether DSC accepts the document (parses it, runs no resource).
+pub fn validate(doc: &Value) -> Result<()> {
+    configurator(doc).map(drop)
+}
+
 fn configurator(doc: &Value) -> Result<Configurator> {
     let mut configurator = Configurator::new(&doc.to_string(), ProgressFormat::None)?;
     configurator.set_context(None)?;

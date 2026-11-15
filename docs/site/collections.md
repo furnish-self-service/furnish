@@ -129,6 +129,51 @@ metadata:
 
 Recommended apps appear first on Discover. The expression can use the collection's options and the app's own.
 
+## Check a collection
+
+`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. For each app it shows which resources run on Linux, macOS and Windows. It exits with 1 when there are errors.
+
+```
+$ furnish check
+✓ collection.yaml  options
+✓ gimp             app  Linux: gimp · macOS: gimp · Windows: gimp (winget)
+✗ vpn              app  Linux: – · macOS: – · Windows: setup
+    error: setup: installers/vpn.msi is not in the collection
+! htop             app  Linux: htop package · macOS: htop package · Windows: –
+    warning: no categories (metadata.furnish.categories)
+✓ design-studio    kit
+
+3 apps, 1 kit: 1 error, 1 warning
+```
+
+To check every change before it reaches people, run it in the repository's CI. On GitHub:
+
+```yaml
+# .github/workflows/furnish.yml
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: furnish-self-service/furnish/check@main
+```
+
+On GitLab:
+
+```yaml
+# .gitlab-ci.yml
+furnish-check:
+  image: alpine:3.24
+  script:
+    - apk add --no-cache curl git
+    - curl -fsSL https://furnish-self-service.github.io/furnish/alpha/furnish-linux-x86_64 -o /usr/local/bin/furnish
+    - chmod +x /usr/local/bin/furnish
+    - furnish check
+```
+
+Conditions are evaluated for each system by putting the system's name in place of `context().os.family`. Conditions on other details, such as the system's version, are evaluated for the computer `furnish check` runs on.
+
 ## Private repositories
 
 A collection can be a private repository:

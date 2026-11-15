@@ -18,6 +18,7 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 | `furnish collection list`, `update`, `remove` | Manage collections |
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
 | `furnish option set`, `reset` | Change an option, or go back to the collection's value |
+| `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
 | `furnish settings` | Show or change automatic updates, and the general download and fallback settings |
 | `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
 

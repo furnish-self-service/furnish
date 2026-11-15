@@ -613,7 +613,7 @@ impl Collection {
             .collect()
     }
 
-    fn load_kit(&self, path: &Path, app_ids: &[String]) -> Result<Kit> {
+    pub(crate) fn load_kit(&self, path: &Path, app_ids: &[String]) -> Result<Kit> {
         let file: KitFile = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let id = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
         if app_ids.contains(&id) {
@@ -657,7 +657,7 @@ impl Collection {
         Some(parts.fold(plain_path(self.dir.canonicalize().ok()?), |p, c| p.join(c)))
     }
 
-    fn load_app(&self, path: &Path) -> Result<App> {
+    pub(crate) fn load_app(&self, path: &Path) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
         if doc.get("$schema").is_none() {

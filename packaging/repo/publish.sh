@@ -26,6 +26,8 @@ prune "$apt/pool/main"; prune "$rpm/x86_64"; prune "$mac"; prune "$win"
 latest() { ls "$1" | grep -E "$2\$" | sort -V | tail -n 1; }
 if [ -n "$(latest "$mac" .dmg)" ]; then cp "$mac/$(latest "$mac" .dmg)" "$site/$channel/furnish-macos.dmg"; fi
 if [ -n "$(latest "$win" .msi)" ]; then cp "$win/$(latest "$win" .msi)" "$site/$channel/furnish-windows.msi"; fi
+# The static Linux CLI on its own, e.g. for `furnish check` in a collection's CI (the packages contain it too).
+if [ -f "$packages/cli/furnish" ]; then install -m 755 "$packages/cli/furnish" "$site/$channel/furnish-linux-x86_64"; fi
 
 # APT: one suite for every Debian-based distro (the packages run on all of them).
 (cd "$apt" && apt-ftparchive packages pool > dists/furnish/main/binary-amd64/Packages)
