@@ -136,6 +136,22 @@ const scenes = {
     await settled();
     await shot('branded');
   },
+  async endpoint() {
+    await settled();
+    await waitFor('sign-in banner', () => find("//div[contains(@class,'banner')]//button[normalize-space()='Sign in']"));
+    await shot('sign-in');
+    await crop('sign-in', "//div[contains(@class,'banner')]");
+    // A private repository: the login fields of the add form.
+    await click(nav('Collections'));
+    const field = "//input[@placeholder='git@github.com:your-org/apps.git']";
+    await wd('POST', s(`/element/${await find(field)}/value`), { text: 'https://git.acme.example/it/apps.git' });
+    await click("//details[contains(@class,'login')]/summary");
+    await wd('POST', s(`/element/${await find("//details[contains(@class,'login')]//input[not(@type='password')]")}/value`), { text: 'alice' });
+    await wd('POST', s(`/element/${await find("//details[contains(@class,'login')]//input[@type='password']")}/value`), { text: 'glpat-example-token' });
+    await js('window.scrollTo(0, 0)');
+    await shot('private-collection');
+    await crop('private-collection', '//form');
+  },
   async dark() {
     await settled();
     await shot('discover-dark');

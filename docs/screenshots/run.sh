@@ -60,6 +60,12 @@ shoot() { node "$repo/docs/screenshots/shoot.mjs" "$1" "$work" "$out"; }
 start "$work/policy.json" && shoot main
 start "$work/policy-branded.json" && shoot branded
 start "$work/policy.json" GTK_THEME=Adwaita:dark && shoot dark
+# An organization's furnish address the user hasn't signed in to yet: the sign-in banner.
+mkdir -p "$work/data/endpoints"
+echo '{"origin": "https://furnish.acme.example", "description": {"name": "Acme", "issuer": "https://sso.acme.example",
+  "clientId": "furnish", "collections": [{"name": "acme", "url": "https://furnish.acme.example/git/acme.git"}]}}' \
+    > "$work/data/endpoints/furnish.acme.example.json"
+start "$work/policy.json" && shoot endpoint
 # Phone crops: cut each window screenshot to its element (x.crop holds WxH+X+Y in pixels).
 docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots sh -c \
     'for c in '"$out"'/*.crop; do convert "${c%.crop}.png" -crop "$(cat "$c")" +repage "${c%.crop}.png" && rm "$c"; done'
