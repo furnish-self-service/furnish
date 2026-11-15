@@ -42,7 +42,7 @@ Resources are of the types `Furnish/Package` and `Furnish/Installer`; furnish re
 
 ### Furnish/Package
 
-Installs a package with the system's package manager: the first of pacman, apt, dnf, zypper, brew and nix that is installed, and winget on Windows.
+Installs a package with the system's package manager: winget on Windows; on macOS and Linux, the first of pacman, apt, dnf, zypper, brew and nix that is installed, which is Homebrew on most Macs.
 
 | Property | Meaning |
 |---|---|
@@ -133,15 +133,15 @@ Recommended apps appear first on Discover. The expression can use the collection
 
 ## Check a collection
 
-`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. For each app it shows which resources run on Linux, macOS and Windows. It exits with 1 when there are errors.
+`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
 
 ```
 $ furnish check
 ✓ collection.yaml  options
-✓ gimp             app  Linux: gimp · macOS: gimp · Windows: gimp (winget)
-✗ vpn              app  Linux: – · macOS: – · Windows: setup
+✓ gimp             app  Windows: gimp (winget) · macOS: gimp · Linux: gimp
+✗ vpn              app  Windows: setup · macOS: – · Linux: –
     error: setup: installers/vpn.msi is not in the collection
-! htop             app  Linux: htop package · macOS: htop package · Windows: –
+! htop             app  Windows: – · macOS: htop package · Linux: htop package
     warning: no categories (metadata.furnish.categories)
 ✓ design-studio    kit
 

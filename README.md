@@ -2,7 +2,7 @@
 
 # furnish
 
-A self-service app catalog for an organization's Linux, macOS and Windows computers, kept in git.
+A self-service app catalog for an organization's Windows, macOS and Linux computers, kept in git.
 
 Status: alpha. Builds of the main branch are published; there are no releases. Apps install with administrator rights, so only add collections you trust.
 
@@ -15,7 +15,7 @@ An organization keeps its apps in a git repository, called a collection. Each ap
 | For | furnish provides |
 |---|---|
 | People using the computers | A desktop app and a `furnish` command to find, install, update and uninstall apps; a preview of each step before it runs |
-| Collection authors | Apps for pacman, apt, dnf, zypper, Homebrew, Nix and winget from one file; installer files (`.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi`, `.exe`); kits, dependencies, questions and recommendations |
+| Collection authors | Apps for winget, Homebrew and the Linux package managers from one file; installer files (`.msi`, `.exe`, `.pkg`, `.dmg`, `.deb`, `.rpm`); kits, dependencies, questions and recommendations |
 | IT administrators | A policy in each system's managed settings: preset collections, locked settings and options, branding; a service that installs for people without administrator rights; sign-in with the organization's account instead of a VPN |
 
 ## How it differs
@@ -27,16 +27,9 @@ An organization keeps its apps in a git repository, called a collection. Each ap
 
 ## Start here
 
-On Debian or Ubuntu, from the signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`):
+Download furnish for [Windows](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) or [macOS](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) (Apple silicon). Both builds aren't signed yet; the [docs](https://furnish-self-service.github.io/docs/) say how to open them. On Linux, furnish comes from a signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`); the docs have the commands for each distribution and for building from source.
 
-```sh
-sudo install -d /etc/apt/keyrings
-sudo curl -fsSLo /etc/apt/keyrings/furnish.asc https://furnish-self-service.github.io/furnish/gpg-key.asc
-sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-service.github.io/furnish/alpha/furnish.list
-sudo apt update && sudo apt install furnish
-```
-
-The [docs](https://furnish-self-service.github.io/docs/) cover Fedora, openSUSE, NixOS, the macOS and Windows downloads, and building from source. Then add the example collection and list its apps:
+Then add the example collection and list its apps:
 
 ```sh
 furnish collection add https://github.com/furnish-self-service/self-service-example.git

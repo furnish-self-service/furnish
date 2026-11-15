@@ -108,7 +108,7 @@ enum Command {
     Reports,
     /// Check a collection (a checkout of its repository) before people install from it: every
     /// file loads, installers and icons exist, expressions evaluate; shows which resources run on
-    /// Linux, macOS and Windows. Exits with 1 on errors. Installs nothing.
+    /// Windows, macOS and Linux. Exits with 1 on errors. Installs nothing.
     Check {
         /// The collection's directory
         #[arg(default_value = ".")]

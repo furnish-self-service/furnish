@@ -1,7 +1,7 @@
 //! `furnish check`: validate a collection before people install from it. Loads every file the way
 //! furnish does, checks what loading alone doesn't (installer files present, dependencies and kit
 //! items that exist, expressions that evaluate, resources for every system), and previews which
-//! resources run on Linux, macOS and Windows. Runs nothing.
+//! resources run on Windows, macOS and Linux. Runs nothing.
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -39,7 +39,7 @@ pub struct Item {
 }
 
 /// The systems an app can be for, as `context().os.family` names them.
-pub const SYSTEMS: [&str; 3] = ["Linux", "macOS", "Windows"];
+pub const SYSTEMS: [&str; 3] = ["Windows", "macOS", "Linux"];
 const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", "Furnish/Installer"];
 const INSTALLER_TYPES: [&str; 6] = ["deb", "rpm", "pkg", "dmg", "msi", "exe"];
 
@@ -193,7 +193,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         systems.push((system, runs));
     }
     if systems.iter().all(|(_, runs)| runs.is_empty()) {
-        findings.push(warning("no resource applies on Linux, macOS or Windows: furnish hides the app everywhere"));
+        findings.push(warning("no resource applies on Windows, macOS or Linux: furnish hides the app everywhere"));
     }
 
     if let Value::String(expr) = &meta["recommended"]
