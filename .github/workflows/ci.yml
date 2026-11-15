@@ -78,6 +78,8 @@ jobs:
           name: furnish-linux-x86_64
           path: bin
       - run: chmod +x bin/furnish && tests/nix.sh bin/furnish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
   flake:
     name: Nix flake (CLI and desktop app)
