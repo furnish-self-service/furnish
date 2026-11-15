@@ -117,7 +117,8 @@
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    width: 8.25rem;
+    /* Fits the longest label, "Uninstalling…", with the stop control. */
+    width: 9.25rem;
     height: 2.1rem;
     padding: 0 1rem;
     border: 1px solid transparent;
@@ -129,7 +130,7 @@
     transition: background 0.15s;
   }
   .large {
-    width: 10.5rem;
+    width: 11.75rem;
     height: 2.75rem;
     font-size: 1rem;
   }
