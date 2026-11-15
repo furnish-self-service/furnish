@@ -353,11 +353,7 @@ pub struct Preview {
 /// Fetch an endpoint's description and its identity provider's configuration without keeping
 /// anything, and say what adding it would change. Fails if the policy doesn't allow adding it.
 pub fn preview(origin: &str) -> Result<Preview> {
-    let native = crate::policy::load_native();
-    let named = native.endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin));
-    if !native.collections.users_can_add && !named {
-        bail!("your organization manages the collections; adding other furnish addresses isn't allowed");
-    }
+    let native = allowed(origin)?;
     let description = fetch(origin)?;
     let config = provider(&description.issuer)?;
     let others: Vec<_> = known().into_iter().filter(|(o, _)| o != origin).collect();
@@ -376,6 +372,17 @@ pub fn preview(origin: &str) -> Result<Preview> {
         reporting,
         branding: after.branding != before.branding,
     })
+}
+
+/// The admin policy, if it allows using this endpoint: without `usersCanAdd`, only the endpoints
+/// it names.
+fn allowed(origin: &str) -> Result<crate::policy::Policy> {
+    let native = crate::policy::load_native();
+    let named = native.endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin));
+    if !native.collections.users_can_add && !named {
+        bail!("your organization manages the collections; adding other furnish addresses isn't allowed");
+    }
+    Ok(native)
 }
 
 // --- Tokens
@@ -644,6 +651,7 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Sign in to the endpoint in the browser; `show` gets the URL in case the browser doesn't open.
 /// Keeps the endpoint's description once signed in (see `discover`).
 pub fn login(origin: &str, description: &Description, show: impl Fn(&str)) -> Result<()> {
+    allowed(origin)?;
     let config = provider(&description.issuer)?;
     let listener = TcpListener::bind("127.0.0.1:0").context("listening for the sign-in")?;
     let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr()?.port());
