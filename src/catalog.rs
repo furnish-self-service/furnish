@@ -1138,9 +1138,25 @@ impl App {
         use crate::engine::Status;
         if matches!(crate::engine::status(&doc)?, Status::Installed | Status::NeedsUpdate) {
             let what = if crate::engine::removal_steps(&doc).is_some() { "its removal steps ran" } else { "uninstalling finished" };
-            bail!("{} is still installed: {what}, but its resources still find it on this computer", self.id);
+            return Err(logged(format!("{} is still installed: {what}, but its resources still find it on this computer", self.id)));
         }
         Ok(())
+    }
+
+    /// After installing: the app must test as installed. A step can report success without
+    /// having done its job (a package manager that exits 0 on a failure, a script that ignores an
+    /// error), so furnish doesn't trust the steps alone. The test is the status check furnish runs
+    /// anyway to show the app, which is cheap next to the install.
+    fn require_installed(&self, doc: &Value) -> Result<()> {
+        let differing = crate::engine::differing(doc).with_context(|| format!("checking {} after the install", self.id))?;
+        if differing.is_empty() {
+            return Ok(());
+        }
+        let resources = match differing.as_slice() {
+            [one] => format!("the resource {one} still differs"),
+            more => format!("the resources {} still differ", more.join(", ")),
+        };
+        Err(logged(format!("{} isn't installed after the install: {resources}", self.id)))
     }
 
     /// Install or update, with the values it was installed with (else the current ones), and
@@ -1196,7 +1212,9 @@ impl App {
 
     pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.check_out_installers(values)?;
-        crate::engine::run(&self.doc_for(values), false, report)?;
+        let doc = self.doc_for(values);
+        crate::engine::run(&doc, false, report)?;
+        self.require_installed(&doc)?;
         let state = self.state_dir(values);
         crate::options::remember(&state, &self.key(), values)?;
         let collection = self.collection_handle();
@@ -1325,7 +1343,9 @@ impl App {
             }
         }
         let earlier = Collection { name: self.collection.clone(), dir: dir.clone(), managed: self.managed }.load_app(&dir.join(&relative))?;
-        crate::engine::run(&earlier.doc_for(values), false, report)?;
+        let doc = earlier.doc_for(values);
+        crate::engine::run(&doc, false, report)?;
+        earlier.require_installed(&doc)?;
         crate::options::remember(&state, &self.key(), values)?;
         let failed = collection.blob("HEAD", &relative).unwrap_or_default();
         let held = crate::versions::Held { commit: version.commit.clone(), failed };
@@ -1377,6 +1397,12 @@ impl App {
         crate::options::forget(&self.state_dir(&old), &self.key())?;
         self.install_with(values, report)
     }
+}
+
+/// An error that is also in the operation's log (the Activity log in the desktop app).
+fn logged(message: String) -> anyhow::Error {
+    crate::engine::emit_log("error", message.clone());
+    anyhow::anyhow!(message)
 }
 
 pub fn all_kits() -> Result<Vec<Kit>> {

@@ -436,16 +436,33 @@ pub fn check(doc: &Value) -> Result<Check> {
     let Some(doc) = applicable(doc) else {
         return Ok(Check { status: Status::Unavailable, reason: None, removable });
     };
-    let result = match configurator(&doc).and_then(|mut c| Ok(c.invoke_test()?)) {
-        Ok(result) => result,
+    let states = match test(&doc) {
+        Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
             return Ok(Check { status: Status::Blocked, reason: Some(reason), removable });
         }
     };
+    let states: Vec<(bool, Value)> = states.into_iter().map(|t| (t.ok, t.actual)).collect();
+    Ok(Check { status: classify(&states), reason: None, removable })
+}
+
+/// The resources (those that apply here) that aren't in their desired state, e.g. "'profile'
+/// (Microsoft.Filesystem.File/Content)". The same test as [`check`], which runs anyway when the
+/// app's status is shown; furnish runs it right after installing to see the install worked.
+pub fn differing(doc: &Value) -> Result<Vec<String>> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let _working = crate::load::activity();
+    let Some(doc) = applicable(doc) else { return Ok(vec![]) };
+    Ok(test(&doc)?.into_iter().filter(|t| !t.ok).map(|t| format!("'{}' ({})", t.name, t.kind)).collect())
+}
+
+/// DSC's test of every resource of the document. The caller holds the engine lock.
+fn test(doc: &Value) -> Result<Vec<Tested>> {
+    let result = configurator(doc)?.invoke_test()?;
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
-    Ok(Check { status: classify(&states), reason: None, removable })
+    Ok(states)
 }
 
 /// The app's own removal steps (`metadata.furnish.uninstall`): DSC resources in the format of
@@ -683,7 +700,8 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
                         a => a,
                     },
                     changes: changes(&r.before_state, &r.after_state),
-                    error: None,
+                    error: failed_command(&r.before_state, &r.after_state)
+                        .map(|failure| format!("'{}' ({}): {failure}", step.name, step.kind)),
                     cancelled: false,
                 },
                 _ => Outcome { action: Action::Skipped, changes: vec![], error: None, cancelled: false },
@@ -695,13 +713,46 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
             }
         };
         let cancelled = outcome.cancelled;
+        let failure = result.is_ok().then(|| outcome.error.clone()).flatten();
         report(Progress::Finished { index, at_ms: finished, duration_ms: finished - started, outcome });
         if cancelled {
             return Err(Cancelled.into());
         }
         result?;
+        if let Some(failure) = failure {
+            emit_log("error", failure.clone());
+            anyhow::bail!(failure);
+        }
     }
     Ok(())
+}
+
+/// Why a step whose set DSC reports as successful failed: the command it ran exited with a code
+/// other than the expected one, e.g. "`rm -f /x` exited with code 1".
+///
+/// DSC 3.3's Microsoft.DSC.Transitional/RunCommandOnSet exits 0 whatever its command returns. Its
+/// result (the after-state) has the command's exit code as `exitCode`, left out if 0. Its input's
+/// `exitCode` is the code the author expects (default 0), which its get echoes into the
+/// before-state, but it never compares the two. So a step fails if its after-state has an
+/// integer `exitCode` other than its before-state's (default 0). This holds for any resource
+/// that reports `exitCode` this way; among DSC's own resources only RunCommandOnSet has it, and
+/// a resource whose `exitCode` describes something that a set doesn't change keeps the same
+/// value before and after. RunCommandOnSet drops the command's output (it traces it only at a
+/// level DSC can't turn on), so the error can't show it.
+fn failed_command(before: &Value, after: &Value) -> Option<String> {
+    let code = after.get("exitCode")?.as_i64()?;
+    let expected = before.get("exitCode").and_then(Value::as_i64).unwrap_or(0);
+    if code == expected {
+        return None;
+    }
+    let mut command: Vec<String> = after["executable"].as_str().map(String::from).into_iter().collect();
+    command.extend(after["arguments"].as_array().into_iter().flatten().map(|a| match a {
+        Value::String(s) => s.clone(),
+        v => v.to_string(),
+    }));
+    let what = if command.is_empty() { "its command".to_string() } else { format!("`{}`", command.join(" ")) };
+    let expected = if expected == 0 { String::new() } else { format!(", expected {expected}") };
+    Some(format!("{what} exited with code {code}{expected}"))
 }
 
 fn now_ms() -> u64 {
@@ -889,11 +940,25 @@ fn configurator(doc: &Value) -> Result<Configurator> {
     Ok(configurator)
 }
 
-/// Collect (in_desired_state, actual_state) of every resource, descending into groups.
-fn flatten(results: &[ResourceTestResult], out: &mut Vec<(bool, Value)>) {
+/// One resource's test result.
+struct Tested {
+    name: String,
+    kind: String,
+    /// In the desired state.
+    ok: bool,
+    actual: Value,
+}
+
+/// Collect the test result of every resource, descending into groups.
+fn flatten(results: &[ResourceTestResult], out: &mut Vec<Tested>) {
     for result in results {
         match &result.result {
-            TestResult::Resource(r) => out.push((r.in_desired_state, r.actual_state.clone())),
+            TestResult::Resource(r) => out.push(Tested {
+                name: result.name.clone(),
+                kind: result.resource_type.to_string(),
+                ok: r.in_desired_state,
+                actual: r.actual_state.clone(),
+            }),
             TestResult::Group(group) => flatten(group, out),
         }
     }
@@ -932,6 +997,24 @@ mod tests {
         // Resources without `_exist`, e.g. a script resource whose test failed: not installed yet.
         assert_eq!(classify(&[(false, json!({"name": "Acme VPN"}))]), Status::NotInstalled);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    #[test]
+    fn a_command_that_exits_with_another_code_fails_its_step() {
+        // RunCommandOnSet's before-state echoes the input; its after-state has the exit code.
+        let before = json!({"executable": "sh", "arguments": ["-c", "exit 3"]});
+        let after = json!({"executable": "sh", "arguments": ["-c", "exit 3"], "exitCode": 3});
+        assert_eq!(failed_command(&before, &after).as_deref(), Some("`sh -c exit 3` exited with code 3"));
+        assert_eq!(failed_command(&before, &json!({"executable": "true"})), None, "0 is left out");
+        // The author expects 3: 3 is fine, 0 isn't.
+        let expects = json!({"executable": "x", "exitCode": 3});
+        assert_eq!(failed_command(&expects, &json!({"executable": "x", "exitCode": 3})), None);
+        assert_eq!(failed_command(&expects, &json!({"executable": "x"})), None, "no exitCode in the result, nothing to compare");
+        assert_eq!(failed_command(&expects, &json!({"executable": "x", "exitCode": 0})).as_deref(), Some("`x` exited with code 0, expected 3"));
+        // Other resources: no exitCode, or one the set doesn't change.
+        assert_eq!(failed_command(&json!({"_exist": false}), &json!({"_exist": true})), None);
+        assert_eq!(failed_command(&json!({"exitCode": 1077}), &json!({"exitCode": 1077})), None);
+        assert_eq!(failed_command(&json!({}), &json!({"exitCode": 2})).as_deref(), Some("its command exited with code 2"));
     }
 
     #[test]

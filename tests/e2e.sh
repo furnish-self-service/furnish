@@ -152,6 +152,50 @@ resources:
     type: Microsoft.Filesystem.File/Content
     properties: { path: "$tmp/dsc-stays.txt", content: furnish }
 YAML
+    # A command that fails: RunCommandOnSet exits 0 anyway and reports the exit code in its
+    # result. furnish must stop there, before the file.
+    cat > "$tmp/repo/apps/dsc-fails.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: A command that fails
+    categories: [Test]
+resources:
+  - name: fail
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties: { executable: "false" }
+  - name: fail on Windows
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    condition: "[equals(context().os.family, 'Windows')]"
+    properties: { executable: cmd, arguments: [/c, exit 1] }
+  - name: settings file
+    type: Microsoft.Filesystem.File/Content
+    dependsOn: ["[resourceId('Microsoft.DSC.Transitional/RunCommandOnSet', 'fail')]",
+                "[resourceId('Microsoft.DSC.Transitional/RunCommandOnSet', 'fail on Windows')]"]
+    properties: { path: "$tmp/dsc-fails.txt", content: furnish }
+YAML
+    # Every step succeeds, but the last one deletes what the first wrote: the app isn't
+    # installed afterwards, and furnish must say so.
+    cat > "$tmp/repo/apps/dsc-differs.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: Steps that succeed without installing
+    categories: [Test]
+resources:
+  - name: settings file
+    type: Microsoft.Filesystem.File/Content
+    properties: { path: "$tmp/dsc-differs.txt", content: furnish }
+  - name: undo
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    dependsOn: ["[resourceId('Microsoft.Filesystem.File/Content', 'settings file')]"]
+    properties: { executable: rm, arguments: [-f, "$tmp/dsc-differs.txt"] }
+  - name: undo on Windows
+    type: Microsoft.DSC.Transitional/RunCommandOnSet
+    condition: "[equals(context().os.family, 'Windows')]"
+    dependsOn: ["[resourceId('Microsoft.Filesystem.File/Content', 'settings file')]"]
+    properties: { executable: powershell, arguments: [-NoProfile, -Command, "Remove-Item -LiteralPath '$tmp/dsc-differs.txt'"] }
+YAML
 fi
 
 git -C "$tmp/repo" init -q
@@ -313,6 +357,18 @@ if $dsc; then
     expect "$(step install dsc-stays)" "Installed dsc-stays"
     expect "$("$furnish" uninstall dsc-stays 2>&1 || true)" "dsc-stays is still installed"
     expect "$(step list)" "✓  dsc-stays "
+
+    out=$("$furnish" install dsc-fails 2>&1) && { echo "FAIL: dsc-fails installed: $out" >&2; exit 1; }
+    echo "$out" >&2
+    expect "$out" "exited with code 1"
+    [ ! -e "$tmp/dsc-fails.txt" ] || { echo "FAIL: furnish went on after the failed command" >&2; exit 1; }
+    expect "$(step list)" "·  dsc-fails "
+
+    out=$("$furnish" install dsc-differs 2>&1) && { echo "FAIL: dsc-differs installed: $out" >&2; exit 1; }
+    echo "$out" >&2
+    expect "$out" "dsc-differs isn't installed after the install: the resource 'settings file' (Microsoft.Filesystem.File/Content) still differs"
+    grep -q "Installed dsc-differs" <<<"$out" && { echo "FAIL: furnish reported dsc-differs installed" >&2; exit 1; }
+    expect "$(step list)" "·  dsc-differs "
 fi
 [ "$n" -gt 0 ] || echo "(no installer format can be built on this platform: installer test skipped)" >&2
 step collection remove fixture >/dev/null

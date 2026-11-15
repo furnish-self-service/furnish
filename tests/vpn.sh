@@ -72,6 +72,10 @@ Linux)
     sudo nmcli connection show 'Acme VPN' | grep -E '^(connection\.(id|type)|vpn\.(service-type|data)):' \
         || fail "no NetworkManager connection 'Acme VPN'"
     dpkg -s network-manager-openvpn | grep '^Status:'
+    # nmcli copied the CA certificate into root's home; uninstalling must delete it.
+    ca=$(sudo nmcli -g vpn.data connection show id 'Acme VPN' | tr ',' '\n' | sed -n 's/^ *ca = //p')
+    [ -n "$ca" ] && sudo test -f "$ca" || fail "no CA certificate in the connection's vpn.data ($ca)"
+    echo "CA certificate: $ca"
     ;;
 esac
 grep -q "remote vpn.acme.example 1194" "$ovpn" 2>/dev/null || sudo grep -q "remote vpn.acme.example 1194" "$ovpn" \
@@ -89,6 +93,7 @@ esac
 [ -e "$client" ] || fail "uninstalling acme-vpn removed $client"
 if [ "$(uname -s)" = Linux ]; then
     if sudo nmcli connection show 'Acme VPN' >/dev/null 2>&1; then fail "the NetworkManager connection is still there"; fi
+    if sudo test -e "$ca"; then fail "the CA certificate $ca is still there"; fi
     dpkg -s network-manager-openvpn | grep -q '^Status: install ok installed' || fail "the client was removed"
 fi
 echo "OK: acme-vpn installed and uninstalled, openvpn-client kept"
