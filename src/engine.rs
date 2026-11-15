@@ -843,7 +843,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn folders_users_can_write_are_not_admin_only() {
-        assert!(crate::service::admin_only(Path::new("/")));
+        use std::os::unix::fs::MetadataExt;
+        // Build sandboxes (Nix) don't give / to root.
+        if fs::metadata("/").unwrap().uid() == 0 {
+            assert!(crate::service::admin_only(Path::new("/")));
+        }
         // SAFETY: geteuid has no preconditions.
         if unsafe { libc::geteuid() } != 0 {
             let mine = env::temp_dir().join(format!("furnish-admin-only-{}", std::process::id()));
