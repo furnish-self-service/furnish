@@ -45,7 +45,7 @@ wait_for 60 curl -sf -X POST --data-binary '' "$vector/events" && ok "Vector acc
 send() {
     for u in $users; do
         lines=$($1 "$u")
-        [ -z "$lines" ] || echo "$lines" | curl -sf -H "X-Furnish-User: $u" --data-binary @- "$vector/events" || bad "Vector rejected $1 of $u"
+        [ -z "$lines" ] || printf '%s\n' "$lines" | curl -sf -H "X-Furnish-User: $u" --data-binary @- "$vector/events" || bad "Vector rejected $1 of $u"
     done
 }
 send batch1
@@ -89,9 +89,9 @@ got=$(loki "$(expr "Devices without inventory for \$stale")" | sed 's/=[0-9]*//g
     && ok "devices without inventory for $stale: $got" || bad "devices without inventory for $stale: expected dave's and erin's, got '$got'"
 lines=$(curl -s -G "$loki/loki/api/v1/query_range" --data-urlencode "query=$(expr "Recent failures")" --data-urlencode since=10m \
     | jq -r '.data.result[].values[][1]')
-[ "$(echo "$lines" | grep -c .)" = 6 ] && ok "recent failures: 6 lines" || bad "recent failures: expected 6 lines, got: $lines"
-echo "$lines" | grep -qx 'carol@myorg.tld on 2a77-carol: install acme/vscode failed: checksum mismatch' \
-    && echo "$lines" | grep -qx 'erin@myorg.tld on 5c02-erin: collectionUpdate design failed: git fetch: connection refused' \
+[ "$(printf '%s\n' "$lines" | grep -c .)" = 6 ] && ok "recent failures: 6 lines" || bad "recent failures: expected 6 lines, got: $lines"
+printf '%s\n' "$lines" | grep -qx 'carol@myorg.tld on 2a77-carol: install acme/vscode failed: checksum mismatch' \
+    && printf '%s\n' "$lines" | grep -qx 'erin@myorg.tld on 5c02-erin: collectionUpdate design failed: git fetch: connection refused' \
     && ok "recent failures name user, device, app or collection, and error" || bad "recent failures lines: $lines"
 
 # Grafana: login required, the provisioned dashboard and data source, each panel's queries.
@@ -112,17 +112,17 @@ stale=$(( $(date +%s) - batch2_at + 2 ))s
 to=$(( $(date +%s) * 1000 )); from=$(( to - 30 * 86400000 ))
 queries=$(jq -c --arg stale "$stale" '.panels[] | .title as $t | .targets[] | {title: $t, query: (.expr |= gsub("\\$stale"; $stale))}' "$dashboard")
 while read -r q; do
-    title=$(echo "$q" | jq -r '"\(.title) (\(.query.refId))"')
-    response=$(echo "$q" | jq -c --arg from "$from" --arg to "$to" \
+    title=$(printf '%s\n' "$q" | jq -r '"\(.title) (\(.query.refId))"')
+    response=$(printf '%s\n' "$q" | jq -c --arg from "$from" --arg to "$to" \
         '{from: $from, to: $to, queries: [.query + {intervalMs: 1800000, maxDataPoints: 1500}]}' | gf -d @- "$grafana/api/ds/query")
-    result=$(echo "$response" | jq -c --argjson from "$from" --argjson to "$to" '.results[] | {status, error,
+    result=$(printf '%s\n' "$response" | jq -c --argjson from "$from" --argjson to "$to" '.results[] | {status, error,
         rows: ([.frames[]?.data.values[0] // [] | length] | add // 0),
         outside: [.frames[]? | select(.schema.fields[0].type == "time") | .data.values[0][] | select(. < $from or . > $to)] | length}')
-    echo "$result" | jq -e '.status == 200 and .error == null and .rows > 0 and .outside == 0' >/dev/null \
-        && ok "panel $title: $(echo "$result" | jq .rows) rows in the time range" || bad "panel $title: $result"
+    printf '%s\n' "$result" | jq -e '.status == 200 and .error == null and .rows > 0 and .outside == 0' >/dev/null \
+        && ok "panel $title: $(printf '%s\n' "$result" | jq .rows) rows in the time range" || bad "panel $title: $result"
     case $title in
     "furnish versions in use (A)")
-        got=$(echo "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.furnish)=\(.data.values[1][0])"] | sort | join(" ")')
+        got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.furnish)=\(.data.values[1][0])"] | sort | join(" ")')
         [ "$got" = "0.10.0=3 0.9.0=2" ] && ok "panel $title: one series per version: $got" || bad "panel $title: expected 0.10.0=3 0.9.0=2, got $got" ;;
     esac
 done <<EOF
