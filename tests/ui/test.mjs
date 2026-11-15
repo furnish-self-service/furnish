@@ -345,6 +345,12 @@ const steps = [
     if (!(await text(row)).includes('Managed by your organization')) throw new Error('not marked managed');
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
   }],
+  ['the open-source licenses open from the Collections page', async () => {
+    await click(button('Collections'));
+    if (!/furnish \d+\.\d+\.\d+/.test(await text("//p[contains(@class,'about')]"))) throw new Error('no version shown');
+    await click(button('Open-source licenses'));
+    await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
+  }],
   ['the logo leads back to Discover', async () => {
     await click("//button[@aria-label='Acme Apps, go to Discover']");
     await waitFor('Discover page', async () => (await text('//h1')) === 'Discover');

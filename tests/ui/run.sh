@@ -59,6 +59,8 @@ done
 sed -i '2i [ -e '"$work"'/deny ] && { echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
 # Like a real sudo without cached credentials: `sudo -n` fails, so only the terminal prompt is left.
 sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work/bin/sudo"
+# The browser: records what furnish opens.
+printf '#!/bin/sh\necho "$1" >> %s/browser.log\n' "$work" > "$work/bin/browser"
 chmod +x "$work/bin/"*
 
 # The fixture collection (already added) and a second repository for the add/remove test.
@@ -102,7 +104,7 @@ JSON
 
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" "$image" \
     sh -c 'Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
 

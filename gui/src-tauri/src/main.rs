@@ -337,6 +337,21 @@ async fn reinstall(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellB
     run(app, key, Action::Reinstall).await
 }
 
+/// furnish's version (builds of main: 0.1.0+alpha.<build>).
+#[tauri::command]
+fn version() -> &'static str {
+    option_env!("FURNISH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+/// Show the open-source components and their licenses: the installer's copy, else the website's.
+#[tauri::command]
+fn open_licenses(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri::Manager;
+    let bundled = app.path().resolve("THIRD-PARTY-LICENSES.html", tauri::path::BaseDirectory::Resource).ok().filter(|p| p.is_file());
+    let target = bundled.map_or_else(|| "https://furnish-self-service.github.io/licenses.html".into(), |p| p.to_string_lossy().into_owned());
+    furnish::endpoint::open_browser(&target).map_err(|e| format!("{e:#}"))
+}
+
 /// Change one setting for one collection; `null` returns it to the general setting.
 #[tauri::command]
 async fn set_collection_setting(name: String, key: String, value: serde_json::Value) -> CmdResult<()> {
@@ -564,6 +579,8 @@ fn main() {
             install_current,
             previous_version,
             set_collection_setting,
+            version,
+            open_licenses,
             uninstall,
             reinstall,
             set_option,

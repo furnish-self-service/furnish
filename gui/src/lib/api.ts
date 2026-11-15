@@ -173,6 +173,9 @@ export const installPrevious = (key: string) => invoke<FellBack | null>('install
 export const installCurrent = (key: string) => invoke<FellBack | null>('install_current', { key });
 /** The version furnish would fall back to; rejects with the reason if there is none. */
 export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
+export const version = () => invoke<string>('version');
+/** Open the list of open-source components and their licenses in the browser. */
+export const openLicenses = () => invoke<void>('open_licenses');
 /** Change a setting for one collection; null returns it to the general setting. */
 export const setCollectionSetting = (name: string, key: keyof CollectionSettings, value: unknown) =>
   invoke<void>('set_collection_setting', { name, key, value });

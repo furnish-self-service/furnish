@@ -21,6 +21,9 @@
   );
   const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+  let version = $state('');
+  api.version().then((v) => (version = v));
+
   let url = $state('');
   let name = $state('');
   let adding = $state(false);
@@ -233,11 +236,30 @@
       {/each}
     </ul>
   {/if}
+
+  <p class="about">
+    furnish {version}
+    · <button class="link" onclick={() => api.openLicenses().catch((e) => toast('error', "Couldn't open the licenses", String(e)))}>Open-source licenses</button>
+  </p>
 </section>
 
 <style>
   section {
     max-width: 56rem;
+  }
+  .about {
+    margin-top: 2.5rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .about .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   h1 {
     margin: 0;
