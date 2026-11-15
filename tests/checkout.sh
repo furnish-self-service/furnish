@@ -93,6 +93,11 @@ furnish list | grep "tool" | grep -q "held" && fail "still held"
 furnish install tool >/dev/null && [ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 4.0 ] || fail "4.0 not installed"
 [ -z "$(ls "$FURNISH_DATA_DIR/versions/org" 2>/dev/null)" ] || fail "files of the earlier version left behind: $(ls "$FURNISH_DATA_DIR/versions/org")"
 
+echo "== no earlier version while the current one installs"
+out=$(furnish install tool --previous 2>&1) && fail "went back to an earlier version without a failure"
+echo "$out" | grep -q "only after installing its current version failed" || fail "unexpected message: $out"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 4.0 ] || fail "not at 4.0 anymore"
+
 echo "== first install, automatic: the app's version before its latest change"
 deb 1.0 fresh fresh1.deb; app installers/fresh1.deb fresh; commit "fresh 1"
 deb 2.0 fresh fresh2.deb broken; app installers/fresh2.deb fresh; commit "fresh 2, broken"
@@ -133,5 +138,53 @@ l=$FURNISH_DATA_DIR/collections/lfs
 furnish install lfsapp >/dev/null || fail "installing from LFS failed"
 dpkg-deb -f "$l/installers/fresh1.deb" Package >/dev/null 2>&1 || fail "the LFS installer is a pointer, not the file"
 [ ! -e "$l/installers/big.deb" ] || fail "an unrelated LFS file was checked out"
+
+echo "== concurrent updates and clones of the same collection"
+cd /tmp/org && echo 5 > notes.txt && git commit -qam "notes 5" && cd /
+for i in 1 2 3 4; do furnish collection update org >/dev/null 2>/tmp/update$i.log & done; wait
+for i in 1 2 3 4; do [ ! -s /tmp/update$i.log ] || fail "concurrent update $i: $(cat /tmp/update$i.log)"; done
+[ "$(git -C "$c" rev-parse HEAD)" = "$(git -C /tmp/org rev-parse HEAD)" ] || fail "update didn't arrive"
+git -C "$c" diff --quiet HEAD || fail "the checkout differs from its commit"
+mkdir -p /etc/furnish && printf '{"collections": {"preset": [{"name": "twice", "url": "file:///tmp/org"}]}}' > /etc/furnish/policy.json
+for i in 1 2 3 4; do furnish list >/dev/null 2>/tmp/list$i.log & done; wait
+for i in 1 2 3 4; do grep -v "^note:" /tmp/list$i.log | grep -q . && fail "concurrent clone $i: $(cat /tmp/list$i.log)"; done
+[ "$(git -C "$FURNISH_DATA_DIR/collections/twice" rev-parse HEAD)" = "$(git -C /tmp/org rev-parse HEAD)" ] || fail "preset not cloned"
+[ -z "$(ls "$FURNISH_DATA_DIR/collections/.partial")" ] || fail "left in .partial: $(ls "$FURNISH_DATA_DIR/collections/.partial")"
+
+echo "== a preset's name with another URL: replaced, not used as the preset"
+furnish collection remove lfs >/dev/null
+furnish collection add file:///tmp/lfs --name corp >/dev/null
+printf '{"collections": {"preset": [{"name": "corp", "url": "file:///tmp/org"}]}}' > /etc/furnish/policy.json
+furnish list >/dev/null 2>&1
+[ "$(git -C "$FURNISH_DATA_DIR/collections/corp" config remote.origin.url)" = file:///tmp/org ] || fail "corp still comes from elsewhere"
+furnish collection list | grep "^corp" | grep -q "managed by your organization" || fail "corp not managed: $(furnish collection list)"
+out=$(furnish collection add file:///tmp/lfs --name corp 2>&1) && fail "added a collection with a preset's name"
+echo "$out" | grep -q "your organization provides" || fail "unexpected message: $out"
+
+echo "== trusted keys: SSH signatures only, no going back"
+ssh-keygen -q -t ed25519 -N '' -f /root/signing
+mkdir -p /tmp/signed/apps && cd /tmp/signed && git init -q
+git config gpg.format ssh && git config user.signingkey /root/signing
+cp /tmp/org/apps/tool.dsc.yaml apps/ && git add -A && git commit -qS -m "signed 1" && signed1=$(git rev-parse HEAD)
+echo 2 > notes.txt && git add -A && git commit -qS -m "signed 2" && signed2=$(git rev-parse HEAD)
+cd /
+printf '{"collections": {"preset": [{"name": "signed", "url": "file:///tmp/signed"}], "trustedKeys": ["%s"]}}' "$(cat /root/signing.pub)" > /etc/furnish/policy.json
+furnish collection list | grep "^signed" | grep -q managed || fail "the signed preset wasn't set up: $(furnish collection list 2>&1)"
+sc=$FURNISH_DATA_DIR/collections/signed
+# A key in root's GnuPG keyring, which git would use for an OpenPGP signature.
+gpg -q --batch --passphrase '' --quick-gen-key 'Someone <someone@example.com>' ed25519 sign never 2>/dev/null
+cd /tmp/signed && echo 3 > notes.txt && git add -A && git -c gpg.format=openpgp -c user.signingkey=someone@example.com commit -qS -m "gpg signed" && cd /
+git -C /tmp/signed verify-commit HEAD 2>/dev/null || fail "test setup: git doesn't accept the GnuPG signature itself"
+out=$(furnish collection update signed 2>&1) && fail "an OpenPGP-signed commit was accepted"
+echo "$out" | grep -q "SSH signatures only" || fail "unexpected message: $out"
+[ "$(git -C "$sc" rev-parse HEAD)" = "$signed2" ] || fail "moved to the OpenPGP-signed commit"
+cd /tmp/signed && git reset -q --hard "$signed1" && cd /
+out=$(furnish collection update signed 2>&1) && fail "went back to an earlier signed commit"
+echo "$out" | grep -q "doesn't follow the current one" || fail "unexpected message: $out"
+[ "$(git -C "$sc" rev-parse HEAD)" = "$signed2" ] || fail "moved back"
+cd /tmp/signed && git reset -q --hard "$signed2" && echo 4 > notes.txt && git add -A && git commit -qS -m "signed 3" && cd /
+furnish collection update signed >/dev/null || fail "a signed commit that follows was refused"
+[ "$(git -C "$sc" rev-parse HEAD)" = "$(git -C /tmp/signed rev-parse HEAD)" ] || fail "signed commit didn't arrive"
+rm /etc/furnish/policy.json
 
 echo "checkout OK"

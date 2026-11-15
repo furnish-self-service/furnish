@@ -12,58 +12,59 @@ identity=$(json_member name "$name")
 subject=$name
 
 # rpm -q prints "package X is not installed" on stdout, so only print on success.
-rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$name" 2>/dev/null) && echo "$v"; }
+rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' -- "$name" 2>/dev/null) && echo "$v"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Each backend: returns 1 if its tool is missing, else sets via, admin, the commands and
-# installed_version. $name is restricted to [A-Za-z0-9@._+-] by the schema.
+# installed_version. $name is restricted to [A-Za-z0-9@._+-] by the schema and can't start with
+# `-` (checked again below); `--` before it where the tool takes that.
 use_pacman() {
     have pacman || return 1
     via=pacman admin=true
-    installed_version() { pacman -Q "$name" 2>/dev/null | cut -d' ' -f2; }
-    do_install() { run_step pacman -S --noconfirm --needed "$name"; }
-    do_remove() { run_step pacman -R --noconfirm "$name"; }
+    installed_version() { pacman -Q -- "$name" 2>/dev/null | cut -d' ' -f2; }
+    do_install() { run_step pacman -S --noconfirm --needed -- "$name"; }
+    do_remove() { run_step pacman -R --noconfirm -- "$name"; }
     install_desc="pacman -S --noconfirm --needed $name" remove_desc="pacman -R --noconfirm $name"
     # Local sync database only ("name 1.0-1 -> 1.1-1").
-    newer_version() { pacman -Qu "$name" 2>/dev/null | cut -d' ' -f4; }
+    newer_version() { pacman -Qu -- "$name" 2>/dev/null | cut -d' ' -f4; }
 }
 use_apt() {
     have apt-get || return 1
     via=apt admin=true
-    installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' "$name" 2>/dev/null | sed -n 's/^installed //p'; }
-    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y "$name"; }
-    do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$name"; }
+    installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' -- "$name" 2>/dev/null | sed -n 's/^installed //p'; }
+    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y -- "$name"; }
+    do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$name"; }
     install_desc="apt-get install -y $name" remove_desc="apt-get remove -y $name"
     # Local package lists only ("name/suite 1.1 amd64 [upgradable from: 1.0]").
     newer_version() { apt list --upgradable 2>/dev/null | grep "^$name/" | cut -d' ' -f2; }
-    do_upgrade() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade "$name"; }
+    do_upgrade() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade -- "$name"; }
     upgrade_desc="apt-get install -y --only-upgrade $name"
 }
 use_dnf() {
     have dnf || return 1
     via=dnf admin=true
     installed_version() { rpm_version; }
-    do_install() { run_step dnf install -y "$name"; }
-    do_remove() { run_step dnf remove -y "$name"; }
+    do_install() { run_step dnf install -y -- "$name"; }
+    do_remove() { run_step dnf remove -y -- "$name"; }
     install_desc="dnf install -y $name" remove_desc="dnf remove -y $name"
     # Cached metadata only (-C): no download during a status check.
-    newer_version() { dnf -C -q check-update "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
-    do_upgrade() { run_step dnf upgrade -y "$name"; }
+    newer_version() { dnf -C -q check-update -- "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
+    do_upgrade() { run_step dnf upgrade -y -- "$name"; }
     upgrade_desc="dnf upgrade -y $name"
 }
 use_zypper() {
     have zypper || return 1
     via=zypper admin=true
     installed_version() { rpm_version; }
-    do_install() { run_step zypper --non-interactive install "$name"; }
-    do_remove() { run_step zypper --non-interactive remove "$name"; }
+    do_install() { run_step zypper --non-interactive install -- "$name"; }
+    do_remove() { run_step zypper --non-interactive remove -- "$name"; }
     install_desc="zypper --non-interactive install $name" remove_desc="zypper --non-interactive remove $name"
     # Without refreshing repositories: "v | repo | name | current | available | arch".
     newer_version() {
         line=$(zypper --no-refresh -q list-updates 2>/dev/null | grep "| $name " | head -n1) || return 0
         [ -n "$line" ] && echo "$line" | cut -d'|' -f5 | tr -d ' '
     }
-    do_upgrade() { run_step zypper --non-interactive update "$name"; }
+    do_upgrade() { run_step zypper --non-interactive update -- "$name"; }
     upgrade_desc="zypper --non-interactive update $name"
 }
 use_brew() {
@@ -144,5 +145,8 @@ esac
 # A package can have another name per package manager (e.g. code / vscode).
 eval "override=\${${via}Name:-}"
 if [ -n "$override" ]; then name=$override subject=$override; fi
+# Not an option to the package manager (the schema says so too; this holds without it).
+case $name in -*) fail 10 "package name starts with '-': $name" ;; esac
+case ${nixpkgs:-} in -*) fail 10 "nixpkgs starts with '-': $nixpkgs" ;; esac
 
 furnish_main "$@"

@@ -12,6 +12,8 @@ identity=$(json_member file "$file")
 [ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
 subject=$(basename "$file")
 
+# A link could point anywhere outside the collection; test -L also holds for a dangling one.
+[ -L "$file" ] && fail 10 "installer is a symbolic link: $file"
 if [ ! -f "$file" ]; then
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
@@ -26,40 +28,40 @@ if head -c 64 "$file" | grep -q '^version https://git-lfs'; then
     missing "git-lfs to download $subject (install it, then update the collection)"
 fi
 
-rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$1" 2>/dev/null) && echo "$v"; }
+rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' -- "$1" 2>/dev/null) && echo "$v"; }
 
 admin=true
 case "$file" in
 *.deb)
     command -v dpkg-deb >/dev/null 2>&1 || missing "dpkg (Debian, Ubuntu) for .deb installers"
-    id=$(dpkg-deb -f "$file" Package)
+    id=$(dpkg-deb -f -- "$file" Package)
     via=apt
-    installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' "$id" 2>/dev/null | sed -n 's/^installed //p'; }
-    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y "$file"; }
-    do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$id"; }
+    installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' -- "$id" 2>/dev/null | sed -n 's/^installed //p'; }
+    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y -- "$file"; }
+    do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$id"; }
     install_desc="apt-get install -y $file" remove_desc="apt-get remove -y $id"
     # A different version in the collection's file is an update: installing the file brings it.
-    newer_version() { v=$(dpkg-deb -f "$file" Version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
+    newer_version() { v=$(dpkg-deb -f -- "$file" Version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     ;;
 *.rpm)
     command -v rpm >/dev/null 2>&1 || missing "rpm (Fedora, openSUSE, RHEL) for .rpm installers"
-    id=$(rpm -qp --qf '%{NAME}' "$file" 2>/dev/null)
+    id=$(rpm -qp --qf '%{NAME}' -- "$file" 2>/dev/null)
     installed_version() { rpm_version "$id"; }
-    newer_version() { v=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$file" 2>/dev/null) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
+    newer_version() { v=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' -- "$file" 2>/dev/null) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     if command -v dnf >/dev/null 2>&1; then
         via=dnf
-        do_install() { run_step dnf install -y "$file"; }
-        do_remove() { run_step dnf remove -y "$id"; }
+        do_install() { run_step dnf install -y -- "$file"; }
+        do_remove() { run_step dnf remove -y -- "$id"; }
         install_desc="dnf install -y $file" remove_desc="dnf remove -y $id"
     elif command -v zypper >/dev/null 2>&1; then
         via=zypper
-        do_install() { run_step zypper --non-interactive install --allow-unsigned-rpm "$file"; }
-        do_remove() { run_step zypper --non-interactive remove "$id"; }
+        do_install() { run_step zypper --non-interactive install --allow-unsigned-rpm -- "$file"; }
+        do_remove() { run_step zypper --non-interactive remove -- "$id"; }
         install_desc="zypper install $file" remove_desc="zypper remove $id"
     else
         via=rpm
-        do_install() { run_step rpm -U "$file"; }
-        do_remove() { run_step rpm -e "$id"; }
+        do_install() { run_step rpm -U -- "$file"; }
+        do_remove() { run_step rpm -e -- "$id"; }
         install_desc="rpm -U $file" remove_desc="rpm -e $id"
     fi
     ;;

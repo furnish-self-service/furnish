@@ -50,7 +50,7 @@
         "name": {
           "type": "string",
           "description": "Package name",
-          "pattern": "^[A-Za-z0-9@._+-]+$"
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
         },
         "version": {
           "type": "string",
@@ -92,37 +92,37 @@
         },
         "pacmanName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when pacman installs it (default: name)"
         },
         "aptName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when apt installs it (default: name)"
         },
         "dnfName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when dnf installs it (default: name)"
         },
         "zypperName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when zypper installs it (default: name)"
         },
         "brewName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when brew installs it (default: name)"
         },
         "nixName": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9@._+-]+$",
+          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
           "description": "Package name when nix installs it (default: name)"
         },
         "nixpkgs": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9:/._?=&#+-]+$",
+          "pattern": "^[A-Za-z0-9:/._?=&#+][A-Za-z0-9:/._?=&#+-]*$",
           "description": "Flake reference to install Nix packages from (default: the registry's nixpkgs, which NixOS pins to the system's)"
         }
       }

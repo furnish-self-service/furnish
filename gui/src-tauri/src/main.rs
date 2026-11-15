@@ -3,7 +3,11 @@
 
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    io::Read as _,
+    path::Path,
+};
 
 use base64::Engine as _;
 use furnish::{
@@ -207,7 +211,16 @@ fn icon_data_url(path: &Path) -> Option<String> {
         "webp" => "image/webp",
         _ => return None,
     };
-    let bytes = fs::read(path).ok().filter(|b| b.len() <= 1024 * 1024)?;
+    // Size first: the collection decides what the file is, and reading it all could be costly.
+    const LIMIT: u64 = 1024 * 1024;
+    if fs::metadata(path).ok()?.len() > LIMIT {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(LIMIT + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > LIMIT {
+        return None;
+    }
     Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 

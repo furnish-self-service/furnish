@@ -31,6 +31,7 @@ fi
 mkdir -p "$work/bin" "$work/pkgs"
 cat > "$work/bin/pacman" <<SH
 #!/bin/sh
+for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of options
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;

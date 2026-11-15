@@ -22,6 +22,7 @@ useradd -m bob
 mkdir -p /var/fake-pkgs
 cat > /usr/local/bin/pacman <<'SH'
 #!/bin/sh
+for a do shift; [ "$a" = -- ] || set -- "$@" "$a"; done  # drop the end of options
 case "$1" in
   -Q) [ -f "/var/fake-pkgs/$2" ] && echo "$2 1.0" ;;
   -Qu) exit 1 ;;

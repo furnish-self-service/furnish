@@ -256,13 +256,20 @@ pub fn values(resolved: &[Resolved]) -> Map<String, Value> {
     resolved.iter().filter_map(|r| r.value.clone().map(|v| (r.name.clone(), v))).collect()
 }
 
-/// The document with `values` as the parameters' defaults, so DSC uses them.
+/// The document with `values` as the parameters' defaults, so DSC uses them. DSC evaluates a
+/// string starting with `[` as an expression, so such a value gets another `[` in front (DSC's
+/// escape for a literal `[`); the app's own default stays as its author wrote it.
 pub fn apply(doc: &Value, values: &Map<String, Value>) -> Value {
     let mut doc = doc.clone();
     for (name, value) in values {
-        if doc["parameters"].get(name).is_some() {
-            doc["parameters"][name]["defaultValue"] = value.clone();
+        let Some(param) = doc["parameters"].get_mut(name) else { continue };
+        if param.get("defaultValue") == Some(value) {
+            continue;
         }
+        param["defaultValue"] = match value {
+            Value::String(s) if s.starts_with('[') => Value::String(format!("[{s}")),
+            other => other.clone(),
+        };
     }
     doc
 }
@@ -510,5 +517,28 @@ mod tests {
         let out = apply(&doc, &values);
         assert_eq!(out["parameters"]["userInstall"]["defaultValue"], json!(true));
         assert!(out["parameters"].get("other").is_none());
+    }
+
+    #[test]
+    fn apply_keeps_values_starting_with_a_bracket_literal() {
+        let doc = json!({"parameters": {
+            "prefix": {"type": "string", "defaultValue": "/opt"},
+            "own": {"type": "string", "defaultValue": "[concat('a', 'b')]"},
+        }});
+        let values = Map::from_iter([
+            ("prefix".to_string(), json!("[envvar('HOME')]")),
+            ("own".to_string(), json!("[concat('a', 'b')]")),
+        ]);
+        let out = apply(&doc, &values);
+        let prefix = out["parameters"]["prefix"]["defaultValue"].as_str().unwrap();
+        assert_eq!(prefix, "[[envvar('HOME')]");
+        // DSC reads the escaped string back as the literal value.
+        let literal = dsc_lib::parser::Statement::new()
+            .unwrap()
+            .parse_and_execute(prefix, &dsc_lib::configure::context::Context::new())
+            .unwrap();
+        assert_eq!(literal, json!("[envvar('HOME')]"));
+        // The app's own default, unchanged, is still the author's expression.
+        assert_eq!(out["parameters"]["own"]["defaultValue"], json!("[concat('a', 'b')]"));
     }
 }

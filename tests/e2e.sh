@@ -21,6 +21,7 @@ if ! $real; then
     mkdir -p "$tmp/bin" "$tmp/pkgs"
     cat > "$tmp/bin/pacman" <<SH
 #!/bin/sh
+for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of options
 case "\$1" in
   -Q) [ -f "$tmp/pkgs/\$2" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2")" ;;
   -Qu) [ -f "$tmp/pkgs/\$2.new" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2") -> \$(cat "$tmp/pkgs/\$2.new")" ;;

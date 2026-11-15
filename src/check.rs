@@ -4,7 +4,7 @@
 //! resources run on Linux, macOS and Windows. Runs nothing.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -66,8 +66,9 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
             BTreeMap::new()
         }
     };
+    // Collection::icon is None for a file outside the collection (also through a symlink).
     if let Some(icon) = yaml_string(&dir.join("collection.yaml"), "icon")
-        && !dir.join(&icon).is_file()
+        && !collection.icon().is_some_and(|p| p.is_file())
     {
         options.findings.push(error(format!("icon '{icon}' is not in the collection")));
     }
@@ -146,6 +147,8 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     for r in &resources {
         let name = r["name"].as_str().unwrap_or("?");
         let kind = r["type"].as_str().unwrap_or_default();
+        // DSC matches resource types ignoring case, so `furnish/installer` is Furnish/Installer.
+        let kind = RESOURCE_TYPES.iter().copied().find(|t| t.eq_ignore_ascii_case(kind)).unwrap_or(kind);
         if !RESOURCE_TYPES.contains(&kind) {
             findings.push(warning(format!("{name}: {kind} is not a furnish resource; it runs only where DSC finds it")));
         }
@@ -222,24 +225,31 @@ fn on_system(condition: &str, system: &str) -> String {
     condition.replace("context().os.family", &format!("'{system}'"))
 }
 
+/// A dependency cycle through `app`, e.g. [a, b, a]. Depth-first; each app is explored once (an app
+/// fully explored without reaching `app` can't lead back to it), so diamonds stay linear.
 fn cycle(app: &App, apps: &[App]) -> Option<Vec<String>> {
-    fn visit(id: &str, apps: &[App], path: &mut Vec<String>) -> Option<Vec<String>> {
-        if let Some(start) = path.iter().position(|p| p == id) {
-            let mut cycle = path[start..].to_vec();
-            cycle.push(id.to_string());
-            return Some(cycle);
+    fn visit<'a>(id: &'a str, target: &str, apps: &'a [App], path: &mut Vec<&'a str>, done: &mut HashSet<&'a str>) -> bool {
+        if !path.is_empty() && id == target {
+            return true;
         }
-        let app = apps.iter().find(|a| a.id == id)?;
-        path.push(id.to_string());
-        for dep in &app.dependencies {
-            if let Some(cycle) = visit(&dep.app, apps, path) {
-                return Some(cycle);
-            }
+        if !done.insert(id) {
+            return false;
+        }
+        let Some(app) = apps.iter().find(|a| a.id == id) else { return false };
+        path.push(id);
+        if app.dependencies.iter().any(|dep| visit(&dep.app, target, apps, path, done)) {
+            return true;
         }
         path.pop();
-        None
+        false
     }
-    visit(&app.id, apps, &mut Vec::new()).filter(|c| c.first() == Some(&app.id))
+    let mut path = Vec::new();
+    if !visit(&app.id, &app.id, apps, &mut path, &mut HashSet::new()) {
+        return None;
+    }
+    let mut cycle: Vec<String> = path.into_iter().map(String::from).collect();
+    cycle.push(app.id.clone());
+    Some(cycle)
 }
 
 fn files(dir: &Path, suffix: &str) -> Vec<PathBuf> {
@@ -264,9 +274,12 @@ fn relative(dir: &Path, path: &Path) -> String {
 /// Whether git has the file, also when the checkout leaves it out (sparse, see blobs_on_demand).
 fn in_repository(dir: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(dir) else { return false };
+    // The repository is the one being checked: its config must not run commands
+    // (core.fsmonitor; hooks for good measure).
     crate::catalog::git_command()
         .arg("-C")
         .arg(dir)
+        .args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"])
         .args(["ls-files", "--error-unmatch", "--"])
         .arg(relative)
         .output()
@@ -289,5 +302,57 @@ mod tests {
         let values = Map::new();
         assert!(!crate::options::condition_holds(&on_system(windows_only, "Linux"), &values).unwrap());
         assert!(crate::options::condition_holds(&on_system(windows_only, "Windows"), &values).unwrap());
+    }
+
+    fn app(id: &str, deps: &[String]) -> App {
+        let dependencies = deps
+            .iter()
+            .map(|d| crate::catalog::Item { app: d.clone(), required: true, selected: true, condition: None })
+            .collect();
+        App {
+            id: id.into(),
+            collection: "c".into(),
+            description: String::new(),
+            categories: vec![],
+            icon: None,
+            path: PathBuf::new(),
+            dependencies,
+            collection_dir: PathBuf::new(),
+            managed: false,
+            doc: Value::Null,
+            held: None,
+        }
+    }
+
+    #[test]
+    fn cycles_are_found_and_deep_diamonds_stay_fast() {
+        let apps = [app("a", &["b".into()]), app("b", &["c".into()]), app("c", &["a".into()]), app("d", &["a".into()])];
+        assert_eq!(cycle(&apps[0], &apps), Some(vec!["a".into(), "b".into(), "c".into(), "a".into()]));
+        assert_eq!(cycle(&apps[3], &apps), None, "d leads into a cycle but isn't part of one");
+        assert_eq!(cycle(&app("s", &["s".into()]), &[app("s", &["s".into()])]), Some(vec!["s".into(), "s".into()]));
+
+        // 40 layers of two apps, each depending on both apps of the next layer: 2^40 paths.
+        let layers = 40;
+        let name = |layer: usize, i: usize| format!("l{layer}-{i}");
+        let mut apps: Vec<App> = (0..layers)
+            .flat_map(|l| {
+                let next: Vec<String> = if l + 1 < layers { vec![name(l + 1, 0), name(l + 1, 1)] } else { vec![] };
+                [app(&name(l, 0), &next), app(&name(l, 1), &next)]
+            })
+            .collect();
+        let start = std::time::Instant::now();
+        for a in &apps {
+            assert_eq!(cycle(a, &apps), None);
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(1), "took {:?}", start.elapsed());
+        // The bottom layer depending on the top closes a cycle through every layer.
+        apps.last_mut().unwrap().dependencies.push(crate::catalog::Item {
+            app: name(0, 0),
+            required: true,
+            selected: true,
+            condition: None,
+        });
+        let found = cycle(&apps[0], &apps).unwrap();
+        assert_eq!((found.first(), found.last(), found.len()), (Some(&name(0, 0)), Some(&name(0, 0)), layers + 1));
     }
 }

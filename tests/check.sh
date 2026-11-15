@@ -53,8 +53,20 @@ $pkg"
 app empty 'metadata: { furnish: { description: Empty, categories: [Test] } }
 resources: []'
 app undescribed "$pkg"
+# DSC matches types ignoring case: a lower-case type gets the same checks.
+app lowercase 'metadata: { furnish: { description: Lower case, categories: [Test] } }
+resources:
+  - name: setup
+    type: furnish/installer
+    properties: { file: installers/lower.msi }'
+# An icon that links out of the collection.
+echo '<svg/>' > "$tmp/outside.svg"
+ln -s "$tmp/outside.svg" "$c/icons/outside.svg"
+printf 'icon: icons/outside.svg\n' > "$c/collection.yaml"
 printf 'description: Kit\nitems:\n  - app: good\n  - app: ghost\n' > "$c/kits/starter.yaml"
 git -C "$c" init -q && git -C "$c" add -A && git -C "$c" -c user.name=t -c user.email=t@t commit -qm init
+# The checked repository's config must not run commands (checking an installer runs git there).
+git -C "$c" config core.fsmonitor "touch '$tmp/pwned'"
 
 out=$("$furnish" check "$c" 2>&1); code=$?
 [ $code -ne 0 ] && ok "a collection with errors fails (exit $code)" || bad "exit 0 despite errors"
@@ -74,6 +86,9 @@ expect recommended "recommended:"
 expect empty "no resources"
 expect undescribed "warning: no description"
 expect starter "ghost"
+expect lowercase "installers/lower.msi is not in the collection"
+expect collection.yaml "icon 'icons/outside.svg' is not in the collection"
+[ ! -e "$tmp/pwned" ] && ok "the repository's core.fsmonitor did not run" || bad "core.fsmonitor ran"
 echo "$out" | grep -qE '^[0-9]+ apps, 1 kit: [0-9]+ errors, [0-9]+ warnings?$' && ok "summary line" || bad "no summary: $(echo "$out" | tail -1)"
 
 out=$("$furnish" check "$fixture" 2>&1) && ok "the test fixture passes" || bad "fixture: $out"

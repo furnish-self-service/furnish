@@ -29,6 +29,12 @@ function Write-State([string]$Version, [string[]]$WhatIf) {
 }
 
 $subject = Split-Path -Leaf $file
+# A link (symbolic link, junction) could point anywhere outside the collection. GetAttributes reads
+# the link itself, so a dangling one counts too; it throws only when nothing is there.
+$attributes = try { [IO.File]::GetAttributes($file) } catch { $null }
+if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    Fail 10 "installer is a symbolic link: $file"
+}
 if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.

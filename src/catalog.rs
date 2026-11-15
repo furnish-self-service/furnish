@@ -3,6 +3,7 @@
 use std::{
     collections::BTreeMap,
     env, fs,
+    io::Write,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -159,7 +160,7 @@ fn preset_dir() -> PathBuf {
 
 pub fn collections() -> Result<Vec<Collection>> {
     let policy = crate::policy::load().collections;
-    let preset = |name: &str| policy.preset.iter().any(|p| p.name == name);
+    let preset_name = |name: &str| policy.preset.iter().any(|p| p.name == name);
     let in_dir = |dir: PathBuf| -> Result<Vec<Collection>> {
         if !dir.exists() {
             return Ok(vec![]);
@@ -169,20 +170,33 @@ pub fn collections() -> Result<Vec<Collection>> {
             .filter(|e| e.path().join(".git").exists())
             .map(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
-                Collection { managed: preset(&name), name, dir: e.path() }
+                Collection { managed: is_preset(&policy.preset, &name, &e.path()), name, dir: e.path() }
             })
             .collect())
     };
+    let separate = preset_dir() != collections_dir();
     let mut collections: Vec<_> = in_dir(collections_dir())?
         .into_iter()
         // If users may not add collections, only the admin's count (others stay on disk, unused).
-        .filter(|c| (policy.users_can_add || c.managed) && (preset_dir() == collections_dir() || !c.managed))
+        .filter(|c| (policy.users_can_add || c.managed) && (!separate || !c.managed))
+        // With the service, a preset's name belongs to the service's copy.
+        .filter(|c| !separate || !preset_name(&c.name))
         .collect();
-    if preset_dir() != collections_dir() {
+    if separate {
         collections.extend(in_dir(preset_dir())?.into_iter().filter(|c| c.managed));
     }
     collections.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(collections)
+}
+
+/// A preset collection: the policy presets its name, and the copy comes from the URL the policy
+/// gives for it, compared exactly as written. A collection of the same name from elsewhere is not.
+fn is_preset(presets: &[crate::policy::Preset], name: &str, dir: &Path) -> bool {
+    presets.iter().any(|p| p.name == name && origin_url(dir).is_ok_and(|u| u == p.url))
+}
+
+fn origin_url(dir: &Path) -> Result<String> {
+    git(Some(dir), &["config", "--get", "remote.origin.url"])
 }
 
 pub fn get(name: &str) -> Result<Collection> {
@@ -214,6 +228,7 @@ pub fn name_from_url(url: &str) -> String {
 /// Add a collection the user chose; the admin policy may forbid that. `credentials`: a username
 /// and password (or access token) for an HTTPS URL, kept in the OS's credential store.
 pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<Collection> {
+    check_name(name)?;
     let policy = crate::policy::load().collections;
     if !policy.users_can_add {
         bail!("your organization manages the collections; adding others isn't allowed");
@@ -224,7 +239,7 @@ pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<C
     if let Some((user, password)) = credentials {
         crate::auth::store(url, user, password)?;
     }
-    clone(url, name, false).inspect_err(|err| {
+    clone(url, name, false, false).inspect_err(|err| {
         if credentials.is_some() && err.is::<crate::auth::CredentialsRequired>() {
             crate::auth::forget(url); // wrong ones: don't keep them
         }
@@ -243,16 +258,21 @@ pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>
     if crate::endpoint::token(origin, &description).is_err() {
         crate::endpoint::login(origin, &description, show)?;
     }
+    let presets = crate::policy::load().collections.preset;
     let mut added = Vec::new();
     for c in &description.collections {
+        check_name(&c.name)?;
+        if presets.iter().any(|p| p.name == c.name && p.url != c.url) {
+            bail!("'{}' is the name of a collection your organization provides", c.name);
+        }
         let dir = collections_dir().join(&c.name);
         if dir.join(".git").exists() {
-            match git(Some(&dir), &["remote", "get-url", "origin"]) {
+            match origin_url(&dir) {
                 Ok(url) if url == c.url => continue, // already there
                 _ => bail!("a collection named '{}' already exists", c.name),
             }
         }
-        added.push(clone(&c.url, &c.name, preset)?);
+        added.push(clone(&c.url, &c.name, preset, false)?);
     }
     Ok(added)
 }
@@ -274,42 +294,70 @@ pub fn ensure_presets() -> Vec<String> {
     }
     let presets = crate::policy::load().collections.preset;
     if crate::service::enabled() {
-        // The service sets them up; ask it only if one is missing.
-        if presets.iter().all(|p| preset_dir().join(&p.name).join(".git").exists()) {
+        // The service sets them up; ask it only if one is missing or comes from elsewhere.
+        if presets.iter().all(|p| is_preset(&presets, &p.name, &preset_dir().join(&p.name))) {
             return problems;
         }
         problems.extend(crate::service::ensure_presets().unwrap_or_else(|err| vec![format!("{err:#}")]));
         return problems;
     }
-    for preset in presets {
+    for preset in &presets {
         let dir = collections_dir().join(&preset.name);
-        if dir.join(".git").exists() {
-            match git(Some(&dir), &["remote", "get-url", "origin"]) {
-                Ok(url) if url == preset.url => {}
-                _ => problems.push(format!("collection '{}' exists but doesn't come from {}", preset.name, preset.url)),
-            }
+        if is_preset(&presets, &preset.name, &dir) {
             continue;
         }
-        if let Err(err) = clone(&preset.url, &preset.name, true) {
-            problems.push(format!("couldn't set up collection '{}': {err:#}", preset.name));
+        // A collection of that name from another URL (added by the user, or the policy changed
+        // the URL): replaced by a fresh copy, never updated from the old URL.
+        let replacing = dir.exists();
+        match clone(&preset.url, &preset.name, true, true) {
+            Ok(_) if replacing => eprintln!("note: replaced collection '{}' with your organization's from {}", preset.name, preset.url),
+            Ok(_) => {}
+            Err(err) if replacing => problems.push(format!(
+                "collection '{}' doesn't come from {}, the address your organization gives; couldn't replace it: {err:#}",
+                preset.name, preset.url
+            )),
+            Err(err) => problems.push(format!("couldn't set up collection '{}': {err:#}", preset.name)),
         }
     }
     problems
 }
 
-fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
-    // The name becomes a directory name: no separators, no `..`, no hidden dirs.
+/// The name becomes a directory name: no separators, no `..`, no hidden dirs, nothing Windows
+/// reserves (`CON`, `NUL`, `COM1`, …, also with an extension, or a trailing `.`).
+fn check_name(name: &str) -> Result<()> {
     let valid = !name.is_empty()
         && !name.starts_with('.')
+        && !name.ends_with('.')
         && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
     if !valid {
         bail!("invalid collection name '{name}': use letters, digits, '.', '_' and '-'");
     }
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&stem.as_str())
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        bail!("invalid collection name '{name}': Windows reserves it for a device");
+    }
+    Ok(())
+}
+
+/// Clone into `collections/<name>`. `replace`: a directory of that name (from another URL) is
+/// replaced once the new copy is complete.
+fn clone(url: &str, name: &str, managed: bool, replace: bool) -> Result<Collection> {
+    check_name(name)?;
+    fs::create_dir_all(collections_dir().join(".partial"))?;
+    let _lock = lock(&collections_dir(), name)?;
     let dir = collections_dir().join(name);
     if dir.exists() {
-        bail!("a collection named '{name}' already exists");
+        if !replace {
+            bail!("a collection named '{name}' already exists");
+        }
+        if origin_url(&dir).is_ok_and(|u| u == url) {
+            return Ok(Collection { name: name.to_string(), dir, managed }); // another furnish just did
+        }
     }
-    fs::create_dir_all(collections_dir())?;
     let settings = crate::settings::for_collection(name).settings;
     let depth = format!("--depth={}", settings.checkout_depth);
     let mut args = vec!["clone", "--quiet", "--no-checkout"];
@@ -325,17 +373,25 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
     args.extend(["--config=gc.reflogExpireUnreachable=now", "--config=gc.pruneExpire=now"]);
     // Set up in .partial/ and moved into place when complete: furnish may stop half way (the
     // service when it is replaced, say), and a copy without its checkout mustn't look finished.
-    let staging = collections_dir().join(".partial").join(name);
-    remove_repository(&staging);
-    fs::create_dir_all(collections_dir().join(".partial"))?;
+    // Its own directory per attempt; under the lock, others of this name are left over.
+    remove_partial(name);
+    let staging = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
     let target = staging.to_string_lossy().into_owned();
-    args.extend([url, &target]);
+    args.extend(["--end-of-options", url, &target]);
     let collection = Collection { name: name.to_string(), dir: staging.clone(), managed };
     let set_up = || -> Result<()> {
         git(None, &args)?;
-        collection.verify("HEAD")?;
-        collection.prepare_checkout(&settings, "HEAD", true)?;
-        git(Some(&collection.dir), &["reset", "--quiet", "--hard"])?;
+        // One commit, resolved once: what is verified is what gets checked out.
+        let head = git(Some(&collection.dir), &["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])?;
+        collection.verify(&head)?;
+        collection.prepare_checkout(&settings, &head, true)?;
+        // A commit id from rev-parse: no option (and git before 2.44 rejects --end-of-options here).
+        git(Some(&collection.dir), &["reset", "--quiet", "--hard", &head])?;
+        if dir.exists() {
+            let old = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
+            fs::rename(&dir, &old)?;
+            remove_repository(&old);
+        }
         Ok(fs::rename(&staging, &dir)?)
     };
     if let Err(err) = set_up() {
@@ -343,6 +399,39 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
         return Err(err);
     }
     Ok(Collection { dir, ..collection })
+}
+
+/// Delete what earlier attempts to clone `name` left in .partial/ (call with the lock held).
+fn remove_partial(name: &str) {
+    let prefix = format!("{name}+");
+    for entry in fs::read_dir(collections_dir().join(".partial")).into_iter().flatten().flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            remove_repository(&entry.path());
+        }
+    }
+}
+
+/// A name no other attempt uses: process id, time and a counter.
+fn unique() -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{nanos}-{n}", std::process::id())
+}
+
+/// Hold the lock of collection `name` in `parent` (`.<name>.lock`): one clone, update or install
+/// at a time per collection, across threads and processes. `None` where this user can't write
+/// (the service's copies, which only the service changes).
+fn lock(parent: &Path, name: &str) -> Result<Option<fs::File>> {
+    let path = parent.join(format!(".{name}.lock"));
+    match fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path) {
+        Ok(file) => {
+            file.lock().with_context(|| format!("locking {}", path.display()))?;
+            Ok(Some(file))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Ok(None),
+        Err(err) => Err(anyhow::Error::new(err).context(format!("locking {}", path.display()))),
+    }
 }
 
 pub fn remove(name: &str) -> Result<()> {
@@ -399,6 +488,7 @@ impl Collection {
         if self.managed && crate::service::enabled() {
             return crate::service::update(&self.name);
         }
+        let _lock = self.lock()?;
         let old = self.revision()?;
         let settings = crate::settings::for_collection(&self.name).settings;
         let depth = format!("--depth={}", settings.checkout_depth);
@@ -409,18 +499,54 @@ impl Collection {
             fetch.push("--unshallow");
         }
         git(Some(&self.dir), &fetch)?;
-        self.verify("@{upstream}")?;
-        self.prepare_checkout(&settings, "@{upstream}", false)?;
+        // One commit, resolved once: what is verified is what gets checked out.
+        let new = git(Some(&self.dir), &["rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"])?;
+        self.verify(&new)?;
+        self.require_descendant(&new)?;
+        self.prepare_checkout(&settings, &new, false)?;
         // ponytail: reset, not merge: in a shallow history git may not see that the new commit
         // follows the old one. Collections are furnish's copies, nobody commits to them.
-        git(Some(&self.dir), &["reset", "--quiet", "--hard", "@{upstream}"])?;
+        git(Some(&self.dir), &["reset", "--quiet", "--hard", &new])?; // a commit id, see clone
         Ok((old, self.revision()?))
+    }
+
+    /// The collection's lock (see `lock`).
+    fn lock(&self) -> Result<Option<fs::File>> {
+        lock(self.dir.parent().unwrap_or(&self.dir), &self.name)
+    }
+
+    /// With trusted keys: `new` must follow the current commit. Otherwise whoever controls the
+    /// server could move the collection back to an older signed commit, with its known problems.
+    fn require_descendant(&self, new: &str) -> Result<()> {
+        if !self.managed || crate::policy::load().collections.trusted_keys.is_empty() {
+            return Ok(());
+        }
+        let head = self.head()?;
+        let follows = || git(Some(&self.dir), &["merge-base", "--is-ancestor", "--end-of-options", &head, new]).is_ok();
+        if follows() {
+            return Ok(());
+        }
+        // A shallow history may end before the current commit: fetch the rest and look again.
+        if git(Some(&self.dir), &["rev-parse", "--is-shallow-repository"])? == "true" {
+            git(Some(&self.dir), &["fetch", "--quiet", "--unshallow"])?;
+            if follows() {
+                return Ok(());
+            }
+        }
+        bail!(
+            "collection '{}': the new commit {} doesn't follow the current one {}; furnish doesn't go back to \
+             earlier commits of collections with trusted keys (to start over from the server's, remove the \
+             collection from the policy and add it again)",
+            self.name,
+            short(new),
+            short(&head)
+        )
     }
 
     /// Set up what checking out `rev` writes: git-lfs (so files it checks out are downloaded,
     /// not left as pointers), and with blobs_on_demand everything except installer files.
     fn prepare_checkout(&self, settings: &crate::settings::CollectionSettings, rev: &str, fresh: bool) -> Result<()> {
-        let attributes = git(Some(&self.dir), &["cat-file", "-p", &format!("{rev}:.gitattributes")]).unwrap_or_default();
+        let attributes = git(Some(&self.dir), &["cat-file", "-p", "--end-of-options", &format!("{rev}:.gitattributes")]).unwrap_or_default();
         if attributes.contains("filter=lfs") {
             git(Some(&self.dir), &["lfs", "version"]).map_err(|_| {
                 anyhow::anyhow!("collection '{}' stores files with Git LFS, but git-lfs is not installed", self.name)
@@ -431,13 +557,13 @@ impl Collection {
         let enabled = git(Some(&self.dir), &["config", "core.sparseCheckout"]).is_ok_and(|v| v == "true");
         if settings.blobs_on_demand && !enabled {
             // Installers already checked out stay: an installed app's status needs its file.
-            let kept = if fresh { String::new() } else { git(Some(&self.dir), &[&["ls-files", "--"][..], &INSTALLERS].concat())? };
+            let kept = if fresh { String::new() } else { git(Some(&self.dir), &[&["ls-files", "-z", "--"][..], &INSTALLERS].concat())? };
             let mut patterns = String::from("/*\n");
             for pattern in INSTALLERS {
                 patterns += &format!("!{pattern}\n");
             }
-            for file in kept.lines() {
-                patterns += &format!("/{file}\n");
+            for file in kept.split('\0').filter(|f| !f.is_empty()) {
+                patterns += &sparse_pattern(file)?;
             }
             fs::create_dir_all(sparse.parent().unwrap_or(&self.dir))?;
             fs::write(&sparse, patterns)?;
@@ -464,14 +590,22 @@ impl Collection {
         let sparse = self.dir.join(".git").join("info").join("sparse-checkout");
         let mut patterns = fs::read_to_string(&sparse).unwrap_or_default();
         for file in files {
-            patterns += &format!("/{}\n", file.replace('\\', "/"));
+            let file = if cfg!(windows) { file.replace('\\', "/") } else { file.clone() };
+            patterns += &sparse_pattern(&file)?;
         }
         fs::write(&sparse, patterns)?;
         git(Some(&self.dir), &["read-tree", "-mu", "HEAD"])?;
-        match files.iter().find(|f| !self.dir.join(f).is_file()) {
-            Some(missing) => bail!("collection '{}' has no file {missing}", self.name),
-            None => Ok(()),
+        for file in files {
+            let path = self.dir.join(file);
+            if !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+                bail!("collection '{}' has no file {file}", self.name);
+            }
+            // What was checked out must be where furnish expects it: no symbolic links on the way.
+            if !same_path(self.file_in_repo(file), self.file_in_repo_later(file)) {
+                bail!("collection '{}': {file} is outside the collection", self.name);
+            }
         }
+        Ok(())
     }
 
     /// For preset collections, when the policy lists trusted keys: refuse a commit that isn't
@@ -481,12 +615,28 @@ impl Collection {
         if !self.managed || keys.is_empty() {
             return Ok(());
         }
-        let signers = self.dir.join(".git").join("furnish-trusted-keys");
+        let refused = || format!("collection '{}': commit {} isn't signed by a key your organization trusts", self.name, short(rev));
+        // git verifies a signature with the program for its kind: an OpenPGP signature would be
+        // checked against the keyring of whoever runs furnish. Only SSH signatures count.
+        let commit = git(Some(&self.dir), &["cat-file", "commit", "--end-of-options", rev]).with_context(refused)?;
+        if !ssh_signed(&commit) {
+            bail!("{} (furnish accepts SSH signatures only)", refused());
+        }
+        // A file of its own: users install per-user apps from the service's copy, which they can't change.
+        let signers = env::temp_dir().join(format!("furnish-trusted-keys-{}", unique()));
         let lines: String = keys.iter().map(|k| format!("* namespaces=\"git\" {}\n", k.trim())).collect();
-        fs::write(&signers, lines)?;
+        fs::OpenOptions::new().write(true).create_new(true).open(&signers)?.write_all(lines.as_bytes())?;
+        let _remove = Defer(|| {
+            let _ = fs::remove_file(&signers);
+        });
         let config = format!("gpg.ssh.allowedSignersFile={}", signers.display());
-        git(Some(&self.dir), &["-c", &config, "verify-commit", rev])
-            .with_context(|| format!("collection '{}': commit {rev} isn't signed by a key your organization trusts", self.name))?;
+        #[rustfmt::skip]
+        let args = [
+            "-c", &config, "-c", "gpg.ssh.program=ssh-keygen", "-c", "gpg.ssh.revocationFile=",
+            "-c", "gpg.program=false", "-c", "gpg.openpgp.program=false", "-c", "gpg.x509.program=false",
+            "verify-commit", "--end-of-options", rev,
+        ];
+        git(Some(&self.dir), &args).with_context(refused)?;
         Ok(())
     }
 
@@ -553,12 +703,13 @@ impl Collection {
 
     /// The id of the file's contents at `rev`, if the file exists there.
     fn blob(&self, rev: &str, relative: &str) -> Option<String> {
-        git(Some(&self.dir), &["rev-parse", "--verify", "--quiet", &format!("{rev}:{}", relative.replace('\\', "/"))]).ok()
+        let spec = format!("{rev}:{}", relative.replace('\\', "/"));
+        git(Some(&self.dir), &["rev-parse", "--verify", "--quiet", "--end-of-options", &spec]).ok()
     }
 
     /// (commit, time, day) of `rev`.
     fn commit_info(&self, rev: &str) -> Result<(String, i64, String)> {
-        let line = git(Some(&self.dir), &["log", "-1", "--format=%H %ct %cs", rev])?;
+        let line = git(Some(&self.dir), &["log", "-1", "--format=%H %ct %cs", "--end-of-options", rev, "--"])?;
         parse_commit_line(&line).with_context(|| format!("unexpected git log output: {line}"))
     }
 
@@ -576,7 +727,8 @@ impl Collection {
             let target = into.join(file);
             fs::create_dir_all(target.parent().unwrap_or(into))?;
             // --filters: what a checkout writes, e.g. the file itself for one in Git LFS.
-            let contents = git_bytes(Some(&self.dir), &["cat-file", "--filters", &format!("{commit}:{}", file.replace('\\', "/"))])?;
+            let spec = format!("{commit}:{}", file.replace('\\', "/"));
+            let contents = git_bytes(Some(&self.dir), &["cat-file", "--filters", "--end-of-options", &spec])?;
             Ok(fs::write(target, contents)?)
         };
         if self.blob(commit, "collection.yaml").is_some() {
@@ -664,19 +816,37 @@ impl Collection {
             // DSC requires it; don't make every app author repeat it.
             doc["$schema"] = DSC_SCHEMA.into();
         }
-        // Installer files are given relative to the collection; resources need absolute paths.
         for resource in doc["resources"].as_array_mut().into_iter().flatten() {
-            if resource["type"] != "Furnish/Installer" {
+            // DSC matches types ignoring case. furnish only finds its own resources, so anything
+            // else couldn't run, and its checks below must see every Furnish/Installer.
+            let kind = resource["type"].as_str().unwrap_or_default();
+            let Some(canonical) = RESOURCE_TYPES.iter().find(|t| t.eq_ignore_ascii_case(kind)) else {
+                let name = resource["name"].as_str().unwrap_or("?");
+                bail!("resource '{name}': type '{kind}' is not a furnish resource ({})", RESOURCE_TYPES.join(", "));
+            };
+            resource["type"] = (*canonical).into();
+            if *canonical != INSTALLER_TYPE {
                 continue;
             }
+            // Windows passes properties as environment variables, whose names ignore case.
+            let keys = resource["properties"].as_object().into_iter().flat_map(|p| p.keys());
+            if let Some(key) = keys.into_iter().find(|k| k.eq_ignore_ascii_case("file") && *k != "file") {
+                bail!("installer property '{key}': did you mean 'file'?");
+            }
+            // Installer files are given relative to the collection; resources need absolute paths.
             if let Some(file) = resource["properties"]["file"].as_str() {
-                // Not checked out yet (blobs_on_demand): installing the app checks it out.
-                let later = || self.file_in_repo_later(file);
-                let resolved = self
-                    .file_in_repo(file)
-                    .or_else(later)
-                    .with_context(|| format!("installer '{file}' is outside the collection"))?;
+                if file.chars().any(char::is_control) {
+                    bail!("installer '{}' has control characters in its name", file.escape_debug());
+                }
+                let outside = || format!("installer '{file}' is outside the collection");
+                let resolved = match fs::symlink_metadata(self.dir.join(file)) {
+                    Ok(_) => self.file_in_repo(file).with_context(outside)?,
+                    // Not checked out yet (blobs_on_demand): installing the app checks it out.
+                    Err(_) => self.file_in_repo_later(file).with_context(outside)?,
+                };
                 resource["properties"]["file"] = resolved.to_string_lossy().into_owned().into();
+            } else if !resource["properties"]["file"].is_null() {
+                bail!("installer file must be a path in the collection");
             }
         }
         let meta = &doc["metadata"]["furnish"];
@@ -701,6 +871,54 @@ impl Collection {
             held: None,
         })
     }
+}
+
+/// The resources furnish ships (see `engine::init`), the only ones DSC finds.
+const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", INSTALLER_TYPE];
+const INSTALLER_TYPE: &str = "Furnish/Installer";
+
+/// Whether two resolved paths are the same (Windows: ignoring case, like its file systems).
+fn same_path(a: Option<PathBuf>, b: Option<PathBuf>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) if cfg!(windows) => a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase(),
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// A sparse-checkout line for exactly this file (gitignore syntax: wildcards and `\\` escaped).
+fn sparse_pattern(file: &str) -> Result<String> {
+    if file.chars().any(char::is_control) {
+        bail!("'{}' has control characters in its name", file.escape_debug());
+    }
+    let mut pattern = String::from("/");
+    for c in file.chars() {
+        if "*?[]\\!# ".contains(c) {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    Ok(pattern + "\n")
+}
+
+/// Whether a commit (`git cat-file commit` output) carries SSH signatures, and only those.
+fn ssh_signed(commit: &str) -> bool {
+    let headers = commit.split("\n\n").next().unwrap_or_default();
+    let signatures: Vec<&str> = headers.lines().filter(|l| l.starts_with("gpgsig")).collect();
+    !signatures.is_empty() && signatures.iter().all(|l| l.split_once(' ').is_some_and(|(_, v)| v == "-----BEGIN SSH SIGNATURE-----"))
+}
+
+/// Runs its closure when dropped.
+struct Defer<F: FnMut()>(F);
+
+impl<F: FnMut()> Drop for Defer<F> {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..10).unwrap_or(commit)
 }
 
 /// Windows canonical paths start with \\?\, which installers like msiexec reject.
@@ -888,11 +1106,24 @@ impl App {
     }
 
     pub fn install_here(&self, values: &serde_json::Map<String, Value>, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        match which {
+        let collection = self.collection_handle();
+        let _lock = collection.lock()?;
+        // The checkout may have changed since furnish verified it: only install a signed one.
+        collection.verify(&collection.head()?)?;
+        let result = match which {
             Which::Shown => self.install_with(values, report),
             Which::Current => self.current()?.install_with(values, report),
-            Which::Previous => self.install_previous_with(values, report),
+            Which::Previous => return self.install_previous_with(values, report),
+        };
+        // Remembered, so the app may go back to an earlier version (see install_previous_with).
+        if let Err(err) = &result
+            && !err.is::<crate::engine::Cancelled>()
+            && let Some(blob) = collection.blob("HEAD", &self.relative_path())
+            && let Err(record) = crate::versions::failed(&self.state_dir(values), &self.key(), &blob)
+        {
+            eprintln!("warning: {}: couldn't record the failure: {record:#}", self.key());
         }
+        result
     }
 
     pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
@@ -935,7 +1166,7 @@ impl App {
     fn missing_installers(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
         let mut files = Vec::new();
         for resource in self.doc["resources"].as_array().into_iter().flatten() {
-            let Some(file) = resource["properties"]["file"].as_str().filter(|_| resource["type"] == "Furnish/Installer") else {
+            let Some(file) = resource["properties"]["file"].as_str().filter(|_| resource["type"] == INSTALLER_TYPE) else {
                 continue;
             };
             let applies = resource["condition"].as_str().is_none_or(|c| crate::options::condition_holds(c, values).unwrap_or(true));
@@ -1005,11 +1236,17 @@ impl App {
     }
 
     /// Install the previous version (see `previous_version`) and hold the app there.
+    /// Only after installing the collection's current version of the app failed here (or while
+    /// it is held at an earlier one because of that).
     fn install_previous_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         let version = self.previous_version()?;
         let collection = self.collection_handle();
         let relative = self.relative_path();
         let state = self.state_dir(values);
+        let current = collection.blob("HEAD", &relative).unwrap_or_default();
+        if !crate::versions::get(&state, &self.key()).has_failed(&current) {
+            bail!("{} goes back to an earlier version only after installing its current version failed", self.id);
+        }
         let dir = version_dir(&state, &self.collection, &version.commit);
         if !dir.join(&relative).exists() {
             let _ = fs::remove_dir_all(&dir);
@@ -1036,6 +1273,7 @@ impl App {
         if self.remote(&values) {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
+        let _lock = self.collection_handle().lock()?;
         crate::engine::run(&self.doc_for(&values), true, report)?;
         crate::versions::forget(&self.state_dir(&values), &self.key())?;
         crate::options::forget(&self.state_dir(&values), &self.key())
@@ -1062,6 +1300,9 @@ impl App {
     }
 
     pub fn reinstall_with(&self, values: &serde_json::Map<String, Value>, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let collection = self.collection_handle();
+        let _lock = collection.lock()?;
+        collection.verify(&collection.head()?)?;
         let old = self.installed_values();
         crate::engine::run(&self.doc_for(&old), true, &mut report)?;
         crate::options::forget(&self.state_dir(&old), &self.key())?;
@@ -1199,7 +1440,10 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     let url = if !network {
         None
     } else if args.first() == Some(&"clone") {
-        args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string())
+        match args.iter().position(|a| *a == "--end-of-options") {
+            Some(end) => args.get(end + 1).map(|a| a.to_string()),
+            None => args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string()),
+        }
     } else {
         dir.and_then(|d| {
             let out = git_command().arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
@@ -1277,5 +1521,74 @@ mod tests {
         for name in ["../evil", "a/b", "..", ".hidden", ""] {
             assert!(add("https://example.com/x.git", name, None).is_err(), "{name} accepted");
         }
+    }
+
+    #[test]
+    fn rejects_collection_names_windows_reserves() {
+        for name in ["CON", "nul", "Aux.apps", "com1", "LPT9", "apps.", "a b"] {
+            assert!(check_name(name).is_err(), "{name} accepted");
+        }
+        for name in ["console", "com10", "apps.v2", "nul-apps", "it_team"] {
+            assert!(check_name(name).is_ok(), "{name} refused");
+        }
+    }
+
+    #[test]
+    fn sparse_patterns_match_only_the_file() {
+        assert_eq!(sparse_pattern("installers/a.deb").unwrap(), "/installers/a.deb\n");
+        assert_eq!(sparse_pattern("i/*.deb").unwrap(), "/i/\\*.deb\n");
+        assert_eq!(sparse_pattern("i/[x]?!#\\ .msi").unwrap(), "/i/\\[x\\]\\?\\!\\#\\\\\\ .msi\n");
+        assert!(sparse_pattern("a\n/*").is_err());
+    }
+
+    #[test]
+    fn only_ssh_signatures_count() {
+        let commit = |sig: &str| format!("tree 1\nauthor a\ncommitter c\n{sig}\nmessage gpgsig -----BEGIN SSH SIGNATURE-----\n");
+        assert!(ssh_signed(&commit("gpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lH\n -----END SSH SIGNATURE-----\n")));
+        assert!(!ssh_signed(&commit("gpgsig -----BEGIN PGP SIGNATURE-----\n iQ\n -----END PGP SIGNATURE-----\n")));
+        assert!(!ssh_signed(&commit("gpgsig -----BEGIN SSH SIGNATURE-----\ngpgsig-sha256 -----BEGIN PGP SIGNATURE-----\n")));
+        assert!(!ssh_signed(&commit(""))); // unsigned; the message doesn't count
+    }
+
+    fn collection_with(files: &[(&str, &str)]) -> (Collection, PathBuf) {
+        let dir = env::temp_dir().join(format!("furnish-catalog-{}", unique()));
+        for (path, contents) in files {
+            fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+            fs::write(dir.join(path), contents).unwrap();
+        }
+        (Collection { name: "c".into(), dir: dir.clone(), managed: false }, dir)
+    }
+
+    #[test]
+    fn resource_types_ignore_case_and_only_furnish_resources_load() {
+        let app = |kind: &str, file: &str| format!("resources:\n  - name: x\n    type: {kind}\n    properties: {{ file: '{file}' }}\n");
+        let (c, dir) = collection_with(&[
+            ("apps/lower.dsc.yaml", &app("furnish/installer", "/etc/passwd")),
+            ("apps/upper.dsc.yaml", &app("FURNISH/INSTALLER", "i/x.deb")),
+            ("apps/other.dsc.yaml", &app("Microsoft.DSC/Include", "x")),
+            ("apps/case.dsc.yaml", "resources:\n  - name: x\n    type: Furnish/Installer\n    properties: { File: 'C:/x.msi' }\n"),
+        ]);
+        assert!(c.load_app(&dir.join("apps/lower.dsc.yaml")).is_err(), "absolute file accepted");
+        let upper = c.load_app(&dir.join("apps/upper.dsc.yaml")).unwrap();
+        assert_eq!(upper.doc["resources"][0]["type"], "Furnish/Installer");
+        assert!(upper.doc["resources"][0]["properties"]["file"].as_str().unwrap().starts_with(&*dir.canonicalize().unwrap().to_string_lossy()));
+        assert!(c.load_app(&dir.join("apps/other.dsc.yaml")).is_err());
+        assert!(c.load_app(&dir.join("apps/case.dsc.yaml")).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installer_symlinks_out_of_the_collection_are_refused() {
+        let yaml = "resources:\n  - name: x\n    type: Furnish/Installer\n    properties: { file: i/x.deb }\n";
+        let (c, dir) = collection_with(&[("apps/a.dsc.yaml", yaml)]);
+        fs::create_dir_all(dir.join("i")).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("i/x.deb")).unwrap();
+        assert!(c.load_app(&dir.join("apps/a.dsc.yaml")).is_err(), "symlink out of the collection accepted");
+        // Dangling: not "missing, checked out later".
+        fs::remove_file(dir.join("i/x.deb")).unwrap();
+        std::os::unix::fs::symlink("/nonexistent/x.deb", dir.join("i/x.deb")).unwrap();
+        assert!(c.load_app(&dir.join("apps/a.dsc.yaml")).is_err(), "dangling symlink accepted");
+        fs::remove_dir_all(dir).unwrap();
     }
 }
