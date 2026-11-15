@@ -57,6 +57,13 @@ static_resources:
                 - remove: x-furnish-user
                 - remove: x-auth-request-email
           # Every route needs a valid sign-in unless it turns this off (furnish.json, 401, 404).
+          # Turned on only for POST /events: reports are at most 1 MiB (413 above). Before the
+          # token check, so Envoy collects the body under this limit from the first byte; placed
+          # after it, a body that arrives in one piece while the check runs would pass unchecked.
+          - name: envoy.filters.http.buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+              max_request_bytes: 1048576
           - name: envoy.filters.http.ext_authz
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
@@ -81,11 +88,6 @@ static_resources:
                   # On denial, pass back only the status and body.
                   allowed_client_headers:
                     patterns: [{exact: content-type, ignore_case: true}]
-          # Turned on only for POST /events: reports are at most 1 MiB (413 above).
-          - name: envoy.filters.http.buffer
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
-              max_request_bytes: 1048576
           # Turned on only for the GitLab routes: if GitLab rejects the deploy token, say so
           # instead of making git ask the user for a password.
           - name: envoy.filters.http.custom_response
