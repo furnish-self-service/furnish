@@ -143,36 +143,42 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     if resources.is_empty() {
         findings.push(error("no resources"));
     }
-    for r in &resources {
-        let name = r["name"].as_str().unwrap_or("?");
-        let kind = r["type"].as_str().unwrap_or_default();
-        // DSC matches resource types ignoring case, so `furnish/installer` is Furnish/Installer.
-        let kind = RESOURCE_TYPES.iter().copied().find(|t| t.eq_ignore_ascii_case(kind)).unwrap_or(kind);
-        // Another DSC resource may be installed where the app runs, just not here.
-        if !RESOURCE_TYPES.contains(&kind) {
-            match crate::engine::available(kind) {
-                Ok(true) => {}
-                Ok(false) => findings.push(warning(format!("{name}: DSC doesn't find the resource {kind} on this computer; the app needs it where it is installed"))),
-                Err(err) => findings.push(error(format!("{name}: {err:#}"))),
+    check_resources(&resources, "", dir, &mut findings);
+    let steps = crate::engine::removal_steps(&app.doc).cloned();
+    match &steps {
+        Some(steps) => {
+            if let Some(removal) = crate::engine::removal_doc(&app.doc_for(&values))
+                && let Err(err) = crate::engine::validate(&removal)
+            {
+                findings.push(error(format!("removal steps: not valid as a DSC document: {err:#}")));
             }
-        }
-        if kind == "Furnish/Package" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
-            findings.push(error(format!("{name}: Furnish/Package needs properties.name")));
-        }
-        if kind == "Furnish/Installer" {
-            match r["properties"]["file"].as_str() {
-                None => findings.push(error(format!("{name}: Furnish/Installer needs properties.file"))),
-                Some(file) => {
-                    let path = PathBuf::from(file);
-                    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-                    if !INSTALLER_TYPES.contains(&extension.as_str()) {
-                        findings.push(error(format!("{name}: {file}: not an installer furnish knows (.deb, .rpm, .pkg, .dmg, .msi, .exe)")));
-                    }
-                    // load_app made the path absolute; it may not be checked out (blobs_on_demand).
-                    if !path.is_file() && !in_repository(dir, &path) {
-                        findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
+            check_resources(steps, "removal step ", dir, &mut findings);
+            for r in steps {
+                if let Some(condition) = r["condition"].as_str() {
+                    for system in SYSTEMS {
+                        if let Err(err) = crate::options::condition_holds(&on_system(condition, system), &values) {
+                            let name = r["name"].as_str().unwrap_or("?");
+                            findings.push(error(format!("removal step {name}: condition {condition}: {err:#}")));
+                            break;
+                        }
                     }
                 }
+            }
+        }
+        // Without removal steps, furnish sets each resource to `_exist: false` to uninstall.
+        // Types DSC doesn't find here aren't judged (see the warning about them above).
+        None => {
+            let cant: Vec<String> = resources
+                .iter()
+                .filter(|r| matches!(crate::engine::removes(r["type"].as_str().unwrap_or_default()), Ok(Some(false))))
+                .map(|r| format!("{} ({})", r["name"].as_str().unwrap_or("?"), r["type"].as_str().unwrap_or_default()))
+                .collect();
+            if !cant.is_empty() {
+                findings.push(warning(format!(
+                    "can't be uninstalled where these resources apply: {}. They can't remove what they set up, so furnish \
+                     doesn't offer Uninstall there. Add removal steps (metadata.furnish.uninstall)",
+                    cant.join(", ")
+                )));
             }
         }
     }
@@ -221,6 +227,44 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     }
 
     Item { name: app.id.clone(), kind: "app", findings, systems }
+}
+
+/// What loading doesn't check about each resource: that DSC finds its type here, and what
+/// furnish's own types need. `label` goes before a resource's name, e.g. "removal step ".
+fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut Vec<Finding>) {
+    for r in resources {
+        let name = format!("{label}{}", r["name"].as_str().unwrap_or("?"));
+        let kind = r["type"].as_str().unwrap_or_default();
+        // DSC matches resource types ignoring case, so `furnish/installer` is Furnish/Installer.
+        let kind = RESOURCE_TYPES.iter().copied().find(|t| t.eq_ignore_ascii_case(kind)).unwrap_or(kind);
+        // Another DSC resource may be installed where the app runs, just not here.
+        if !RESOURCE_TYPES.contains(&kind) {
+            match crate::engine::available(kind) {
+                Ok(true) => {}
+                Ok(false) => findings.push(warning(format!("{name}: DSC doesn't find the resource {kind} on this computer; the app needs it where it is installed"))),
+                Err(err) => findings.push(error(format!("{name}: {err:#}"))),
+            }
+        }
+        if kind == "Furnish/Package" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
+            findings.push(error(format!("{name}: Furnish/Package needs properties.name")));
+        }
+        if kind == "Furnish/Installer" {
+            match r["properties"]["file"].as_str() {
+                None => findings.push(error(format!("{name}: Furnish/Installer needs properties.file"))),
+                Some(file) => {
+                    let path = PathBuf::from(file);
+                    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    if !INSTALLER_TYPES.contains(&extension.as_str()) {
+                        findings.push(error(format!("{name}: {file}: not an installer furnish knows (.deb, .rpm, .pkg, .dmg, .msi, .exe)")));
+                    }
+                    // load_app made the path absolute; it may not be checked out (blobs_on_demand).
+                    if !path.is_file() && !in_repository(dir, &path) {
+                        findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// The condition as it evaluates on another system: `context().os.family` replaced by its name.

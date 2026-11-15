@@ -36,6 +36,8 @@ While an app installs, its button shows the progress and a stop control. The fir
 
 If a step needs administrator rights, your system asks for your password. Cancelling the password dialog cancels the install.
 
+Some apps can't be uninstalled with furnish, for example a setting the collection doesn't say how to remove. Their page shows a note instead of the Uninstall button.
+
 Installs run one at a time. Clicking Install on more apps adds them to a queue, which the Activity page shows; ✕ removes an app from it.
 
 ![The Activity page: one install running, two waiting.](images/activity.webp)

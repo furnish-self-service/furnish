@@ -38,7 +38,7 @@ resources:
       name: GIMP.GIMP.3
 ```
 
-furnish ships two resources, `Furnish/Package` and `Furnish/Installer`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`.
+furnish ships two resources, `Furnish/Package` and `Furnish/Installer`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 ### Furnish/Package
 
@@ -90,13 +90,40 @@ Microsoft's [resource reference](https://learn.microsoft.com/powershell/dsc/refe
 
 furnish also finds resources where DSC does: in the folders on `PATH` and where DSC is installed. A resource the computer doesn't have makes the app show "Needs the DSC resource ...". So install the resource on the computers that need it, for example as a dependency. A resource whose `condition` is false on a computer doesn't need to be there. A folder elsewhere that declares a type furnish includes, such as an installed DSC of another version, isn't searched for resources: furnish's version is the one apps get.
 
-furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Uninstalling sets `_exist: false`, so an app whose resources don't support `_exist` can't be uninstalled with furnish. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell.
+furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell.
 
 For `--dry-run` and the steps preview, furnish's own resources show their exact commands. Other resources show their type and properties.
 
 No other resource may declare `Furnish/Package` or `Furnish/Installer`. furnish refuses to run when DSC finds one, whatever its version.
 
 Your organization can limit which resource types apps may use (see [For admins](admins.md#the-policy)).
+
+### Removal steps
+
+Many resources can't remove what they set up. `File/Content` writes a file but doesn't delete it. `RunCommandOnSet` and the PowerShell script resources run their command or script every time. For such an app, list the steps that remove it under `metadata.furnish.uninstall`. They are DSC resources in the same format as `resources`, with conditions and `dependsOn`:
+
+```yaml
+metadata:
+  furnish:
+    uninstall:
+      - name: delete the profile
+        type: Microsoft.DSC.Transitional/RunCommandOnSet
+        condition: "[equals(context().os.family, 'Linux')]"
+        properties:
+          executable: rm
+          arguments: [-f, /etc/acme/profile.conf]
+resources:
+  - name: profile
+    type: Microsoft.Filesystem.File/Content
+    condition: "[equals(context().os.family, 'Linux')]"
+    properties:
+      path: /etc/acme/profile.conf
+      content: "server = vpn.acme.example"
+```
+
+To uninstall the app, furnish runs the removal steps in their order instead of the resources. The steps preview and `furnish uninstall --dry-run` show them. Afterwards furnish tests the app's resources as usual. If they still find the app, the uninstall fails with a message that says so. The organization's list of allowed resource types and the checks on installer files apply to removal steps too.
+
+Without removal steps, furnish looks at each resource that applies on the computer. A resource can remove if its manifest has a `delete` operation or its `set` handles `_exist` (`handlesExist: true`). `Furnish/Package`, `Furnish/Installer` and `Microsoft.Windows/Registry` can. If one of the app's resources can't, furnish doesn't offer to uninstall the app: the app's page shows a note instead of the Uninstall button, and `furnish uninstall` refuses. `furnish check` warns about such apps.
 
 ### Dependencies
 
@@ -169,7 +196,7 @@ Recommended apps appear first on Discover. The expression can use the collection
 
 ## Check a collection
 
-`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. A resource type that DSC doesn't find on the computer running the check is a warning, since it may be installed where the app runs. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
+`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. A resource type that DSC doesn't find on the computer running the check is a warning, since it may be installed where the app runs. An app without removal steps whose resources can't remove what they set up is a warning too. Only types DSC finds on the computer running the check are judged. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
 
 ```
 $ furnish check

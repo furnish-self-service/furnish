@@ -170,7 +170,8 @@ export const getBranding = () => invoke<import('./brand').Branding>('get_brandin
 export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
-export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null }>('app_status', { key });
+/** `removable`: furnish can uninstall it here (no resource that can't remove, or removal steps). */
+export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null; removable: boolean }>('app_status', { key });
 export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
 export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });
 export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('reinstall', { key, trigger: trigger ?? null });

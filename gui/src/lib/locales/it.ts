@@ -120,6 +120,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'app.status.error': 'Impossibile verificare lo stato',
   'app.status.checking': 'Verifica dello stato…',
   'app.confirmUninstall': 'Disinstallare {app} da questo computer?',
+  'app.cantUninstall': 'furnish non può disinstallare questa app: la raccolta {collection} non indica come rimuoverla.',
   'app.autoUpdate': 'Aggiorna automaticamente',
   'app.autoUpdateLocked': 'Aggiorna automaticamente (impostato dalla tua organizzazione)',
   'app.held': "Questa è la versione di {app} del {date}: l'installazione della versione attuale della raccolta non è riuscita. {app} resta a questa versione finché la raccolta non la cambia.",
@@ -160,6 +161,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'kit.hint': "Le installazioni vengono eseguite una dopo l'altra. Puoi seguirle in Attività.",
   'kit.chooseUninstall': 'Scegli le app da disinstallare',
   'kit.alsoIn': 'Anche in {kits}, che è installato',
+  'kit.cantUninstall': 'furnish non può disinstallare questa app',
   'kit.uninstall': { one: 'Disinstalla {n} app', other: 'Disinstalla {n} app' },
   'kit.nothingSelected': 'Nessuna selezione',
 

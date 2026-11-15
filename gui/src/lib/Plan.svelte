@@ -18,7 +18,8 @@
   let picked = $state<Mode | null>(null);
   // While an operation runs, always follow it; otherwise show what the user picked, or the
   // preview of the app's primary action.
-  const mode: Mode = $derived(running ? 'run' : (picked ?? (status === 'installed' ? 'uninstall' : 'install')));
+  const unremovable = $derived(!!store.unremovable[app.key]);
+  const mode: Mode = $derived(running ? 'run' : (picked ?? (status === 'installed' && !unremovable ? 'uninstall' : 'install')));
   const installLabel = $derived(status === 'needsUpdate' ? t('common.update') : t('common.install'));
 
   // Once a run starts, keep showing it after it ends, so its results stay visible.
@@ -35,6 +36,7 @@
     if (mode === 'run' || running) return;
     const uninstall = mode === 'uninstall';
     status; // dependency: refresh after install/uninstall
+    if (uninstall && unremovable) return; // nothing to preview, see the note below
     loading = true;
     error = null;
     api
@@ -54,7 +56,11 @@
 
   /** Rows to show: preview steps, or the run's steps with their progress. */
   const rows: RunStep[] = $derived(
-    mode === 'run' ? (run?.steps ?? []) : (preview ?? []).map((step) => ({ step, state: 'pending' as const })),
+    mode === 'run'
+      ? (run?.steps ?? [])
+      : mode === 'uninstall' && unremovable
+        ? []
+        : (preview ?? []).map((step) => ({ step, state: 'pending' as const })),
   );
 
 
@@ -134,6 +140,8 @@
         <span class="muted">· {t('plan.started', { time: clock(run.startedAt) })}</span>
       {/if}
     </p>
+  {:else if mode === 'uninstall' && unremovable}
+    <p class="muted">{t('app.cantUninstall', { collection: app.collection })}</p>
   {:else if error}
     <p class="error">{t('plan.previewError', { error })}</p>
   {:else if !preview}

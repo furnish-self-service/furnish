@@ -824,6 +824,13 @@ impl Collection {
             doc["$schema"] = DSC_SCHEMA.into();
         }
         self.check_resources(&mut doc["resources"], allowed)?;
+        // Removal steps are resources too: the same policy and installer checks.
+        if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {
+            if !steps.as_array().is_some_and(|s| !s.is_empty() && s.iter().all(Value::is_object)) {
+                bail!("metadata.furnish.uninstall: a list of DSC resources, like resources");
+            }
+            self.check_resources(steps, allowed).context("metadata.furnish.uninstall")?;
+        }
         let meta = &doc["metadata"]["furnish"];
         let file_name = path.file_name().unwrap_or_default().to_string_lossy();
         Ok(App {
@@ -1097,7 +1104,43 @@ impl App {
     }
 
     pub fn plan(&self, uninstall: bool) -> Result<Vec<crate::engine::Step>> {
-        crate::engine::plan(&self.doc_for(&self.installed_values()), uninstall)
+        let doc = self.doc_for(&self.installed_values());
+        if uninstall {
+            self.require_removable(&doc)?;
+        }
+        crate::engine::plan(&doc, uninstall)
+    }
+
+    /// Why furnish can't uninstall the app here (see `engine::unremovable`); `None` if it can.
+    pub fn unremovable(&self) -> Result<Option<String>> {
+        crate::engine::unremovable(&self.doc_for(&self.installed_values()))
+    }
+
+    fn require_removable(&self, doc: &Value) -> Result<()> {
+        if let Some(what) = crate::engine::unremovable(doc)? {
+            bail!(
+                "furnish can't uninstall {}: {what} can't remove what it set up, and the app has no removal steps \
+                 (metadata.furnish.uninstall). Ask whoever maintains the collection '{}' to add them",
+                self.id,
+                self.collection
+            );
+        }
+        Ok(())
+    }
+
+    /// Uninstall here with these values: the removal steps, or the resources set to `_exist: false`.
+    /// Then the app must no longer test as installed.
+    fn remove_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let doc = self.doc_for(values);
+        self.require_removable(&doc)?;
+        self.check_out_installers(values)?;
+        crate::engine::run(&doc, true, report)?;
+        use crate::engine::Status;
+        if matches!(crate::engine::status(&doc)?, Status::Installed | Status::NeedsUpdate) {
+            let what = if crate::engine::removal_steps(&doc).is_some() { "its removal steps ran" } else { "uninstalling finished" };
+            bail!("{} is still installed: {what}, but its resources still find it on this computer", self.id);
+        }
+        Ok(())
     }
 
     /// Install or update, with the values it was installed with (else the current ones), and
@@ -1186,11 +1229,12 @@ impl App {
         self.path.strip_prefix(&self.collection_dir).unwrap_or(&self.path).to_string_lossy().into_owned()
     }
 
-    /// Installer files (relative to the collection) the resources that apply with these values
-    /// use and that aren't on disk.
+    /// Installer files (relative to the collection) the resources and removal steps that apply
+    /// with these values use and that aren't on disk.
     fn missing_installers(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
         let mut files = Vec::new();
-        for resource in self.doc["resources"].as_array().into_iter().flatten() {
+        let steps = crate::engine::removal_steps(&self.doc).into_iter().flatten();
+        for resource in self.doc["resources"].as_array().into_iter().flatten().chain(steps) {
             let Some(file) = resource["properties"]["file"].as_str().filter(|_| resource["type"] == INSTALLER_TYPE) else {
                 continue;
             };
@@ -1299,7 +1343,7 @@ impl App {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
         let _lock = self.collection_handle().lock()?;
-        crate::engine::run(&self.doc_for(&values), true, report)?;
+        self.remove_with(&values, report)?;
         crate::versions::forget(&self.state_dir(&values), &self.key())?;
         crate::options::forget(&self.state_dir(&values), &self.key())
     }
@@ -1329,7 +1373,7 @@ impl App {
         let _lock = collection.lock()?;
         collection.verify(&collection.head()?)?;
         let old = self.installed_values();
-        crate::engine::run(&self.doc_for(&old), true, &mut report)?;
+        self.remove_with(&old, &mut report)?;
         crate::options::forget(&self.state_dir(&old), &self.key())?;
         self.install_with(values, report)
     }
@@ -1627,6 +1671,31 @@ mod tests {
         let narrowed = Some(&["Microsoft.DSC/Group".to_string()][..]);
         let err = c.load_app_allowing(&group, narrowed).err().unwrap().to_string();
         assert!(err.contains("RunCommandOnSet' isn't allowed"), "nested type not narrowed: {err}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn removal_steps_get_the_checks_resources_get() {
+        let app = |steps: &str| format!(
+            "metadata:\n  furnish:\n    uninstall: {steps}\nresources:\n  - name: f\n    type: Microsoft.Filesystem.File/Content\n    properties: {{ path: /tmp/x }}\n"
+        );
+        let (c, dir) = collection_with(&[
+            ("apps/ok.dsc.yaml", &app("[{ name: rm, type: Microsoft.DSC.Transitional/RunCommandOnSet, properties: { executable: rm } }, { name: u, type: furnish/installer, properties: { file: i/x.deb, _exist: false } }]")),
+            ("apps/outside.dsc.yaml", &app("[{ name: u, type: Furnish/Installer, properties: { file: /etc/passwd } }]")),
+            ("apps/empty.dsc.yaml", &app("[]")),
+            ("apps/text.dsc.yaml", &app("rm -f /tmp/x")),
+        ]);
+        let ok = c.load_app(&dir.join("apps/ok.dsc.yaml")).unwrap();
+        let steps = &ok.doc["metadata"]["furnish"]["uninstall"];
+        assert_eq!(steps[1]["type"], "Furnish/Installer");
+        assert!(steps[1]["properties"]["file"].as_str().unwrap().starts_with(&*dir.canonicalize().unwrap().to_string_lossy()));
+        let err = |file: &str| format!("{:#}", c.load_app(&dir.join(file)).err().unwrap());
+        assert!(err("apps/outside.dsc.yaml").contains("outside the collection"));
+        assert!(err("apps/empty.dsc.yaml").contains("a list of DSC resources"));
+        assert!(err("apps/text.dsc.yaml").contains("a list of DSC resources"));
+        let narrowed = Some(&["Microsoft.Filesystem.File/Content".to_string()][..]);
+        let err = format!("{:#}", c.load_app_allowing(&dir.join("apps/ok.dsc.yaml"), narrowed).err().unwrap());
+        assert!(err.contains("RunCommandOnSet' isn't allowed"), "{err}");
         fs::remove_dir_all(dir).unwrap();
     }
 

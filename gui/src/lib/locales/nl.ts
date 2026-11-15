@@ -120,6 +120,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'app.status.error': 'Kan de status niet controleren',
   'app.status.checking': 'Status controleren…',
   'app.confirmUninstall': '{app} van deze computer verwijderen?',
+  'app.cantUninstall': 'furnish kan deze app niet verwijderen: de collectie {collection} geeft niet aan hoe dat moet.',
   'app.autoUpdate': 'Automatisch bijwerken',
   'app.autoUpdateLocked': 'Automatisch bijwerken (ingesteld door uw organisatie)',
   'app.held': 'Dit is de versie van {app} van {date}: het installeren van de huidige versie uit de collectie is mislukt. {app} blijft op deze versie tot de collectie die wijzigt.',
@@ -160,6 +161,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'kit.hint': 'Installaties lopen na elkaar. U volgt ze onder Activiteit.',
   'kit.chooseUninstall': 'Kies apps om te verwijderen',
   'kit.alsoIn': 'Ook in {kits}, dat is geïnstalleerd',
+  'kit.cantUninstall': 'furnish kan deze app niet verwijderen',
   'kit.uninstall': { one: '{n} app verwijderen', other: '{n} apps verwijderen' },
   'kit.nothingSelected': 'Niets geselecteerd',
 

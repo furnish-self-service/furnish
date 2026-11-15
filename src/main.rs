@@ -995,6 +995,13 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
     // Reverse kit order, so later items (which may build on earlier ones) go first.
     for item in kit.items.iter().rev().filter(|i| selected.contains(&i.app)) {
         let app = apps.iter().find(|a| a.id == item.app).expect("kit items are validated");
+        // Chosen by furnish, not by name: skip what furnish can't uninstall (named ones fail below).
+        if only.is_empty()
+            && let Some(what) = app.unremovable()?
+        {
+            println!("– {} (furnish can't uninstall it: {what} can't remove what it set up)", app.id);
+            continue;
+        }
         if dry_run { print_plan(app, true)?; } else { uninstall_app(app)?; }
     }
     Ok(())

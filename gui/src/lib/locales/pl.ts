@@ -120,6 +120,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'app.status.error': 'Nie można sprawdzić stanu',
   'app.status.checking': 'Sprawdzanie stanu…',
   'app.confirmUninstall': 'Odinstalować aplikację {app} z tego komputera?',
+  'app.cantUninstall': 'furnish nie może odinstalować tej aplikacji: kolekcja {collection} nie podaje, jak ją usunąć.',
   'app.autoUpdate': 'Aktualizuj automatycznie',
   'app.autoUpdateLocked': 'Aktualizuj automatycznie (ustawione przez Twoją organizację)',
   'app.held': 'To jest wersja aplikacji {app} z {date}: instalacja bieżącej wersji z kolekcji nie powiodła się. Aplikacja {app} pozostanie w tej wersji, dopóki kolekcja jej nie zmieni.',
@@ -165,6 +166,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'kit.hint': 'Instalacje są wykonywane po kolei. Postęp widać w sekcji Aktywność.',
   'kit.chooseUninstall': 'Wybierz aplikacje do odinstalowania',
   'kit.alsoIn': 'Należy też do zainstalowanego zestawu {kits}',
+  'kit.cantUninstall': 'furnish nie może odinstalować tej aplikacji',
   'kit.uninstall': {
     one: 'Odinstaluj {n} aplikację',
     few: 'Odinstaluj {n} aplikacje',

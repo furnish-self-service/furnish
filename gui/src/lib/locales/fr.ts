@@ -120,6 +120,7 @@ export const fr: Record<keyof typeof en, Entry> = {
   'app.status.error': 'Impossible de vérifier l’état',
   'app.status.checking': 'Vérification de l’état…',
   'app.confirmUninstall': 'Désinstaller {app} de cet ordinateur ?',
+  'app.cantUninstall': 'furnish ne peut pas désinstaller cette app : la collection {collection} n’indique pas comment la supprimer.',
   'app.autoUpdate': 'Mettre à jour automatiquement',
   'app.autoUpdateLocked': 'Mettre à jour automatiquement (défini par votre organisation)',
   'app.held': 'Il s’agit de la version de {app} du {date} : l’installation de la version actuelle de la collection a échoué. {app} reste à cette version jusqu’à ce que la collection la modifie.',
@@ -160,6 +161,7 @@ export const fr: Record<keyof typeof en, Entry> = {
   'kit.hint': 'Les installations s’exécutent l’une après l’autre ; suivez-les dans Activité.',
   'kit.chooseUninstall': 'Choisir les apps à désinstaller',
   'kit.alsoIn': 'Fait aussi partie de {kits}, qui est installé',
+  'kit.cantUninstall': 'furnish ne peut pas désinstaller cette app',
   'kit.uninstall': { one: 'Désinstaller {n} app', other: 'Désinstaller {n} apps' },
   'kit.nothingSelected': 'Aucune sélection',
 

@@ -58,6 +58,8 @@ export const store = $state({
   status: {} as Record<string, Status | 'error'>,
   /** For blocked apps: what they need, e.g. "Homebrew (brew)". */
   reasons: {} as Record<string, string>,
+  /** Apps furnish can't uninstall: a resource can't remove what it set up and the app has no removal steps. */
+  unremovable: {} as Record<string, true>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
@@ -181,6 +183,8 @@ export async function checkStatus(key: string) {
     store.status[key] = check.status;
     if (check.reason) store.reasons[key] = check.reason;
     else delete store.reasons[key];
+    if (check.removable) delete store.unremovable[key];
+    else store.unremovable[key] = true;
   } catch {
     store.status[key] = 'error';
   }
@@ -533,6 +537,7 @@ export function installCurrent(app: AppInfo) {
 
 /** Uninstall an app: right away, or after what is already running and queued. */
 export function uninstall(app: AppInfo) {
+  if (store.unremovable[app.key]) return; // furnish would refuse; the app page says why
   enqueue(app.key, 'uninstall');
 }
 
@@ -582,9 +587,10 @@ export function otherKitsWith(appKey: string, except: KitInfo) {
   return store.kits.filter((k) => k.key !== except.key && kitInstalled(k) && k.items.some((i) => i.key === appKey));
 }
 
-/** Installed items to preselect for uninstalling a kit: those no other installed kit needs. */
+/** Installed items to preselect for uninstalling a kit: those no other installed kit needs, and
+ *  that furnish can uninstall. */
 export function defaultUninstall(kit: KitInfo) {
-  return kit.items.map((i) => i.key).filter((key) => isInstalled(key) && !otherKitsWith(key, kit).length);
+  return kit.items.map((i) => i.key).filter((key) => isInstalled(key) && !store.unremovable[key] && !otherKitsWith(key, kit).length);
 }
 
 /** Queue installing the chosen items, in kit order. */

@@ -15,7 +15,10 @@ use dsc_lib::{
     configure::{Configurator, config_doc::ExecutionKind, config_result::ResourceTestResult},
     discovery::{Discovery, command_discovery::ImportedManifest, discovery_trait::{DiscoveryFilter, DiscoveryKind}},
     dscerror::DscError,
-    dscresources::invoke_result::{SetResult, TestResult},
+    dscresources::{
+        dscresource::Capability,
+        invoke_result::{SetResult, TestResult},
+    },
     progress::ProgressFormat,
     types::{FullyQualifiedTypeName, TypeNameFilter},
 };
@@ -190,6 +193,8 @@ pub struct Check {
     pub status: Status,
     /// For `Blocked`: what is missing, e.g. "Homebrew (brew)".
     pub reason: Option<String>,
+    /// furnish can uninstall it here (see [`unremovable`]).
+    pub removable: bool,
 }
 
 /// Resources report a missing tool as a plain stderr line "furnish: needs <what>" (exit 11).
@@ -427,19 +432,96 @@ pub fn status(doc: &Value) -> Result<Status> {
 pub fn check(doc: &Value) -> Result<Check> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
+    let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { status: Status::Unavailable, reason: None });
+        return Ok(Check { status: Status::Unavailable, reason: None, removable });
     };
     let result = match configurator(&doc).and_then(|mut c| Ok(c.invoke_test()?)) {
         Ok(result) => result,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { status: Status::Blocked, reason: Some(reason) });
+            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable });
         }
     };
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
-    Ok(Check { status: classify(&states), reason: None })
+    Ok(Check { status: classify(&states), reason: None, removable })
+}
+
+/// The app's own removal steps (`metadata.furnish.uninstall`): DSC resources in the format of
+/// `resources`, which uninstalling runs instead of setting the app's resources to `_exist: false`.
+/// DSC ignores what is in `metadata`, so the document stays a valid DSC document.
+pub fn removal_steps(doc: &Value) -> Option<&Vec<Value>> {
+    doc["metadata"]["furnish"]["uninstall"].as_array()
+}
+
+/// The document that uninstalls with the app's removal steps: the app's document, with them as
+/// its resources. `None` if the app has none.
+pub fn removal_doc(doc: &Value) -> Option<Value> {
+    let steps = removal_steps(doc)?;
+    let mut removal = doc.clone();
+    removal["resources"] = Value::Array(steps.clone());
+    Some(removal)
+}
+
+/// Why furnish can't uninstall the app here, e.g. "the resource 'profile'
+/// (Microsoft.DSC.Transitional/RunCommandOnSet)"; `None` if it can. It can't if the app has no
+/// removal steps and a resource that applies on this computer can't remove what it set up (see
+/// [`can_remove`]). A type DSC doesn't find here doesn't count: uninstalling then fails before any
+/// step runs (every step is previewed first), so nothing is changed and the error names the type.
+pub fn unremovable(doc: &Value) -> Result<Option<String>> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    unremovable_unlocked(doc)
+}
+
+fn unremovable_unlocked(doc: &Value) -> Result<Option<String>> {
+    if removal_steps(doc).is_some() {
+        return Ok(None);
+    }
+    let Some(doc) = applicable(doc) else { return Ok(None) };
+    let resources = doc["resources"].as_array().cloned().unwrap_or_default();
+    let found = capabilities(resources.iter().filter_map(|r| r["type"].as_str()))?;
+    Ok(first_unremovable(&resources, |kind| found.iter().find(|(k, _)| k == kind).map(|(_, c)| c.as_slice())))
+}
+
+/// The first resource whose type `capabilities` knows and that can't remove.
+fn first_unremovable<'a>(resources: &[Value], capabilities: impl Fn(&str) -> Option<&'a [Capability]>) -> Option<String> {
+    resources.iter().find_map(|r| {
+        let kind = r["type"].as_str().unwrap_or_default();
+        let name = r["name"].as_str().unwrap_or("?");
+        (!can_remove(capabilities(kind)?)).then(|| format!("the resource '{name}' ({kind})"))
+    })
+}
+
+/// Whether a resource with these capabilities removes what it set up when furnish sets it to
+/// `_exist: false`. DSC then calls its `set` if the manifest says `set.handlesExist: true`, else
+/// its `delete` if it has one, else fails ("does not support `delete` and does not handle `_exist`
+/// as false"). Resources that have neither may still list `_exist` in their schema (File/Content).
+fn can_remove(capabilities: &[Capability]) -> bool {
+    capabilities.contains(&Capability::SetHandlesExist) || capabilities.contains(&Capability::Delete)
+}
+
+/// Whether DSC's resource of this type on this computer can remove (see [`can_remove`]); `None`
+/// if DSC doesn't find it here.
+pub fn removes(kind: &str) -> Result<Option<bool>> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(capabilities([kind])?.first().map(|(_, c)| can_remove(c)))
+}
+
+/// The capabilities of the resource types DSC finds here, from their manifests: (type as given, capabilities).
+fn capabilities<'a>(kinds: impl IntoIterator<Item = &'a str>) -> Result<Vec<(String, Vec<Capability>)>> {
+    ensure_own_resources()?;
+    let parsed: Vec<(&str, FullyQualifiedTypeName)> = kinds.into_iter().filter_map(|k| Some((k, k.parse().ok()?))).collect();
+    let filters: Vec<DiscoveryFilter> = parsed.iter().map(|(_, t)| DiscoveryFilter::new(t, None, None)).collect();
+    let mut discovery = Discovery::new();
+    discovery.find_resources(&filters, ProgressFormat::None)?;
+    let mut found = Vec::new();
+    for ((kind, _), filter) in parsed.iter().zip(&filters) {
+        if let Some(resource) = discovery.find_resource(filter)? {
+            found.push((kind.to_string(), resource.capabilities.clone()));
+        }
+    }
+    Ok(found)
 }
 
 /// A resource type DSC doesn't find on this computer, e.g. "the DSC resource Microsoft.Windows/Registry".
@@ -500,8 +582,8 @@ pub fn apply(doc: &Value) -> Result<()> {
     run(doc, false, |_| {})
 }
 
-/// Uninstall an app: every resource set to `_exist: false`, in reverse install order.
-// ponytail: assumes every resource of an app supports `_exist`; per-app uninstall docs if not.
+/// Uninstall an app: its removal steps if it has them (see [`removal_steps`]), else every
+/// resource set to `_exist: false`, in reverse install order.
 pub fn remove(doc: &Value) -> Result<()> {
     run(doc, true, |_| {})
 }
@@ -595,7 +677,11 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let outcome = match &result {
             Ok(r) => match r.results.first().map(|r| &r.result) {
                 Some(SetResult::Resource(r)) => Outcome {
-                    action: action(&r.before_state, &r.after_state),
+                    // A step without preview ran its command, even if its state reads the same.
+                    action: match action(&r.before_state, &r.after_state) {
+                        Action::Nothing if step.details.first().is_some_and(|d| d == NO_PREVIEW) => Action::Change,
+                        a => a,
+                    },
                     changes: changes(&r.before_state, &r.after_state),
                     error: None,
                     cancelled: false,
@@ -622,12 +708,17 @@ fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
-/// One single-resource document per step, in run order. Uninstall flips `_exist` and runs the
-/// install order backwards, so dependents go before what they depend on.
+/// One single-resource document per step, in run order. Uninstall runs the app's removal steps
+/// as they are, in their order, if it has them. Else it flips `_exist` and runs the install order
+/// backwards, so dependents go before what they depend on.
 fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
+    let (doc, flip) = match uninstall.then(|| removal_doc(doc)).flatten() {
+        Some(removal) => (removal, false),
+        None => (doc.clone(), uninstall),
+    };
     let resources = doc["resources"].as_array().cloned().unwrap_or_default();
     let mut order = invocation_order(&resources)?;
-    if uninstall {
+    if flip {
         order.reverse();
     }
     Ok(order
@@ -638,7 +729,7 @@ fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
                 // Ordering is handled here; DSC would reject references to absent resources.
                 r.remove("dependsOn");
             }
-            if uninstall {
+            if flip {
                 resource["properties"]["_exist"] = Value::Bool(false);
             }
             let mut single = doc.clone();
@@ -688,6 +779,9 @@ fn dependency(entry: &Value) -> Option<String> {
     Some(name.trim().trim_matches('\'').to_string())
 }
 
+/// The first detail of a step DSC can't preview (see `preview`).
+const NO_PREVIEW: &str = "No preview: this step runs its command or script";
+
 /// What-if for one single-resource document.
 fn preview(doc: &Value) -> Result<Step> {
     let resource = &doc["resources"][0];
@@ -702,7 +796,18 @@ fn preview(doc: &Value) -> Result<Step> {
     }
     let mut configurator = configurator(doc)?;
     configurator.context.execution_type = ExecutionKind::WhatIf;
-    let result = configurator.invoke_set(false)?;
+    let result = match configurator.invoke_set(false) {
+        Ok(result) => result,
+        // Resources that decide themselves whether to change something (`set.implementsPretest`)
+        // and have no what-if, e.g. RunCommandOnSet and the PowerShell script resources: DSC
+        // can't preview them. They run their command or script when the step runs.
+        Err(DscError::NotImplemented(_)) => {
+            let mut details = vec![NO_PREVIEW.to_string()];
+            details.extend(property_lines(&resource["properties"]));
+            return Ok(Step { name, kind, action: Action::Change, details, changes: vec![] });
+        }
+        Err(e) => return Err(e.into()),
+    };
     // A resource skipped by its condition produces no result at all.
     let Some(r) = result.results.first() else {
         return Ok(skipped());
@@ -854,6 +959,69 @@ mod tests {
             {"name": "b", "dependsOn": ["[resourceId('T/X', 'a')]"]},
         ]});
         assert!(step_docs(&cycle, false).is_err());
+    }
+
+    #[test]
+    fn removal_steps_run_as_they_are_instead_of_the_reversed_resources() {
+        let other = if cfg!(windows) { "Linux" } else { "Windows" };
+        let doc = json!({
+            "parameters": {"server": {"type": "string", "defaultValue": "vpn.acme.example"}},
+            "metadata": {"furnish": {"uninstall": [
+                {"name": "reload", "type": "T/Cmd", "dependsOn": ["[resourceId('T/Cmd', 'delete')]"], "properties": {"executable": "nmcli"}},
+                {"name": "delete", "type": "T/Cmd", "properties": {"executable": "rm"}},
+                {"name": "elsewhere", "type": "T/Cmd", "condition": format!("[equals(context().os.family, '{other}')]"), "properties": {}},
+            ]}},
+            "resources": [{"name": "profile", "type": "T/File", "properties": {"path": "/etc/x"}}],
+        });
+        let docs = step_docs(&doc, true).unwrap();
+        let names: Vec<_> = docs.iter().map(|d| d["resources"][0]["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["delete", "reload", "elsewhere"]);
+        assert!(docs.iter().all(|d| d["resources"][0]["properties"].get("_exist").is_none()), "removal steps run as a normal set");
+        assert!(docs[1]["resources"][0].get("dependsOn").is_none());
+        // The app's parameters stay, so the steps' expressions and conditions see the options.
+        assert_eq!(docs[0]["parameters"], doc["parameters"]);
+        assert!(!applies_here(&docs[2]["resources"][0], &docs[2]), "conditions apply to removal steps");
+        // Installing still runs the resources.
+        let install = step_docs(&doc, false).unwrap();
+        assert_eq!((install.len(), &install[0]["resources"][0]["name"]), (1, &json!("profile")));
+        assert_eq!(removal_doc(&doc).unwrap()["resources"].as_array().unwrap().len(), 3);
+        assert!(removal_doc(&json!({"resources": []})).is_none());
+    }
+
+    #[test]
+    fn an_app_is_removable_if_its_resources_handle_exist_or_delete() {
+        use Capability::*;
+        let caps = |kind: &str| -> Option<&'static [Capability]> {
+            match kind {
+                "Furnish/Package" => Some(&[Get, Set, SetHandlesExist, Test]),
+                "Microsoft.Windows/Registry" => Some(&[Get, Set, Delete]),
+                "Microsoft.Filesystem.File/Content" => Some(&[Get, Set, Test]),
+                "Microsoft.DSC.Transitional/RunCommandOnSet" => Some(&[Get, Set]),
+                _ => None, // not on this computer
+            }
+        };
+        let resources = |list: &[(&str, &str)]| -> Vec<Value> {
+            list.iter().map(|(name, kind)| json!({"name": name, "type": kind})).collect()
+        };
+        assert!(can_remove(&[Get, Set, SetHandlesExist]));
+        assert!(can_remove(&[Get, Delete]));
+        assert!(!can_remove(&[Get, Set, Test]));
+        assert_eq!(first_unremovable(&resources(&[("app", "Furnish/Package"), ("key", "Microsoft.Windows/Registry")]), caps), None);
+        assert_eq!(
+            first_unremovable(&resources(&[("app", "Furnish/Package"), ("profile", "Microsoft.Filesystem.File/Content")]), caps).as_deref(),
+            Some("the resource 'profile' (Microsoft.Filesystem.File/Content)")
+        );
+        // A type DSC doesn't find here: uninstalling fails before any step, so it doesn't count.
+        assert_eq!(first_unremovable(&resources(&[("vpn", "Acme/Vpn")]), caps), None);
+        // With removal steps, the resources don't matter (and nothing is looked up).
+        let doc = json!({"metadata": {"furnish": {"uninstall": [{"name": "rm", "type": "Microsoft.DSC.Transitional/RunCommandOnSet"}]}},
+                         "resources": [{"name": "profile", "type": "Microsoft.Filesystem.File/Content"}]});
+        assert_eq!(unremovable_unlocked(&doc).unwrap(), None);
+        // Resources that don't apply on this computer don't count either.
+        let other = if cfg!(windows) { "Linux" } else { "Windows" };
+        let doc = json!({"resources": [{"name": "s", "type": "Microsoft.DSC.Transitional/WindowsPowerShellScript",
+                                        "condition": format!("[equals(context().os.family, '{other}')]")}]});
+        assert_eq!(unremovable_unlocked(&doc).unwrap(), None);
     }
 
     #[test]

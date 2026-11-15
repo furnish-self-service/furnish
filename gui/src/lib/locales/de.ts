@@ -118,6 +118,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'app.status.error': 'Der Status konnte nicht geprüft werden',
   'app.status.checking': 'Status wird geprüft…',
   'app.confirmUninstall': '{app} von diesem Computer deinstallieren?',
+  'app.cantUninstall': 'furnish kann diese App nicht deinstallieren: Die Sammlung {collection} gibt nicht an, wie sie entfernt wird.',
   'app.autoUpdate': 'Automatisch aktualisieren',
   'app.autoUpdateLocked': 'Automatisch aktualisieren (von Ihrer Organisation festgelegt)',
   'app.held': 'Dies ist die Version von {app} vom {date}: Die Installation der aktuellen Version der Sammlung ist fehlgeschlagen. {app} bleibt auf dieser Version, bis die Sammlung sie ändert.',
@@ -158,6 +159,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'kit.hint': 'Installationen laufen nacheinander. Unter Aktivität sehen Sie den Fortschritt.',
   'kit.chooseUninstall': 'Apps zum Deinstallieren auswählen',
   'kit.alsoIn': 'Auch in {kits} enthalten, das installiert ist',
+  'kit.cantUninstall': 'furnish kann diese App nicht deinstallieren',
   'kit.uninstall': { one: '{n} App deinstallieren', other: '{n} Apps deinstallieren' },
   'kit.nothingSelected': 'Nichts ausgewählt',
 

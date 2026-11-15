@@ -117,6 +117,7 @@ export const en = {
   'app.status.error': "Couldn't check the status",
   'app.status.checking': 'Checking status…',
   'app.confirmUninstall': 'Uninstall {app} from this computer?',
+  'app.cantUninstall': "furnish can't uninstall this app: the collection {collection} doesn't say how to remove it.",
   'app.autoUpdate': 'Update automatically',
   'app.autoUpdateLocked': 'Update automatically (set by your organization)',
   'app.held': "This is the version of {app} from {date}: installing the collection's current version failed. {app} stays at this version until the collection changes it.",
@@ -157,6 +158,7 @@ export const en = {
   'kit.hint': 'Installs run one after another; follow them under Activity.',
   'kit.chooseUninstall': 'Choose apps to uninstall',
   'kit.alsoIn': 'Also in {kits}, which is installed',
+  'kit.cantUninstall': "furnish can't uninstall this app",
   'kit.uninstall': { one: 'Uninstall {n} app', other: 'Uninstall {n} apps' },
   'kit.nothingSelected': 'Nothing selected',
 

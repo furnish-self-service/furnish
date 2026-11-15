@@ -117,6 +117,41 @@ resources:
       path: $tmp/dsc-file.txt
       content: furnish
 YAML
+    # The same with removal steps, run instead of setting File/Content to _exist: false.
+    cat > "$tmp/repo/apps/dsc-removable.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: A file that removal steps delete
+    categories: [Test]
+    uninstall:
+      - name: delete the file
+        type: Microsoft.DSC.Transitional/RunCommandOnSet
+        condition: "[not(equals(context().os.family, 'Windows'))]"
+        properties: { executable: rm, arguments: [-f, "$tmp/dsc-removable.txt"] }
+      - name: delete the file on Windows
+        type: Microsoft.DSC.Transitional/RunCommandOnSet
+        condition: "[equals(context().os.family, 'Windows')]"
+        properties: { executable: powershell, arguments: [-NoProfile, -Command, "Remove-Item -LiteralPath '$tmp/dsc-removable.txt'"] }
+resources:
+  - name: settings file
+    type: Microsoft.Filesystem.File/Content
+    properties: { path: "$tmp/dsc-removable.txt", content: furnish }
+YAML
+    # Removal steps that leave the file: furnish must not report it uninstalled.
+    cat > "$tmp/repo/apps/dsc-stays.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: Removal steps that remove nothing
+    categories: [Test]
+    uninstall:
+      - name: do nothing
+        type: Microsoft.DSC.Transitional/RunCommandOnSet
+        properties: { executable: git, arguments: [--version] }
+resources:
+  - name: settings file
+    type: Microsoft.Filesystem.File/Content
+    properties: { path: "$tmp/dsc-stays.txt", content: furnish }
+YAML
 fi
 
 git -C "$tmp/repo" init -q
@@ -259,8 +294,25 @@ if $dsc; then
     expect "$(step install dsc-file)" "Installed dsc-file"
     [ "$(cat "$tmp/dsc-file.txt")" = furnish ] || { echo "FAIL: File/Content didn't write the file" >&2; exit 1; }
     expect "$(step list)" "✓  dsc-file "
-    # DSC 3.3's File/Content can't delete (its manifest has no delete and doesn't handle _exist).
-    expect "$("$furnish" uninstall dsc-file 2>&1 || true)" "does not support \`delete\`"
+    # DSC 3.3's File/Content can't delete (its manifest has no delete and doesn't handle _exist),
+    # and the app has no removal steps: furnish refuses before changing anything.
+    expect "$("$furnish" uninstall dsc-file --dry-run 2>&1 || true)" "furnish can't uninstall dsc-file"
+    expect "$("$furnish" uninstall dsc-file 2>&1 || true)" "furnish can't uninstall dsc-file"
+    [ -f "$tmp/dsc-file.txt" ] || { echo "FAIL: a refused uninstall changed something" >&2; exit 1; }
+    expect "$(step list)" "✓  dsc-file "
+
+    expect "$(step install dsc-removable)" "Installed dsc-removable"
+    expect "$(step list)" "✓  dsc-removable "
+    plan=$(step uninstall dsc-removable --dry-run)
+    expect "$plan" "delete the file"
+    grep -q "settings file" <<<"$plan" && { echo "FAIL: the preview shows the resources, not the removal steps" >&2; exit 1; }
+    expect "$(step uninstall dsc-removable)" "Uninstalled dsc-removable"
+    [ ! -e "$tmp/dsc-removable.txt" ] || { echo "FAIL: the removal steps left the file" >&2; exit 1; }
+    expect "$(step list)" "·  dsc-removable "
+
+    expect "$(step install dsc-stays)" "Installed dsc-stays"
+    expect "$("$furnish" uninstall dsc-stays 2>&1 || true)" "dsc-stays is still installed"
+    expect "$(step list)" "✓  dsc-stays "
 fi
 [ "$n" -gt 0 ] || echo "(no installer format can be built on this platform: installer test skipped)" >&2
 step collection remove fixture >/dev/null

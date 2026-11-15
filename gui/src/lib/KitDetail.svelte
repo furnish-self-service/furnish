@@ -35,7 +35,9 @@
   );
   const installedItems = $derived(kit.items.filter((i) => isInstalled(i.key)));
   const defaults = $derived(defaultUninstall(kit));
-  const toRemove = $derived(installedItems.filter((i) => removePicked[i.key] ?? defaults.includes(i.key)).map((i) => i.key));
+  const toRemove = $derived(
+    installedItems.filter((i) => !store.unremovable[i.key] && (removePicked[i.key] ?? defaults.includes(i.key))).map((i) => i.key),
+  );
 
   function badge(item: KitInfo['items'][number]) {
     const key = item.key;
@@ -119,13 +121,15 @@
               <input
                 type="checkbox"
                 checked={toRemove.includes(item.key)}
-                disabled={isPending(item.key)}
+                disabled={isPending(item.key) || !!store.unremovable[item.key]}
                 onchange={(e) => (removePicked[item.key] = e.currentTarget.checked)}
               />
               <AppIcon {app} size={36} />
               <span class="text">
                 <span class="name">{app.id}</span>
-                {#if others.length}
+                {#if store.unremovable[item.key]}
+                  <span class="desc">{t('kit.cantUninstall')}</span>
+                {:else if others.length}
                   <span class="desc">{t('kit.alsoIn', { kits: others.map((k) => k.id).join(', ') })}</span>
                 {:else}
                   <span class="desc">{app.description}</span>

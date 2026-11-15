@@ -64,7 +64,12 @@
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
-        <button class="secondary large" onclick={() => (confirming = true)}>{t('common.uninstall')}</button>
+        {#if store.unremovable[app.key]}
+          <!-- A resource can't remove what it set up, and the collection gives no removal steps. -->
+          <p class="unremovable">{t('app.cantUninstall', { collection: app.collection })}</p>
+        {:else}
+          <button class="secondary large" onclick={() => (confirming = true)}>{t('common.uninstall')}</button>
+        {/if}
       {:else}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
@@ -224,6 +229,13 @@
   .confirm {
     margin: 0;
     font-weight: 600;
+  }
+  .unremovable {
+    max-width: 16rem;
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    text-align: right;
   }
   .row {
     display: flex;
