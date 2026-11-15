@@ -1,0 +1,32 @@
+# furnish's reports: the proxy forwards POST /events (JSON lines, at most 1 MiB) here, after
+# checking the user's sign-in, and names the user in the X-Furnish-User header. The event schema
+# is documented in the admins' docs ("Reports"). Change the sink to send them where you keep logs.
+
+sources:
+  furnish:
+    type: http_server
+    address: 0.0.0.0:8080
+    path: /events
+    decoding: { codec: json }
+    framing: { method: newline_delimited }
+    headers: [X-Furnish-User]
+    # Headers go into metadata, so a field in the report can't stand in for one.
+    log_namespace: true
+
+transforms:
+  reports:
+    type: remap
+    inputs: [furnish]
+    source: |
+      # The user the proxy verified; a "user" in the report itself is replaced. Null when the proxy
+      # doesn't send it (see "Reports without user names" in the README).
+      .user = %http_server.headers."X-Furnish-User"
+      del(."X-Furnish-User")
+
+sinks:
+  # One JSON line per report on Vector's output (docker compose logs vector). Replace or add sinks,
+  # for example file, loki, elasticsearch, splunk_hec or http: https://vector.dev/docs/reference/configuration/sinks/
+  stdout:
+    type: console
+    inputs: [reports]
+    encoding: { codec: json }

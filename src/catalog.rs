@@ -383,6 +383,19 @@ impl Collection {
 
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
+        let result = self.update_unreported();
+        crate::reports::record(crate::reports::Event {
+            event: "collectionUpdate",
+            outcome: if result.is_ok() { "succeeded" } else { "failed" },
+            collection: Some(self.name.clone()),
+            version: result.as_ref().ok().map(|(_, new)| new.clone()),
+            error: result.as_ref().err().map(|e| format!("{e:#}")),
+            ..Default::default()
+        });
+        result
+    }
+
+    fn update_unreported(&self) -> Result<(String, String)> {
         if self.managed && crate::service::enabled() {
             return crate::service::update(&self.name);
         }
@@ -847,12 +860,22 @@ impl App {
     /// Install or update, with the values it was installed with (else the current ones), and
     /// remember them.
     pub fn install(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        self.install_values(self.installed_values(), Which::Shown, report)
+        self.install_version(Which::Shown, report)
     }
 
-    /// Install the current version, or the previous one (see `previous_version`).
+    /// Install the current version, or the previous one (see `previous_version`). Reported.
     pub fn install_version(&self, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        self.install_values(self.installed_values(), which, report)
+        let event = match which {
+            Which::Previous => "fallback",
+            _ if self.recorded_values().is_some() => "update",
+            _ => "install",
+        };
+        let version = match which {
+            Which::Previous => self.previous_version().ok().map(|v| v.commit),
+            Which::Shown if self.held.is_some() => self.held.clone(),
+            _ => self.collection_handle().head().ok(),
+        };
+        crate::reports::operation(event, self, version, || self.install_values(self.installed_values(), which, report))
     }
 
     /// Install with these values: through the furnish service, or here.
@@ -1006,6 +1029,10 @@ impl App {
 
     /// Uninstall with the values it was installed with.
     pub fn uninstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        crate::reports::operation("uninstall", self, None, || self.uninstall_unreported(report))
+    }
+
+    fn uninstall_unreported(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         let values = self.installed_values();
         if self.remote(&values) {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
@@ -1017,14 +1044,19 @@ impl App {
 
     /// Apply changed options: uninstall with the old values, install with the current ones.
     /// Moving between a system-wide and a per-user install takes both the service and this process.
-    pub fn reinstall(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+    pub fn reinstall(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let version = self.collection_handle().head().ok();
+        crate::reports::operation("reinstall", self, version, || self.reinstall_unreported(report))
+    }
+
+    fn reinstall_unreported(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.require_answers()?;
         let (old, new) = (self.installed_values(), self.current_values());
         if self.remote(&old) && self.remote(&new) {
             return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new }, report);
         }
         if self.remote(&old) || self.remote(&new) {
-            self.uninstall(&mut report)?;
+            self.uninstall_unreported(&mut report)?;
             return self.install_values(new, Which::Shown, report);
         }
         self.reinstall_with(&new, report)

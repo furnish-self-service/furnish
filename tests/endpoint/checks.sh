@@ -3,7 +3,7 @@
 set -u
 E=https://furnish.test
 ISS=http://mock-oidc:8080
-CA=/caddy-data/caddy/pki/authorities/local/root.crt
+CA=/certs/ca.crt
 OUT=/tmp/out                    # every response (headers + body) lands here for the leak check
 REDIRECT=http://127.0.0.1:47123/callback
 mkdir -p $OUT /tmp/w
@@ -217,6 +217,23 @@ if grep -rqF -e "$DEPLOY_TOKEN" -e "$ACME_GITLAB_AUTH" $OUT; then bad "deploy to
 else ok "deploy token in no response (headers, bodies, git traces)"; fi
 if grep -rqiE 'fake-gitlab|www-authenticate: basic|set-cookie' $OUT/*.head $OUT/*.curl; then bad "upstream auth challenge or cookie leaked"
 else ok "no upstream WWW-Authenticate or Set-Cookie in responses"; fi
+
+# --- 8. reports (POST /events) -----------------------------------------------------------------
+EV='{"event":"install","outcome":"failed","app":"acme/x","check":"events"}'
+req "report without a token" "401 403" -X POST -H 'Content-Type: application/x-ndjson' --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "report with a bad token" "401 403" -X POST -H "Authorization: Bearer $WRONG_AUD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "report as JWT in a Basic password" 401 -X POST -u "x:$GOOD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "reports, signed in" "200 204" -X POST -H "$AUTH" -H 'Content-Type: application/x-ndjson' --data-binary "$EV
+$EV" $E/events
+req "report naming another user in a header" "200 204" -X POST -H "$AUTH" -H 'X-Furnish-User: mallory@myorg.tld' \
+    -H 'X-Auth-Request-Email: mallory@myorg.tld' --data-binary "$EV" $E/events
+req "report naming another user in its fields" "200 204" -X POST -H "$AUTH" \
+    --data-binary '{"event":"install","check":"events","user":"mallory@myorg.tld","X-Furnish-User":"mallory@myorg.tld"}' $E/events
+head -c 1200000 /dev/zero | tr '\0' 'x' > /tmp/big
+req "report over 1 MiB" 413 -X POST -H "$AUTH" --data-binary @/tmp/big $E/events
+req "GET /events" "404 405" -H "$AUTH" $E/events
+req "POST /events/x" 404 -X POST -H "$AUTH" --data-binary "$EV" $E/events/x
+req "POST /events?x=1" 404 -X POST -H "$AUTH" --data-binary "$EV" "$E/events?x=1"
 
 echo "$n HTTP requests checked"
 exit $failed

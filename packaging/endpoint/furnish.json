@@ -5,5 +5,6 @@
   "token": "id_token",
   "collections": [
     {"name": "acme", "url": "https://furnish.myorg.tld/git/acme.git"}
-  ]
+  ],
+  "events": "https://furnish.myorg.tld/events"
 }

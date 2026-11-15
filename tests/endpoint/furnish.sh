@@ -3,7 +3,7 @@
 # address, sign in through the browser (here: a script posting the fake provider's login form),
 # get its collection over git with the token, keep updating it; signed out, it asks to sign in.
 set -u
-CA=/caddy-data/caddy/pki/authorities/local/root.crt
+CA=/certs/ca.crt
 failed=0
 ok()  { echo "ok   furnish: $*"; }
 bad() { echo "FAIL furnish: $*"; failed=1; }
@@ -33,6 +33,14 @@ out=$(furnish collection update acme 2>&1) && bad "updated while signed out"
 echo "$out" | grep -q "sign in to Acme first: furnish login furnish.test" && ok "signed out, it says how to sign in" || bad "unexpected: $out"
 out=$(furnish login furnish.test 2>&1) && echo "$out" | grep -q "Signed in to Acme" && ok "furnish login signs in again" || bad "login: $out"
 furnish collection update acme >/dev/null 2>&1 && ok "updates again after signing in" || bad "update after login failed"
+
+# Reports: queued, sent with the sign-in when the command ends (run.sh checks what Vector got).
+furnish settings --reporting all >/dev/null
+furnish collection update acme >/dev/null 2>&1
+out=$(furnish reports 2>&1)
+echo "$out" | grep -q "Sent to: Acme" && ok "furnish reports names where reports go" || bad "reports: $out"
+echo "$out" | grep -q "Waiting: 0" && ok "the report was sent" || bad "reports still waiting: $out"
+furnish settings --reporting off >/dev/null
 
 out=$(furnish collection add https://furnish.test/git/acme.git --name direct 2>&1)
 echo "$out" | grep -q "Added 'direct'" && ok "a collection URL at the endpoint uses the sign-in too" || bad "direct URL: $out"
