@@ -100,7 +100,7 @@ use_brew() {
     # it can't write its caches and locks there. Its folders tell what is installed: opt/<name>
     # links to Cellar/<formula>/<version> (also for a formula's other names), Caskroom/<cask>/
     # holds a folder per version.
-    if [ -z "${brew_user:-}" ] && prefix=$(brew --prefix 2>/dev/null) && [ ! -w "$prefix" ]; then
+    if [ -z "${brew_user:-}" ] && prefix=$(brew --prefix 2>/dev/null) && [ -d "$prefix/Cellar" ] && [ ! -w "$prefix" ]; then
         installed_version() {
             v=$(readlink "$prefix/opt/$name" 2>/dev/null) && { echo "${v##*/}"; return; }
             ls -1 "$prefix/Caskroom/$name" 2>/dev/null | grep -v '^\.' | tail -n 1
