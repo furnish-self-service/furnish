@@ -61,6 +61,8 @@ Darwin)
     sudo test -f "$ovpn" || fail "no $ovpn"
     [ -d "$client" ] || fail "no $client"
     sudo ls -lR "/Library/Application Support/Tunnelblick/Shared"
+    status=/Library/Application\ Support/Acme\ VPN/acme.ovpn  # what furnish reads for the status
+    ls -l "$status"
     ;;
 Linux)
     ovpn=/etc/openvpn/acme-vpn.ovpn
@@ -80,7 +82,8 @@ list=$(step list)
 expect "$list" "·  acme-vpn "
 expect "$list" "✓  openvpn-client "
 case "$(uname -s)" in
-Darwin) sudo test ! -e "${ovpn%/Contents/*}" || fail "the configuration is still there" ;;
+Darwin) sudo test ! -e "${ovpn%/Contents/*}" || fail "the configuration is still there"
+    [ ! -e "$status" ] || fail "$status is still there" ;;
 *) [ ! -e "$ovpn" ] || fail "$ovpn is still there" ;;
 esac
 [ -e "$client" ] || fail "uninstalling acme-vpn removed $client"
