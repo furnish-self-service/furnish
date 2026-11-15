@@ -70,7 +70,7 @@ labels=$(curl -s "$loki/loki/api/v1/labels" | jq -r '.data | sort | join(" ")')
 # The dashboard's own queries: expr <panel title> [refId], with the time range and $stale set.
 expr() {
     jq -r --arg t "$1" --arg r "${2:-A}" '.panels[] | select(.title == $t) | .targets[] | select(.refId == $r) | .expr' "$dashboard" \
-        | sed -e 's/\$__range/10m/g' -e 's/\$__auto/10m/g' -e "s/\\\$stale/${stale:-7d}/g"
+        | sed -e 's/ offset -\$__auto//' -e 's/\$__range/10m/g' -e 's/\$__auto/10m/g' -e "s/\\\$stale/${stale:-7d}/g"
 }
 # check <description> <expected> <panel title> [refId]
 check() {
@@ -105,17 +105,41 @@ wait_for 30 listed && ok "Grafana lists the dashboard \"furnish reports\"" || ba
 health=$(gf "$grafana/api/datasources/uid/furnish-loki/health" | jq -r .status)
 [ "$health" = OK ] && ok "Grafana's Loki data source works" || bad "Loki data source health: $(gf "$grafana/api/datasources/uid/furnish-loki/health")"
 
+# Each panel's queries as the browser sends them for the default range (30 days, about 1500
+# pixels wide: 30-minute steps). Points of range queries must fall inside the range, or Grafana
+# shows "Data outside time range" (Loki aligns points to the step, which can lie after "to").
 stale=$(( $(date +%s) - batch2_at + 2 ))s
+to=$(( $(date +%s) * 1000 )); from=$(( to - 30 * 86400000 ))
 queries=$(jq -c --arg stale "$stale" '.panels[] | .title as $t | .targets[] | {title: $t, query: (.expr |= gsub("\\$stale"; $stale))}' "$dashboard")
 while read -r q; do
     title=$(echo "$q" | jq -r '"\(.title) (\(.query.refId))"')
-    result=$(echo "$q" | jq -c '{from: "now-15m", to: "now", queries: [.query]}' | gf -d @- "$grafana/api/ds/query" \
-        | jq -c '.results[] | {status, error, rows: ([.frames[]?.data.values[0] // [] | length] | add // 0)}')
-    echo "$result" | jq -e '.status == 200 and .error == null and .rows > 0' >/dev/null \
-        && ok "panel $title: $(echo "$result" | jq .rows) rows" || bad "panel $title: $result"
+    response=$(echo "$q" | jq -c --arg from "$from" --arg to "$to" \
+        '{from: $from, to: $to, queries: [.query + {intervalMs: 1800000, maxDataPoints: 1500}]}' | gf -d @- "$grafana/api/ds/query")
+    result=$(echo "$response" | jq -c --argjson from "$from" --argjson to "$to" '.results[] | {status, error,
+        rows: ([.frames[]?.data.values[0] // [] | length] | add // 0),
+        outside: [.frames[]? | select(.schema.fields[0].type == "time") | .data.values[0][] | select(. < $from or . > $to)] | length}')
+    echo "$result" | jq -e '.status == 200 and .error == null and .rows > 0 and .outside == 0' >/dev/null \
+        && ok "panel $title: $(echo "$result" | jq .rows) rows in the time range" || bad "panel $title: $result"
+    case $title in
+    "furnish versions in use (A)")
+        got=$(echo "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.furnish)=\(.data.values[1][0])"] | sort | join(" ")')
+        [ "$got" = "0.10.0=3 0.9.0=2" ] && ok "panel $title: one series per version: $got" || bad "panel $title: expected 0.10.0=3 0.9.0=2, got $got" ;;
+    esac
 done <<EOF
 $queries
 EOF
+
+# How the panels show results. The time series must ask for a range; the versions bar gauge must
+# show one bar per row, as Grafana's browser turns an instant query into one table (Time, labels,
+# "Value #<refId>"); tables must rename those value columns.
+jq -e '.panels[] | select(.type == "timeseries") | .targets[] | .queryType == "range" and .range == true and .instant == false' "$dashboard" >/dev/null \
+    && ok "the time series panel runs range queries" || bad "the time series panel doesn't run a range query"
+jq -e '.panels[] | select(.title == "furnish versions in use") | .options.reduceOptions.values == true' "$dashboard" >/dev/null \
+    && ok "the versions panel shows one bar per version" || bad "the versions panel reduces all versions to one value"
+unnamed=$(jq -r '.panels[] | select(.type == "table") | .title as $t
+    | ([.transformations[]? | select(.id == "organize") | .options.renameByName | keys[]]) as $renamed
+    | .targets[] | "Value #\(.refId)" | select(. as $v | $renamed | index($v) | not) | "\($t): \(.)"' "$dashboard")
+[ -z "$unnamed" ] && ok "every table names its value columns" || bad "table columns without a name: $unnamed"
 
 if [ $failed -ne 0 ]; then
     echo "--- container logs ---"

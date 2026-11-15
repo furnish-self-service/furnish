@@ -5,7 +5,7 @@
     "furnish"
   ],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -61,7 +61,7 @@
     {
       "type": "timeseries",
       "title": "Failed operations by app",
-      "description": "Failed installs, updates, uninstalls, reinstalls and fallbacks per app and time interval.",
+      "description": "Failed installs, updates, uninstalls, reinstalls and fallbacks per app. Each bar counts the failures from its time to the next bar.",
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -103,7 +103,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "sum by (app) (count_over_time({job=\"furnish\", outcome=\"failed\"} | json app | app != \"\" [$__auto]))",
+          "expr": "sum by (app) (count_over_time({job=\"furnish\", outcome=\"failed\"} | json app | app != \"\" [$__auto] offset -$__auto))",
           "queryType": "range",
           "editorMode": "code",
           "range": true,
@@ -303,12 +303,14 @@
             "renameByName": {
               "app": "App",
               "version": "Installed commit",
-              "Value": "Devices"
+              "Value": "Devices",
+              "Value #A": "Devices"
             },
             "indexByName": {
               "app": 0,
               "version": 1,
-              "Value": 2
+              "Value": 2,
+              "Value #A": 2
             }
           }
         }
@@ -348,8 +350,8 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
-          "values": false
+          "fields": "/^Value/",
+          "values": true
         }
       },
       "targets": [
@@ -434,13 +436,15 @@
               "device": "Device",
               "user": "User",
               "host": "Host",
-              "Value": "Last inventory"
+              "Value": "Last inventory",
+              "Value #A": "Last inventory"
             },
             "indexByName": {
               "device": 0,
               "user": 1,
               "host": 2,
-              "Value": 3
+              "Value": 3,
+              "Value #A": 3
             }
           }
         }
