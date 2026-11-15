@@ -68,19 +68,52 @@ use_zypper() {
     upgrade_desc="zypper --non-interactive update $name"
 }
 use_brew() {
-    have brew || return 1
+    # As root (the furnish service on macOS): brew runs as the account that owns Homebrew, if
+    # that is safe; see furnish-homebrew.sh. Never brew as root, and not from PATH.
+    . "$(dirname "$0")/furnish-homebrew.sh"
+    if [ "$(id -u)" = 0 ]; then
+        [ "$(uname -s)" = Darwin ] || return 1
+        rc=0
+        brew_owner || rc=$?
+        [ "$rc" = 1 ] && return 1
+        if [ "$rc" != 0 ]; then
+            # A sudo rule from `furnish service install --homebrew-sudo` would now let whoever
+            # can change Homebrew become root: remove it.
+            rm -f /etc/sudoers.d/furnish-homebrew
+            missing "Homebrew that only administrators can change ($brew_problem; see \"macOS: the service and Homebrew\" in furnish's admin guide)"
+        fi
+        cd / # the owner may not be allowed into the service's working folder
+    else
+        # Also where it is installed when PATH lacks it (apps started from the Finder, and users
+        # whose Homebrew the service manages): status checks only read.
+        if ! have brew; then
+            for d in /opt/homebrew/bin /usr/local/bin; do [ -x "$d/brew" ] && PATH="$d:$PATH" && break; done
+            have brew || return 1
+        fi
+    fi
     via=Homebrew admin=false # Homebrew refuses to run as root
     # A cask (an app such as tunnelblick) is listed only with --cask when it is named.
     installed_version() {
-        { brew list --versions "$name" || brew list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
+        { run_brew command list --versions "$name" || run_brew command list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
     }
-    do_install() { run_step brew install "$name"; }
-    do_remove() { run_step brew uninstall "$name"; }
+    # Someone else's Homebrew (a user whose apps the service installs): brew fails for them, as
+    # it can't write its caches and locks there. Its folders tell what is installed: opt/<name>
+    # links to Cellar/<formula>/<version> (also for a formula's other names), Caskroom/<cask>/
+    # holds a folder per version.
+    if [ -z "${brew_user:-}" ] && prefix=$(brew --prefix 2>/dev/null) && [ -d "$prefix/Cellar" ] && [ ! -w "$prefix" ]; then
+        installed_version() {
+            v=$(readlink "$prefix/opt/$name" 2>/dev/null) && { echo "${v##*/}"; return; }
+            ls -1 "$prefix/Caskroom/$name" 2>/dev/null | grep -v '^\.' | tail -n 1
+        }
+    fi
+    do_install() { run_brew run_step install "$name"; }
+    do_remove() { run_brew run_step uninstall "$name"; }
     install_desc="brew install $name" remove_desc="brew uninstall $name"
+    run_as=${brew_user:-}
     # "name (1.0) < 1.1"; no auto-update of Homebrew itself during a status check.
     # brew outdated exits non-zero exactly when something is outdated.
-    newer_version() { line=$(HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --verbose "$name" 2>/dev/null || true); [ -n "$line" ] && echo "${line##* }"; }
-    do_upgrade() { run_step brew upgrade "$name"; }
+    newer_version() { line=$(HOMEBREW_NO_AUTO_UPDATE=1 run_brew command outdated --verbose "$name" 2>/dev/null || true); [ -n "$line" ] && echo "${line##* }"; }
+    do_upgrade() { run_brew run_step upgrade "$name"; }
     upgrade_desc="brew upgrade $name"
 }
 use_nix() {

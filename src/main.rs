@@ -177,7 +177,12 @@ fn print_collection_settings(s: &furnish::settings::CollectionSettings, locked: 
 #[derive(Subcommand)]
 enum ServiceAction {
     /// Register and start the service with the OS's service manager (as administrator)
-    Install,
+    Install {
+        /// macOS: let the account that owns Homebrew, an administrator, run sudo without a
+        /// password, so the service can install casks that run installer packages
+        #[arg(long)]
+        homebrew_sudo: bool,
+    },
     /// Stop and unregister the service (as administrator)
     Uninstall,
 }
@@ -275,8 +280,8 @@ fn run(command: Command) -> Result<()> {
     }
     match command {
         Command::Service { action: None } => furnish::service::serve(),
-        Command::Service { action: Some(ServiceAction::Install) } => {
-            furnish::service::install()?;
+        Command::Service { action: Some(ServiceAction::Install { homebrew_sudo }) } => {
+            furnish::service::install(homebrew_sudo)?;
             println!("✓ The furnish service is running. Enable it for users with the `service` section of the admin policy.");
             Ok(())
         }
