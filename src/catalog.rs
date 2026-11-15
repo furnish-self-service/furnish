@@ -1,8 +1,9 @@
 //! App collections: git repositories with one DSC configuration document per app in `apps/`.
 
 use std::{
+    collections::BTreeMap,
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 
@@ -100,6 +101,30 @@ pub struct App {
     /// From a collection the admin policy presets.
     pub managed: bool,
     pub doc: Value,
+    /// Held at this earlier version (a commit), because the collection's current one failed;
+    /// `doc` is that version's (see `versions`).
+    pub held: Option<String>,
+}
+
+/// Which version of an app to install.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Which {
+    /// The version furnish shows: the collection's, or the one the app is held at.
+    #[default]
+    Shown,
+    /// The collection's version, also for a held app.
+    Current,
+    /// The earlier version to fall back to (see `App::previous_version`).
+    Previous,
+}
+
+/// An earlier version of an app.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Version {
+    pub commit: String,
+    /// The day of the commit, e.g. 2026-11-02.
+    pub date: String,
 }
 
 /// Data directory; `FURNISH_DATA_DIR` overrides the OS default.
@@ -285,18 +310,39 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
         bail!("a collection named '{name}' already exists");
     }
     fs::create_dir_all(collections_dir())?;
-    git(None, &["clone", "--quiet", "--no-checkout", url, &dir.to_string_lossy()])?;
-    let collection = Collection { name: name.to_string(), dir, managed };
-    let checkout = || -> Result<()> {
+    let settings = crate::settings::for_collection(name).settings;
+    let depth = format!("--depth={}", settings.checkout_depth);
+    let mut args = vec!["clone", "--quiet", "--no-checkout"];
+    // A path on this computer is copied as it is, so there is nothing to download on demand; and
+    // a filter would make git serve it like a remote (git-upload-pack), as whoever clones.
+    if settings.blobs_on_demand && !Path::new(url).exists() {
+        args.push("--filter=blob:none");
+    }
+    if settings.checkout_depth > 0 {
+        args.push(&depth);
+    }
+    // Commits that left the history (see checkout_depth) are deleted at the next cleanup.
+    args.extend(["--config=gc.reflogExpireUnreachable=now", "--config=gc.pruneExpire=now"]);
+    // Set up in .partial/ and moved into place when complete: furnish may stop half way (the
+    // service when it is replaced, say), and a copy without its checkout mustn't look finished.
+    let staging = collections_dir().join(".partial").join(name);
+    remove_repository(&staging);
+    fs::create_dir_all(collections_dir().join(".partial"))?;
+    let target = staging.to_string_lossy().into_owned();
+    args.extend([url, &target]);
+    let collection = Collection { name: name.to_string(), dir: staging.clone(), managed };
+    let set_up = || -> Result<()> {
+        git(None, &args)?;
         collection.verify("HEAD")?;
+        collection.prepare_checkout(&settings, "HEAD", true)?;
         git(Some(&collection.dir), &["reset", "--quiet", "--hard"])?;
-        collection.fetch_lfs_files()
+        Ok(fs::rename(&staging, &dir)?)
     };
-    if let Err(err) = checkout() {
-        let _ = fs::remove_dir_all(&collection.dir); // no half-usable collection
+    if let Err(err) = set_up() {
+        remove_repository(&staging);
         return Err(err);
     }
-    Ok(collection)
+    Ok(Collection { dir, ..collection })
 }
 
 pub fn remove(name: &str) -> Result<()> {
@@ -341,11 +387,78 @@ impl Collection {
             return crate::service::update(&self.name);
         }
         let old = self.revision()?;
-        git(Some(&self.dir), &["fetch", "--quiet"])?;
+        let settings = crate::settings::for_collection(&self.name).settings;
+        let depth = format!("--depth={}", settings.checkout_depth);
+        let mut fetch = vec!["fetch", "--quiet"];
+        if settings.checkout_depth > 0 {
+            fetch.push(&depth);
+        } else if git(Some(&self.dir), &["rev-parse", "--is-shallow-repository"])? == "true" {
+            fetch.push("--unshallow");
+        }
+        git(Some(&self.dir), &fetch)?;
         self.verify("@{upstream}")?;
-        git(Some(&self.dir), &["merge", "--quiet", "--ff-only", "@{upstream}"])?;
-        self.fetch_lfs_files()?;
+        self.prepare_checkout(&settings, "@{upstream}", false)?;
+        // ponytail: reset, not merge: in a shallow history git may not see that the new commit
+        // follows the old one. Collections are furnish's copies, nobody commits to them.
+        git(Some(&self.dir), &["reset", "--quiet", "--hard", "@{upstream}"])?;
         Ok((old, self.revision()?))
+    }
+
+    /// Set up what checking out `rev` writes: git-lfs (so files it checks out are downloaded,
+    /// not left as pointers), and with blobs_on_demand everything except installer files.
+    fn prepare_checkout(&self, settings: &crate::settings::CollectionSettings, rev: &str, fresh: bool) -> Result<()> {
+        let attributes = git(Some(&self.dir), &["cat-file", "-p", &format!("{rev}:.gitattributes")]).unwrap_or_default();
+        if attributes.contains("filter=lfs") {
+            git(Some(&self.dir), &["lfs", "version"]).map_err(|_| {
+                anyhow::anyhow!("collection '{}' stores files with Git LFS, but git-lfs is not installed", self.name)
+            })?;
+            git(Some(&self.dir), &["lfs", "install", "--local"])?;
+        }
+        let sparse = self.dir.join(".git").join("info").join("sparse-checkout");
+        let enabled = git(Some(&self.dir), &["config", "core.sparseCheckout"]).is_ok_and(|v| v == "true");
+        if settings.blobs_on_demand && !enabled {
+            // Installers already checked out stay: an installed app's status needs its file.
+            let kept = if fresh { String::new() } else { git(Some(&self.dir), &[&["ls-files", "--"][..], &INSTALLERS].concat())? };
+            let mut patterns = String::from("/*\n");
+            for pattern in INSTALLERS {
+                patterns += &format!("!{pattern}\n");
+            }
+            for file in kept.lines() {
+                patterns += &format!("/{file}\n");
+            }
+            fs::create_dir_all(sparse.parent().unwrap_or(&self.dir))?;
+            fs::write(&sparse, patterns)?;
+            for (key, value) in [
+                ("core.sparseCheckout", "true"),
+                ("core.sparseCheckoutCone", "false"),
+                // Existing full copies: from now on, fetches leave out file contents too.
+                ("remote.origin.promisor", "true"),
+                ("remote.origin.partialCloneFilter", "blob:none"),
+            ] {
+                git(Some(&self.dir), &["config", key, value])?;
+            }
+        } else if !settings.blobs_on_demand && enabled {
+            git(Some(&self.dir), &["config", "core.sparseCheckout", "false"])?;
+            if !fresh {
+                git(Some(&self.dir), &["read-tree", "-mu", "HEAD"])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Check out files that blobs_on_demand left out (paths relative to the collection).
+    fn check_out(&self, files: &[String]) -> Result<()> {
+        let sparse = self.dir.join(".git").join("info").join("sparse-checkout");
+        let mut patterns = fs::read_to_string(&sparse).unwrap_or_default();
+        for file in files {
+            patterns += &format!("/{}\n", file.replace('\\', "/"));
+        }
+        fs::write(&sparse, patterns)?;
+        git(Some(&self.dir), &["read-tree", "-mu", "HEAD"])?;
+        match files.iter().find(|f| !self.dir.join(f).is_file()) {
+            Some(missing) => bail!("collection '{}' has no file {missing}", self.name),
+            None => Ok(()),
+        }
     }
 
     /// For preset collections, when the policy lists trusted keys: refuse a commit that isn't
@@ -360,7 +473,7 @@ impl Collection {
         fs::write(&signers, lines)?;
         let config = format!("gpg.ssh.allowedSignersFile={}", signers.display());
         git(Some(&self.dir), &["-c", &config, "verify-commit", rev])
-            .with_context(|| format!("collection '{}': the latest commit isn't signed by a key your organization trusts", self.name))?;
+            .with_context(|| format!("collection '{}': commit {rev} isn't signed by a key your organization trusts", self.name))?;
         Ok(())
     }
 
@@ -375,16 +488,93 @@ impl Collection {
             .filter(|p| p.to_string_lossy().ends_with(".dsc.yaml"))
             .collect();
         paths.sort();
+        let held: Vec<_> = self.held_dirs().into_iter().map(|d| (crate::versions::all(&d), d)).collect();
         paths
             .iter()
             .filter_map(|path| match self.load_app(path) {
-                Ok(app) => Some(app),
+                Ok(app) => Some(self.with_hold(app, &held)),
                 Err(err) => {
                     eprintln!("warning: skipping {}: {err:#}", path.display());
                     None
                 }
             })
             .collect()
+    }
+
+    /// Where apps of this collection may be held at an earlier version: the user's data
+    /// directory, and the service's for preset collections.
+    fn held_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = vec![data_dir()];
+        if self.managed && crate::service::enabled() && system_dir() != data_dir() {
+            dirs.push(system_dir());
+        }
+        dirs
+    }
+
+    /// The app at the version it is held at, while the collection still has the version that failed.
+    fn with_hold(&self, mut app: App, records: &[(BTreeMap<String, crate::versions::Record>, PathBuf)]) -> App {
+        let key = app.key();
+        let Some((held, dir)) = records.iter().find_map(|(r, d)| Some((r.get(&key)?.held.clone()?, d))) else {
+            return app;
+        };
+        let relative = app.relative_path();
+        if self.blob("HEAD", &relative).as_deref() != Some(held.failed.as_str()) {
+            return app; // the collection changed the app: the next install tries that version
+        }
+        let version = version_dir(dir, &self.name, &held.commit);
+        let earlier = Collection { name: self.name.clone(), dir: version.clone(), managed: self.managed };
+        match earlier.load_app(&version.join(&relative)) {
+            Ok(earlier) => {
+                app.doc = earlier.doc;
+                app.dependencies = earlier.dependencies;
+                app.held = Some(held.commit);
+            }
+            Err(err) => eprintln!("warning: {key}: the version it is held at: {err:#}"),
+        }
+        app
+    }
+
+    fn head(&self) -> Result<String> {
+        git(Some(&self.dir), &["rev-parse", "HEAD"])
+    }
+
+    /// The id of the file's contents at `rev`, if the file exists there.
+    fn blob(&self, rev: &str, relative: &str) -> Option<String> {
+        git(Some(&self.dir), &["rev-parse", "--verify", "--quiet", &format!("{rev}:{}", relative.replace('\\', "/"))]).ok()
+    }
+
+    /// (commit, time, day) of `rev`.
+    fn commit_info(&self, rev: &str) -> Result<(String, i64, String)> {
+        let line = git(Some(&self.dir), &["log", "-1", "--format=%H %ct %cs", rev])?;
+        parse_commit_line(&line).with_context(|| format!("unexpected git log output: {line}"))
+    }
+
+    /// The last `n` commits that changed the file, newest first.
+    fn changes(&self, relative: &str, n: usize) -> Vec<(String, i64, String)> {
+        let count = format!("-{n}");
+        let out = git(Some(&self.dir), &["log", &count, "--no-renames", "--format=%H %ct %cs", "--", relative]).unwrap_or_default();
+        out.lines().filter_map(parse_commit_line).collect()
+    }
+
+    /// Write files of `commit` to `into`: `collection.yaml`, the app's file, and the installer
+    /// files it uses with these values.
+    fn extract(&self, commit: &str, relative: &str, values: &serde_json::Map<String, Value>, into: &Path) -> Result<()> {
+        let write = |file: &str| -> Result<()> {
+            let target = into.join(file);
+            fs::create_dir_all(target.parent().unwrap_or(into))?;
+            // --filters: what a checkout writes, e.g. the file itself for one in Git LFS.
+            let contents = git_bytes(Some(&self.dir), &["cat-file", "--filters", &format!("{commit}:{}", file.replace('\\', "/"))])?;
+            Ok(fs::write(target, contents)?)
+        };
+        if self.blob(commit, "collection.yaml").is_some() {
+            write("collection.yaml")?;
+        }
+        write(relative)?;
+        let earlier = Collection { name: self.name.clone(), dir: into.to_path_buf(), managed: self.managed };
+        for file in earlier.load_app(&into.join(relative))?.missing_installers(values) {
+            write(&file)?;
+        }
+        Ok(())
     }
 
     /// Load `kits/*.yaml`. Kits naming unknown apps, or named like an app, are reported and skipped.
@@ -434,29 +624,24 @@ impl Collection {
         })
     }
 
-    /// Collections may store installers with Git LFS; without it they'd hold pointer files.
-    // ponytail: downloads every LFS file; per-OS `lfs.fetchinclude` if collections get large.
-    fn fetch_lfs_files(&self) -> Result<()> {
-        let uses_lfs = fs::read_to_string(self.dir.join(".gitattributes")).is_ok_and(|a| a.contains("filter=lfs"));
-        if !uses_lfs {
-            return Ok(());
-        }
-        git(Some(&self.dir), &["lfs", "version"])
-            .map_err(|_| anyhow::anyhow!("collection '{}' stores files with Git LFS, but git-lfs is not installed", self.name))?;
-        git(Some(&self.dir), &["lfs", "install", "--local"])?;
-        git(Some(&self.dir), &["lfs", "pull"])?;
-        Ok(())
-    }
-
     /// Resolve a repo-relative path; `None` if missing or pointing outside the repo.
     fn file_in_repo(&self, relative: &str) -> Option<PathBuf> {
         let path = self.dir.join(relative).canonicalize().ok()?;
         if !path.starts_with(self.dir.canonicalize().ok()?) {
             return None;
         }
-        // Windows canonical paths start with \\?\, which installers like msiexec reject.
-        let plain = path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from);
-        Some(plain.unwrap_or(path))
+        Some(plain_path(path))
+    }
+
+    /// Where a file of the repository that isn't checked out yet will be (see blobs_on_demand).
+    /// Joined part by part onto the canonical directory: Windows installers such as msiexec reject
+    /// paths with a `/`.
+    fn file_in_repo_later(&self, relative: &str) -> Option<PathBuf> {
+        let parts = Path::new(relative).components();
+        if !parts.clone().all(|c| matches!(c, Component::Normal(_))) {
+            return None;
+        }
+        Some(parts.fold(plain_path(self.dir.canonicalize().ok()?), |p, c| p.join(c)))
     }
 
     fn load_app(&self, path: &Path) -> Result<App> {
@@ -472,9 +657,12 @@ impl Collection {
                 continue;
             }
             if let Some(file) = resource["properties"]["file"].as_str() {
+                // Not checked out yet (blobs_on_demand): installing the app checks it out.
+                let later = || self.file_in_repo_later(file);
                 let resolved = self
                     .file_in_repo(file)
-                    .with_context(|| format!("installer '{file}' is missing or outside the collection"))?;
+                    .or_else(later)
+                    .with_context(|| format!("installer '{file}' is outside the collection"))?;
                 resource["properties"]["file"] = resolved.to_string_lossy().into_owned().into();
             }
         }
@@ -497,8 +685,33 @@ impl Collection {
                 None => Vec::new(),
             },
             doc,
+            held: None,
         })
     }
+}
+
+/// Windows canonical paths start with \\?\, which installers like msiexec reject.
+fn plain_path(path: PathBuf) -> PathBuf {
+    path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(path)
+}
+
+/// Delete a copy git left behind.
+fn remove_repository(dir: &Path) {
+    if let Err(err) = fs::remove_dir_all(dir)
+        && dir.exists()
+    {
+        eprintln!("warning: couldn't remove {}: {err}", dir.display());
+    }
+}
+
+fn parse_commit_line(line: &str) -> Option<(String, i64, String)> {
+    let mut parts = line.split(' ');
+    Some((parts.next()?.to_string(), parts.next()?.parse().ok()?, parts.next()?.to_string()))
+}
+
+/// Where the files of an earlier version of a collection's apps are kept.
+fn version_dir(state_dir: &Path, collection: &str, commit: &str) -> PathBuf {
+    state_dir.join("versions").join(collection).join(commit)
 }
 
 impl App {
@@ -634,21 +847,161 @@ impl App {
     /// Install or update, with the values it was installed with (else the current ones), and
     /// remember them.
     pub fn install(&self, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        self.install_values(self.installed_values(), report)
+        self.install_values(self.installed_values(), Which::Shown, report)
+    }
+
+    /// Install the current version, or the previous one (see `previous_version`).
+    pub fn install_version(&self, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        self.install_values(self.installed_values(), which, report)
     }
 
     /// Install with these values: through the furnish service, or here.
-    fn install_values(&self, values: serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+    fn install_values(&self, values: serde_json::Map<String, Value>, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.require_answers()?;
         if self.remote(&values) {
-            return crate::service::run(&crate::service::Request::Install { app: self.key(), values }, report);
+            return crate::service::run(&crate::service::Request::Install { app: self.key(), values, which }, report);
         }
-        self.install_with(&values, report)
+        self.install_here(&values, which, report)
+    }
+
+    pub fn install_here(&self, values: &serde_json::Map<String, Value>, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        match which {
+            Which::Shown => self.install_with(values, report),
+            Which::Current => self.current()?.install_with(values, report),
+            Which::Previous => self.install_previous_with(values, report),
+        }
     }
 
     pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        self.check_out_installers(values)?;
         crate::engine::run(&self.doc_for(values), false, report)?;
-        crate::options::remember(&self.state_dir(values), &self.key(), values)
+        let state = self.state_dir(values);
+        crate::options::remember(&state, &self.key(), values)?;
+        let collection = self.collection_handle();
+        let held = self.held.as_ref().map(|commit| crate::versions::Held {
+            commit: commit.clone(),
+            failed: collection.blob("HEAD", &self.relative_path()).unwrap_or_default(),
+        });
+        let commit = match &self.held {
+            Some(commit) => commit.clone(),
+            None => collection.head()?,
+        };
+        crate::versions::installed(&state, &self.key(), &commit, held)
+    }
+
+    /// Installer files this install uses that aren't checked out yet (see blobs_on_demand).
+    fn check_out_installers(&self, values: &serde_json::Map<String, Value>) -> Result<()> {
+        let files = self.missing_installers(values);
+        if files.is_empty() {
+            return Ok(());
+        }
+        self.collection_handle().check_out(&files)
+    }
+
+    fn collection_handle(&self) -> Collection {
+        Collection { name: self.collection.clone(), dir: self.collection_dir.clone(), managed: self.managed }
+    }
+
+    /// The app's file, relative to the collection, e.g. `apps/gimp.dsc.yaml`.
+    fn relative_path(&self) -> String {
+        self.path.strip_prefix(&self.collection_dir).unwrap_or(&self.path).to_string_lossy().into_owned()
+    }
+
+    /// Installer files (relative to the collection) the resources that apply with these values
+    /// use and that aren't on disk.
+    fn missing_installers(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
+        let mut files = Vec::new();
+        for resource in self.doc["resources"].as_array().into_iter().flatten() {
+            let Some(file) = resource["properties"]["file"].as_str().filter(|_| resource["type"] == "Furnish/Installer") else {
+                continue;
+            };
+            let applies = resource["condition"].as_str().is_none_or(|c| crate::options::condition_holds(c, values).unwrap_or(true));
+            // Paths of files not checked out start from the canonical directory (file_in_repo_later).
+            let base = self.collection_dir.canonicalize().map(plain_path).unwrap_or_else(|_| self.collection_dir.clone());
+            if applies && !Path::new(file).is_file()
+                && let Ok(relative) = Path::new(file).strip_prefix(&base).or_else(|_| Path::new(file).strip_prefix(&self.collection_dir))
+            {
+                files.push(relative.to_string_lossy().into_owned());
+            }
+        }
+        files
+    }
+
+    /// The version it is held at, if it is (see `held`).
+    pub fn held_version(&self) -> Option<Version> {
+        let commit = self.held.as_ref()?;
+        let (commit, _, date) = self.collection_handle().commit_info(commit).ok()?;
+        Some(Version { commit, date })
+    }
+
+    /// The app as the collection has it now, also if it is held at an earlier version.
+    pub fn current(&self) -> Result<App> {
+        self.collection_handle().load_app(&self.path)
+    }
+
+    /// The record of the versions it was installed from: the user's, else the service's.
+    fn versions_record(&self) -> crate::versions::Record {
+        let own = crate::versions::get(&data_dir(), &self.key());
+        if own.good.is_none() && self.managed && crate::service::enabled() {
+            return crate::versions::get(&system_dir(), &self.key());
+        }
+        own
+    }
+
+    /// The earlier version to fall back to: the one that last installed without error here,
+    /// else the app's file before its latest change. Within the limits of the fallback settings.
+    pub fn previous_version(&self) -> Result<Version> {
+        let settings = crate::settings::for_collection(&self.collection).settings;
+        if settings.fallback == crate::settings::Fallback::Off {
+            bail!("falling back to an earlier version is turned off for collection '{}'", self.collection);
+        }
+        let collection = self.collection_handle();
+        let relative = self.relative_path();
+        let current = collection.blob("HEAD", &relative).with_context(|| format!("{} isn't in the collection", self.id))?;
+        let changes = collection.changes(&relative, 2);
+        let good = self.versions_record().good.filter(|g| collection.blob(g, &relative).is_some_and(|b| b != current));
+        let (commit, time, date) = match good {
+            Some(good) => collection.commit_info(&good)?,
+            None => match changes.get(1) {
+                Some(change) => change.clone(),
+                None if settings.checkout_depth > 0 => bail!(
+                    "{} has no earlier version in the {} commits furnish keeps of collection '{}' (checkoutDepth)",
+                    self.id,
+                    settings.checkout_depth,
+                    self.collection
+                ),
+                None => bail!("{} has no earlier version", self.id),
+            },
+        };
+        let days = settings.fallback_max_age_days;
+        if days > 0 && changes.first().is_some_and(|(_, newest, _)| newest - time > i64::from(days) * 86_400) {
+            bail!("the previous version of {} is from {date}, more than {days} days older than the current one", self.id);
+        }
+        collection.verify(&commit)?;
+        Ok(Version { commit, date })
+    }
+
+    /// Install the previous version (see `previous_version`) and hold the app there.
+    fn install_previous_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let version = self.previous_version()?;
+        let collection = self.collection_handle();
+        let relative = self.relative_path();
+        let state = self.state_dir(values);
+        // ponytail: version folders stay after the app is uninstalled; prune them if they pile up.
+        let dir = version_dir(&state, &self.collection, &version.commit);
+        if !dir.join(&relative).exists() {
+            let _ = fs::remove_dir_all(&dir);
+            if let Err(err) = collection.extract(&version.commit, &relative, values, &dir) {
+                let _ = fs::remove_dir_all(&dir);
+                return Err(err.context(format!("getting the version from {}", version.date)));
+            }
+        }
+        let earlier = Collection { name: self.collection.clone(), dir: dir.clone(), managed: self.managed }.load_app(&dir.join(&relative))?;
+        crate::engine::run(&earlier.doc_for(values), false, report)?;
+        crate::options::remember(&state, &self.key(), values)?;
+        let failed = collection.blob("HEAD", &relative).unwrap_or_default();
+        let held = crate::versions::Held { commit: version.commit.clone(), failed };
+        crate::versions::installed(&state, &self.key(), &version.commit, Some(held))
     }
 
     /// Uninstall with the values it was installed with.
@@ -658,6 +1011,7 @@ impl App {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
         crate::engine::run(&self.doc_for(&values), true, report)?;
+        crate::versions::forget(&self.state_dir(&values), &self.key())?;
         crate::options::forget(&self.state_dir(&values), &self.key())
     }
 
@@ -671,7 +1025,7 @@ impl App {
         }
         if self.remote(&old) || self.remote(&new) {
             self.uninstall(&mut report)?;
-            return self.install_values(new, report);
+            return self.install_values(new, Which::Shown, report);
         }
         self.reinstall_with(&new, report)
     }
@@ -746,9 +1100,57 @@ pub fn find_app(query: &str) -> Result<App> {
     }
 }
 
+/// Installer files, which blobs_on_demand leaves out of the checkout until an app needs one.
+const INSTALLERS: [&str; 6] = ["*.msi", "*.exe", "*.pkg", "*.dmg", "*.deb", "*.rpm"];
+
+/// The git program: the system's, else the copy the Windows installer ships next to furnish
+/// (MinGit with git-lfs, in `git\` beside furnish.exe).
+pub fn git_command() -> Command {
+    static BUNDLED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    let bundled = BUNDLED.get_or_init(|| {
+        let on_path = env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("git.exe").is_file()));
+        if !cfg!(windows) || on_path {
+            return None;
+        }
+        let git = env::current_exe().ok()?.parent()?.join("git").join("cmd").join("git.exe");
+        git.is_file().then_some(git)
+    });
+    let Some(git) = bundled else { return Command::new("git") };
+    let mut cmd = Command::new(git);
+    // furnish asks for logins itself; the bundled credential manager mustn't open windows.
+    cmd.env("GCM_INTERACTIVE", "never");
+    // Windows' own OpenSSH, so its ssh-agent service and keys work like with a system git.
+    let openssh = env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32").join("OpenSSH").join("ssh.exe"));
+    if let Some(ssh) = openssh.filter(|s| s.is_file())
+        && env::var_os("GIT_SSH_COMMAND").is_none()
+    {
+        cmd.env("GIT_SSH_COMMAND", format!("\"{}\"", ssh.display()).replace('\\', "/"));
+    }
+    cmd
+}
+
+/// Why git couldn't run, and what to do about it.
+fn git_missing(err: std::io::Error) -> anyhow::Error {
+    if err.kind() != std::io::ErrorKind::NotFound {
+        return anyhow::Error::new(err).context("failed to run git");
+    }
+    let how = if cfg!(windows) {
+        "reinstall furnish (its installer includes git), or install Git for Windows"
+    } else if cfg!(target_os = "macos") {
+        "install Apple's Command Line Tools (run `xcode-select --install`) or git from Homebrew"
+    } else {
+        "install the package git with your package manager"
+    };
+    anyhow::anyhow!("furnish needs git, which isn't installed: {how}")
+}
+
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8_lossy(&git_bytes(dir, args)?).trim().to_string())
+}
+
+fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     let _working = crate::load::activity(); // load-aware updates ignore furnish's own downloads
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
         // The service's collections belong to root/SYSTEM; git refuses other users' repositories otherwise.
@@ -758,23 +1160,31 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     }
     // Talking to the server: never a terminal prompt (an app has none), and furnish's credentials
     // for that URL, if any (see `auth`); SSH keys, the agent and credential helpers work as usual.
-    let network = matches!(args.first(), Some(&("clone" | "fetch" | "pull" | "lfs" | "ls-remote")));
+    // Commands that write or read files download the contents they lack (see blobs_on_demand).
+    let network = matches!(
+        args.first(),
+        Some(&("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "reset" | "read-tree" | "cat-file"))
+    );
     let url = if !network {
         None
     } else if args.first() == Some(&"clone") {
         args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string())
     } else {
         dir.and_then(|d| {
-            let out = Command::new("git").arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
+            let out = git_command().arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
         })
     };
     if let Some(url) = &url {
         cmd.envs(crate::auth::git_env(url)?);
     }
-    let output = cmd.args(args).output().context("failed to run git (is it installed?)")?;
+    let output = cmd.args(args).output().map_err(git_missing)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // macOS: /usr/bin/git is a placeholder until the Command Line Tools are installed.
+        if stderr.contains("xcrun: error: invalid active developer path") || stderr.contains("No developer tools were found") {
+            return Err(git_missing(std::io::ErrorKind::NotFound.into()));
+        }
         if let Some(url) = url.filter(|u| u.starts_with("http") && crate::auth::is_auth_failure(&stderr)) {
             return Err(crate::auth::CredentialsRequired { url }.into());
         }
@@ -783,7 +1193,7 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
         }
         bail!("git {} failed: {stderr}", args.join(" "));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(output.stdout)
 }
 
 #[cfg(test)]

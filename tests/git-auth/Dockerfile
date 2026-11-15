@@ -1,7 +1,7 @@
-# A git server for tests/git-auth.sh: HTTPS-style smart HTTP behind Basic auth (Apache), and SSH.
+# For tests/git-auth.sh and tests/checkout.sh. A git server: HTTPS-style smart HTTP behind Basic auth (Apache), and SSH.
 FROM debian:trixie
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-        apache2 apache2-utils openssh-server git ca-certificates procps \
+        apache2 apache2-utils openssh-server git git-lfs ca-certificates procps \
     && rm -rf /var/lib/apt/lists/*
 RUN a2enmod -q cgi alias env auth_basic >/dev/null \
     && htpasswd -bc /etc/apache2/git.htpasswd alice s3cret-token \

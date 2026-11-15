@@ -15,8 +15,32 @@ function Fail([int]$Code, [string]$Message) {
 
 $file = $env:file
 if (-not $file) { Fail 10 'property file is required' }
-if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { Fail 11 "installer not found: $file" }
+function Write-State([string]$Version, [string[]]$WhatIf) {
+    # Echo back every identifying property: DSC's test compares each desired property with the state.
+    $state = [ordered]@{ file = $file }
+    foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
+        $v = [Environment]::GetEnvironmentVariable($p)
+        if ($null -ne $v) { $state[$p] = $v }
+    }
+    $state._exist = [bool]$Version
+    if ($Version -and $Version -ne '?') { $state.version = $Version }
+    if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
+    [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
+}
+
 $subject = Split-Path -Leaf $file
+if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+    # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
+    # Until then the app counts as not installed, and only an actual install needs the file.
+    if ($Operation -eq 'get') { Write-State ''; exit 0 }
+    if ($Operation -eq 'set' -and $Mode -eq 'what-if') {
+        # The state after the step: installed, like the Unix resource's what-if reports.
+        if ($env:_exist -ne 'false') { Write-State '?' @("Download $subject from the collection, then install it as administrator") }
+        else { Write-State '' @("$subject is not installed") }
+        exit 0
+    }
+    Fail 11 "installer not found: $file"
+}
 if ((Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue) -like 'version https://git-lfs*') {
     [Console]::Error.WriteLine("furnish: needs git-lfs to download $subject (install it, then update the collection)"); exit 11
 }
@@ -63,19 +87,6 @@ switch -Wildcard ($file) {
 }
 
 $version = if ($installed) { if ($installed.DisplayVersion) { [string]$installed.DisplayVersion } else { '?' } } else { '' }
-
-function Write-State([string]$Version, [string[]]$WhatIf) {
-    # Echo back every identifying property: DSC's test compares each desired property with the state.
-    $state = [ordered]@{ file = $file }
-    foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
-        $v = [Environment]::GetEnvironmentVariable($p)
-        if ($null -ne $v) { $state[$p] = $v }
-    }
-    $state._exist = [bool]$Version
-    if ($Version -and $Version -ne '?') { $state.version = $Version }
-    if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
-    [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
-}
 
 # Runs elevated (UAC prompt unless already elevated, e.g. as the furnish service) and waits.
 # A declined prompt is a cancel.

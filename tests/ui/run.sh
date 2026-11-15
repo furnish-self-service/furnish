@@ -35,6 +35,7 @@ case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
   -S) sleep 2  # slow enough to observe live progress
+      [ "\$4" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
       if [ -f "$work/pkgs/\$4.new" ]; then mv "$work/pkgs/\$4.new" "$work/pkgs/\$4"; else echo 1.0 > "$work/pkgs/\$4"; fi
       if [ "\$4" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
   -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
@@ -58,6 +59,8 @@ done
 sed -i '2i [ -e '"$work"'/deny ] && { echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
 # Like a real sudo without cached credentials: `sudo -n` fails, so only the terminal prompt is left.
 sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work/bin/sudo"
+# The browser: records what furnish opens.
+printf '#!/bin/sh\necho "$1" >> %s/browser.log\n' "$work" > "$work/bin/browser"
 chmod +x "$work/bin/"*
 
 # The fixture collection (already added) and a second repository for the add/remove test.
@@ -67,6 +70,12 @@ repo_from_fixture() {
 }
 mkdir -p "$work/data/collections"
 repo_from_fixture "$work/origin-src"
+# An app whose latest version fails to install; the one before works (falling back).
+flaky() {
+    printf 'metadata: { furnish: { description: Its latest version is broken, categories: [Test] } }\nresources:\n  - name: flaky\n    type: Furnish/Package\n    properties: { name: %s }\n' "$1" > "$work/origin-src/apps/flaky.dsc.yaml"
+    git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "flaky: $1"
+}
+flaky flaky; flaky broken
 git clone -q --bare "$work/origin-src" "$work/origin.git"
 git clone -q "$work/origin.git" "$work/data/collections/fixture"
 # The origin moves on after the app's clone: updating on launch must bring in this app.
@@ -95,7 +104,7 @@ JSON
 
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" "$image" \
     sh -c 'Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
 

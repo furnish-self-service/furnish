@@ -91,4 +91,4 @@ The desktop app is in `gui/` (Tauri 2 and Svelte): `cd gui && npm ci && npx taur
 
 ## License
 
-MIT
+MIT. The installers contain open-source components under their own licenses, listed in [THIRD-PARTY-LICENSES.html](THIRD-PARTY-LICENSES.html) (`node scripts/licenses.mjs` regenerates it).

@@ -39,6 +39,8 @@ struct AppInfo {
     recommended: bool,
     /// Required collection options nobody answered yet: installing waits for them.
     unanswered: Vec<String>,
+    /// Held at this earlier version because the collection's current one failed.
+    held: Option<catalog::Version>,
 }
 
 #[derive(Serialize)]
@@ -84,6 +86,8 @@ struct CollectionInfo {
     options: Vec<options::Resolved>,
     /// Data URL of the collection's avatar (`icon` in collection.yaml).
     icon: Option<String>,
+    /// History kept, downloads and falling back, and which of them the organization sets.
+    settings: furnish::settings::CollectionEffective,
 }
 
 /// The organization's branding (policy `branding`), checked: colors are `#rgb`/`#rrggbb`, theme
@@ -184,6 +188,7 @@ fn app_info(app: &App) -> AppInfo {
         options_differ: app.options_differ(),
         recommended: app.recommended(),
         unanswered: app.unanswered(),
+        held: app.held_version(),
     }
 }
 
@@ -218,6 +223,7 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         apps: c.apps().len(),
         options: c.options()?,
         icon: c.icon().as_deref().and_then(icon_data_url),
+        settings: furnish::settings::for_collection(&c.name),
     })
 }
 
@@ -260,41 +266,103 @@ struct ProgressEvent {
 
 #[derive(Clone, Copy)]
 enum Action {
-    Install,
+    Install(catalog::Which),
     Uninstall,
     Reinstall,
 }
 
+/// An install that failed, after which furnish installed an earlier version (fallback "automatic").
+#[derive(Serialize)]
+struct FellBack {
+    date: String,
+    error: String,
+}
+
 /// Run an install/update, uninstall or reinstall, streaming step progress as `furnish://progress` events.
-async fn run(handle: tauri::AppHandle, key: String, action: Action) -> CmdResult<()> {
+async fn run(handle: tauri::AppHandle, key: String, action: Action) -> CmdResult<Option<FellBack>> {
     blocking(move || {
         let app = catalog::find_app(&key)?;
         let report = |progress| {
             let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
         };
         match action {
-            Action::Install => app.install(report),
-            Action::Uninstall => app.uninstall(report),
-            Action::Reinstall => app.reinstall(report),
+            Action::Install(which) => match app.install_version(which, report) {
+                Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && app.held.is_none() => {
+                    let automatic = furnish::settings::for_collection(&app.collection).settings.fallback == furnish::settings::Fallback::Automatic;
+                    let Some(version) = app.previous_version().ok().filter(|_| automatic) else { return Err(err) };
+                    app.install_version(catalog::Which::Previous, report)?;
+                    Ok(Some(FellBack { date: version.date, error: format!("{err:#}") }))
+                }
+                result => result.map(|()| None),
+            },
+            Action::Uninstall => app.uninstall(report).map(|()| None),
+            Action::Reinstall => app.reinstall(report).map(|()| None),
         }
     })
     .await
 }
 
+/// Install or update; with the fallback "automatic", a failure installs the previous version.
 #[tauri::command]
-async fn install(app: tauri::AppHandle, key: String) -> CmdResult<()> {
-    run(app, key, Action::Install).await
+async fn install(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Shown)).await
+}
+
+/// Install the previous version of an app (see `previous_version`).
+#[tauri::command]
+async fn install_previous(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Previous)).await
+}
+
+/// For an app held at an earlier version: install the collection's current one.
+#[tauri::command]
+async fn install_current(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Current)).await
+}
+
+/// The earlier version furnish would fall back to; an error says why there is none.
+#[tauri::command]
+async fn previous_version(key: String) -> CmdResult<catalog::Version> {
+    blocking(move || catalog::find_app(&key)?.previous_version()).await
 }
 
 #[tauri::command]
-async fn uninstall(app: tauri::AppHandle, key: String) -> CmdResult<()> {
+async fn uninstall(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
     run(app, key, Action::Uninstall).await
 }
 
 /// Uninstall with the options the app was installed with, then install with the current ones.
 #[tauri::command]
-async fn reinstall(app: tauri::AppHandle, key: String) -> CmdResult<()> {
+async fn reinstall(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
     run(app, key, Action::Reinstall).await
+}
+
+/// furnish's version (builds of main: 0.1.0+alpha.<build>).
+#[tauri::command]
+fn version() -> &'static str {
+    option_env!("FURNISH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+/// Show the open-source components and their licenses: the installer's copy, else the website's.
+#[tauri::command]
+fn open_licenses(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri::Manager;
+    let bundled = app.path().resolve("THIRD-PARTY-LICENSES.html", tauri::path::BaseDirectory::Resource).ok().filter(|p| p.is_file());
+    let target = bundled.map_or_else(|| "https://furnish-self-service.github.io/licenses.html".into(), |p| p.to_string_lossy().into_owned());
+    furnish::endpoint::open_browser(&target).map_err(|e| format!("{e:#}"))
+}
+
+/// Change one setting for one collection; `null` returns it to the general setting.
+#[tauri::command]
+async fn set_collection_setting(name: String, key: String, value: serde_json::Value) -> CmdResult<()> {
+    blocking(move || {
+        furnish::settings::set_for_collection(&name, &key, value)?;
+        if matches!(key.as_str(), "checkoutDepth" | "blobsOnDemand") {
+            catalog::get(&name)?.update()?; // applied when git next talks to the server
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// Set (or with `None`, reset) an option for a collection or an app (`collection/app`).
@@ -507,6 +575,12 @@ fn main() {
             list_kits,
             app_status,
             install,
+            install_previous,
+            install_current,
+            previous_version,
+            set_collection_setting,
+            version,
+            open_licenses,
             uninstall,
             reinstall,
             set_option,

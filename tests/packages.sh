@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the Linux packages on a distro and check both programs can run there: the static
-# furnish CLI runs, and furnish-gui finds every library (and glibc version) it needs.
+# furnish CLI runs, git came along, and furnish-gui finds every library (and glibc version) it needs.
 #
 #   tests/packages.sh <image> <dir with the .deb and .rpm>     e.g. debian:12 target/jammy/release/bundle
 set -eu
@@ -18,6 +18,7 @@ docker run --rm -v "$dir:/p:ro" "$image" sh -c "
     set -e
     $install
     furnish --version
+    git --version >/dev/null || { echo 'the package did not bring git' >&2; exit 1; }
     missing=\$(ldd /usr/bin/furnish-gui | grep 'not found' || true)
     [ -z \"\$missing\" ] || { echo \"furnish-gui can't start: \$missing\" >&2; exit 1; }
     echo 'packages OK on $image'

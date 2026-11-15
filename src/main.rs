@@ -41,6 +41,13 @@ enum Command {
         /// Leave out these optional kit items or app dependencies (comma-separated)
         #[arg(long, value_delimiter = ',', value_name = "APPS")]
         without: Vec<String>,
+        /// Install the previous version of the app: the one that last installed here without
+        /// error, else the one before the collection's latest change to it
+        #[arg(long, conflicts_with = "current")]
+        previous: bool,
+        /// For an app held at an earlier version: try the collection's current version again
+        #[arg(long)]
+        current: bool,
     },
     /// Uninstall an app, or apps of a kit
     Uninstall {
@@ -88,7 +95,67 @@ enum Command {
         /// Update collections every N minutes while the desktop app runs (0: never)
         #[arg(long, value_name = "MINUTES")]
         update_interval: Option<u32>,
+        #[command(flatten)]
+        collections: CollectionSettingsArgs,
     },
+}
+
+/// Settings that can differ per collection (`furnish collection settings`).
+#[derive(clap::Args)]
+struct CollectionSettingsArgs {
+    /// Keep this many commits of a collection's history (0: all)
+    #[arg(long, value_name = "COMMITS")]
+    checkout_depth: Option<u32>,
+    /// Download file contents only when needed: earlier versions when falling back, installer
+    /// files when an app using them is installed
+    #[arg(long, value_name = "BOOL")]
+    blobs_on_demand: Option<bool>,
+    /// When installing or updating an app fails: offer the previous version (ask), install it
+    /// right away (automatic), or neither (off)
+    #[arg(long, value_parser = ["ask", "automatic", "off"])]
+    fallback: Option<String>,
+    /// Fall back only to versions at most this many days older than the failing one (0: any)
+    #[arg(long, value_name = "DAYS")]
+    fallback_max_age: Option<u32>,
+}
+
+impl CollectionSettingsArgs {
+    fn changes(&self) -> Vec<(&'static str, serde_json::Value)> {
+        let mut changes = Vec::new();
+        if let Some(v) = self.checkout_depth {
+            changes.push(("checkoutDepth", v.into()));
+        }
+        if let Some(v) = self.blobs_on_demand {
+            changes.push(("blobsOnDemand", v.into()));
+        }
+        if let Some(v) = &self.fallback {
+            changes.push(("fallback", v.as_str().into()));
+        }
+        if let Some(v) = self.fallback_max_age {
+            changes.push(("fallbackMaxAgeDays", v.into()));
+        }
+        changes
+    }
+}
+
+fn print_collection_settings(s: &furnish::settings::CollectionSettings, locked: &[String]) {
+    let org = |key: &str| if locked.iter().any(|k| k == key) { "  (set by your organization)" } else { "" };
+    match s.checkout_depth {
+        0 => println!("history:           all commits{}", org("checkoutDepth")),
+        n => println!("history:           the last {n} commits{}", org("checkoutDepth")),
+    }
+    let blobs = if s.blobs_on_demand { "when needed (installer files when their app is installed)" } else { "all at once" };
+    println!("file contents:     {blobs}{}", org("blobsOnDemand"));
+    let fallback = match s.fallback {
+        furnish::settings::Fallback::Ask => "offer the previous version",
+        furnish::settings::Fallback::Automatic => "install the previous version",
+        furnish::settings::Fallback::Off => "nothing",
+    };
+    println!("when an install fails: {fallback}{}", org("fallback"));
+    match s.fallback_max_age_days {
+        0 => println!("previous versions: any age{}", org("fallbackMaxAgeDays")),
+        d => println!("previous versions: at most {d} days older{}", org("fallbackMaxAgeDays")),
+    }
 }
 
 #[derive(Subcommand)]
@@ -136,6 +203,15 @@ enum CollectionCommand {
     Update { name: Option<String> },
     /// Remove a collection (installed apps stay installed)
     Remove { name: String },
+    /// Show or change settings for one collection (history kept, downloads, falling back)
+    Settings {
+        name: String,
+        #[command(flatten)]
+        settings: CollectionSettingsArgs,
+        /// Use the general settings again (`furnish settings`)
+        #[arg(long)]
+        reset: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -208,12 +284,12 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
         // Kits: names that are no app but a kit.
-        Command::Install { app, dry_run, with, without } if is_kit(&app) => {
+        Command::Install { app, dry_run, with, without, .. } if is_kit(&app) => {
             install_kit(&catalog::find_kit(&app)?, &with, &without, dry_run)
         }
         Command::Uninstall { app, dry_run, only } if is_kit(&app) => uninstall_kit(&catalog::find_kit(&app)?, &only, dry_run),
         Command::Uninstall { only, .. } if !only.is_empty() => anyhow::bail!("--only is for kits"),
-        Command::Install { app, dry_run: true, with, without } => {
+        Command::Install { app, dry_run: true, with, without, .. } => {
             let app = catalog::find_app(&app)?;
             for dep in chosen_dependencies(&app, &with, &without)? {
                 if !matches!(dep.status()?, Status::Installed | Status::NeedsUpdate | Status::Unavailable) {
@@ -224,6 +300,20 @@ fn run(command: Command) -> Result<()> {
             print_plan(&app, false)
         }
         Command::Uninstall { app, dry_run: true, .. } => print_plan(&catalog::find_app(&app)?, true),
+        Command::Install { app, previous: true, .. } => {
+            let app = catalog::find_app(&app)?;
+            install_previous(&app, &app.previous_version()?)
+        }
+        Command::Install { app, current: true, with, without, .. } => {
+            let app = catalog::find_app(&app)?;
+            if app.held.is_none() {
+                return install_with_dependencies(&app, &with, &without, &mut Vec::new());
+            }
+            println!("⟳ Installing the collection's current version of {}…", app.id);
+            report_failure(&app, app.install_version(catalog::Which::Current, print_progress()))?;
+            println!("✓ Installed {}", app.id);
+            Ok(())
+        }
         Command::Install { app, with, without, .. } => {
             install_with_dependencies(&catalog::find_app(&app)?, &with, &without, &mut Vec::new())
         }
@@ -248,7 +338,7 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Option(cmd) => option(cmd),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates } => {
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections } => {
             use furnish::settings::set;
             if let Some(v) = update_on_launch {
                 set("updateOnLaunch", v.into())?;
@@ -258,6 +348,9 @@ fn run(command: Command) -> Result<()> {
             }
             if let Some(v) = load_aware_updates {
                 set("loadAwareUpdates", v.into())?;
+            }
+            for (key, value) in collections.changes() {
+                set(key, value)?;
             }
             if !auto_update.is_empty() || !no_auto_update.is_empty() {
                 let mut off = furnish::settings::load().no_auto_update;
@@ -294,6 +387,12 @@ fn run(command: Command) -> Result<()> {
             match s.no_auto_update.as_slice() {
                 [] => println!("app updates:       automatic for all apps{}", org("noAutoUpdate")),
                 apps => println!("app updates:       automatic, except {}{}", apps.join(", "), org("noAutoUpdate")),
+            }
+            let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
+            print_collection_settings(&general, &effective.locked);
+            if !s.collections.is_empty() {
+                let names: Vec<_> = s.collections.keys().map(String::as_str).collect();
+                println!("Collections with their own settings (furnish collection settings <name>): {}", names.join(", "));
             }
             Ok(())
         }
@@ -337,6 +436,9 @@ fn list() -> Result<()> {
                 "?"
             }
         };
+        if let Some(commit) = &app.held {
+            description = format!("{description} (held at an earlier version, {}: furnish install {} --current)", &commit[..7.min(commit.len())], app.id);
+        }
         if app.options_differ() {
             description = format!("{description} (installed with other options: furnish reinstall {})", app.id);
         }
@@ -434,6 +536,25 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         CollectionCommand::Remove { name } => {
             catalog::remove(&name)?;
             println!("✓ Removed '{name}'. Apps installed from it stay installed.");
+        }
+        CollectionCommand::Settings { name, settings, reset } => {
+            let collection = catalog::get(&name)?;
+            if reset {
+                for key in furnish::settings::PER_COLLECTION {
+                    if !furnish::settings::for_collection(&name).locked.iter().any(|k| k == key) {
+                        furnish::settings::set_for_collection(&name, key, serde_json::Value::Null)?;
+                    }
+                }
+            }
+            for (key, value) in settings.changes() {
+                furnish::settings::set_for_collection(&name, key, value)?;
+            }
+            let effective = furnish::settings::for_collection(&name);
+            print_collection_settings(&effective.settings, &effective.locked);
+            if settings.checkout_depth.is_some() || settings.blobs_on_demand.is_some() {
+                // Applied when git next talks to the server.
+                collection.update()?;
+            }
         }
     }
     Ok(())
@@ -647,7 +768,10 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
         }
     }
     path.pop();
-    let check = app.check()?;
+    let check = match app.check() {
+        Ok(check) => check,
+        Err(err) => return report_failure(app, Err(err)),
+    };
     match check.status {
         Status::Installed => {
             println!("✓ {} is already installed and up to date", app.id);
@@ -658,8 +782,38 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
         Status::NotInstalled | Status::NeedsUpdate => {}
     }
     println!("⟳ Installing {}…", app.id);
-    app.install(print_progress())?;
+    report_failure(app, app.install(print_progress()))?;
     println!("✓ Installed {}", app.id);
+    Ok(())
+}
+
+/// After a failed install or update: with the fallback setting on, offer the previous version
+/// (ask) or install it (automatic). Cancelled installs are no failure.
+fn report_failure(app: &catalog::App, result: Result<()>) -> Result<()> {
+    let Err(err) = result else { return Ok(()) };
+    if err.is::<engine::Cancelled>() || app.held.is_some() {
+        return Err(err);
+    }
+    let Ok(version) = app.previous_version() else { return Err(err) };
+    match furnish::settings::for_collection(&app.collection).settings.fallback {
+        furnish::settings::Fallback::Automatic => {
+            eprintln!("✗ {err:#}");
+            install_previous(app, &version)
+        }
+        _ => {
+            eprintln!("The version of {} from {} may work: furnish install {} --previous", app.id, version.date, app.id);
+            Err(err)
+        }
+    }
+}
+
+fn install_previous(app: &catalog::App, version: &catalog::Version) -> Result<()> {
+    println!("⟳ Installing the version of {} from {}…", app.id, version.date);
+    app.install_version(catalog::Which::Previous, print_progress())?;
+    println!(
+        "✓ Installed the version of {} from {}. furnish keeps it until the collection changes {}; furnish install {} --current tries the current version.",
+        app.id, version.date, app.id, app.id
+    );
     Ok(())
 }
 

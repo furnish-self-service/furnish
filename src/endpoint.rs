@@ -343,8 +343,9 @@ fn random() -> Result<String> {
     Ok(B64.encode(bytes))
 }
 
-/// Open a URL in the user's browser (FURNISH_BROWSER: a command to use instead, e.g. in tests).
-fn open_browser(url: &str) -> Result<()> {
+/// Open a URL or an HTML file in the user's browser (FURNISH_BROWSER: a command to use
+/// instead, e.g. in tests).
+pub fn open_browser(url: &str) -> Result<()> {
     let mut cmd = if let Ok(browser) = std::env::var("FURNISH_BROWSER") {
         let mut c = std::process::Command::new(browser);
         c.arg(url);

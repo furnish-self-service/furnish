@@ -30,6 +30,20 @@ export interface AppInfo {
   recommended: boolean;
   /** Names of required collection options nobody answered yet: installing waits for them. */
   unanswered: string[];
+  /** Held at this earlier version because the collection's current one failed. */
+  held: Version | null;
+}
+
+/** A version of an app: a commit of its collection, and the day of it. */
+export interface Version {
+  commit: string;
+  date: string;
+}
+
+/** An install failed and furnish installed an earlier version instead (fallback "automatic"). */
+export interface FellBack {
+  date: string;
+  error: string;
 }
 
 /** An option (DSC parameter) of an app or collection and where its value comes from. */
@@ -129,6 +143,19 @@ export interface CollectionInfo {
   options: Option[];
   /** Data URL of the collection's avatar. */
   icon: string | null;
+  /** History kept, downloads and falling back, and which of them the organization sets. */
+  settings: { settings: CollectionSettings; locked: (keyof CollectionSettings)[] };
+}
+
+export interface CollectionSettings {
+  /** Commits of history to keep; 0: all. */
+  checkoutDepth: number;
+  /** Download file contents when needed: installer files when their app is installed. */
+  blobsOnDemand: boolean;
+  /** When an install fails: offer the previous version, install it, or neither. */
+  fallback: 'ask' | 'automatic' | 'off';
+  /** Only versions at most this many days older than the failing one; 0: any age. */
+  fallbackMaxAgeDays: number;
 }
 
 /** The organization's name, logo and colors (admin policy `branding`). */
@@ -137,9 +164,21 @@ export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
 export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null }>('app_status', { key });
-export const install = (key: string) => invoke<void>('install', { key });
-export const uninstall = (key: string) => invoke<void>('uninstall', { key });
-export const reinstall = (key: string) => invoke<void>('reinstall', { key });
+export const install = (key: string) => invoke<FellBack | null>('install', { key });
+export const uninstall = (key: string) => invoke<FellBack | null>('uninstall', { key });
+export const reinstall = (key: string) => invoke<FellBack | null>('reinstall', { key });
+/** Install the previous version: the one that last installed here, else the one before the latest change. */
+export const installPrevious = (key: string) => invoke<FellBack | null>('install_previous', { key });
+/** For an app held at an earlier version: install the collection's current one. */
+export const installCurrent = (key: string) => invoke<FellBack | null>('install_current', { key });
+/** The version furnish would fall back to; rejects with the reason if there is none. */
+export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
+export const version = () => invoke<string>('version');
+/** Open the list of open-source components and their licenses in the browser. */
+export const openLicenses = () => invoke<void>('open_licenses');
+/** Change a setting for one collection; null returns it to the general setting. */
+export const setCollectionSetting = (name: string, key: keyof CollectionSettings, value: unknown) =>
+  invoke<void>('set_collection_setting', { name, key, value });
 /** Set an option of a collection or an app (`collection/app`); null resets it. */
 export const setOption = (target: string, name: string, value: unknown) =>
   invoke<void>('set_option', { target, name, value });

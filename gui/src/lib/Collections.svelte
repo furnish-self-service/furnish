@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
+  import CollectionSettings from './CollectionSettings.svelte';
   import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
@@ -19,6 +20,9 @@
       : intervals,
   );
   const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  let version = $state('');
+  api.version().then((v) => (version = v));
 
   let url = $state('');
   let name = $state('');
@@ -224,15 +228,38 @@
               <Options target={c.name} options={c.options} scope="collection" />
             </details>
           {/if}
+          <details class="copts">
+            <summary>Downloads and earlier versions</summary>
+            <CollectionSettings collection={c} />
+          </details>
         </li>
       {/each}
     </ul>
   {/if}
+
+  <p class="about">
+    furnish {version}
+    · <button class="link" onclick={() => api.openLicenses().catch((e) => toast('error', "Couldn't open the licenses", String(e)))}>Open-source licenses</button>
+  </p>
 </section>
 
 <style>
   section {
     max-width: 56rem;
+  }
+  .about {
+    margin-top: 2.5rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .about .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   h1 {
     margin: 0;

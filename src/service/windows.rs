@@ -98,11 +98,23 @@ fn service_main(_: Vec<OsString>) {
     });
     let Ok(handle) = handler else { return };
     let _ = STATUS.set(handle);
+    log_to_file();
     let _ = handle.set_service_status(status(ServiceState::Running, 0));
     if let Err(err) = listen() {
         eprintln!("furnish service: {err:#}");
         let _ = handle.set_service_status(status(ServiceState::Stopped, 1));
     }
+}
+
+/// A service has no console: its messages (e.g. why a preset collection couldn't be set up) go
+/// to service.log in the system directory, which administrators can read.
+fn log_to_file() {
+    use std::os::windows::io::IntoRawHandle;
+    let path = crate::catalog::system_dir().join("service.log");
+    // ponytail: appends forever; rotate if it grows (it gets a few lines per start and problem).
+    let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else { return };
+    // SAFETY: the handle stays open for the life of the process (into_raw_handle leaks it).
+    unsafe { windows_sys::Win32::System::Console::SetStdHandle(windows_sys::Win32::System::Console::STD_ERROR_HANDLE, file.into_raw_handle()) };
 }
 
 fn wide(s: &str) -> Vec<u16> {

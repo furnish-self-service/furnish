@@ -99,6 +99,34 @@ jobs:
           path: bin
       - run: chmod +x bin/furnish && tests/git-auth.sh bin/furnish
 
+  licenses:
+    name: THIRD-PARTY-LICENSES.html is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-about --version 0.9.3 --locked --features cli
+      - run: npm ci
+        working-directory: gui
+      - run: node scripts/licenses.mjs && git diff --exit-code THIRD-PARTY-LICENSES.html || { echo "::error::run node scripts/licenses.mjs and commit THIRD-PARTY-LICENSES.html"; exit 1; }
+
+  checkout:
+    name: disk use and falling back (blobless, shallow, installers on demand, earlier versions)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/checkout.sh bin/furnish
+
   endpoint:
     name: endpoint (SSO proxy, sign-in, git)
     needs: linux-binary
@@ -208,7 +236,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, git-auth, endpoint, native, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, git-auth, checkout, endpoint, native, service-macos, service-windows, packages, gui]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -287,10 +315,29 @@ jobs:
         shell: bash
         run: |
           case "$RUNNER_OS" in
-            Linux)   dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$' ;;
+            Linux)   dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$'
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep THIRD-PARTY-LICENSES.html ;;
             macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
+      # Windows has no git: furnish uses the MinGit the installer ships, with git-lfs.
+      - name: The installed app uses the bundled git when the system has none
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true
+          $msi = (Get-Item target\release\bundle\msi\*.msi).FullName
+          $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+          if ($p.ExitCode) { throw "msiexec exited with $($p.ExitCode)" }
+          $app = "$env:ProgramFiles\furnish"
+          if (-not (Test-Path "$app\THIRD-PARTY-LICENSES.html")) { throw 'no THIRD-PARTY-LICENSES.html' }
+          & "$app\git\cmd\git.exe" lfs version
+          New-Item -ItemType Directory t\repo | Out-Null
+          Copy-Item -Recurse tests\fixtures\collection\* t\repo
+          git -C t\repo init -q; git -C t\repo add -A; git -C t\repo -c user.name=t -c user.email=t@t commit -qm init
+          $env:FURNISH_DATA_DIR = "$PWD\t\data"; $env:PATH = 'C:\Windows\System32;C:\Windows'
+          & "$app\furnish.exe" collection add "$PWD\t\repo" --name fixture
+          if (-not (& "$app\furnish.exe" collection list | Select-String fixture)) { throw 'collection not added' }
       # Real app under Xvfb, driven via WebDriver; also checks GUI elevation never uses sudo.
       - if: runner.os == 'Linux'
         run: tests/ui/run.sh target/release/furnish-gui

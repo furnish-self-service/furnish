@@ -12,7 +12,15 @@ identity=$(json_member file "$file")
 [ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
 subject=$(basename "$file")
 
-[ -f "$file" ] || fail 10 "installer not found: $file"
+if [ ! -f "$file" ]; then
+    # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
+    # Until then the app counts as not installed, and only an actual install needs the file.
+    [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && fail 10 "installer not found: $file"
+    installed_version() { :; }
+    admin=true via="its installer" install_desc="download $subject from the collection, then install it"
+    furnish_main "$@"
+    exit
+fi
 # Without git-lfs, an LFS-tracked file is a small text pointer instead of the installer.
 if head -c 64 "$file" | grep -q '^version https://git-lfs'; then
     missing "git-lfs to download $subject (install it, then update the collection)"

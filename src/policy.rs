@@ -35,6 +35,8 @@ pub struct Policy {
     pub collections: Collections,
     /// Option values (see `options`) by collection or `collection/app`: defaults or locked.
     pub parameters: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// Per collection: values for the settings in `settings::PER_COLLECTION`, defaults or locked.
+    pub collection_settings: BTreeMap<String, BTreeMap<String, Entry>>,
     /// Present: the furnish service installs the preset collections' apps (see `service`).
     pub service: Option<Service>,
     /// The desktop app under the organization's name, logo and colors.

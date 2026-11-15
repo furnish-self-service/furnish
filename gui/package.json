@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "tauri": "tauri",
-    "bundle": "node scripts/cli-sidecar.mjs && tauri build --config src-tauri/tauri.bundle.conf.json",
+    "bundle": "node scripts/cli-sidecar.mjs && node scripts/bundle-resources.mjs && tauri build --config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.resources.conf.json",
     "test": "node --test --experimental-strip-types src/lib/*.test.ts"
   },
   "dependencies": {

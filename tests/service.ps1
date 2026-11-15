@@ -10,6 +10,19 @@ $pw = ConvertTo-SecureString 'Furnish-Test-1!' -AsPlainText -Force
 function Fail([string]$Message) {
     Write-Host "FAIL: $Message"
     Get-ChildItem C:\ProgramData\furnish -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 30 | ForEach-Object FullName
+    # The service's copy of the collection, as git sees it.
+    $org = 'C:\ProgramData\furnish\collections\org'
+    if (Test-Path "$org\.git") {
+        Write-Host '--- git config, sparse patterns, index (S: left out of the checkout)'
+        git -c safe.directory=* -C $org config --local --list
+        Get-Content "$org\.git\info\sparse-checkout" -ErrorAction SilentlyContinue
+        git -c safe.directory=* -C $org ls-files -t | Select-Object -First 10
+        git -c safe.directory=* -C $org status --short | Select-Object -First 10
+    }
+    Write-Host '--- service.log'
+    Get-Content C:\ProgramData\furnish\service.log -ErrorAction SilentlyContinue | Select-Object -Last 30
+    Write-Host '--- git processes still running (the service waiting on one?)'
+    Get-CimInstance Win32_Process -Filter "Name like 'git%' or Name = 'furnish.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }
     Get-WinEvent -LogName System -MaxEvents 20 -ErrorAction SilentlyContinue | Where-Object ProviderName -eq 'Service Control Manager' | Format-List TimeCreated, Message
     exit 1
 }

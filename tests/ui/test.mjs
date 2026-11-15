@@ -88,7 +88,8 @@ const steps = [
     await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
   }],
   ['apps without a resource for this OS are hidden', async () => {
-    if ((await findAll(card('nowhere'))).length) throw new Error('nowhere is shown');
+    // Cards show until the app's status arrives; "not available here" then hides it.
+    await waitFor('nowhere hidden', async () => !(await findAll(card('nowhere'))).length);
   }],
   ['a missing tool shows what is needed; prerequisites install first', async () => {
     await waitFor('brew-only shows what it needs', async () => (await text(card('brew-only'))).includes('Needs Homebrew'));
@@ -320,10 +321,35 @@ const steps = [
     if (!(await text("//label[contains(@class,'interval')]")).includes('Set by your organization')) throw new Error('no hint');
     if (log('data/settings.json').includes('updateIntervalMinutes')) throw new Error('locked setting saved for the user');
   }],
+  ['a failed install offers the earlier version; installing it holds the app there', async () => {
+    await click(button('Discover'));
+    await click(`${card('flaky')}${button('Install')}`);
+    await click(`${card('flaky')}//button[@aria-label='Open flaky']`);
+    await waitFor('offer of the earlier version', () => find("//button[starts-with(normalize-space(), 'Install the version from')]"), 30000);
+    await click("//button[starts-with(normalize-space(), 'Install the version from')]");
+    await waitFor('held notice', async () => (await text('//section')).includes("installing the collection's current version failed"), 30000);
+    await waitFor('installed', async () => (await text("//p[contains(@class,'status')]")) === 'Installed and up to date');
+    if (!existsSync(`${workDir}/pkgs/flaky`)) throw new Error('the earlier version did not install package flaky');
+    if (!(await findAll(button('Try the current version'))).length) throw new Error('no way back to the current version');
+  }],
+  ['per-collection settings: falling back, downloads, history', async () => {
+    // Error notifications stay until dismissed; the one from the failed install would cover the list.
+    for (const el of await findAll("//button[@aria-label='Dismiss']")) await wd('POST', s(`/element/${el}/click`), {});
+    await click(button('Collections'));
+    await click("//li[.//*[normalize-space()='fixture']]//summary[contains(., 'Downloads and earlier versions')]");
+    await click("//select[@id='cs-fixture-fallback']/option[normalize-space()='Install the previous version']");
+    await waitFor('saved for the collection', () => /"fixture":\s*\{\s*"fallback":\s*"automatic"/.test(log('data/settings.json')));
+  }],
   ['collections the organization provides cannot be removed', async () => {
     const row = "//li[.//*[normalize-space()='fixture']]";
     if (!(await text(row)).includes('Managed by your organization')) throw new Error('not marked managed');
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
+  }],
+  ['the open-source licenses open from the Collections page', async () => {
+    await click(button('Collections'));
+    if (!/furnish \d+\.\d+\.\d+/.test(await text("//p[contains(@class,'about')]"))) throw new Error('no version shown');
+    await click(button('Open-source licenses'));
+    await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
   }],
   ['the logo leads back to Discover', async () => {
     await click("//button[@aria-label='Acme Apps, go to Discover']");
