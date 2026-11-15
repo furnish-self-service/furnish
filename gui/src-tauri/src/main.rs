@@ -131,6 +131,13 @@ fn branding_info() -> BrandingInfo {
     }
 }
 
+/// The furnish:// link furnish was started with, if any (later ones arrive as events).
+#[tauri::command]
+fn pending_link(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    app.deep_link().get_current().ok().flatten().and_then(|urls| urls.first().map(|u| u.to_string()))
+}
+
 #[tauri::command]
 fn get_branding() -> BrandingInfo {
     branding_info()
@@ -364,13 +371,72 @@ async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
 }
 
+/// Add a git collection, or an organization's furnish address (`furnish.myorg.tld`): then sign
+/// in in the browser (its URL comes as a `furnish://sign-in` event) and add all its collections.
 #[tauri::command]
-async fn add_collection(url: String, name: Option<String>) -> CmdResult<CollectionInfo> {
+async fn add_collection(
+    app: tauri::AppHandle,
+    url: String,
+    name: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) -> CmdResult<Vec<CollectionInfo>> {
     blocking(move || {
+        if let Some(origin) = furnish::endpoint::origin(&url) {
+            let added = catalog::add_endpoint(&origin, |u| {
+                let _ = app.emit("furnish://sign-in", u.to_string());
+            })?;
+            return added.iter().map(collection_info).collect();
+        }
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| catalog::name_from_url(&url));
-        collection_info(&catalog::add(url.trim(), name.trim())?)
+        let credentials = username.as_deref().filter(|u| !u.is_empty()).zip(password.as_deref());
+        Ok(vec![collection_info(&catalog::add(url.trim(), name.trim(), credentials)?)?])
     })
     .await
+}
+
+/// An organization's furnish address and whether the user is signed in to it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EndpointInfo {
+    origin: String,
+    name: String,
+    signed_in: bool,
+}
+
+#[tauri::command]
+async fn endpoints() -> CmdResult<Vec<EndpointInfo>> {
+    blocking(|| {
+        Ok(furnish::endpoint::known()
+            .into_iter()
+            .map(|(origin, d)| EndpointInfo { signed_in: furnish::endpoint::token(&origin, &d).is_ok(), name: d.name, origin })
+            .collect())
+    })
+    .await
+}
+
+/// Sign in to an endpoint again, then set up its collections (e.g. presets that needed it).
+#[tauri::command]
+async fn sign_in(app: tauri::AppHandle, origin: String) -> CmdResult<Vec<String>> {
+    blocking(move || {
+        let description = furnish::endpoint::discover(&origin)?;
+        furnish::endpoint::login(&origin, &description, |u| {
+            let _ = app.emit("furnish://sign-in", u.to_string());
+        })?;
+        Ok(catalog::ensure_presets())
+    })
+    .await
+}
+
+/// Apps to install on first launch (policy or endpoint `autoInstall`) not installed that way yet.
+#[tauri::command]
+fn auto_install_pending() -> Vec<String> {
+    furnish::endpoint::auto_install_pending()
+}
+
+#[tauri::command]
+fn auto_install_done(app: String) -> CmdResult<()> {
+    furnish::endpoint::auto_install_done(&app).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -405,8 +471,21 @@ fn main() {
     }
     furnish::load::start_sampler(load_interval());
     tauri::Builder::default()
+        // A furnish:// link while furnish runs: hand it to the running window.
+        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             use tauri::Manager;
+            use tauri_plugin_deep_link::DeepLinkExt;
+            // Links (furnish://add?endpoint=…) go to the UI, which asks before adding anything.
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    let _ = handle.emit("furnish://link", url.to_string());
+                }
+            });
+            #[cfg(any(target_os = "linux", windows))]
+            let _ = app.deep_link().register_all();
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&branding_info().name);
             }
@@ -419,6 +498,11 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_branding,
+            endpoints,
+            sign_in,
+            auto_install_pending,
+            auto_install_done,
+            pending_link,
             list_apps,
             list_kits,
             app_status,

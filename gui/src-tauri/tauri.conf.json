@@ -43,5 +43,14 @@
         "desktopTemplate": "furnish.desktop"
       }
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "furnish"
+        ]
+      }
+    }
   }
 }

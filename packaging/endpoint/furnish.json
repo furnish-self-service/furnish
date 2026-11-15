@@ -1,0 +1,9 @@
+{
+  "name": "Acme",
+  "issuer": "https://login.myorg.tld/realms/myorg",
+  "clientId": "furnish",
+  "token": "id_token",
+  "collections": [
+    {"name": "acme", "url": "https://furnish.myorg.tld/git/acme.git"}
+  ]
+}

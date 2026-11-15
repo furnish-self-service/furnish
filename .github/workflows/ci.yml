@@ -87,6 +87,30 @@ jobs:
       - uses: cachix/install-nix-action@v31
       - run: nix build -L .#furnish .#furnish-gui
 
+  git-auth:
+    name: private collections (HTTPS credentials, SSH)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/git-auth.sh bin/furnish
+
+  endpoint:
+    name: endpoint (SSO proxy, sign-in, git)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && FURNISH_BIN=$PWD/bin/furnish tests/endpoint/run.sh
+
   native:
     name: e2e ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -184,7 +208,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, native, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, git-auth, endpoint, native, service-macos, service-windows, packages, gui]
     runs-on: ubuntu-latest
     permissions:
       pages: write

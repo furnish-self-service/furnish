@@ -39,9 +39,13 @@ pub struct Policy {
     pub service: Option<Service>,
     /// The desktop app under the organization's name, logo and colors.
     pub branding: Branding,
+    /// The organization's furnish addresses (see `endpoint`): their collections are preset.
+    pub endpoints: Vec<String>,
+    /// Apps (`collection/app`) installed on first launch, e.g. a VPN client.
+    pub auto_install: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Branding {
     /// Shown instead of "furnish": window title, sidebar, texts.
@@ -57,7 +61,7 @@ pub struct Branding {
     pub theme: Theme,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Theme {
     pub light: BTreeMap<String, String>,
@@ -108,11 +112,53 @@ pub struct Preset {
 /// The policy, or none. An unreadable policy is reported and ignored rather than blocking furnish.
 // ponytail: fail open on a broken policy; fail closed (refuse to run) if admins prefer that.
 pub fn load() -> Policy {
+    let mut policy = load_native();
+    with_endpoints(&mut policy, &crate::endpoint::known());
+    policy
+}
+
+/// Only what the admin deployed, without the endpoints' defaults.
+pub fn load_native() -> Policy {
     match read() {
         Ok(policy) => policy.unwrap_or_default(),
         Err(err) => {
             eprintln!("warning: ignoring the admin policy: {err:#}");
             Policy::default()
+        }
+    }
+}
+
+/// Add what the organization's endpoints say: the collections of endpoints the policy names
+/// become presets; their branding, settings, option values and apps to install fill in what the
+/// policy leaves open, as defaults (never locked).
+pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint::Description)]) {
+    let named: Vec<String> = policy.endpoints.iter().filter_map(|e| crate::endpoint::origin(e)).collect();
+    for (origin, d) in endpoints {
+        if named.contains(origin) {
+            for c in &d.collections {
+                if !policy.collections.preset.iter().any(|p| p.name == c.name) {
+                    policy.collections.preset.push(Preset { name: c.name.clone(), url: c.url.clone() });
+                }
+            }
+        }
+        if policy.branding == Branding::default()
+            && let Some(b) = d.branding.clone().and_then(|b| serde_json::from_value(b).ok())
+        {
+            policy.branding = b;
+        }
+        for (key, value) in &d.settings {
+            policy.settings.entry(key.clone()).or_insert(Entry { value: value.clone(), locked: false });
+        }
+        for (target, values) in &d.parameters {
+            let entries = policy.parameters.entry(target.clone()).or_default();
+            for (name, value) in values {
+                entries.entry(name.clone()).or_insert(Entry { value: value.clone(), locked: false });
+            }
+        }
+        for app in &d.auto_install {
+            if !policy.auto_install.contains(app) {
+                policy.auto_install.push(app.clone());
+            }
         }
     }
 }
@@ -194,6 +240,35 @@ mod tests {
         std::fs::write(&path, xml).unwrap();
         assert_eq!(parse_plist(&path).unwrap(), json);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn endpoints_fill_in_defaults_but_never_override_or_lock() {
+        let mut p: Policy = serde_json::from_str(
+            r#"{"endpoints": ["furnish.acme.tld"],
+                "settings": {"updateIntervalMinutes": {"value": 60, "locked": true}},
+                "branding": {"name": "Admin's"}}"#,
+        )
+        .unwrap();
+        let d: crate::endpoint::Description = serde_json::from_value(serde_json::json!({
+            "name": "Acme", "issuer": "https://sso.acme.tld", "clientId": "furnish",
+            "collections": [{"name": "acme", "url": "https://furnish.acme.tld/git/acme.git"}],
+            "branding": {"name": "Acme Apps"},
+            "settings": {"updateIntervalMinutes": 5, "loadAwareUpdates": false},
+            "parameters": {"acme": {"role": "developer"}},
+            "autoInstall": ["acme/vpn"]
+        }))
+        .unwrap();
+        let other = crate::endpoint::Description { collections: vec![], ..d.clone() };
+        with_endpoints(&mut p, &[("https://furnish.acme.tld".into(), d), ("https://elsewhere.tld".into(), other)]);
+        // Its collections are preset because the policy names it.
+        assert_eq!(p.collections.preset, [Preset { name: "acme".into(), url: "https://furnish.acme.tld/git/acme.git".into() }]);
+        // The policy's own values win; the endpoint's only fill gaps, unlocked.
+        assert_eq!(p.branding.name.as_deref(), Some("Admin's"));
+        assert_eq!(p.settings["updateIntervalMinutes"], Entry { value: 60.into(), locked: true });
+        assert_eq!(p.settings["loadAwareUpdates"], Entry { value: false.into(), locked: false });
+        assert!(!p.parameters["acme"]["role"].locked);
+        assert_eq!(p.auto_install, ["acme/vpn"]);
     }
 
     #[test]

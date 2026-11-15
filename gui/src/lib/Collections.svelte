@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
-  import { askQuestions } from './state.svelte';
+  import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
   const intervals = [
@@ -23,6 +23,11 @@
   let url = $state('');
   let name = $state('');
   let adding = $state(false);
+  // HTTPS repositories that need a login: username and password (or access token).
+  let username = $state('');
+  let password = $state('');
+  let needsLogin = $state(false);
+  const https = $derived(/^https?:\/\/.+\/./.test(url.trim()));
   /** Name of the collection being updated or removed; all-update uses '*'. */
   let working = $state<string | null>(null);
   let confirmRemove = $state<string | null>(null);
@@ -31,12 +36,22 @@
     event.preventDefault();
     adding = true;
     const ok = await collectionAction(async () => {
-      const c = await api.addCollection(url, name || null);
-      return `Added ${c.name} with ${c.apps} app${c.apps === 1 ? '' : 's'}`;
+      try {
+        const added = await api.addCollection(url, name || null, username, password);
+        if (!added.length) return 'Signed in; its collections were already there';
+        return `Added ${added.map((c) => c.name).join(', ')}`;
+      } catch (e) {
+        // The server wants a login: show the fields (furnish keeps it in the credential store).
+        if (String(e).includes('needs a username and password')) needsLogin = true;
+        throw e;
+      }
     }, "Couldn't add the collection");
     adding = false;
+    store.signInUrl = null;
+    await refreshEndpoints();
     if (ok) {
-      url = name = '';
+      url = name = username = password = '';
+      needsLogin = false;
       askQuestions(true); // the new collection's required options
     }
   }
@@ -80,7 +95,7 @@
   {#if store.usersCanAddCollections}
   <form onsubmit={add}>
     <label class="url">
-      <span>Git URL</span>
+      <span>Git URL, or your organization's furnish address</span>
       <input bind:value={url} required placeholder="git@github.com:your-org/apps.git" spellcheck="false" />
     </label>
     <label class="name">
@@ -88,6 +103,20 @@
       <input bind:value={name} placeholder="from the URL" spellcheck="false" />
     </label>
     <button class="primary" disabled={adding || !url.trim()}>{adding ? 'Adding…' : 'Add collection'}</button>
+    {#if https}
+      <details class="login" bind:open={needsLogin}>
+        <summary>Needs a login?</summary>
+        <p class="explain flush">For a private repository: your username and a password or access token. furnish keeps them in your system's credential store and sends them to this repository only. SSH URLs use your SSH keys and agent instead.</p>
+        <label class="name">
+          <span>Username</span>
+          <input bind:value={username} autocomplete="username" spellcheck="false" />
+        </label>
+        <label class="name">
+          <span>Password or access token</span>
+          <input bind:value={password} type="password" autocomplete="current-password" />
+        </label>
+      </details>
+    {/if}
   </form>
   <p class="warning">Apps run with administrator rights. Only add collections from people you trust.</p>
   {:else}
@@ -334,7 +363,22 @@
     padding: 0.85rem 0;
     border-bottom: 1px solid var(--line);
   }
-  .copts {
+  .copts,
+  .login {
+    flex-basis: 100%;
+  }
+  .login summary {
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+  .login[open] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .login[open] summary {
     flex-basis: 100%;
   }
   .avatar {

@@ -1,0 +1,37 @@
+# Test overlay for packaging/endpoint/docker-compose.yml, used by tests/endpoint/run.sh.
+# Paths use ${TEST_DIR}: relative paths would resolve against packaging/endpoint/.
+services:
+  caddy:
+    ports: !reset []
+    volumes:
+      - ${TEST_DIR}/furnish.json:/srv/furnish/.well-known/furnish.json:ro
+    networks:
+      default:
+        aliases: [furnish.test]
+
+  oauth2-proxy:
+    depends_on: [mock-oidc]
+
+  # Fake IdP; issuers are http://mock-oidc:8080/<any name>, each with its own signing key.
+  mock-oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.5
+
+  gitlab:
+    build: {context: "${TEST_DIR}", target: gitlab}
+    image: furnish-endpoint-test-gitlab
+    environment:
+      DEPLOY_USER: ${DEPLOY_USER}
+      DEPLOY_TOKEN: ${DEPLOY_TOKEN}
+
+  client:
+    build: {context: "${TEST_DIR}", target: client}
+    image: furnish-endpoint-test-client
+    profiles: [client]
+    environment:
+      DEPLOY_TOKEN: ${DEPLOY_TOKEN}
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH}
+    volumes:
+      - caddy-data:/caddy-data:ro
+      - ${TEST_DIR}/checks.sh:/checks.sh:ro
+      - ${TEST_DIR}/furnish.sh:/furnish.sh:ro
+      - ${FURNISH_BIN:-/dev/null}:/usr/local/bin/furnish:ro
