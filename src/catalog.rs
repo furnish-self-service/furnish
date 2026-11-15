@@ -323,23 +323,26 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
     }
     // Commits that left the history (see checkout_depth) are deleted at the next cleanup.
     args.extend(["--config=gc.reflogExpireUnreachable=now", "--config=gc.pruneExpire=now"]);
-    let target = dir.to_string_lossy();
+    // Set up in .partial/ and moved into place when complete: furnish may stop half way (the
+    // service when it is replaced, say), and a copy without its checkout mustn't look finished.
+    let staging = collections_dir().join(".partial").join(name);
+    remove_repository(&staging);
+    fs::create_dir_all(collections_dir().join(".partial"))?;
+    let target = staging.to_string_lossy().into_owned();
     args.extend([url, &target]);
-    if let Err(err) = git(None, &args) {
-        remove_repository(&dir); // git may leave a partial copy behind
-        return Err(err);
-    }
-    let collection = Collection { name: name.to_string(), dir, managed };
-    let checkout = || -> Result<()> {
+    let collection = Collection { name: name.to_string(), dir: staging.clone(), managed };
+    let set_up = || -> Result<()> {
+        git(None, &args)?;
         collection.verify("HEAD")?;
         collection.prepare_checkout(&settings, "HEAD", true)?;
-        git(Some(&collection.dir), &["reset", "--quiet", "--hard"]).map(drop)
+        git(Some(&collection.dir), &["reset", "--quiet", "--hard"])?;
+        Ok(fs::rename(&staging, &dir)?)
     };
-    if let Err(err) = checkout() {
-        remove_repository(&collection.dir); // no half-usable collection
+    if let Err(err) = set_up() {
+        remove_repository(&staging);
         return Err(err);
     }
-    Ok(collection)
+    Ok(Collection { dir, ..collection })
 }
 
 pub fn remove(name: &str) -> Result<()> {
