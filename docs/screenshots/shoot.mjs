@@ -93,17 +93,23 @@ const scenes = {
     await waitFor('question', () => find("//dialog[@open]//select[@data-question='role']"), 60000);
     await shot('questions');
     await crop('questions', '//dialog[@open]');
-    await click("//dialog[@open]//select[@data-question='role']/option[normalize-space()='Design and media']");
+    await click("//dialog[@open]//select[@data-question='role']/option[normalize-space()='Office work']");
     await click("//dialog[@open]//button[normalize-space()='Save answers']");
-    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='gimp']"));
+    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='thunderbird']"));
     await settled();
     await js('window.scrollTo(0, 0)');
     await shot('discover');
     await crop('discover', "//div[contains(@class,'recommended')]");
     await js('window.scrollTo(0, 0)');
 
+    // A kit, before Thunderbird is installed.
+    await click("//button[@aria-label='Open kit office']");
+    await shot('kit');
+    await crop('kit', "//ul[contains(@class,'items')]");
+    await click(nav('Discover'));
+
     // An app's page with the preview of its steps.
-    await click(`${card('gimp')}//button[@aria-label='Open gimp']`);
+    await click(`${card('thunderbird')}//button[@aria-label='Open thunderbird']`);
     await click("//details[summary[contains(., 'Steps')]]/summary");
     await waitFor('preview', async () => (await findAll("//details[@open]//li")).length > 0);
     await shot('app-detail');
@@ -114,23 +120,18 @@ const scenes = {
     await sleep(1500);
     await shot('install-progress');
     await crop('install-progress', "//details[@open][summary[contains(., 'Steps')]]");
-    await waitFor('installed', () => find("//*[contains(normalize-space(), 'Installed gimp in')]"), 60000);
+    await waitFor('installed', () => find("//*[contains(normalize-space(), 'Installed thunderbird in')]"), 60000);
     await click(nav('Discover'));
 
-    // A kit.
-    await click("//button[@aria-label='Open kit design-studio']");
-    await shot('kit');
-    await crop('kit', "//ul[contains(@class,'items')]");
-    await click(nav('Discover'));
 
     // Several installs at once: the queue on the Activity page.
-    for (const app of ['inkscape', 'krita', 'kdenlive']) await click(`${card(app)}//button[normalize-space()='Install']`);
+    for (const app of ['gimp', 'inkscape', 'vlc']) await click(`${card(app)}//button[normalize-space()='Install']`);
     await click(nav('Activity'));
     await waitFor('queue', async () => (await findAll("//ol[contains(@class,'queue')]/li")).length >= 1);
     await shot('activity');
     await crop('activity', '//main/section');
     await click(nav('Discover'));
-    for (const app of ['inkscape', 'krita', 'kdenlive']) {
+    for (const app of ['gimp', 'inkscape', 'vlc']) {
       await waitFor(`${app} installed`, () => find(`${card(app)}//*[normalize-space()='Installed']`), 90000);
     }
 
@@ -179,7 +180,7 @@ const scenes = {
     await click(nav('Collections'));
     await click("//select[@id='language']/option[@value='de']");
     await click(nav('Entdecken'));
-    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='gimp']"));
+    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='thunderbird']"));
     await settled();
     await js('window.scrollTo(0, 0)');
     await shot('discover-de');
@@ -196,9 +197,9 @@ const scenes = {
     await shot('collection-settings');
     await crop('collection-settings', row);
 
-    // Installing cowsay fails (the collection's latest change); its earlier version is offered.
+    // Installing 7zip fails (the collection's latest change); its earlier version is offered.
     await click(nav('Discover'));
-    await click(`${card('cowsay')}//button[@aria-label='Open cowsay']`);
+    await click(`${card('7zip')}//button[@aria-label='Open 7zip']`);
     await click("//button[contains(@class,'action') and normalize-space()='Install']");
     const header = "//section[contains(@class,'detail')]/header";
     const offer = "//div[contains(@class,'differ')][.//button[starts-with(normalize-space(), 'Install the version from')]]";
@@ -207,7 +208,7 @@ const scenes = {
     await js('window.scrollTo(0, 0)');
     await shot('fallback');
     await crop('fallback', header, offer);
-    // Installing that version holds cowsay there.
+    // Installing that version holds 7zip there.
     await click(`${offer}//button`);
     const held = "//div[contains(@class,'differ')][.//button[normalize-space()='Try the current version']]";
     await waitFor('held', () => find(held), 60000);
@@ -222,7 +223,7 @@ const scenes = {
     await shot('discover-dark');
     await crop('discover-dark', "//div[contains(@class,'recommended')]");
     await js('window.scrollTo(0, 0)');
-    await click(`${card('krita')}//button[@aria-label='Open krita']`);
+    await click(`${card('firefox')}//button[@aria-label='Open firefox']`);
     await shot('app-detail-dark');
     await crop('app-detail-dark', "//section[contains(@class,'detail')]/header");
   },

@@ -26,27 +26,29 @@ binary="$repo/target/ui-docker/release/furnish-gui"
 mkdir -p "$work/bin" "$work/pkgs"
 cat > "$work/bin/pacman" <<SH
 #!/bin/sh
+# The package is the last argument (furnish puts -- before it).
+for p; do :; done
 case "\$1" in
-  -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
-  -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
-  -S) [ "\$4" = cowsay-git ] && { sleep 2; echo "error: target not found: \$4" >&2; exit 1; }
-      sleep 4; if [ -f "$work/pkgs/\$4.new" ]; then mv "$work/pkgs/\$4.new" "$work/pkgs/\$4"; else echo 1.0 > "$work/pkgs/\$4"; fi ;;
-  -R) rm "$work/pkgs/\$3" ;;
+  -Q) [ -f "$work/pkgs/\$p" ] && echo "\$p \$(cat "$work/pkgs/\$p")" ;;
+  -Qu) [ -f "$work/pkgs/\$p.new" ] && echo "\$p \$(cat "$work/pkgs/\$p") -> \$(cat "$work/pkgs/\$p.new")" ;;
+  -S) [ "\$p" = 7zip-git ] && { sleep 2; echo "error: target not found: \$p" >&2; exit 1; }
+      sleep 4; if [ -f "$work/pkgs/\$p.new" ]; then mv "$work/pkgs/\$p.new" "$work/pkgs/\$p"; else echo 1.0 > "$work/pkgs/\$p"; fi ;;
+  -R) rm "$work/pkgs/\$p" ;;
 esac
 SH
 printf '#!/bin/sh\nexec "$@"\n' > "$work/bin/pkexec"
 chmod +x "$work/bin/"*
-for p in git htop keepassxc libreoffice-fresh; do echo 24.2.1 > "$work/pkgs/$p"; done
+for p in firefox git keepassxc libreoffice-fresh; do echo 24.2.1 > "$work/pkgs/$p"; done
 echo 24.8.0 > "$work/pkgs/libreoffice-fresh.new"
 
 # The collection as its own clone (uncommitted changes included), two weeks old. Its latest
-# commit moves cowsay to a package the fake pacman can't install: the fallback scene.
+# commit moves 7zip to a package the fake pacman can't install: the fallback scene.
 cp -r "$collection" "$work/example-src" && rm -rf "$work/example-src/.git"
 git -C "$work/example-src" init -q && git -C "$work/example-src" add -A
 then=$(date -R -d '13 days ago')
 GIT_AUTHOR_DATE=$then GIT_COMMITTER_DATE=$then git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qm example
-sed -i 's/name: cowsay$/name: cowsay-git/' "$work/example-src/apps/cowsay.dsc.yaml"
-git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qam 'cowsay from git'
+sed -i 's/^      name: 7zip$/      name: 7zip-git/' "$work/example-src/apps/7zip.dsc.yaml"
+git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qam '7zip from git'
 mkdir -p "$work/data/collections"
 git clone -q "$work/example-src" "$work/data/collections/example"
 # Only the policy can make the collection managed; a plain policy keeps furnish's own look.
@@ -70,16 +72,16 @@ start "$work/policy.json" GTK_THEME=Adwaita:dark && shoot dark
 mkdir -p "$work/data/endpoints"
 echo '{"origin": "https://furnish.acme.example", "description": {"name": "Acme", "issuer": "https://sso.acme.example",
   "clientId": "furnish", "collections": [{"name": "acme", "url": "https://furnish.acme.example/git/acme.git"}]}}' \
-    > "$work/data/endpoints/furnish.acme.example.json"
+    > "$work/data/endpoints/https_furnish.acme.example.json"
 start "$work/policy.json" && shoot endpoint
 # Reports: the organization's furnish address takes them, the policy suggests errors only.
 echo '{"origin": "https://furnish.acme.example", "description": {"name": "Acme", "issuer": "https://sso.acme.example",
   "clientId": "furnish", "collections": [{"name": "acme", "url": "https://furnish.acme.example/git/acme.git"}],
-  "events": "https://furnish.acme.example/events"}}' > "$work/data/endpoints/furnish.acme.example.json"
+  "events": "https://furnish.acme.example/events"}}' > "$work/data/endpoints/https_furnish.acme.example.json"
 echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]},
   "settings": {"reporting": {"value": "errors"}}}' > "$work/policy-reports.json"
 start "$work/policy-reports.json" && shoot reports
-# Last, as it installs cowsay: German, collection settings, falling back to an earlier version.
+# Last, as it installs 7zip: German, collection settings, falling back to an earlier version.
 rm -rf "$work/data/endpoints"
 start "$work/policy.json" && shoot fallback
 # Phone crops: cut each window screenshot to its element (x.crop holds WxH+X+Y in pixels).

@@ -88,19 +88,21 @@ Apps set `metadata.furnish.icon`, kits and `collection.yaml` set `icon`: the pat
 A kit installs several apps of the collection together:
 
 ```yaml
-# kits/design-studio.yaml
-description: Image editing, vector graphics and digital painting
-categories: [Graphics]
-icon: icons/design-studio.svg
+# kits/office.yaml
+description: Office suite, email and a password manager
+categories: [Office]
+icon: icons/office.svg
 items:
-  - app: gimp
+  - app: libreoffice
     required: true       # always installed with the kit
-  - app: inkscape
+  - app: thunderbird
     required: true
-  - app: krita           # optional and preselected; `selected: false` leaves it unselected
+  - app: keepassxc       # optional and preselected
+  - app: 7zip
+    selected: false      # optional, not preselected
 ```
 
-![The Design studio kit with its three apps.](images/kit.webp)
+![The Office kit with its four apps.](images/kit.webp)
 
 ## Questions and options
 
@@ -126,7 +128,7 @@ An option with `allowedValues` is shown as a list to choose from. An app uses an
 ```yaml
 metadata:
   furnish:
-    recommended: "[equals(parameters('role'), 'design')]"   # or: true
+    recommended: "[equals(parameters('role'), 'office')]"   # or: true
 ```
 
 Recommended apps appear first on Discover. The expression can use the collection's options and the app's own.
@@ -141,9 +143,9 @@ $ furnish check
 ✓ gimp             app  Windows: gimp (winget) · macOS: gimp · Linux: gimp
 ✗ vpn              app  Windows: setup · macOS: – · Linux: –
     error: setup: installers/vpn.msi is not in the collection
-! htop             app  Windows: – · macOS: htop package · Linux: htop package
+! slack            app  Windows: slack (winget) · macOS: slack (Homebrew) · Linux: –
     warning: no categories (metadata.furnish.categories)
-✓ design-studio    kit
+✓ office           kit
 
 3 apps, 1 kit: 1 error, 1 warning
 ```

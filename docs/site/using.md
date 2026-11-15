@@ -26,7 +26,7 @@ Click an app for its description, its source and what it installs. Three closed 
 - Activity log shows what the package manager printed during the last install.
 - DSC configuration shows the app's file in the collection.
 
-![GIMP's page with the preview of its install step.](images/app-detail.webp)
+![Thunderbird's page with the preview of its install step.](images/app-detail.webp)
 
 ## Install, update, uninstall
 
@@ -44,11 +44,11 @@ Installs run one at a time. Clicking Install on more apps adds them to a queue, 
 
 If installing or updating an app fails, furnish offers an earlier version of it: the one that last installed on this computer, else the version before the collection's latest change to the app. The app's page shows Install the version from, with the day of that version.
 
-![cowsay's page after a failed install, offering its version from an earlier day.](images/fallback.webp)
+![7-Zip's page after a failed install, offering its version from an earlier day.](images/fallback.webp)
 
 furnish then keeps the app at that version, and its updates don't retry the failed one. When the collection changes the app again, furnish installs the new version with the next update. Try the current version on the app's page installs the collection's version right away.
 
-![cowsay's page saying it is held at an earlier version, with the button Try the current version.](images/held.webp)
+![7-Zip's page saying it is held at an earlier version, with the button Try the current version.](images/held.webp)
 
 On the Collections page, Downloads and earlier versions sets this per collection: offer the previous version, install it without asking, or neither, and how much older it may be. Your organization may set these.
 

@@ -37,10 +37,10 @@ furnish list
 ```
 
 ```
-   App          Collection  Categories          Description
-·  gimp         example     Graphics, Photo     ★ Image editor for photo retouching, image composition and painting.
-✓  git          example     Development         Distributed version control system.
-✓  htop         example     System, Monitoring  Interactive process viewer for the terminal.
+   App          Collection  Categories             Description
+✓  firefox      example     Internet               ★ Web browser from Mozilla.
+✓  git          example     Development            Distributed version control system.
+·  thunderbird  example     Communication, Office  ★ Email, calendar and contacts.
 ```
 
 ✓ is installed, · not installed, ★ recommended for you.
@@ -48,17 +48,23 @@ furnish list
 ## An app
 
 ```yaml
-# apps/htop.dsc.yaml
+# apps/slack.dsc.yaml
 metadata:
   furnish:
-    description: Interactive process viewer for the terminal.
-    categories: [System, Monitoring]
-    icon: icons/htop.svg
+    description: Team chat with channels, huddles and file sharing.
+    categories: [Communication]
+    icon: icons/slack.svg
 resources:
-  - name: htop
+  - name: slack (winget)
     type: Furnish/Package
+    condition: "[equals(context().os.family, 'Windows')]"
     properties:
-      name: htop
+      name: SlackTechnologies.Slack
+  - name: slack (Homebrew)
+    type: Furnish/Package
+    condition: "[equals(context().os.family, 'macOS')]"
+    properties:
+      name: slack
 ```
 
 ## Docs

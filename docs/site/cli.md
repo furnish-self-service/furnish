@@ -36,8 +36,8 @@ Installing gimp would:
                    Run as administrator: pacman -S --noconfirm --needed gimp
 
 $ furnish list
-   App          Collection  Categories          Description
-·  gimp         example     Graphics, Photo     ★ Image editor for photo retouching, image composition and painting.
-✓  git          example     Development         Distributed version control system.
-✓  htop         example     System, Monitoring  Interactive process viewer for the terminal.
+   App          Collection  Categories             Description
+✓  firefox      example     Internet               ★ Web browser from Mozilla.
+✓  git          example     Development            Distributed version control system.
+·  thunderbird  example     Communication, Office  ★ Email, calendar and contacts.
 ```
