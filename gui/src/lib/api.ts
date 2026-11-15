@@ -144,8 +144,26 @@ export const reinstall = (key: string) => invoke<void>('reinstall', { key });
 export const setOption = (target: string, name: string, value: unknown) =>
   invoke<void>('set_option', { target, name, value });
 export const listCollections = () => invoke<CollectionInfo[]>('list_collections');
-export const addCollection = (url: string, name: string | null) =>
-  invoke<CollectionInfo>('add_collection', { url, name });
+/** A git collection, or an organization's furnish address (furnish.myorg.tld): all its collections. */
+export const addCollection = (url: string, name: string | null, username?: string, password?: string) =>
+  invoke<CollectionInfo[]>('add_collection', { url, name, username: username || null, password: password || null });
+/** The organization's furnish addresses this computer knows, and whether the user is signed in. */
+export interface Endpoint {
+  origin: string;
+  name: string;
+  signedIn: boolean;
+}
+export const endpoints = () => invoke<Endpoint[]>('endpoints');
+/** Sign in again in the browser; returns problems setting up its collections. */
+export const signIn = (origin: string) => invoke<string[]>('sign_in', { origin });
+/** The sign-in page's URL, in case the browser doesn't open. */
+export const onSignIn = (handler: (url: string) => void) => listen<string>('furnish://sign-in', (e) => handler(e.payload));
+/** furnish:// links (e.g. furnish://add?endpoint=furnish.myorg.tld): the one furnish started with, then events. */
+export const pendingLink = () => invoke<string | null>('pending_link');
+export const onLink = (handler: (url: string) => void) => listen<string>('furnish://link', (e) => handler(e.payload));
+/** Apps to install on first launch (organization's choice), not installed that way yet. */
+export const autoInstallPending = () => invoke<string[]>('auto_install_pending');
+export const autoInstallDone = (app: string) => invoke<void>('auto_install_done', { app });
 export const updateCollection = (name: string) =>
   invoke<{ old: string; new: string }>('update_collection', { name });
 export const removeCollection = (name: string) => invoke<void>('remove_collection', { name });

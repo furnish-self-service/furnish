@@ -3,6 +3,8 @@
   import { store, start, visibleApps, visibleKits, checkForUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
+  import SignInBanner from './lib/SignInBanner.svelte';
+  import LinkDialog from './lib/LinkDialog.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
@@ -78,6 +80,7 @@
   </nav>
 
   <main>
+    <SignInBanner />
     {#if view.page === 'collections'}
       <Collections />
     {:else if view.page === 'activity'}
@@ -155,6 +158,7 @@
 <Toasts />
 <DepsDialog />
 <QuestionsDialog />
+<LinkDialog />
 
 <style>
   .shell {

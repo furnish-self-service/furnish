@@ -3,7 +3,9 @@ Categories={{categories}}
 {{#if comment}}
 Comment={{comment}}
 {{/if}}
-Exec={{exec}}
+# %u: furnish:// links (an organization's address to add) open in the app.
+Exec={{exec}} %u
+MimeType=x-scheme-handler/furnish;
 Icon={{icon}}
 Name={{name}}
 # Must match the program name the app sets (see src/main.rs), so the window gets this icon.

@@ -12,16 +12,21 @@ members = [".", "gui/src-tauri"]
 
 [dependencies]
 anyhow = "1.0.104"
+base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 dirs = "7.0.0"
 dsc-lib = { git = "https://github.com/PowerShell/DSC", tag = "v3.3.0" }
+getrandom = "0.4.3"
+keyring = "4.2.0"
 plist = "1.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = "0.9.34"
+sha2 = "0.11.1"
 sysinfo = "0.38.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+ureq = { version = "3.5.2", features = ["json", "platform-verifier"] }
 
 # dsc-lib's grammar crate is generated at build time upstream; use our vendored, pre-generated copy.
 [patch."https://github.com/PowerShell/DSC"]

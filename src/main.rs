@@ -56,6 +56,10 @@ enum Command {
     /// Manage app collections (git repositories with apps)
     #[command(subcommand)]
     Collection(CollectionCommand),
+    /// Sign in to your organization's furnish address (e.g. furnish.myorg.tld) in the browser
+    Login { endpoint: String },
+    /// Forget the sign-in to a furnish address
+    Logout { endpoint: String },
     /// Uninstall and install an app again, to apply options you changed
     Reinstall { app: String },
     /// Show or change options (DSC parameters such as userInstall) of a collection or an app
@@ -117,6 +121,13 @@ enum CollectionCommand {
         /// required ones not given are asked for)
         #[arg(long = "option", value_name = "NAME=VALUE")]
         options: Vec<String>,
+        /// HTTPS: the username for the git server (the password or token is asked for, or read
+        /// with --password-stdin). Without it, git's credential helpers and prompt are used.
+        #[arg(long)]
+        username: Option<String>,
+        /// HTTPS: read the password or access token from standard input (for scripts)
+        #[arg(long, requires = "username")]
+        password_stdin: bool,
     },
     /// List collections
     #[command(visible_alias = "ls")]
@@ -157,7 +168,7 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::Service { .. }) {
+    if !matches!(command, Command::Settings { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
@@ -181,6 +192,21 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::List => list(),
+        Command::Login { endpoint } => {
+            let origin = endpoint_origin(&endpoint)?;
+            let description = furnish::endpoint::discover(&origin)?;
+            furnish::endpoint::login(&origin, &description, print_sign_in_url)?;
+            println!("✓ Signed in to {}", description.name);
+            for problem in catalog::ensure_presets() {
+                eprintln!("warning: {problem}");
+            }
+            Ok(())
+        }
+        Command::Logout { endpoint } => {
+            furnish::endpoint::logout(&endpoint_origin(&endpoint)?);
+            println!("✓ Signed out");
+            Ok(())
+        }
         // Kits: names that are no app but a kit.
         Command::Install { app, dry_run, with, without } if is_kit(&app) => {
             install_kit(&catalog::find_kit(&app)?, &with, &without, dry_run)
@@ -339,9 +365,37 @@ fn list() -> Result<()> {
 
 fn collection(cmd: CollectionCommand) -> Result<()> {
     match cmd {
-        CollectionCommand::Add { url, name, options } => {
+        // An organization's furnish address: sign in, then add all of its collections.
+        CollectionCommand::Add { url, .. } if furnish::endpoint::origin(&url).is_some() => {
+            let origin = furnish::endpoint::origin(&url).expect("checked");
+            let added = catalog::add_endpoint(&origin, print_sign_in_url)?;
+            for c in &added {
+                println!("✓ Added '{}' with {} app(s)", c.name, c.apps().len());
+                ask_unanswered(c)?;
+            }
+            if added.is_empty() {
+                println!("✓ Signed in; its collections were already added");
+            }
+        }
+        CollectionCommand::Add { url, name, options, username, password_stdin } => {
             let name = name.unwrap_or_else(|| catalog::name_from_url(&url));
-            let collection = catalog::add(&url, &name)?;
+            let given = match (&username, password_stdin) {
+                (Some(user), true) => {
+                    let mut password = String::new();
+                    std::io::stdin().read_line(&mut password)?;
+                    Some((user.clone(), password.trim_end_matches(['\r', '\n']).to_string()))
+                }
+                (Some(_), false) => furnish::auth::ask_in_terminal(&url_with_user(&url, username.as_deref()))?,
+                (None, _) => None,
+            };
+            let collection = match catalog::add(&url, &name, given.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))) {
+                // The server wants a login: ask like git does (its helpers, then the terminal).
+                Err(err) if given.is_none() && err.is::<furnish::auth::CredentialsRequired>() => {
+                    let (user, password) = furnish::auth::ask_in_terminal(&url)?.ok_or(err)?;
+                    catalog::add(&url, &name, Some((&user, &password)))?
+                }
+                result => result?,
+            };
             let apps = collection.apps().len();
             println!("✓ Added '{name}' at revision {} with {apps} app(s)", collection.revision()?);
             println!("⚠ Apps run with administrator rights. Only add collections from authors you trust.");
@@ -422,6 +476,22 @@ fn target(name: &str) -> Result<(String, Vec<furnish::options::Resolved>)> {
         (None, Ok(a)) => Ok((a.key(), a.options())),
         (None, Err(_)) => anyhow::bail!("no collection or app named '{name}'"),
     }
+}
+
+/// The URL with a username, so git's prompt only asks for the password.
+fn url_with_user(url: &str, user: Option<&str>) -> String {
+    match (user, url.split_once("://")) {
+        (Some(user), Some((scheme, rest))) => format!("{scheme}://{user}@{rest}"),
+        _ => url.to_string(),
+    }
+}
+
+fn print_sign_in_url(url: &str) {
+    println!("Signing in in your browser. If it doesn't open, go to:\n  {url}");
+}
+
+fn endpoint_origin(input: &str) -> Result<String> {
+    furnish::endpoint::origin(input).with_context(|| format!("'{input}' isn't a furnish address like furnish.myorg.tld"))
 }
 
 /// Ask for the collection's required options that have no value yet. Without a terminal, say how

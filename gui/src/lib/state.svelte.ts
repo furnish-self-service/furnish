@@ -78,6 +78,12 @@ export const store = $state({
   choosing: null as string | null,
   /** The dialog with the collections' unanswered required options is open. */
   asking: false,
+  /** The organization's furnish addresses and whether the user is signed in to each. */
+  endpoints: [] as api.Endpoint[],
+  /** While signing in: the sign-in page, in case the browser didn't open. */
+  signInUrl: null as string | null,
+  /** A furnish:// link's address waiting for the user's yes. */
+  linkOrigin: null as string | null,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: {
     running: false,
@@ -186,6 +192,7 @@ async function runOperation(app: AppInfo, action: Queued['action']): Promise<boo
     await api[action](app.key);
     ok = true;
     toast('success', `${kindDone[kind]} ${app.id}`);
+    if (autoInstalling.delete(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
     if (cancelled) toast('info', `${kindNoun[kind]} of ${app.id} cancelled`);
@@ -332,14 +339,61 @@ export async function start() {
     toast('error', "Couldn't read the settings", message(e));
   }
   schedule();
-  // Collections the organization provides, for this user too.
+  // furnish:// links: the one furnish started with, and those arriving while it runs.
+  api.onLink(openLink);
+  api.pendingLink().then((url) => url && openLink(url)).catch(() => {});
+  // Collections the organization provides, for this user too. A missing sign-in shows as a banner.
   for (const problem of await api.ensurePresets().catch((e) => [message(e)])) {
-    toast('error', "Couldn't set up a collection", problem);
+    if (!problem.includes('sign in to')) toast('error', "Couldn't set up a collection", problem);
   }
+  await refreshEndpoints();
   await loadAll();
+  await autoInstall();
   if (store.settings?.updateOnLaunch) await checkForUpdates();
   else updateApps();
 }
+
+api.onSignIn((url) => (store.signInUrl = url));
+
+export async function refreshEndpoints() {
+  store.endpoints = await api.endpoints().catch(() => []);
+}
+
+/** Sign in to an organization's furnish address again, then set up its collections. */
+export async function signIn(origin: string) {
+  try {
+    for (const problem of await api.signIn(origin)) toast('error', "Couldn't set up a collection", problem);
+    toast('success', `Signed in to ${store.endpoints.find((e) => e.origin === origin)?.name ?? origin}`);
+  } catch (e) {
+    toast('error', "Couldn't sign in", message(e));
+  } finally {
+    store.signInUrl = null;
+  }
+  await refreshEndpoints();
+  await loadAll();
+}
+
+/** A furnish://add?endpoint=… link: ask before adding anything (a link can come from anyone). */
+function openLink(url: string) {
+  const match = url.match(/^furnish:\/\/add\?endpoint=([^&#]+)/);
+  if (match) store.linkOrigin = decodeURIComponent(match[1]);
+}
+
+/** Apps the organization installs on first launch (e.g. its VPN client), once each: an app the
+ *  user uninstalls later stays uninstalled. */
+async function autoInstall() {
+  for (const key of await api.autoInstallPending().catch(() => [])) {
+    const app = store.apps.find((a) => a.key === key);
+    if (!app) continue; // its collection may arrive later (e.g. after signing in)
+    if (isInstalled(key)) {
+      await api.autoInstallDone(key);
+    } else {
+      install(app);
+      autoInstalling.add(key);
+    }
+  }
+}
+const autoInstalling = new Set<string>();
 
 export const isLocked = (key: keyof Settings) => store.locked.includes(key);
 

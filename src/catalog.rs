@@ -175,7 +175,9 @@ pub fn branding_logo() -> Option<PathBuf> {
         return Path::new(&spec).is_file().then(|| PathBuf::from(spec));
     }
     let (name, path) = spec.split_once('/')?;
-    get(name).ok().filter(|c| c.managed)?.file_in_repo(path)
+    // Only from the organization's own collections: preset ones, or those of its endpoints.
+    let theirs = |c: &Collection| c.managed || c.url().is_ok_and(|u| crate::endpoint::for_url(&u).is_some());
+    get(name).ok().filter(theirs)?.file_in_repo(path)
 }
 
 /// Default collection name: last URL path segment without `.git`.
@@ -184,8 +186,9 @@ pub fn name_from_url(url: &str) -> String {
     last.trim_end_matches(".git").to_string()
 }
 
-/// Add a collection the user chose; the admin policy may forbid that.
-pub fn add(url: &str, name: &str) -> Result<Collection> {
+/// Add a collection the user chose; the admin policy may forbid that. `credentials`: a username
+/// and password (or access token) for an HTTPS URL, kept in the OS's credential store.
+pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<Collection> {
     let policy = crate::policy::load().collections;
     if !policy.users_can_add {
         bail!("your organization manages the collections; adding others isn't allowed");
@@ -193,21 +196,66 @@ pub fn add(url: &str, name: &str) -> Result<Collection> {
     if policy.preset.iter().any(|p| p.name == name) {
         bail!("'{name}' is the name of a collection your organization provides");
     }
-    clone(url, name, false)
+    if let Some((user, password)) = credentials {
+        crate::auth::store(url, user, password)?;
+    }
+    clone(url, name, false).inspect_err(|err| {
+        if credentials.is_some() && err.is::<crate::auth::CredentialsRequired>() {
+            crate::auth::forget(url); // wrong ones: don't keep them
+        }
+    })
+}
+
+/// Add an organization's furnish address (`furnish.myorg.tld`, see `endpoint`): sign in if
+/// needed (`show` gets the sign-in URL), then add each of its collections. Returns the new ones.
+pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>> {
+    let policy = crate::policy::load_native();
+    let preset = policy.endpoints.iter().filter_map(|e| crate::endpoint::origin(e)).any(|o| o == origin);
+    if !policy.collections.users_can_add && !preset {
+        bail!("your organization manages the collections; adding others isn't allowed");
+    }
+    let description = crate::endpoint::discover(origin)?;
+    if crate::endpoint::token(origin, &description).is_err() {
+        crate::endpoint::login(origin, &description, show)?;
+    }
+    let mut added = Vec::new();
+    for c in &description.collections {
+        let dir = collections_dir().join(&c.name);
+        if dir.join(".git").exists() {
+            match git(Some(&dir), &["remote", "get-url", "origin"]) {
+                Ok(url) if url == c.url => continue, // already there
+                _ => bail!("a collection named '{}' already exists", c.name),
+            }
+        }
+        added.push(clone(&c.url, &c.name, preset)?);
+    }
+    Ok(added)
 }
 
 /// Clone the admin's preset collections this user doesn't have yet. Returns problems as messages
-/// (e.g. offline), so a missing preset doesn't stop furnish.
+/// (e.g. offline, or "sign in to …"), so a missing preset doesn't stop furnish.
 pub fn ensure_presets() -> Vec<String> {
+    let mut problems = Vec::new();
+    // The organization's endpoints: their descriptions (and so their collections) may change.
+    for e in crate::policy::load_native().endpoints {
+        match crate::endpoint::origin(&e) {
+            Some(origin) => {
+                if let Err(err) = crate::endpoint::discover(&origin) {
+                    problems.push(format!("{err:#}"));
+                }
+            }
+            None => problems.push(format!("the admin policy names '{e}' as an endpoint, which isn't a furnish address")),
+        }
+    }
     let presets = crate::policy::load().collections.preset;
     if crate::service::enabled() {
         // The service sets them up; ask it only if one is missing.
         if presets.iter().all(|p| preset_dir().join(&p.name).join(".git").exists()) {
-            return vec![];
+            return problems;
         }
-        return crate::service::ensure_presets().unwrap_or_else(|err| vec![format!("{err:#}")]);
+        problems.extend(crate::service::ensure_presets().unwrap_or_else(|err| vec![format!("{err:#}")]));
+        return problems;
     }
-    let mut problems = Vec::new();
     for preset in presets {
         let dir = collections_dir().join(&preset.name);
         if dir.join(".git").exists() {
@@ -255,6 +303,9 @@ pub fn remove(name: &str) -> Result<()> {
     let collection = get(name)?;
     if collection.managed {
         bail!("'{name}' is provided by your organization and can't be removed");
+    }
+    if let Ok(url) = collection.url() {
+        crate::auth::forget(&url);
     }
     fs::remove_dir_all(&collection.dir)?;
     Ok(())
@@ -705,9 +756,32 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
             cmd.args(["-c", "safe.directory=*"]);
         }
     }
+    // Talking to the server: never a terminal prompt (an app has none), and furnish's credentials
+    // for that URL, if any (see `auth`); SSH keys, the agent and credential helpers work as usual.
+    let network = matches!(args.first(), Some(&("clone" | "fetch" | "pull" | "lfs" | "ls-remote")));
+    let url = if !network {
+        None
+    } else if args.first() == Some(&"clone") {
+        args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string())
+    } else {
+        dir.and_then(|d| {
+            let out = Command::new("git").arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        })
+    };
+    if let Some(url) = &url {
+        cmd.envs(crate::auth::git_env(url)?);
+    }
     let output = cmd.args(args).output().context("failed to run git (is it installed?)")?;
     if !output.status.success() {
-        bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if let Some(url) = url.filter(|u| u.starts_with("http") && crate::auth::is_auth_failure(&stderr)) {
+            return Err(crate::auth::CredentialsRequired { url }.into());
+        }
+        if let Some(advice) = crate::auth::ssh_advice(&stderr) {
+            bail!("git {} failed: {advice} ({stderr})", args.join(" "));
+        }
+        bail!("git {} failed: {stderr}", args.join(" "));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -760,7 +834,7 @@ mod tests {
     #[test]
     fn rejects_collection_names_that_escape_the_data_dir() {
         for name in ["../evil", "a/b", "..", ".hidden", ""] {
-            assert!(add("https://example.com/x.git", name).is_err(), "{name} accepted");
+            assert!(add("https://example.com/x.git", name, None).is_err(), "{name} accepted");
         }
     }
 }

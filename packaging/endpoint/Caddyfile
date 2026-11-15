@@ -1,0 +1,88 @@
+# furnish endpoint: lets furnish users clone selected internal GitLab repositories
+# with their own OIDC sign-in, without exposing GitLab itself.
+#
+#   furnish ──HTTPS, Bearer <ID token>──▶ Caddy ──forward_auth──▶ oauth2-proxy (checks the JWT)
+#                                           └──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#
+# Settings come from environment variables (see docker-compose.yml and README.md):
+#   FURNISH_HOST   public host name, e.g. furnish.myorg.tld
+#   FURNISH_TLS    an e-mail address for Let's Encrypt/ACME, or "internal" for Caddy's own CA
+#   GITLAB_URL     internal GitLab base URL, e.g. https://gitlab.myorg.internal
+#   <collection credentials>  one variable per collection, named in its `import collection` line
+
+# A collection: one public, read-only path mapped to exactly one upstream repository.
+#   import collection <public name> <upstream repository path> <credentials variable>
+# Only these two requests are proxied, compared byte for byte against the raw request URI
+# (no normalisation, so `..`, `%2e`, `%2f`, `//`, extra segments or query parameters never match):
+#   GET  /git/<public name>.git/info/refs?service=git-upload-pack
+#   POST /git/<public name>.git/git-upload-pack
+# Git protocol v2 uses exactly these two requests too (it signals v2 in the Git-Protocol header).
+# Everything else, including pushes (git-receive-pack) and the dumb protocol, falls through to 404.
+(collection) {
+	@{args[0]}_refs expression `{method} == "GET" && {uri} == "/git/{args[0]}.git/info/refs?service=git-upload-pack"`
+	handle @{args[0]}_refs {
+		import gitlab {args[1]}/info/refs?service=git-upload-pack {args[2]}
+	}
+	@{args[0]}_pack expression `{method} == "POST" && {uri} == "/git/{args[0]}.git/git-upload-pack"`
+	handle @{args[0]}_pack {
+		import gitlab {args[1]}/git-upload-pack {args[2]}
+	}
+}
+
+# Authenticate the user, then forward to one fixed upstream URI with the deploy token.
+#   import gitlab <upstream path and query> <credentials variable>
+(gitlab) {
+	# Without route, Caddy would reorder these directives; inside route they run top to bottom.
+	route {
+		# Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take a JWT
+		# sent as a Basic password, or a session cookie; neither is needed, so neither is allowed.)
+		@no_bearer not header_regexp Authorization `^Bearer \S+$`
+		respond @no_bearer 401
+		# oauth2-proxy answers 202 for a valid bearer JWT (issuer, signature, expiry, audience = client ID)
+		# and 401/403 otherwise; anything but 2xx is returned to the client and nothing is proxied.
+		forward_auth oauth2-proxy:4180 {
+			uri /oauth2/auth
+			# Never let a cookie stand in for the bearer token.
+			header_up -Cookie
+		}
+		reverse_proxy {$GITLAB_URL} {
+			# The upstream URI is fixed; nothing from the client's path or query reaches GitLab.
+			rewrite {args[0]}
+			header_up Host {upstream_hostport}
+			# Replace the user's ID token with the read-only deploy token (base64 of "username:token").
+			header_up Authorization "Basic {env.{args[1]}}"
+			# Drop other ways the client could present GitLab credentials of its own.
+			header_up -Cookie
+			header_up -Private-Token
+			header_up -Job-Token
+			header_up -Deploy-Token
+			header_down -Set-Cookie
+			header_down -WWW-Authenticate
+			# If GitLab rejects the deploy token, say so instead of making git ask the user for a password.
+			@denied status 401 403
+			handle_response @denied {
+				respond "upstream rejected the endpoint's deploy token" 502
+			}
+		}
+	}
+}
+
+{$FURNISH_HOST} {
+	tls {$FURNISH_TLS}
+	log
+
+	# Discovery document for furnish; public, no sign-in needed.
+	handle /.well-known/furnish.json {
+		root * /srv/furnish
+		header Cache-Control "max-age=300"
+		file_server
+	}
+
+	# One line per collection; add the same collection to furnish.json.
+	import collection acme /it/catalog.git ACME_GITLAB_AUTH
+
+	# Everything else.
+	handle {
+		respond 404
+	}
+}

@@ -28,7 +28,7 @@ furnish list | grep -q "✓  hyperfine" || fail "not shown as installed"
 
 echo "== the collection pins a newer nixpkgs: an update"
 app nixos-25.11; git commit -qam new; furnish collection update org >/dev/null
-furnish list | grep -q "↑  hyperfine" || fail "no update shown"
+furnish list | grep -q "↑  hyperfine" || { furnish list; furnish collection update org; fail "no update shown"; }
 furnish install hyperfine >/dev/null || fail "update failed"
 furnish list | grep -q "✓  hyperfine" || fail "not up to date after the update"
 [ "$(profile | grep -c 'hyperfine-')" = 1 ] || fail "old version left in the profile"

@@ -1,0 +1,53 @@
+# furnish endpoint: Caddy (TLS, allowlist, deploy token) + oauth2-proxy (checks the users' ID tokens).
+# GitLab is not part of this file; it stays internal and only Caddy talks to it.
+# Configure through a .env file next to this file (see .env.example and README.md).
+name: furnish-endpoint
+
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      FURNISH_TLS: ${FURNISH_TLS:?set FURNISH_TLS to an ACME contact e-mail or to "internal"}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./furnish.json:/srv/furnish/.well-known/furnish.json:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - oauth2-proxy
+
+  # Not published: only Caddy reaches it, and only its /oauth2/auth check is used.
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6
+    restart: unless-stopped
+    environment:
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL}
+      # Bearer JWTs must carry this client ID as audience (the "aud" claim of an ID token).
+      OAUTH2_PROXY_CLIENT_ID: ${OIDC_CLIENT_ID:-furnish}
+      # furnish is a public client. oauth2-proxy insists on a secret but never uses it
+      # for bearer-token checks, so any placeholder works.
+      OAUTH2_PROXY_CLIENT_SECRET: unused-public-client
+      # Required by oauth2-proxy even though no cookie session is ever created here.
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET (openssl rand -base64 32 | tr -- +/ -_)}
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+      # An invalid bearer token gets 403, not a redirect to a login page.
+      OAUTH2_PROXY_BEARER_TOKEN_LOGIN_FALLBACK: "false"
+      # Restrict by the token's e-mail domain; "*" accepts every user of the IdP.
+      OAUTH2_PROXY_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-*}
+      OAUTH2_PROXY_UPSTREAMS: static://202
+      OAUTH2_PROXY_HTTP_ADDRESS: 0.0.0.0:4180
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+
+volumes:
+  caddy-data:
+  caddy-config:

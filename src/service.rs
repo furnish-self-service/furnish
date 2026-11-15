@@ -17,6 +17,7 @@
 //!   collections is open to every local user.
 
 use std::{
+    collections::BTreeMap,
     io::{BufRead, BufReader, Read, Write},
     sync::{
         Arc, Mutex,
@@ -48,8 +49,17 @@ pub enum Request {
     Reinstall { app: String, values: Map<String, Value> },
     /// Stop the running operation after its step, or (force) now.
     Stop { force: bool },
-    Update { collection: String },
-    EnsurePresets,
+    /// `headers`: the user's credentials for the collections' servers (URL prefix →
+    /// `Authorization: …`: endpoint sign-ins, stored passwords), which the service fetches with.
+    Update {
+        collection: String,
+        #[serde(default)]
+        headers: BTreeMap<String, String>,
+    },
+    EnsurePresets {
+        #[serde(default)]
+        headers: BTreeMap<String, String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,17 +95,23 @@ pub fn run(request: &Request, mut report: impl FnMut(Progress)) -> Result<()> {
 }
 
 pub fn update(collection: &str) -> Result<(String, String)> {
-    match call(&Request::Update { collection: collection.into() }, &mut |_| {})? {
+    let request = Request::Update { collection: collection.into(), headers: preset_headers() };
+    match call(&request, &mut |_| {})? {
         Reply::Updated { old, new } => Ok((old, new)),
         other => bail!("unexpected answer from the furnish service: {other:?}"),
     }
 }
 
 pub fn ensure_presets() -> Result<Vec<String>> {
-    match call(&Request::EnsurePresets, &mut |_| {})? {
+    match call(&Request::EnsurePresets { headers: preset_headers() }, &mut |_| {})? {
         Reply::Problems(p) => Ok(p),
         other => bail!("unexpected answer from the furnish service: {other:?}"),
     }
+}
+
+/// The user's credentials for the organization's collections, for the service to fetch with.
+fn preset_headers() -> BTreeMap<String, String> {
+    crate::auth::headers_for(crate::policy::load().collections.preset.into_iter().map(|p| p.url))
 }
 
 /// Ask the service to stop what it is running (no-op without the service).
@@ -207,13 +223,16 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Re
         result.map(|()| Reply::Done)
     };
     match request {
-        Request::EnsurePresets => return Ok(Reply::Problems(crate::catalog::ensure_presets())),
-        Request::Update { collection } => {
+        // Fetching with the user's sign-in: the service only ever installs what it fetched.
+        Request::EnsurePresets { headers } => {
+            return Ok(Reply::Problems(crate::auth::with_headers(headers, crate::catalog::ensure_presets)));
+        }
+        Request::Update { collection, headers } => {
             let c = crate::catalog::get(&collection)?;
             if !c.managed {
                 bail!("'{collection}' isn't a collection your organization provides");
             }
-            let (old, new) = c.update()?;
+            let (old, new) = crate::auth::with_headers(headers, || c.update())?;
             return Ok(Reply::Updated { old, new });
         }
         _ => authorize()?,
@@ -237,7 +256,7 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Re
             if force { engine::force_stop() } else { engine::abort() }
             Ok(Reply::Done)
         }
-        Request::Update { .. } | Request::EnsurePresets => unreachable!("answered above"),
+        Request::Update { .. } | Request::EnsurePresets { .. } => unreachable!("answered above"),
     }
 }
 

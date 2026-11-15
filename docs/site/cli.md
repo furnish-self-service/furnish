@@ -4,7 +4,7 @@ order: 3
 ---
 # Command line
 
-The `furnish` command does everything the app does. `furnish --help` and `furnish <command> --help` list all options.
+The `furnish` command does what the app does. `furnish --help` and `furnish <command> --help` list all options.
 
 | Command | What it does |
 |---|---|
@@ -13,13 +13,14 @@ The `furnish` command does everything the app does. `furnish --help` and `furnis
 | `furnish uninstall <app>` | Uninstall; for a kit, `--only` picks the apps |
 | `furnish reinstall <app>` | Apply changed options |
 | `furnish upgrade` | Install available updates (`--all` includes apps with automatic updates off) |
-| `furnish collection add <url>` | Add a collection; `--option name=value` answers its questions |
+| `furnish collection add <url or address>` | Add a collection, or all collections of your organization's furnish address; `--option name=value` answers a question, `--username` (with `--password-stdin` in scripts) logs in to a private HTTPS repository |
+| `furnish login <address>`, `logout <address>` | Sign in to your organization's furnish address again, or remove the sign-in |
 | `furnish collection list`, `update`, `remove` | Manage collections |
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
 | `furnish option set`, `reset` | Change an option, or go back to the collection's value |
 | `furnish settings` | Show or change automatic updates |
 
-`-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; without one, it prints the `furnish option set` command to answer them.
+`-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.
 
 ```
 $ furnish install gimp --dry-run
