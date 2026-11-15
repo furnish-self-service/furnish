@@ -64,6 +64,8 @@ Darwin)
     ;;
 Linux)
     ovpn=/etc/openvpn/acme-vpn.ovpn
+    client=/usr/lib/NetworkManager/VPN/nm-openvpn-service.name
+    [ -f "$client" ] || fail "no NetworkManager OpenVPN plugin ($client)"
     [ -f "$ovpn" ] || fail "no $ovpn"
     sudo nmcli connection show 'Acme VPN' | grep -E '^(connection\.(id|type)|vpn\.(service-type|data)):' \
         || fail "no NetworkManager connection 'Acme VPN'"
@@ -81,7 +83,7 @@ case "$(uname -s)" in
 Darwin) sudo test ! -e "${ovpn%/Contents/*}" || fail "the configuration is still there" ;;
 *) [ ! -e "$ovpn" ] || fail "$ovpn is still there" ;;
 esac
-[ -e "$client" ] || [ "$(uname -s)" = Linux ] || fail "uninstalling acme-vpn removed $client"
+[ -e "$client" ] || fail "uninstalling acme-vpn removed $client"
 if [ "$(uname -s)" = Linux ]; then
     if sudo nmcli connection show 'Acme VPN' >/dev/null 2>&1; then fail "the NetworkManager connection is still there"; fi
     dpkg -s network-manager-openvpn | grep -q '^Status: install ok installed' || fail "the client was removed"
