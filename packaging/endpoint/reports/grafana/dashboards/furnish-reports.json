@@ -1,0 +1,492 @@
+{
+  "uid": "furnish-reports",
+  "title": "furnish reports",
+  "tags": [
+    "furnish"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "stale",
+        "label": "No inventory for",
+        "query": "1d,3d,7d,14d,30d",
+        "current": {
+          "text": "7d",
+          "value": "7d"
+        },
+        "options": [
+          {
+            "text": "1d",
+            "value": "1d",
+            "selected": false
+          },
+          {
+            "text": "3d",
+            "value": "3d",
+            "selected": false
+          },
+          {
+            "text": "7d",
+            "value": "7d",
+            "selected": true
+          },
+          {
+            "text": "14d",
+            "value": "14d",
+            "selected": false
+          },
+          {
+            "text": "30d",
+            "value": "30d",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Failed operations by app",
+      "description": "Failed installs, updates, uninstalls, reinstalls and fallbacks per app and time interval.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            },
+            "lineWidth": 1
+          },
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "sum by (app) (count_over_time({job=\"furnish\", outcome=\"failed\"} | json app | app != \"\" [$__auto]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "range": true,
+          "instant": false,
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "id": 1,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Failure rate per app",
+      "description": "Failed operations divided by all finished operations (succeeded or failed) in the time range. Needs reporting: all; with reporting: errors every reported operation is a failure.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failure rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.05
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Failure rate",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "(sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} | json app [$__range])) or on (app) 0 * sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"succeeded\"} | json app [$__range]))) / sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} | json app [$__range]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} | json app [$__range]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} | json app [$__range]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "app": "App",
+              "Value #A": "Failure rate",
+              "Value #B": "Failed",
+              "Value #C": "Operations"
+            },
+            "indexByName": {
+              "app": 0,
+              "Value #A": 1,
+              "Value #B": 2,
+              "Value #C": 3
+            }
+          }
+        }
+      ],
+      "id": 2,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Fallbacks: apps installed at an earlier version",
+      "description": "Successful fallbacks in the time range: after a failed install or update, furnish installed the app from an earlier commit of its collection. Devices stay at that version until a later update succeeds.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Devices",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "count by (app, version) (sum by (app, version, device) (count_over_time({job=\"furnish\", event=\"fallback\", outcome=\"succeeded\"} | json app, version, device [$__range])))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "app": "App",
+              "version": "Installed commit",
+              "Value": "Devices"
+            },
+            "indexByName": {
+              "app": 0,
+              "version": 1,
+              "Value": 2
+            }
+          }
+        }
+      ],
+      "id": 3,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "furnish versions in use",
+      "description": "Devices per furnish version, taken from each device's latest report in the time range.",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 8,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "count by (furnish) (max by (device, furnish) (max_over_time({job=\"furnish\"} | json device, furnish | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) == on (device) group_left max by (device) (max by (device, furnish) (max_over_time({job=\"furnish\"} | json device, furnish | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range]))))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{furnish}}"
+        }
+      ],
+      "id": 4,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Devices without inventory for $stale",
+      "description": "Devices that sent an inventory in the time range but none in the last $stale (change it at the top). furnish sends an inventory once a day with reporting: all.",
+      "gridPos": {
+        "x": 8,
+        "y": 17,
+        "w": 16,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last inventory"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Last inventory",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "1000 * (max by (device, user, host) (max_over_time({job=\"furnish\", event=\"inventory\"} | json device, user, host | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) unless on (device) sum by (device) (count_over_time({job=\"furnish\", event=\"inventory\"} | json device [$stale])))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "device": "Device",
+              "user": "User",
+              "host": "Host",
+              "Value": "Last inventory"
+            },
+            "indexByName": {
+              "device": 0,
+              "user": 1,
+              "host": 2,
+              "Value": 3
+            }
+          }
+        }
+      ],
+      "id": 5,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Recent failures",
+      "description": "Failed operations and collection updates, newest first.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 12
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "{job=\"furnish\", outcome=\"failed\"} | json | line_format `{{.user}} on {{.device}}: {{.event}} {{if .app}}{{.app}}{{else}}{{.collection}}{{end}} failed: {{.error}}`",
+          "queryType": "range",
+          "editorMode": "code",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "id": 6,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    }
+  ]
+}

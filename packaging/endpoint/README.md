@@ -13,6 +13,7 @@ folder as they are.
 | [`vector/vector.yaml`](vector/vector.yaml) | Where reports go |
 | [`furnish.json`](furnish.json) | Example discovery document |
 | [`.env.example`](.env.example) | Settings to copy into `.env` |
+| [`reports/`](reports) | Optional: Loki and Grafana with a dashboard of the reports |
 | [`caddy/`](caddy), [`nginx/`](nginx), [`traefik/`](traefik), [`envoy/`](envoy), [`haproxy/`](haproxy) | One proxy each: its configuration and `compose.yml` |
 
 Start with one proxy:

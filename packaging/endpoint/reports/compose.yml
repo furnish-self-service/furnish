@@ -1,0 +1,68 @@
+# Reports in Grafana: Loki stores them, Grafana shows the "furnish reports" dashboard. Add this
+# file to the stack after the proxy's:
+#
+#   docker compose -f docker-compose.yml -f caddy/compose.yml -f reports/compose.yml up -d
+#
+# Vector then reads reports/vector.yaml as well as vector/vector.yaml and sends every report to
+# Loki in addition to its log output. Settings come from .env (see reports/README.md).
+services:
+  vector:
+    command: ["--config", "/etc/vector/vector.yaml", "--config", "/etc/vector/loki.yaml"]
+    volumes:
+      - ./reports/vector.yaml:/etc/vector/loki.yaml:ro
+    depends_on: [loki]
+
+  # Not published: only Vector and Grafana reach it.
+  loki:
+    image: grafana/loki:3.7.9
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
+    environment:
+      # How long reports are kept, such as 30d or 365d.
+      REPORTS_RETENTION: ${REPORTS_RETENTION:-90d}
+    volumes:
+      - ./reports/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    restart: unless-stopped
+    # Only on this host: open http://127.0.0.1:3000 here or through an SSH tunnel
+    # (ssh -L 3000:127.0.0.1:3000 <host>). To reach it from other computers, put it behind the
+    # proxy or publish it, and sign people in with your identity provider (Grafana's generic
+    # OAuth) instead of the admin password, for example:
+    #   GF_SERVER_ROOT_URL: https://reports.myorg.tld/
+    #   GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
+    #   GF_AUTH_GENERIC_OAUTH_NAME: MyOrg
+    #   GF_AUTH_GENERIC_OAUTH_CLIENT_ID: grafana
+    #   GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_OAUTH_CLIENT_SECRET:?set GRAFANA_OAUTH_CLIENT_SECRET}
+    #   GF_AUTH_GENERIC_OAUTH_SCOPES: openid email profile
+    #   GF_AUTH_GENERIC_OAUTH_AUTH_URL: https://login.myorg.tld/realms/myorg/protocol/openid-connect/auth
+    #   GF_AUTH_GENERIC_OAUTH_TOKEN_URL: https://login.myorg.tld/realms/myorg/protocol/openid-connect/token
+    #   GF_AUTH_GENERIC_OAUTH_API_URL: https://login.myorg.tld/realms/myorg/protocol/openid-connect/userinfo
+    #   GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: "true"
+    #   GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: contains(groups[*], 'furnish-admins') && 'Viewer'
+    #   GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "true"
+    #   GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD, e.g. openssl rand -base64 24}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/furnish-reports.json
+    volumes:
+      - ./reports/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./reports/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./reports/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [loki]
+
+volumes:
+  loki-data:
+  grafana-data:

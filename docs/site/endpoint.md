@@ -62,6 +62,18 @@ The proxy forwards reports to Vector, which by default prints each one as a JSON
 
 @include packaging/endpoint/vector/vector.yaml
 
+## Look at the reports
+
+@include-md packaging/endpoint/reports/README.md
+
+@include packaging/endpoint/reports/compose.yml
+
+@include packaging/endpoint/reports/vector.yaml
+
+@include packaging/endpoint/reports/loki.yaml
+
+[`tests/reports/run.sh`](https://github.com/furnish-self-service/furnish/blob/main/tests/reports/run.sh) starts these files, sends reports from several devices to Vector, and checks what Loki stored and that each panel of the dashboard shows data.
+
 ## Pick a proxy
 
 All five do the same and pass the same tests. Pick the one your team already runs.

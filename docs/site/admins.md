@@ -75,6 +75,8 @@ A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboar
 
 furnish can report to your organization what it installed, updated or removed on each computer and whether that worked, through your furnish address. Its proxy accepts `POST /events` from signed-in users only, adds the user's e-mail address from the sign-in, and passes the reports to [Vector](https://vector.dev), which writes them where you keep logs: a file, Loki, Elasticsearch, Splunk and others. The [endpoint setup](endpoint.md) contains the configuration.
 
+To look at reports without a log system of your own, add Loki and Grafana to the endpoint: the dashboard "furnish reports" shows failed operations per app, fallbacks to earlier versions, the furnish versions in use and devices that stopped reporting. See [Look at the reports](endpoint.md#look-at-the-reports).
+
 The setting `reporting` decides what furnish sends:
 
 | Value | Reports |

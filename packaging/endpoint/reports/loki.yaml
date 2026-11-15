@@ -1,0 +1,43 @@
+# Loki for furnish's reports: one process, data in the loki-data volume. Read with
+# -config.expand-env=true, so ${REPORTS_RETENTION} comes from .env (default 90 days).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2026-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Reports older than this are deleted by the compactor.
+  retention_period: ${REPORTS_RETENTION:-90d}
+  # Long enough for "Last inventory" queries over the whole retention.
+  max_query_length: 0
+  max_query_lookback: ${REPORTS_RETENTION:-90d}
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

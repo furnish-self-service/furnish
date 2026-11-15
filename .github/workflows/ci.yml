@@ -154,6 +154,14 @@ jobs:
           path: bin
       - run: chmod +x bin/furnish && FURNISH_BIN=$PWD/bin/furnish tests/endpoint/run.sh
 
+  reports:
+    name: reports in Loki and Grafana
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Runs packaging/endpoint/reports/, the files the docs show.
+      - run: tests/reports/run.sh
+
   native:
     name: e2e ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

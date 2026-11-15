@@ -1,0 +1,22 @@
+# Loaded by Vector together with vector/vector.yaml when reports/compose.yml is used: sends the
+# reports to Loki as well. Labels are the few values the dashboard filters by; everything else,
+# such as user, device and app, stays in the JSON line and is read with LogQL's `| json`.
+transforms:
+  loki_labels:
+    type: remap
+    inputs: [reports]
+    source: |
+      # In metadata, so the JSON line stays as it was. Inventories have no collection.
+      %loki.collection = string(.collection) ?? ""
+
+sinks:
+  loki:
+    type: loki
+    inputs: [loki_labels]
+    endpoint: http://loki:3100
+    encoding: { codec: json }
+    labels:
+      job: furnish
+      event: "{{ event }}"
+      outcome: "{{ outcome }}"
+      collection: "{{ %loki.collection }}"
