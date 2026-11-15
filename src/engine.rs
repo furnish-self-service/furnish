@@ -29,6 +29,7 @@ use serde_json::Value;
 #[cfg(not(windows))]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ("furnish-common.sh", include_str!("../resources/unix/furnish-common.sh")),
+    ("furnish-homebrew.sh", include_str!("../resources/unix/furnish-homebrew.sh")),
     ("furnish-package.dsc.resource.json", include_str!("../resources/unix/furnish-package.dsc.resource.json")),
     ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
     ("furnish-installer.dsc.resource.json", include_str!("../resources/unix/furnish-installer.dsc.resource.json")),

@@ -4,6 +4,7 @@
 #   subject             what the steps talk about, e.g. "htop"
 #   via                 what installs it, e.g. "pacman"
 #   admin               true if installing/removing needs administrator rights
+#   run_as              optional: the account the commands run as, if not the caller's
 #   install_desc, remove_desc   the commands as shown in previews
 #   do_install, do_remove       functions that run them through run_step
 #   installed_version   function printing the installed version, "?" if unknown, or nothing
@@ -131,7 +132,7 @@ furnish_main() {
         else
             step="$subject is not installed" after=
         fi
-        how="as your user"; $admin && how="as administrator"
+        how="as your user"; $admin && how="as administrator"; [ -n "${run_as:-}" ] && how="as $run_as"
 
         if [ "${2:-}" = --what-if ]; then
             # Describe, don't act. The whatIf messages are DSC's convention for what-if details.

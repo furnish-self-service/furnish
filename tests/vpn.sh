@@ -7,6 +7,7 @@
 #
 # DSC's resources must be beside furnish (scripts/fetch-dsc.mjs). Changes the system: needs an
 # administrator (Windows), passwordless sudo (macOS, Linux) and, on Linux, apt and NetworkManager.
+# macOS: installs the furnish service, creates the user carol and needs Homebrew.
 set -euo pipefail
 furnish=$(realpath "$1")
 ref=${2:?usage: $0 <furnish> <example commit>}
@@ -15,8 +16,9 @@ if command -v cygpath >/dev/null; then tmp=$(cygpath -m "$tmp"); fi
 export FURNISH_DATA_DIR="$tmp/data"
 
 # Linux: acme-vpn writes to /etc and NetworkManager, so furnish runs as root (as the service
-# would). Windows: the runner is an elevated administrator. macOS: furnish runs as the user,
-# because Homebrew (openvpn-client) refuses root; acme-vpn's steps get root through sudo.
+# would). Windows: the runner is an elevated administrator. macOS: through the furnish service,
+# as a user without administrator rights; the service runs Homebrew (openvpn-client) as the
+# account that owns it, the runner.
 run=()  # bash 3.2 (macOS): an empty array is "unbound", hence ${run[@]+...} below
 [ "$(uname -s)" = Linux ] && run=(sudo --preserve-env=FURNISH_DATA_DIR)
 
@@ -36,10 +38,33 @@ git init -q "$tmp/example"
 git -C "$tmp/example" fetch -q --depth 1 https://github.com/furnish-self-service/self-service-example "$ref"
 git -C "$tmp/example" checkout -q -B main FETCH_HEAD
 # root clones only repositories it owns.
-[ "$(uname -s)" = Linux ] && sudo chown -R root "$tmp/example"
+case "$(uname -s)" in Linux | Darwin) sudo chown -R root "$tmp/example" ;; esac
 
-step collection add "$tmp/example" --name example >/dev/null
-step option set example role office >/dev/null
+if [ "$(uname -s)" = Darwin ]; then
+    # The service runs only a binary (and DSC's resources beside it) that root owns, in folders
+    # only root can change.
+    sudo mkdir -p /Library/furnish-vpn
+    sudo cp -R "$furnish" "$(dirname "$furnish")/dsc" /Library/furnish-vpn/
+    sudo chown -R root:wheel /Library/furnish-vpn && sudo chmod -R go-w /Library/furnish-vpn
+    furnish=/Library/furnish-vpn/furnish
+    sudo sysadminctl -addUser carol -password Furnish-Test-1 >/dev/null 2>&1
+    sudo dseditgroup -o create furnish-users
+    sudo dseditgroup -o edit -a carol -t user furnish-users
+    if dseditgroup -o checkmember -m carol admin >/dev/null 2>&1; then fail "carol is an administrator"; fi
+    # The example as a preset collection, as an MDM profile would deploy the policy.
+    printf '{"collections": {"preset": [{"name": "example", "url": "%s"}], "usersCanAdd": false}, "parameters": {"example": {"role": {"value": "office"}}}, "service": {"allowedGroup": "furnish-users"}}' \
+        "$tmp/example" > "$tmp/policy.json"
+    sudo mkdir -p "/Library/Managed Preferences"
+    plutil -convert xml1 -o - "$tmp/policy.json" | sudo tee "/Library/Managed Preferences/io.github.furnish-self-service.furnish.plist" >/dev/null
+    sudo "$furnish" service install
+    for _ in $(seq 100); do [ -S /var/run/furnish.sock ] && [ -d "/Library/Application Support/furnish/collections/example/apps" ] && break; sleep 0.3; done
+    [ -S /var/run/furnish.sock ] || { sudo cat /var/log/furnish.log; fail "the service didn't start"; }
+    run=(sudo -u carol env FURNISH_DATA_DIR=/tmp/carol-data HOME=/tmp PATH="$PATH")
+    trap '[ $? = 0 ] || { echo "--- service log"; sudo cat /var/log/furnish.log; }' EXIT
+else
+    step collection add "$tmp/example" --name example >/dev/null
+    step option set example role office >/dev/null
+fi
 expect "$(step list)" "·  acme-vpn "
 
 expect "$(step -v install acme-vpn)" "Installed acme-vpn"

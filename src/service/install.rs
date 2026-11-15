@@ -85,7 +85,10 @@ const UNIT: &str = "/etc/systemd/system/furnish.service";
 const POLKIT: &str = "/usr/share/polkit-1/actions/io.github.furnish.policy";
 
 #[cfg(target_os = "linux")]
-pub fn install() -> Result<()> {
+pub fn install(homebrew_sudo: bool) -> Result<()> {
+    if homebrew_sudo {
+        bail!("--homebrew-sudo is for macOS");
+    }
     require_root()?;
     let unit = include_str!("../../packaging/linux/furnish.service").replace("/usr/bin/furnish", &exe()?.to_string_lossy());
     std::fs::write(UNIT, unit).with_context(|| format!("writing {UNIT}"))?;
@@ -122,9 +125,11 @@ fn plist_path() -> String {
 }
 
 #[cfg(target_os = "macos")]
-pub fn install() -> Result<()> {
+pub fn install(homebrew_sudo: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     require_root()?;
+    // Before anything changes: a refusal leaves the computer as it was.
+    let brew_owner = if homebrew_sudo { Some(homebrew::owner()?) } else { None };
     let plist = include_str!("../../packaging/macos/io.github.furnish-self-service.furnish.plist").replace("/usr/local/bin/furnish", &exe()?.to_string_lossy());
     let path = plist_path();
     // The log has details of failures that users don't see: for administrators only.
@@ -133,6 +138,10 @@ pub fn install() -> Result<()> {
     let _ = run("launchctl", &["bootout", &format!("system/{LABEL}")]); // reinstall: replace the running one
     std::fs::write(&path, plist).with_context(|| format!("writing {path}"))?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+    match brew_owner {
+        Some(owner) => homebrew::allow_sudo(&owner)?,
+        None => homebrew::remove_rule()?, // installing again without the option takes it back
+    }
     run("launchctl", &["bootstrap", "system", &path])
 }
 
@@ -141,14 +150,111 @@ pub fn uninstall() -> Result<()> {
     require_root()?;
     let _ = run("launchctl", &["bootout", &format!("system/{LABEL}")]);
     let _ = std::fs::remove_file(plist_path());
-    Ok(())
+    homebrew::remove_rule()
+}
+
+/// macOS: the service runs Homebrew as the account that owns it (Homebrew refuses root), see
+/// resources/unix/furnish-homebrew.sh. Casks that run installer packages (`pkg`), and the
+/// uninstall steps of many casks, call `sudo` from that account, so `--homebrew-sudo` writes a
+/// sudo rule for it.
+///
+/// The rule allows all commands. A narrower one would protect nothing: what Homebrew runs through
+/// sudo is `/usr/sbin/installer -pkg <a package the owner downloaded>` (the package's scripts run
+/// as root), `/usr/bin/xargs -0 -- /bin/rm --` with paths from the owner, Homebrew's own
+/// `rmdir.sh` from the owner's installation, `launchctl`, `pkgutil --forget`, `kextunload`,
+/// `chown`, and casks' own uninstall scripts with `sudo: true`, each with `-E` and variables on
+/// the command line (which a rule only allows with SETENV). The installer, xargs, rmdir.sh,
+/// launchctl and the scripts each give whoever may run them as root full control, and a list
+/// would break casks with scripts. So the rule is only safe when the owner can
+/// become root anyway and nobody else can run code as the owner: the owner must be an
+/// administrator and the installation must be writable only by the owner, root and admins. The
+/// check in furnish-homebrew.sh enforces both here and on every use; when it fails there, the
+/// service removes the rule.
+#[cfg(target_os = "macos")]
+mod homebrew {
+    use anyhow::{Context, Result, bail};
+    use std::{fs, io::Write, os::unix::fs::OpenOptionsExt, process::Command};
+
+    pub const RULE: &str = "/etc/sudoers.d/furnish-homebrew";
+    /// Next to the rule: sudo skips files in sudoers.d whose name contains a dot.
+    const STAGED: &str = "/etc/sudoers.d/.furnish-homebrew.new";
+
+    /// The account that owns Homebrew, if the service may use it.
+    pub fn owner() -> Result<String> {
+        let out = Command::new("/bin/sh")
+            .args(["-c", include_str!("../../resources/unix/furnish-homebrew.sh"), "furnish-homebrew-check"])
+            .output()
+            .context("running /bin/sh")?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        if !out.status.success() {
+            bail!(
+                "can't let the service use Homebrew: {}. See \"macOS: the service and Homebrew\" in furnish's admin guide",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let owner = stdout.split_whitespace().next().unwrap_or_default().to_string();
+        // Checked by the script too; the name goes into a sudoers file.
+        if owner.is_empty() || owner.starts_with('-') || !owner.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
+            bail!("unexpected Homebrew owner '{owner}'");
+        }
+        Ok(owner)
+    }
+
+    pub fn rule_text(owner: &str) -> String {
+        format!(
+            "# Written by `furnish service install --homebrew-sudo`, removed by `furnish service uninstall`.\n\
+             # The furnish service runs Homebrew as {owner}, the administrator who owns it. Casks that run\n\
+             # installer packages call sudo, and the service has nobody to type a password.\n\
+             {owner} ALL = (root) NOPASSWD: ALL\n"
+        )
+    }
+
+    /// Writes the rule: staged with its final owner and mode, checked by visudo, then renamed into
+    /// place, so sudo never reads a broken or half-written file.
+    pub fn allow_sudo(owner: &str) -> Result<()> {
+        let sudoers = fs::read_to_string("/etc/sudoers").context("reading /etc/sudoers")?;
+        if !sudoers.lines().any(|l| {
+            let l = l.trim();
+            (l.starts_with("#includedir") || l.starts_with("@includedir")) && l.ends_with("/etc/sudoers.d")
+        }) {
+            bail!("/etc/sudoers doesn't read /etc/sudoers.d, where the Homebrew rule would go");
+        }
+        let _ = fs::remove_file(STAGED);
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o440).open(STAGED).with_context(|| format!("creating {STAGED}"))?;
+        file.write_all(rule_text(owner).as_bytes())?;
+        drop(file);
+        std::os::unix::fs::chown(STAGED, Some(0), Some(0))?; // root:wheel
+        let valid = Command::new("/usr/sbin/visudo").args(["-c", "-q", "-f", STAGED]).status().context("running visudo")?;
+        if !valid.success() {
+            let _ = fs::remove_file(STAGED);
+            bail!("visudo rejected the Homebrew rule for {owner}");
+        }
+        fs::rename(STAGED, RULE).with_context(|| format!("writing {RULE}"))?;
+        let all = Command::new("/usr/sbin/visudo").args(["-c", "-q"]).status().context("running visudo")?;
+        if !all.success() {
+            let _ = fs::remove_file(RULE);
+            bail!("sudo's configuration is invalid with the Homebrew rule; removed it again");
+        }
+        println!("✓ The service runs Homebrew as {owner}, who may now use sudo without a password ({RULE})");
+        Ok(())
+    }
+
+    pub fn remove_rule() -> Result<()> {
+        match fs::remove_file(RULE) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).with_context(|| format!("removing {RULE}")),
+            _ => Ok(()),
+        }
+    }
 }
 
 // --- Windows: a service under SYSTEM
 
 #[cfg(windows)]
-pub fn install() -> Result<()> {
+pub fn install(homebrew_sudo: bool) -> Result<()> {
     use std::time::Duration;
+    if homebrew_sudo {
+        bail!("--homebrew-sudo is for macOS");
+    }
     use windows_service::{
         service::{
             ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl, ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo,
@@ -225,11 +331,11 @@ fn stop(service: &windows_service::service::Service) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-pub fn install() -> Result<()> {
+pub fn install(_homebrew_sudo: bool) -> Result<()> {
     bail!("the furnish service isn't available on this OS")
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn uninstall() -> Result<()> {
-    install()
+    install(false)
 }
