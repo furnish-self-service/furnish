@@ -166,6 +166,10 @@ export async function loadAll() {
   store.status = {};
   // The engine runs one check at a time anyway; sequential keeps the UI updating card by card.
   for (const app of store.apps) await checkStatus(app.key);
+  // The daily inventory report, if the organization takes reports and asks for everything.
+  if (store.settings?.reporting === 'all') {
+    api.reportInventory(Object.entries(store.status).map(([key, status]) => [key, String(status)])).catch(() => {});
+  }
 }
 
 export async function checkStatus(key: string) {
@@ -184,7 +188,8 @@ const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstal
 const kindVerb = { install: 'install', update: 'update', uninstall: 'uninstall', reinstall: 'reinstall' } as const;
 
 /** Run one queued operation; resolves to whether it succeeded. */
-async function runOperation(app: AppInfo, action: Queued['action']): Promise<boolean> {
+async function runOperation(app: AppInfo, action: Queued['action'], auto = false): Promise<boolean> {
+  const trigger: api.Trigger = autoInstalling.has(app.key) ? 'autoInstall' : auto ? 'update' : 'user';
   const installs = action !== 'uninstall' && action !== 'reinstall';
   const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
   startRun(app.key, kind);
@@ -193,7 +198,7 @@ async function runOperation(app: AppInfo, action: Queued['action']): Promise<boo
   let cancelled = false;
   let ok = false;
   try {
-    const fellBack = await api[action](app.key);
+    const fellBack = await api[action](app.key, trigger);
     ok = true;
     if (fellBack) toast('info', `Installed the version of ${app.id} from ${fellBack.date}`, `The current version failed: ${fellBack.error}`);
     else toast('success', `${kindDone[kind]} ${app.id}`);
@@ -536,7 +541,7 @@ async function pump() {
   if (!next) return;
   const app = store.apps.find((a) => a.key === next.key);
   if (app) {
-    const ok = await runOperation(app, next.action);
+    const ok = await runOperation(app, next.action, next.auto);
     // Don't retry an automatic update the user cancelled or that failed, until the app restarts.
     if (next.auto && !ok) declinedUpdates.add(next.key);
   }

@@ -279,8 +279,14 @@ struct FellBack {
 }
 
 /// Run an install/update, uninstall or reinstall, streaming step progress as `furnish://progress` events.
-async fn run(handle: tauri::AppHandle, key: String, action: Action) -> CmdResult<Option<FellBack>> {
-    blocking(move || {
+/// `trigger`: who started it, for reports: `update` (automatic updates), `autoInstall`, else the user.
+async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    let trigger = match trigger.as_deref() {
+        Some("update") => "update",
+        Some("autoInstall") => "autoInstall",
+        _ => "user",
+    };
+    let result = blocking(move || furnish::reports::with_trigger(trigger, || {
         let app = catalog::find_app(&key)?;
         let report = |progress| {
             let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
@@ -298,26 +304,28 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action) -> CmdResult
             Action::Uninstall => app.uninstall(report).map(|()| None),
             Action::Reinstall => app.reinstall(report).map(|()| None),
         }
-    })
-    .await
+    }))
+    .await;
+    std::thread::spawn(furnish::reports::send);
+    result
 }
 
 /// Install or update; with the fallback "automatic", a failure installs the previous version.
 #[tauri::command]
-async fn install(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
-    run(app, key, Action::Install(catalog::Which::Shown)).await
+async fn install(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Shown), trigger).await
 }
 
 /// Install the previous version of an app (see `previous_version`).
 #[tauri::command]
-async fn install_previous(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
-    run(app, key, Action::Install(catalog::Which::Previous)).await
+async fn install_previous(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Previous), trigger).await
 }
 
 /// For an app held at an earlier version: install the collection's current one.
 #[tauri::command]
-async fn install_current(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
-    run(app, key, Action::Install(catalog::Which::Current)).await
+async fn install_current(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Current), trigger).await
 }
 
 /// The earlier version furnish would fall back to; an error says why there is none.
@@ -327,14 +335,14 @@ async fn previous_version(key: String) -> CmdResult<catalog::Version> {
 }
 
 #[tauri::command]
-async fn uninstall(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
-    run(app, key, Action::Uninstall).await
+async fn uninstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Uninstall, trigger).await
 }
 
 /// Uninstall with the options the app was installed with, then install with the current ones.
 #[tauri::command]
-async fn reinstall(app: tauri::AppHandle, key: String) -> CmdResult<Option<FellBack>> {
-    run(app, key, Action::Reinstall).await
+async fn reinstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Reinstall, trigger).await
 }
 
 /// furnish's version (builds of main: 0.1.0+alpha.<build>).
@@ -510,10 +518,39 @@ fn auto_install_done(app: String) -> CmdResult<()> {
 #[tauri::command]
 async fn update_collection(name: String) -> CmdResult<Revisions> {
     blocking(move || {
-        let (old, new) = catalog::get(&name)?.update()?;
+        let updated = catalog::get(&name)?.update();
+        std::thread::spawn(furnish::reports::send);
+        let (old, new) = updated?;
         Ok(Revisions { old, new })
     })
     .await
+}
+
+/// Where reports go (the organization's furnish addresses that take them).
+#[tauri::command]
+fn report_destinations() -> Vec<String> {
+    furnish::reports::destination_names()
+}
+
+/// The installed apps, for the daily inventory report (only with `reporting: all`, once a day).
+#[tauri::command]
+fn report_inventory(apps: Vec<(String, String)>) {
+    if !furnish::reports::inventory_due() {
+        return;
+    }
+    let apps = apps
+        .into_iter()
+        .filter_map(|(app, status)| {
+            let status = match status.as_str() {
+                "installed" => "installed",
+                "needsUpdate" => "needsUpdate",
+                _ => return None,
+            };
+            Some(furnish::reports::Installed { app, status })
+        })
+        .collect();
+    furnish::reports::inventory(apps);
+    std::thread::spawn(furnish::reports::send);
 }
 
 #[tauri::command]
@@ -581,6 +618,8 @@ fn main() {
             set_collection_setting,
             version,
             open_licenses,
+            report_destinations,
+            report_inventory,
             uninstall,
             reinstall,
             set_option,

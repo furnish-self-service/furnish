@@ -345,6 +345,14 @@ const steps = [
     if (!(await text(row)).includes('Managed by your organization')) throw new Error('not marked managed');
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
   }],
+  ["reports: the organization's setting shows and can't be changed", async () => {
+    await click(button('Collections'));
+    const section = "//section[h2[normalize-space()='Reports to your organization']]";
+    await waitFor('reports section', () => find(section));
+    if (!(await text(section)).includes('Set by your organization')) throw new Error('no hint that the organization sets it');
+    if (!(await prop(`${section}//select`, 'disabled'))) throw new Error('locked reporting setting is editable');
+    if ((await prop(`${section}//select`, 'value')) !== 'errors') throw new Error('not the policy value');
+  }],
   ['the open-source licenses open from the Collections page', async () => {
     await click(button('Collections'));
     if (!/furnish \d+\.\d+\.\d+/.test(await text("//p[contains(@class,'about')]"))) throw new Error('no version shown');

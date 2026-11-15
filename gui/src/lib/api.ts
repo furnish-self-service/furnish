@@ -40,6 +40,13 @@ export interface Version {
   date: string;
 }
 
+/** Who started an operation, for reports: the user (default), automatic updates, or the organization's first-start installs. */
+export type Trigger = 'user' | 'update' | 'autoInstall';
+/** The organization's furnish addresses that take reports. */
+export const reportDestinations = () => invoke<string[]>('report_destinations');
+/** The installed apps for the daily inventory report (ignored unless due). */
+export const reportInventory = (apps: [string, string][]) => invoke<void>('report_inventory', { apps });
+
 /** An install failed and furnish installed an earlier version instead (fallback "automatic"). */
 export interface FellBack {
   date: string;
@@ -164,13 +171,13 @@ export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
 export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null }>('app_status', { key });
-export const install = (key: string) => invoke<FellBack | null>('install', { key });
-export const uninstall = (key: string) => invoke<FellBack | null>('uninstall', { key });
-export const reinstall = (key: string) => invoke<FellBack | null>('reinstall', { key });
+export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
+export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });
+export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('reinstall', { key, trigger: trigger ?? null });
 /** Install the previous version: the one that last installed here, else the one before the latest change. */
-export const installPrevious = (key: string) => invoke<FellBack | null>('install_previous', { key });
+export const installPrevious = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_previous', { key, trigger: trigger ?? null });
 /** For an app held at an earlier version: install the collection's current one. */
-export const installCurrent = (key: string) => invoke<FellBack | null>('install_current', { key });
+export const installCurrent = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_current', { key, trigger: trigger ?? null });
 /** The version furnish would fall back to; rejects with the reason if there is none. */
 export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
 export const version = () => invoke<string>('version');
@@ -217,6 +224,10 @@ export interface Settings {
   /** Postpone automatic updates while the computer is busy. */
   loadAwareUpdates: boolean;
   loadLimits: { cpuPercent: number; memoryPercent: number; networkKbps: number };
+  /** Reports to the organization: off, errors (failures and fallbacks), all. */
+  reporting: 'off' | 'errors' | 'all';
+  /** Include this computer's name in reports. */
+  reportHostname: boolean;
 }
 
 export interface Load {

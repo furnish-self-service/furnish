@@ -1,0 +1,30 @@
+# The Traefik proxy for the furnish endpoint; see traefik/dynamic.yml and traefik/README.md.
+#   docker compose -f docker-compose.yml -f traefik/compose.yml up -d
+services:
+  proxy:
+    image: traefik:v3.7.17
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - ${TLS_DIR:-./certs}:/certs:ro
+    depends_on: [oauth2-proxy, vector, files]
+
+  # Traefik can't serve files or rename headers: this busybox httpd serves furnish.json and tells
+  # Traefik the user name to pass to Vector (traefik/files/user.sh). Not published.
+  files:
+    image: busybox:1.37.0-musl
+    restart: unless-stopped
+    command: [httpd, -f, -p, "8080", -h, /www, -c, /etc/httpd.conf]
+    volumes:
+      - ./traefik/files/httpd.conf:/etc/httpd.conf:ro
+      - ./traefik/files/user.sh:/www/user.sh:ro
+      - ${FURNISH_JSON:-./furnish.json}:/www/furnish.json:ro

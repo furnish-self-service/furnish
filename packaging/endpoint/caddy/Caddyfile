@@ -1,12 +1,13 @@
-# furnish endpoint: lets furnish users clone selected internal GitLab repositories
-# with their own OIDC sign-in, without exposing GitLab itself.
+# furnish endpoint with Caddy: lets furnish users clone selected internal GitLab repositories
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
 #
 #   furnish ──HTTPS, Bearer <ID token>──▶ Caddy ──forward_auth──▶ oauth2-proxy (checks the JWT)
-#                                           └──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#                                           └──POST /events, X-Furnish-User──▶ Vector
 #
-# Settings come from environment variables (see docker-compose.yml and README.md):
+# Settings come from environment variables (see caddy/compose.yml and README.md):
 #   FURNISH_HOST   public host name, e.g. furnish.myorg.tld
-#   FURNISH_TLS    an e-mail address for Let's Encrypt/ACME, or "internal" for Caddy's own CA
+#   FURNISH_TLS    an e-mail address for Let's Encrypt/ACME, or "/certs/tls.crt /certs/tls.key"
 #   GITLAB_URL     internal GitLab base URL, e.g. https://gitlab.myorg.internal
 #   <collection credentials>  one variable per collection, named in its `import collection` line
 
@@ -38,6 +39,10 @@
 		# sent as a Basic password, or a session cookie; neither is needed, so neither is allowed.)
 		@no_bearer not header_regexp Authorization `^Bearer \S+$`
 		respond @no_bearer 401
+		# A second Authorization header, e.g. "Basic <x:JWT>" before the Bearer one, could be the one
+		# oauth2-proxy reads: refuse any value that isn't "Bearer <token>".
+		@other_auth header_regexp Authorization `^(?:.{0,6}$|[^B]|B[^e]|Be[^a]|Bea[^r]|Bear[^e]|Beare[^r]|Bearer[^ ])`
+		respond @other_auth 401
 		# oauth2-proxy answers 202 for a valid bearer JWT (issuer, signature, expiry, audience = client ID)
 		# and 401/403 otherwise; anything but 2xx is returned to the client and nothing is proxied.
 		forward_auth oauth2-proxy:4180 {
@@ -78,8 +83,36 @@
 		file_server
 	}
 
+	# Only the proxy names the user: drop what a client sends under these names.
+	request_header -X-Furnish-User
+	request_header -X-Auth-Request-Email
+
 	# One line per collection; add the same collection to furnish.json.
 	import collection acme /it/catalog.git ACME_GITLAB_AUTH
+
+	# Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
+	@events expression `{method} == "POST" && {uri} == "/events"`
+	handle @events {
+		request_body {
+			max_size 1MB
+		}
+		route {
+			@no_bearer not header_regexp Authorization `^Bearer \S+$`
+			respond @no_bearer 401
+			@other_auth header_regexp Authorization `^(?:.{0,6}$|[^B]|B[^e]|Be[^a]|Bea[^r]|Bear[^e]|Beare[^r]|Bearer[^ ])`
+			respond @other_auth 401
+			forward_auth oauth2-proxy:4180 {
+				uri /oauth2/auth
+				header_up -Cookie
+				copy_headers X-Auth-Request-Email>X-Furnish-User
+			}
+			reverse_proxy vector:8080 {
+				rewrite /events
+				header_up -Authorization
+				header_up -Cookie
+			}
+		}
+	}
 
 	# Everything else.
 	handle {

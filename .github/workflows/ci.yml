@@ -128,9 +128,16 @@ jobs:
       - run: chmod +x bin/furnish && tests/checkout.sh bin/furnish
 
   endpoint:
-    name: endpoint (SSO proxy, sign-in, git)
+    name: endpoint with ${{ matrix.proxy }} (SSO, git allowlist, reports)
     needs: linux-binary
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each one runs packaging/endpoint/<proxy>/, the files the docs show.
+        proxy: [caddy, nginx, traefik, envoy, haproxy]
+    env:
+      PROXY: ${{ matrix.proxy }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

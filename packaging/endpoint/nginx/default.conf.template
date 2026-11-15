@@ -1,0 +1,196 @@
+# furnish endpoint with nginx: lets furnish users clone selected internal GitLab repositories
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
+#
+#   furnish ──HTTPS, Bearer <ID token>──▶ nginx ──auth_request──▶ oauth2-proxy (checks the JWT)
+#                                          ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#                                          └──POST /events, X-Furnish-User──▶ Vector
+#
+# The official image runs envsubst on this template at start, replacing ${FURNISH_HOST},
+# ${GITLAB_URL} and the credentials variables (see nginx/compose.yml). Only variables defined in
+# the environment are replaced, so nginx's own lowercase $variables stay as they are.
+
+# Allowlist, compared byte for byte against method + raw request URI. $request_uri is never
+# normalised (location matching is), so `..`, `%2e`, `%2f`, `//`, extra segments or query
+# parameters never match. Plain map keys compare case-insensitively, so the keys are anchored
+# regular expressions (`~`, case-sensitive; escape `.` and `?`). Git protocol v2 uses these same two
+# requests. Everything else, including pushes and the dumb protocol, gets 404.
+#
+# A collection is two lines here (upstream URI) and two lines in $furnish_gitlab_auth below.
+map $request_method$request_uri $furnish_gitlab_uri {
+    default "";
+    "~^GET/git/acme\.git/info/refs\?service=git-upload-pack$" "/it/catalog.git/info/refs?service=git-upload-pack";
+    "~^POST/git/acme\.git/git-upload-pack$"                   "/it/catalog.git/git-upload-pack";
+}
+
+# The read-only deploy token for each collection (base64 of "username:token").
+map $request_method$request_uri $furnish_gitlab_auth {
+    default "";
+    "~^GET/git/acme\.git/info/refs\?service=git-upload-pack$" "Basic ${ACME_GITLAB_AUTH}";
+    "~^POST/git/acme\.git/git-upload-pack$"                   "Basic ${ACME_GITLAB_AUTH}";
+}
+
+# Reports: exactly POST /events, no query.
+map $request_method$request_uri $furnish_events {
+    default          0;
+    "~^POST/events$" 1;
+}
+
+# Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take a JWT sent as
+# a Basic password, or a session cookie; neither is needed, so neither is allowed.)
+map $http_authorization $furnish_bearer {
+    default            0;
+    "~^Bearer [!-~]+$" 1;
+}
+
+# Docker's DNS. proxy_pass with variables resolves at request time, so containers that restart
+# with a new address are found again.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+server_tokens off;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${FURNISH_HOST};
+    return 301 https://${FURNISH_HOST}$request_uri;
+}
+
+# Requests for any other host name (Host header, SNI or absolute-form URI) get 404.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    ssl_certificate     /certs/tls.crt;
+    ssl_certificate_key /certs/tls.key;
+    return 404;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${FURNISH_HOST};
+
+    ssl_certificate     /certs/tls.crt;
+    ssl_certificate_key /certs/tls.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # git's upload-pack requests have no fixed size limit (Caddy sets none either); the body is
+    # only read after authentication. /events sets its own limit.
+    client_max_body_size 0;
+
+    # A request with two Authorization headers gets 400 from nginx itself, before any location runs.
+
+    # Discovery document for furnish; public, no sign-in needed.
+    location = /.well-known/furnish.json {
+        alias /srv/furnish/furnish.json;
+        types { }
+        default_type application/json;
+        add_header Cache-Control "max-age=300";
+    }
+
+    # Dispatch on the raw URI; "rewrite ... last" (one of the safe uses of `if`) moves the request
+    # to an internal location. $request_uri stays the original, so the maps still apply there.
+    location / {
+        if ($furnish_gitlab_uri != "") {
+            rewrite ^ /_furnish_gitlab last;
+        }
+        if ($furnish_events) {
+            rewrite ^ /_furnish_events last;
+        }
+        return 404;
+    }
+
+    location = /_furnish_gitlab {
+        internal;
+        if ($furnish_bearer = 0) {
+            return 401;
+        }
+        # oauth2-proxy answers 202 for a valid bearer JWT (issuer, signature, expiry,
+        # audience = client ID) and 401/403 otherwise; 401/403 go back to the client.
+        auth_request /_furnish_auth;
+
+        # The upstream URI is fixed; nothing from the client's path or query reaches GitLab.
+        # The request goes through the loopback server below, which talks to GitLab.
+        proxy_pass http://127.0.0.1:8081$furnish_gitlab_uri;
+        proxy_http_version 1.1;
+        # Replace the user's ID token with the read-only deploy token.
+        proxy_set_header Authorization $furnish_gitlab_auth;
+        # Drop other ways the client could present GitLab credentials of its own.
+        proxy_set_header Cookie "";
+        proxy_set_header Private-Token "";
+        proxy_set_header Job-Token "";
+        proxy_set_header Deploy-Token "";
+        proxy_set_header X-Furnish-User "";
+        proxy_set_header X-Auth-Request-Email "";
+        proxy_hide_header Set-Cookie;
+        proxy_hide_header WWW-Authenticate;
+        # Stream packs instead of buffering them to disk.
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
+    location = /_furnish_events {
+        internal;
+        client_max_body_size 1m;
+        if ($furnish_bearer = 0) {
+            return 401;
+        }
+        auth_request /_furnish_auth;
+        auth_request_set $furnish_user $upstream_http_x_auth_request_email;
+
+        set $furnish_vector http://vector:8080;
+        proxy_pass $furnish_vector/events;
+        proxy_http_version 1.1;
+        # Only the proxy names the user: what the client sent under these names is replaced.
+        proxy_set_header X-Furnish-User $furnish_user;
+        proxy_set_header X-Auth-Request-Email "";
+        proxy_set_header Authorization "";
+        proxy_set_header Cookie "";
+    }
+
+    # The token check. Subrequests carry the client's headers but no body.
+    location = /_furnish_auth {
+        internal;
+        set $furnish_oauth2 http://oauth2-proxy:4180;
+        proxy_pass $furnish_oauth2/oauth2/auth;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        # Never let a cookie stand in for the bearer token.
+        proxy_set_header Cookie "";
+        proxy_set_header X-Forwarded-Uri $request_uri;
+    }
+}
+
+# Talks to GitLab for the git locations above; reachable only from inside the container. It is a
+# separate hop because nginx keeps GitLab's WWW-Authenticate header on an intercepted 401 even
+# with proxy_hide_header; the outer location's proxy_hide_header removes it from the 502.
+server {
+    listen 127.0.0.1:8081;
+    server_name _;
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass ${GITLAB_URL}$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        # For an https GITLAB_URL: send SNI and verify GitLab's certificate.
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+
+        # If GitLab rejects the deploy token, say so instead of making git ask the user for a
+        # password.
+        proxy_intercept_errors on;
+        error_page 401 403 = @rejected;
+    }
+
+    location @rejected {
+        default_type text/plain;
+        return 502 "upstream rejected the endpoint's deploy token\n";
+    }
+}

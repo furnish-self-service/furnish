@@ -71,6 +71,44 @@ Behind the address runs a reverse proxy: it checks the token with oauth2-proxy a
 
 A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and starts the sign-in after the person confirms.
 
+## Reports
+
+furnish can report to your organization what it installed, updated or removed on each computer and whether that worked, through your furnish address. Its proxy accepts `POST /events` from signed-in users only, adds the user's e-mail address from the sign-in, and passes the reports to [Vector](https://vector.dev), which writes them where you keep logs: a file, Loki, Elasticsearch, Splunk and others. The [endpoint setup](endpoint.md) contains the configuration.
+
+The setting `reporting` decides what furnish sends:
+
+| Value | Reports |
+|---|---|
+| `off` (default) | none |
+| `errors` | failed installs, updates and uninstalls, failed collection updates, and installs of an earlier version after a failure |
+| `all` | also successful ones, and once a day the list of installed apps |
+
+People see the setting under Reports to your organization on the Collections page, and `furnish reports` shows what is waiting to be sent. To turn reports on for everyone, set it in the policy, and lock it if people mustn't turn it off:
+
+```json
+{ "settings": { "reporting": { "value": "errors", "locked": true }, "reportHostname": { "value": false } } }
+```
+
+The address's `furnish.json` names where reports go, on the address itself: `"events": "https://furnish.myorg.tld/events"`. furnish keeps reports in `reports/queue.ndjson` in its data folder until the address accepts them, at most 5 MB, so computers that are offline report later.
+
+Each report is one JSON object:
+
+| Field | Meaning |
+|---|---|
+| `time` | When it happened, UTC, such as `2026-11-15T08:03:06Z` |
+| `user` | The signed-in user's e-mail address, added by the proxy |
+| `device` | A random ID furnish created for this user on this computer |
+| `host` | The computer's name, only with `reportHostname: true` |
+| `os`, `osVersion`, `furnish` | The system and furnish's version |
+| `event` | `install`, `update`, `uninstall`, `reinstall`, `fallback`, `collectionUpdate` or `inventory` |
+| `outcome` | `succeeded`, `failed`, `cancelled`; `reported` for an inventory |
+| `app`, `collection`, `version` | The app (`collection/app`), its collection, and the collection's commit it was installed from |
+| `trigger` | `user`, `update` (automatic updates) or `autoInstall` |
+| `error`, `durationMs` | The error message of a failure, and how long it took |
+| `apps` | For an inventory: each installed app with `installed` or `needsUpdate` |
+
+Reports about the software people install are personal data, and in Germany a works council has a say before they are collected (§ 87 (1) 6 BetrVG). `errors` without host names collects the least that helps fix broken apps. To send reports without user names, remove the line that sets `X-Furnish-User` from the proxy's configuration.
+
 ## Branding
 
 ```json

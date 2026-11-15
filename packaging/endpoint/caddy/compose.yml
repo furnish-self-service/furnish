@@ -1,0 +1,28 @@
+# The Caddy proxy for the furnish endpoint; see caddy/Caddyfile.
+#   docker compose -f docker-compose.yml -f caddy/compose.yml up -d
+services:
+  proxy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      # An ACME contact e-mail (Let's Encrypt), or "/certs/tls.crt /certs/tls.key" for your own certificate.
+      FURNISH_TLS: ${FURNISH_TLS:?set FURNISH_TLS to an ACME contact e-mail or to "/certs/tls.crt /certs/tls.key"}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/.well-known/furnish.json:ro
+      - ${TLS_DIR:-./certs}:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [oauth2-proxy, vector]
+
+volumes:
+  caddy-data:
+  caddy-config:

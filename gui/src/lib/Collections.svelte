@@ -23,6 +23,9 @@
 
   let version = $state('');
   api.version().then((v) => (version = v));
+  // The organization's furnish addresses that take reports; the section shows only with one.
+  let destinations = $state<string[]>([]);
+  api.reportDestinations().then((d) => (destinations = d));
 
   let url = $state('');
   let name = $state('');
@@ -178,6 +181,44 @@
           Last checked at {clock(store.autoUpdate.lastAt)}.
         {/if}
       </p>
+    </section>
+  {/if}
+
+  {#if store.settings && (destinations.length || isLocked('reporting'))}
+    <section class="auto" aria-labelledby="reports-title">
+      <h2 id="reports-title">Reports to your organization</h2>
+      <p class="explain flush">
+        {#if destinations.length}
+          {store.brand.name} can tell {destinations.join(', ')} which apps it installed, updated or removed on
+          this computer and whether that worked. Reports name you as you are signed in.
+        {:else}
+          No furnish address of your organization takes reports, so nothing is sent.
+        {/if}
+      </p>
+      <label class="interval">
+        <span>Send</span>
+        <select
+          value={store.settings.reporting}
+          disabled={isLocked('reporting')}
+          onchange={(e) => changeSettings({ reporting: e.currentTarget.value as 'off' | 'errors' | 'all' })}
+        >
+          <option value="off">Nothing</option>
+          <option value="errors">Failures and fallbacks</option>
+          <option value="all">Everything, and the installed apps once a day</option>
+        </select>
+        {#if isLocked('reporting')}<span class="org">Set by your organization</span>{/if}
+      </label>
+      <label class="check">
+        <input
+          type="checkbox"
+          checked={store.settings.reportHostname}
+          disabled={isLocked('reportHostname') || store.settings.reporting === 'off'}
+          onchange={(e) => changeSettings({ reportHostname: e.currentTarget.checked })}
+        />
+        Include this computer's name
+        {#if isLocked('reportHostname')}<span class="org">Set by your organization</span>{/if}
+      </label>
+      <p class="explain">Reports waiting to be sent are in <code>reports/queue.ndjson</code> in {store.brand.name}'s data folder; <code>furnish reports</code> shows them.</p>
     </section>
   {/if}
 

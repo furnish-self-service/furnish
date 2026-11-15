@@ -3,7 +3,7 @@
 set -u
 E=https://furnish.test
 ISS=http://mock-oidc:8080
-CA=/caddy-data/caddy/pki/authorities/local/root.crt
+CA=/certs/ca.crt
 OUT=/tmp/out                    # every response (headers + body) lands here for the leak check
 REDIRECT=http://127.0.0.1:47123/callback
 mkdir -p $OUT /tmp/w
@@ -112,6 +112,11 @@ req "e-mail outside ALLOWED_EMAIL_DOMAINS" "401 403" -H "Authorization: Bearer $
 req "email_verified=false" "401 403" -H "Authorization: Bearer $UNVERIFIED" "$REFS"
 req "no e-mail claim" "401 403" -H "Authorization: Bearer $NO_EMAIL" "$REFS"
 req "JWT sent as Basic password" 401 -u "x:$GOOD" "$REFS"
+# Two Authorization headers: refused (nginx answers 400 itself before any configuration runs).
+BASIC_JWT="Authorization: Basic $(printf 'x:%s' "$GOOD" | openssl base64 -A)"
+req "Basic JWT header, then a Bearer header" "400 401" -H "$BASIC_JWT" -H "$AUTH" "$REFS"
+req "Bearer header, then a Basic JWT header" "400 401" -H "$AUTH" -H "$BASIC_JWT" "$REFS"
+req "report: Basic JWT header, then a Bearer header" "400 401" -X POST -H "$BASIC_JWT" -H "$AUTH" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
 for t in none "$WRONG_AUD" "$OTHER_ISS"; do
     if [ $t = none ]; then hdr="X-None: 1"; label="no token"; else hdr="Authorization: Bearer $t"; label="bad token"; fi
     git -c http.extraHeader="$hdr" clone -q $E/git/acme.git /tmp/w/denied >>$OUT/denied.log 2>&1 \
@@ -136,7 +141,11 @@ while read -r method path; do
     case $method in
         HEAD) req "$method $path" 404 -H "$AUTH" --path-as-is -I "$E$path" ;;
         POST) req "$method $path" 404 -H "$AUTH" --path-as-is -X POST -H 'Content-Type: application/x-git-upload-pack-request' --data-binary 0000 "$E$path" ;;
-        *)    req "$method $path" 404 -H "$AUTH" --path-as-is -X "$method" "$E$path" ;;
+        *)    want=404
+              # Traefik decodes %XX of unreserved characters before routing (RFC 3986 calls the forms
+              # equivalent); GitLab still only gets the fixed URI. See packaging/endpoint/traefik/README.md.
+              [ "${PROXY:-}" = traefik ] && [ "$path" = "/git/acme.git/info/r%65fs?service=git-upload-pack" ] && want=200
+              req "$method $path" "$want" -H "$AUTH" --path-as-is -X "$method" "$E$path" ;;
     esac
 done <<'EOF'
 GET /git/secret.git/info/refs?service=git-upload-pack
@@ -217,6 +226,23 @@ if grep -rqF -e "$DEPLOY_TOKEN" -e "$ACME_GITLAB_AUTH" $OUT; then bad "deploy to
 else ok "deploy token in no response (headers, bodies, git traces)"; fi
 if grep -rqiE 'fake-gitlab|www-authenticate: basic|set-cookie' $OUT/*.head $OUT/*.curl; then bad "upstream auth challenge or cookie leaked"
 else ok "no upstream WWW-Authenticate or Set-Cookie in responses"; fi
+
+# --- 8. reports (POST /events) -----------------------------------------------------------------
+EV='{"event":"install","outcome":"failed","app":"acme/x","check":"events"}'
+req "report without a token" "401 403" -X POST -H 'Content-Type: application/x-ndjson' --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "report with a bad token" "401 403" -X POST -H "Authorization: Bearer $WRONG_AUD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "report as JWT in a Basic password" 401 -X POST -u "x:$GOOD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "reports, signed in" "200 204" -X POST -H "$AUTH" -H 'Content-Type: application/x-ndjson' --data-binary "$EV
+$EV" $E/events
+req "report naming another user in a header" "200 204" -X POST -H "$AUTH" -H 'X-Furnish-User: mallory@myorg.tld' \
+    -H 'X-Auth-Request-Email: mallory@myorg.tld' --data-binary "$EV" $E/events
+req "report naming another user in its fields" "200 204" -X POST -H "$AUTH" \
+    --data-binary '{"event":"install","check":"events","user":"mallory@myorg.tld","X-Furnish-User":"mallory@myorg.tld"}' $E/events
+head -c 1200000 /dev/zero | tr '\0' 'x' > /tmp/big
+req "report over 1 MiB" 413 -X POST -H "$AUTH" --data-binary @/tmp/big $E/events
+req "GET /events" "404 405" -H "$AUTH" $E/events
+req "POST /events/x" 404 -X POST -H "$AUTH" --data-binary "$EV" $E/events/x
+req "POST /events?x=1" 404 -X POST -H "$AUTH" --data-binary "$EV" "$E/events?x=1"
 
 echo "$n HTTP requests checked"
 exit $failed

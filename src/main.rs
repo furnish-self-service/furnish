@@ -97,7 +97,15 @@ enum Command {
         update_interval: Option<u32>,
         #[command(flatten)]
         collections: CollectionSettingsArgs,
+        /// Reports to your organization: off, errors (failures and fallbacks) or all
+        #[arg(long, value_parser = ["off", "errors", "all"])]
+        reporting: Option<String>,
+        /// Include this computer's name in reports
+        #[arg(long, value_name = "BOOL")]
+        report_hostname: Option<bool>,
     },
+    /// Show the reports waiting to be sent to your organization, and where they go
+    Reports,
 }
 
 /// Settings that can differ per collection (`furnish collection settings`).
@@ -229,6 +237,8 @@ fn main() -> ExitCode {
         engine::capture_logs(print_log_line);
     }
     let result = engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command));
+    // Reports this command queued (and older ones still waiting), if the organization takes them.
+    furnish::reports::send();
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) if err.is::<engine::Cancelled>() => {
@@ -244,7 +254,7 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
+    if !matches!(command, Command::Settings { .. } | Command::Reports | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
@@ -338,7 +348,14 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Option(cmd) => option(cmd),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections } => {
+        Command::Reports => reports(),
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname } => {
+            if let Some(v) = reporting {
+                furnish::settings::set("reporting", v.into())?;
+            }
+            if let Some(v) = report_hostname {
+                furnish::settings::set("reportHostname", v.into())?;
+            }
             use furnish::settings::set;
             if let Some(v) = update_on_launch {
                 set("updateOnLaunch", v.into())?;
@@ -388,6 +405,12 @@ fn run(command: Command) -> Result<()> {
                 [] => println!("app updates:       automatic for all apps{}", org("noAutoUpdate")),
                 apps => println!("app updates:       automatic, except {}{}", apps.join(", "), org("noAutoUpdate")),
             }
+            let level = match s.reporting {
+                furnish::reports::Level::Off => "off",
+                furnish::reports::Level::Errors => "failures and fallbacks",
+                furnish::reports::Level::All => "everything, and the installed apps once a day",
+            };
+            println!("reports:           {level}{}{}", if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
             let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
             print_collection_settings(&general, &effective.locked);
             if !s.collections.is_empty() {
@@ -407,10 +430,13 @@ fn list() -> Result<()> {
     }
     let mut rows = vec![row(["", "App", "Collection", "Categories", "Description"])];
     let mut installed = std::collections::HashSet::new();
+    let mut inventory = Vec::new();
     for app in &apps {
         let check = app.check();
-        if matches!(check, Ok(engine::Check { status: Status::Installed | Status::NeedsUpdate, .. })) {
+        if let Ok(engine::Check { status: s @ (Status::Installed | Status::NeedsUpdate), .. }) = &check {
             installed.insert((app.collection.clone(), app.id.clone()));
+            let status = if *s == Status::Installed { "installed" } else { "needsUpdate" };
+            inventory.push(furnish::reports::Installed { app: app.key(), status });
         }
         let mut description = app.description.clone();
         let symbol = match check {
@@ -448,6 +474,9 @@ fn list() -> Result<()> {
         rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &description]));
     }
     print_table(&rows);
+    if furnish::reports::inventory_due() {
+        furnish::reports::inventory(inventory);
+    }
     println!("\n✓ installed  ↑ update available  · not installed  – not available on this OS  ! needs a missing tool  ? unknown");
 
     let kits = catalog::all_kits()?;
@@ -718,7 +747,7 @@ fn upgrade(all: bool) -> Result<()> {
             skipped.push(key);
             continue;
         }
-        install_app(&app)?;
+        furnish::reports::with_trigger("update", || install_app(&app))?;
         updated += 1;
     }
     if updated == 0 {
@@ -726,6 +755,25 @@ fn upgrade(all: bool) -> Result<()> {
     }
     if !skipped.is_empty() {
         println!("Not updated (automatic updates off): {}. Use --all to update them too.", skipped.join(", "));
+    }
+    Ok(())
+}
+
+/// What furnish reports to the organization and what is waiting to be sent.
+fn reports() -> Result<()> {
+    let s = furnish::settings::effective();
+    let level = serde_json::to_value(s.settings.reporting)?;
+    let locked = if s.locked.iter().any(|k| k == "reporting") { " (set by your organization)" } else { "" };
+    println!("Reports: {}{locked}", level.as_str().unwrap_or_default());
+    match furnish::reports::destination_names().as_slice() {
+        [] => println!("No furnish address of your organization takes reports; nothing is sent."),
+        names => println!("Sent to: {}. Their proxy adds who you are signed in as.", names.join(", ")),
+    }
+    let queue = std::fs::read_to_string(furnish::reports::queue_path()).unwrap_or_default();
+    let lines: Vec<_> = queue.lines().collect();
+    println!("Waiting: {} ({})", lines.len(), furnish::reports::queue_path().display());
+    for line in lines.iter().rev().take(20).rev() {
+        println!("  {line}");
     }
     Ok(())
 }

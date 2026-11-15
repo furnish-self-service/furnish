@@ -33,6 +33,10 @@ pub struct Settings {
     pub fallback: Fallback,
     /// Only fall back to versions at most this many days older than the failing one; 0: any age.
     pub fallback_max_age_days: u32,
+    /// Reports to the organization's furnish address (see `reports`): off, errors or all.
+    pub reporting: crate::reports::Level,
+    /// Include this computer's name in reports.
+    pub report_hostname: bool,
     /// The user's values for the four settings above for single collections, keyed by collection.
     pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
 }
@@ -82,6 +86,8 @@ impl Default for Settings {
             blobs_on_demand: true,
             fallback: Fallback::Ask,
             fallback_max_age_days: 0,
+            reporting: crate::reports::Level::Off,
+            report_hostname: false,
             collections: Default::default(),
         }
     }

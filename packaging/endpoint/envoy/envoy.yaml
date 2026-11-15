@@ -1,0 +1,352 @@
+# furnish endpoint with Envoy: lets furnish users clone selected internal GitLab repositories
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
+#
+#   furnish ──HTTPS, Bearer <ID token>──▶ Envoy ──ext_authz──▶ auth hop (127.0.0.1) ──▶ oauth2-proxy
+#                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#                                           └──POST /events, X-Furnish-User──▶ Vector
+#
+# Envoy does not read environment variables in its configuration: envoy/entrypoint.sh replaces
+# every ${NAME} in this file with the variable's value before starting Envoy, and refuses to start
+# if one is unset. Lines starting with "#https:" are kept only when GITLAB_URL is https://.
+# Settings (see envoy/compose.yml and envoy/README.md):
+#   FURNISH_HOST   public host name, e.g. furnish.myorg.tld
+#   GITLAB_URL     internal GitLab base URL; the entrypoint derives GITLAB_HOST, GITLAB_PORT and
+#                  GITLAB_AUTHORITY (host[:port], sent as Host) from it
+#   <collection credentials>  one variable per collection, used in its routes below
+#
+# No admin listener: it would show the deploy tokens in /config_dump.
+
+static_resources:
+  listeners:
+  - name: https
+    address: {socket_address: {address: 0.0.0.0, port_value: 443}}
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            alpn_protocols: [h2, http/1.1]
+            # Copies of /certs/tls.crt and tls.key made by entrypoint.sh (restart to load new ones).
+            tls_certificates:
+            - certificate_chain: {filename: /tmp/tls/tls.crt}
+              private_key: {filename: /tmp/tls/tls.key}
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: https
+          codec_type: AUTO
+          use_remote_address: true
+          # Routes compare the raw request URI, so Envoy must not rewrite it first: with these
+          # defaults changed, "..", "%2e", "%2f" and "//" stay as sent and match no route.
+          normalize_path: false
+          merge_slashes: false
+          path_with_escaped_slashes_action: KEEP_UNCHANGED
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+          http_filters:
+          # Only the proxy names the user: drop what a client sends under these names.
+          - name: envoy.filters.http.header_mutation
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+              mutations:
+                request_mutations:
+                - remove: x-furnish-user
+                - remove: x-auth-request-email
+          # Every route needs a valid sign-in unless it turns this off (furnish.json, 401, 404).
+          # Turned on only for POST /events: reports are at most 1 MiB (413 above). Before the
+          # token check, so Envoy collects the body under this limit from the first byte; placed
+          # after it, a body that arrives in one piece while the check runs would pass unchecked.
+          - name: envoy.filters.http.buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+              max_request_bytes: 1048576
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              # oauth2-proxy unreachable: 503, not a misleading 403.
+              status_on_error: {code: ServiceUnavailable}
+              # Only Authorization goes to the check (Host, Method, Path are always sent):
+              # never let a cookie stand in for the bearer token.
+              allowed_headers:
+                patterns: [{exact: authorization, ignore_case: true}]
+              disallowed_headers:
+                patterns: [{exact: cookie, ignore_case: true}]
+              http_service:
+                # The auth hop below: Envoy's ext_authz only takes 200 as success, oauth2-proxy
+                # answers 202.
+                server_uri: {uri: "http://127.0.0.1:10000", cluster: auth_hop, timeout: 5s}
+                path_override: /oauth2/auth
+                authorization_response:
+                  # The user's verified e-mail, for X-Furnish-User on reports.
+                  allowed_upstream_headers:
+                    patterns: [{exact: x-auth-request-email, ignore_case: true}]
+                  # On denial, pass back only the status and body.
+                  allowed_client_headers:
+                    patterns: [{exact: content-type, ignore_case: true}]
+          # Turned on only for the GitLab routes: if GitLab rejects the deploy token, say so
+          # instead of making git ask the user for a password.
+          - name: envoy.filters.http.custom_response
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.custom_response.v3.CustomResponse
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          route_config:
+            # furnish.json is read into memory at start (restart Envoy after changing it).
+            max_direct_response_body_size_bytes: 1048576
+            virtual_hosts:
+            - name: furnish
+              domains: ["${FURNISH_HOST}", "${FURNISH_HOST}:443"]
+              typed_per_filter_config:
+                envoy.filters.http.buffer:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
+                  disabled: true
+              # Evaluated after the routes' own header changes, so a route can still copy
+              # x-auth-request-email before it is dropped here.
+              request_headers_to_remove: [x-auth-request-email, cookie]
+              routes:
+              # Discovery document for furnish; public, no sign-in needed.
+              - match: {path: /.well-known/furnish.json}
+                direct_response: {status: 200, body: {filename: /srv/furnish/furnish.json}}
+                response_headers_to_add:
+                - header: {key: content-type, value: application/json}
+                  append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                - header: {key: cache-control, value: max-age=300}
+                typed_per_filter_config: &public
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+
+              # A collection: one public, read-only path mapped to exactly one upstream repository.
+              # Only these two requests are proxied, compared byte for byte against the raw request
+              # URI (":path" includes the query) and the method:
+              #   GET  /git/<public name>.git/info/refs?service=git-upload-pack
+              #   POST /git/<public name>.git/git-upload-pack
+              # Git protocol v2 uses exactly these two requests too (it signals v2 in the
+              # Git-Protocol header). Everything else, including pushes (git-receive-pack) and the
+              # dumb protocol, falls through to 404. To add a collection, copy both routes and
+              # change the public name, the upstream path and the credentials variable.
+              #
+              # Collection acme → /it/catalog.git, credentials ACME_GITLAB_AUTH.
+              - match:
+                  prefix: /
+                  headers:
+                  - {name: ":method", string_match: {exact: GET}}
+                  - {name: ":path", string_match: {exact: "/git/acme.git/info/refs?service=git-upload-pack"}}
+                route:
+                  cluster: gitlab
+                  # The upstream URI is fixed; nothing from the client's path or query reaches
+                  # GitLab (the query is kept, and the match above allows only this one).
+                  regex_rewrite: {pattern: {regex: ".*"}, substitution: /it/catalog.git/info/refs}
+                  host_rewrite_literal: "${GITLAB_AUTHORITY}"
+                  timeout: 0s
+                # Replace the user's ID token with the read-only deploy token (base64 of
+                # "username:token").
+                request_headers_to_add: &acme_auth
+                - header: {key: authorization, value: "Basic ${ACME_GITLAB_AUTH}"}
+                  append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                # Drop other ways the client could present GitLab credentials of its own.
+                request_headers_to_remove: &gitlab_drop [private-token, job-token, deploy-token]
+                response_headers_to_remove: &gitlab_drop_down [set-cookie, www-authenticate]
+                typed_per_filter_config: &gitlab_filters
+                  envoy.filters.http.custom_response:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.custom_response.v3.CustomResponse
+                    # Local replies (ext_authz's 401/403) pass through this filter as well;
+                    # x-envoy-upstream-service-time is set only on responses from GitLab.
+                    custom_response_matcher:
+                      matcher_list:
+                        matchers:
+                        - predicate:
+                            and_matcher:
+                              predicate:
+                              - single_predicate:
+                                  input:
+                                    name: status
+                                    typed_config:
+                                      "@type": type.googleapis.com/envoy.type.matcher.v3.HttpResponseStatusCodeMatchInput
+                                  value_match: {safe_regex: {google_re2: {}, regex: "40[13]"}}
+                              - single_predicate:
+                                  input:
+                                    name: from_upstream
+                                    typed_config:
+                                      "@type": type.googleapis.com/envoy.type.matcher.v3.HttpResponseHeaderMatchInput
+                                      header_name: x-envoy-upstream-service-time
+                                  value_match: {safe_regex: {google_re2: {}, regex: ".*"}}
+                          on_match:
+                            action:
+                              name: rejected
+                              typed_config:
+                                "@type": type.googleapis.com/envoy.extensions.http.custom_response.local_response_policy.v3.LocalResponsePolicy
+                                status_code: 502
+                                body: {inline_string: "upstream rejected the endpoint's deploy token\n"}
+              - match:
+                  prefix: /
+                  headers:
+                  - {name: ":method", string_match: {exact: POST}}
+                  - {name: ":path", string_match: {exact: /git/acme.git/git-upload-pack}}
+                route:
+                  cluster: gitlab
+                  regex_rewrite: {pattern: {regex: ".*"}, substitution: /it/catalog.git/git-upload-pack}
+                  host_rewrite_literal: "${GITLAB_AUTHORITY}"
+                  timeout: 0s
+                request_headers_to_add: *acme_auth
+                request_headers_to_remove: *gitlab_drop
+                response_headers_to_remove: *gitlab_drop_down
+                typed_per_filter_config: *gitlab_filters
+
+              # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the
+              # user's e-mail.
+              - match:
+                  path: /events
+                  headers:
+                  - {name: ":method", string_match: {exact: POST}}
+                  - {name: ":path", string_match: {exact: /events}}
+                route: {cluster: vector}
+                request_headers_to_add:
+                - header: {key: x-furnish-user, value: "%REQ(x-auth-request-email)%"}
+                  append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                request_headers_to_remove: [authorization]
+                typed_per_filter_config:
+                  envoy.filters.http.buffer:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
+                    buffer: {max_request_bytes: 1048576}
+
+              # Everything else.
+              - match: {prefix: /}
+                direct_response: {status: 404}
+                typed_per_filter_config: *public
+
+  # The auth hop, reachable only from inside the container. Envoy's ext_authz treats only 200 as
+  # success, oauth2-proxy's /oauth2/auth answers 202. This listener asks oauth2-proxy itself;
+  # every answer becomes a local reply, and the local reply mapper turns 202 into 200, keeping
+  # X-Auth-Request-Email. 401 and 403 pass through unchanged.
+  - name: auth_hop
+    address: {socket_address: {address: 127.0.0.1, port_value: 10000}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: auth_hop
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              status_on_error: {code: ServiceUnavailable}
+              allowed_headers:
+                patterns: [{exact: authorization, ignore_case: true}]
+              disallowed_headers:
+                patterns: [{exact: cookie, ignore_case: true}]
+              http_service:
+                server_uri: {uri: "http://oauth2-proxy:4180", cluster: oauth2_proxy, timeout: 5s}
+                path_override: /oauth2/auth
+                authorization_response:
+                  allowed_client_headers:
+                    patterns:
+                    - {exact: x-auth-request-email, ignore_case: true}
+                    - {exact: content-type, ignore_case: true}
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          local_reply_config:
+            mappers:
+            - filter:
+                status_code_filter:
+                  comparison: {op: EQ, value: {default_value: 202, runtime_key: auth_hop.accepted}}
+              status_code: 200
+          route_config:
+            virtual_hosts:
+            - name: auth_hop
+              domains: ["*"]
+              routes:
+              # Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take
+              # a JWT sent as a Basic password; that is not needed, so it is not allowed.) Envoy
+              # joins repeated headers with "," before matching, and a token never contains one,
+              # so a second Authorization header next to the Bearer one gets 401 too.
+              - match:
+                  prefix: /
+                  headers:
+                  - {name: authorization, string_match: {safe_regex: {regex: '^Bearer [^\s,]+$'}}}
+                # oauth2-proxy never answers 200, so this is never reached: it would mean "deny".
+                direct_response: {status: 500}
+              - match: {prefix: /}
+                direct_response: {status: 401}
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+
+  - name: http
+    address: {socket_address: {address: 0.0.0.0, port_value: 80}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: http
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+          route_config:
+            virtual_hosts:
+            - name: redirect
+              domains: ["*"]
+              routes:
+              - match: {prefix: /}
+                redirect: {https_redirect: true, host_redirect: "${FURNISH_HOST}"}
+
+  clusters:
+  - name: gitlab
+    type: STRICT_DNS
+    dns_lookup_family: V4_PREFERRED
+    connect_timeout: 5s
+    load_assignment:
+      cluster_name: gitlab
+      endpoints:
+      - lb_endpoints:
+        - endpoint: {address: {socket_address: {address: "${GITLAB_HOST}", port_value: ${GITLAB_PORT}}}}
+#https:    transport_socket:
+#https:      name: envoy.transport_sockets.tls
+#https:      typed_config:
+#https:        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+#https:        sni: "${GITLAB_HOST}"
+#https:        common_tls_context:
+#https:          validation_context:
+#https:            # For a private CA, mount it into the container and name it here.
+#https:            trusted_ca: {filename: /etc/ssl/certs/ca-certificates.crt}
+#https:            match_typed_subject_alt_names:
+#https:            - san_type: DNS
+#https:              matcher: {exact: "${GITLAB_HOST}"}
+  - name: oauth2_proxy
+    type: STRICT_DNS
+    dns_lookup_family: V4_PREFERRED
+    connect_timeout: 5s
+    load_assignment:
+      cluster_name: oauth2_proxy
+      endpoints:
+      - lb_endpoints:
+        - endpoint: {address: {socket_address: {address: oauth2-proxy, port_value: 4180}}}
+  - name: vector
+    type: STRICT_DNS
+    dns_lookup_family: V4_PREFERRED
+    connect_timeout: 5s
+    load_assignment:
+      cluster_name: vector
+      endpoints:
+      - lb_endpoints:
+        - endpoint: {address: {socket_address: {address: vector, port_value: 8080}}}
+  - name: auth_hop
+    type: STATIC
+    connect_timeout: 1s
+    load_assignment:
+      cluster_name: auth_hop
+      endpoints:
+      - lb_endpoints:
+        - endpoint: {address: {socket_address: {address: 127.0.0.1, port_value: 10000}}}

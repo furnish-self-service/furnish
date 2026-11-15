@@ -157,6 +157,7 @@ fn connect() -> std::io::Result<std::fs::File> {
 
 /// Before anything writes to the system directory: make sure only the service can change it.
 pub fn prepare() -> Result<()> {
+    crate::reports::running_as_service();
     #[cfg(windows)]
     windows::secure_system_dir(&crate::catalog::system_dir())?;
     Ok(())

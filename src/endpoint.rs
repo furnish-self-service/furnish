@@ -54,6 +54,9 @@ pub struct Description {
     /// Apps (`collection/app`) furnish installs on first launch, e.g. the VPN client.
     #[serde(default)]
     pub auto_install: Vec<String>,
+    /// Where furnish sends reports (see `reports`), on this endpoint, e.g. https://furnish.myorg.tld/events.
+    #[serde(default)]
+    pub events: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -138,7 +141,7 @@ fn percent_decode(s: &str) -> String {
 
 /// HTTPS with the operating system's certificates, so an organization's own certificate
 /// authority (installed on its computers) works too.
-fn http() -> ureq::Agent {
+pub(crate) fn http() -> ureq::Agent {
     use ureq::tls::{RootCerts, TlsConfig};
     ureq::Agent::config_builder().tls_config(TlsConfig::builder().root_certs(RootCerts::PlatformVerifier).build()).build().into()
 }

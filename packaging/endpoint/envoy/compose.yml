@@ -1,0 +1,22 @@
+# The Envoy proxy for the furnish endpoint; see envoy/envoy.yaml.
+#   docker compose -f docker-compose.yml -f envoy/compose.yml up -d
+services:
+  proxy:
+    image: envoyproxy/envoy:v1.40.2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/etc/envoy/entrypoint.sh"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml.in:ro
+      - ./envoy/entrypoint.sh:/etc/envoy/entrypoint.sh:ro
+      - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/furnish.json:ro
+      # tls.crt and tls.key, read at start (restart the proxy after renewing them).
+      - ${TLS_DIR:-./certs}:/certs:ro
+    depends_on: [oauth2-proxy, vector]

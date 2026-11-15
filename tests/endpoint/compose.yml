@@ -1,10 +1,8 @@
 # Test overlay for packaging/endpoint/docker-compose.yml, used by tests/endpoint/run.sh.
 # Paths use ${TEST_DIR}: relative paths would resolve against packaging/endpoint/.
 services:
-  caddy:
+  proxy:
     ports: !reset []
-    volumes:
-      - ${TEST_DIR}/furnish.json:/srv/furnish/.well-known/furnish.json:ro
     networks:
       default:
         aliases: [furnish.test]
@@ -28,10 +26,11 @@ services:
     image: furnish-endpoint-test-client
     profiles: [client]
     environment:
+      PROXY: ${PROXY}
       DEPLOY_TOKEN: ${DEPLOY_TOKEN}
       ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH}
     volumes:
-      - caddy-data:/caddy-data:ro
+      - ${TLS_DIR}:/certs:ro
       - ${TEST_DIR}/checks.sh:/checks.sh:ro
       - ${TEST_DIR}/furnish.sh:/furnish.sh:ro
       - ${FURNISH_BIN:-/dev/null}:/usr/local/bin/furnish:ro
