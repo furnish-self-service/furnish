@@ -32,8 +32,12 @@ ok() { echo "ok    $*"; }
 for _ in $(seq 50); do (exec 3<>/dev/tcp/server/80) 2>/dev/null && break; sleep 0.2; done 2>/dev/null || true
 sleep 1
 useradd -m user && cp /key /home/user/key && chown user /home/user/key && chmod 600 /home/user/key
-as() { su user -s /bin/sh -c "export HOME=/home/user FURNISH_DATA_DIR=/home/user/data FURNISH_TOKEN_STORE=file; $1"; }
+# The test server speaks plain http; furnish sends credentials over it only to hosts named here.
+as() { su user -s /bin/sh -c "export HOME=/home/user FURNISH_DATA_DIR=/home/user/data FURNISH_TOKEN_STORE=file FURNISH_ALLOW_HTTP=server; $1"; }
 url=http://server/git/apps.git
+
+out=$(as "echo s3cret-token | FURNISH_ALLOW_HTTP= furnish collection add $url --name h --username alice --password-stdin 2>&1") && fail "sent credentials over plain http"
+echo "$out" | grep -q "only sends a username and password over https" && ok "no credentials over plain http" || fail "unexpected: $out"
 
 out=$(as "furnish collection add $url --name h </dev/null 2>&1") && fail "added without credentials"
 echo "$out" | grep -q "needs a username and password" && ok "HTTPS without credentials: furnish asks for them" || fail "unexpected: $out"
