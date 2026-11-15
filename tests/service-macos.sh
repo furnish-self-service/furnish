@@ -61,6 +61,8 @@ cask "furnish-brewdemo" do
   uninstall pkgutil: "io.github.furnish-self-service.brewdemo"
 end
 RUBY
+# The service's brew updates Homebrew, which (since 7.0) loads casks only from trusted taps.
+brew update --quiet >/dev/null && brew trust furnish/test
 cat > "$work/org/apps/brewdemo.dsc.yaml" <<YAML
 metadata:
   furnish:
