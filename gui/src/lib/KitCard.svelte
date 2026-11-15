@@ -2,6 +2,7 @@
   import type { KitInfo } from './api';
   import { appByKey, isInstalled } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
+  import { t } from './i18n.svelte';
 
   let { kit, onopen }: { kit: KitInfo; onopen: () => void } = $props();
 
@@ -10,11 +11,11 @@
 </script>
 
 <article class="card kit">
-  <button class="open" onclick={onopen} aria-label="Open kit {kit.id}"></button>
+  <button class="open" onclick={onopen} aria-label={t('kit.openKit', { name: kit.id })}></button>
   <header>
     <AppIcon app={kit} />
     <div class="title">
-      <p class="eyebrow">Kit · {kit.items.length} apps</p>
+      <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
       <h3>{kit.id}</h3>
     </div>
   </header>
@@ -25,13 +26,13 @@
   </div>
   <footer>
     {#if installed === kit.items.length}
-      <span class="state installed">Installed</span>
+      <span class="state installed">{t('common.installed')}</span>
     {:else if installed}
-      <span class="state partial">{installed} of {kit.items.length} installed</span>
+      <span class="state partial">{t('kit.partlyInstalled', { n: installed, total: kit.items.length })}</span>
     {:else}
       <span class="collection">{kit.collection}</span>
     {/if}
-    <button class="choose" onclick={(e) => { e.stopPropagation(); onopen(); }}>Choose apps</button>
+    <button class="choose" onclick={(e) => { e.stopPropagation(); onopen(); }}>{t('kit.chooseApps')}</button>
   </footer>
 </article>
 

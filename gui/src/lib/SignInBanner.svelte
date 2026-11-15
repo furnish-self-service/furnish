@@ -2,6 +2,7 @@
   // An organization's furnish address the user isn't (or no longer) signed in to: its apps wait
   // for the sign-in. While signing in, the sign-in page's address in case the browser didn't open.
   import { store, signIn } from './state.svelte';
+  import { t, parts } from './i18n.svelte';
 
   const signedOut = $derived(store.endpoints.filter((e) => !e.signedIn));
   let busy = $state<string | null>(null);
@@ -15,14 +16,14 @@
 
 {#if store.signInUrl}
   <div class="banner" role="status">
-    <span>Finish signing in in your browser. If it didn't open, copy this address into it:</span>
+    <span>{t('signIn.finish')}</span>
     <code>{store.signInUrl}</code>
   </div>
 {:else}
   {#each signedOut as e (e.origin)}
     <div class="banner" role="status">
-      <span><strong>{e.name}</strong>: sign in to get your organization's apps and updates.</span>
-      <button class="primary" disabled={busy !== null} onclick={() => start(e.origin)}>{busy === e.origin ? 'Signing in…' : 'Sign in'}</button>
+      <span>{#each parts(t('signIn.prompt', { name: e.name })) as p}{#if p.tag}<strong>{p.text}</strong>{:else}{p.text}{/if}{/each}</span>
+      <button class="primary" disabled={busy !== null} onclick={() => start(e.origin)}>{busy === e.origin ? t('signIn.signingIn') : t('signIn.signIn')}</button>
     </div>
   {/each}
 {/if}

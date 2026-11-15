@@ -1,15 +1,16 @@
 <script lang="ts">
   import { store, dismiss } from './state.svelte';
+  import { t } from './i18n.svelte';
 </script>
 
 <div class="toasts" role="status" aria-live="polite">
-  {#each store.toasts as t (t.id)}
-    <div class="toast {t.kind}">
+  {#each store.toasts as item (item.id)}
+    <div class="toast {item.kind}">
       <div class="body">
-        <strong>{t.title}</strong>
-        {#if t.detail}<pre>{t.detail}</pre>{/if}
+        <strong>{item.title}</strong>
+        {#if item.detail}<pre>{item.detail}</pre>{/if}
       </div>
-      <button aria-label="Dismiss" onclick={() => dismiss(t.id)}>×</button>
+      <button aria-label={t('toast.dismiss')} onclick={() => dismiss(item.id)}>×</button>
     </div>
   {/each}
 </div>

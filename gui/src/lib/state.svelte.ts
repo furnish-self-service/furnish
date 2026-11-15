@@ -2,6 +2,7 @@
 import * as api from './api';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 import { applyBranding, type Branding } from './brand';
+import { setLanguage, t, formatDate } from './i18n.svelte';
 
 export type View =
   | { page: 'discover' }
@@ -156,11 +157,11 @@ export async function loadAll() {
   // Loaded independently: a problem with one must not hide the other.
   const [apps, collections, kits] = await Promise.allSettled([api.listApps(), api.listCollections(), api.listKits()]);
   if (apps.status === 'fulfilled') store.apps = apps.value;
-  else toast('error', "Couldn't load the apps", message(apps.reason));
+  else toast('error', t('toast.loadApps'), message(apps.reason));
   if (kits.status === 'fulfilled') store.kits = kits.value;
-  else toast('error', "Couldn't load the kits", message(kits.reason));
+  else toast('error', t('toast.loadKits'), message(kits.reason));
   if (collections.status === 'fulfilled') store.collections = collections.value;
-  else toast('error', "Couldn't load the collections", message(collections.reason));
+  else toast('error', t('toast.loadCollections'), message(collections.reason));
   askQuestions(); // on launch, and when an update brings a new question
   store.loading = false;
   store.status = {};
@@ -183,9 +184,6 @@ export async function checkStatus(key: string) {
   }
 }
 
-const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall', reinstall: 'Reinstall' } as const;
-const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled', reinstall: 'Reinstalled' } as const;
-const kindVerb = { install: 'install', update: 'update', uninstall: 'uninstall', reinstall: 'reinstall' } as const;
 
 /** Run one queued operation; resolves to whether it succeeded. */
 async function runOperation(app: AppInfo, action: Queued['action'], auto = false): Promise<boolean> {
@@ -200,14 +198,15 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
   try {
     const fellBack = await api[action](app.key, trigger);
     ok = true;
-    if (fellBack) toast('info', `Installed the version of ${app.id} from ${fellBack.date}`, `The current version failed: ${fellBack.error}`);
-    else toast('success', `${kindDone[kind]} ${app.id}`);
+    if (fellBack)
+      toast('info', t('toast.fellBack', { app: app.id, date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
+    else toast('success', t(`run.done.${kind}`, { app: app.id }));
     if (autoInstalling.delete(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
-    if (cancelled) toast('info', `${kindNoun[kind]} of ${app.id} cancelled`);
+    if (cancelled) toast('info', t(`run.cancelled.${kind}`, { app: app.id }));
     else {
-      toast('error', `Couldn't ${kindVerb[kind]} ${app.id}`, message(e));
+      toast('error', t(`run.failed.${kind}`, { app: app.id }), message(e));
       // An earlier version may work (fallback "ask"); none is offered for one furnish fell back to.
       const offer = action === 'install' && !app.held;
       store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };
@@ -298,7 +297,7 @@ async function updateApps() {
   store.autoUpdate.postponed = null;
   const apps = due();
   for (const app of apps) enqueue(app.key, 'install', true);
-  if (apps.length) toast('info', `Updating ${apps.map((a) => a.id).join(', ')} automatically`);
+  if (apps.length) toast('info', t('toast.autoUpdating', { apps: apps.map((a) => a.id).join(', '), n: apps.length }));
 }
 
 /** Pull collections, look for app updates (package managers learn about them on their own),
@@ -309,7 +308,7 @@ export async function checkForUpdates() {
   try {
     const changed = await updateCollections();
     store.autoUpdate.error = null;
-    if (changed.length) toast('info', `Updated ${changed.join(', ')}`);
+    if (changed.length) toast('info', t('toast.updated', { names: changed.join(', ') }));
   } catch (e) {
     store.autoUpdate.error = message(e);
   } finally {
@@ -343,15 +342,16 @@ export async function start() {
     store.brand = await api.getBranding();
     applyBranding(store.brand);
   } catch (e) {
-    toast('error', "Couldn't read the branding", message(e));
+    toast('error', t('toast.branding'), message(e));
   }
   try {
     const effective = await api.getSettings();
     store.settings = effective.settings;
     store.locked = effective.locked;
     store.usersCanAddCollections = effective.usersCanAddCollections;
+    setLanguage(effective.settings.language);
   } catch (e) {
-    toast('error', "Couldn't read the settings", message(e));
+    toast('error', t('toast.settings'), message(e));
   }
   schedule();
   // furnish:// links: the one furnish started with, and those arriving while it runs.
@@ -359,7 +359,7 @@ export async function start() {
   api.pendingLink().then((url) => url && openLink(url)).catch(() => {});
   // Collections the organization provides, for this user too. A missing sign-in shows as a banner.
   for (const problem of await api.ensurePresets().catch((e) => [message(e)])) {
-    if (!problem.includes('sign in to')) toast('error', "Couldn't set up a collection", problem);
+    if (!problem.includes('sign in to')) toast('error', t('toast.setupCollection'), problem);
   }
   await refreshEndpoints();
   await loadAll();
@@ -377,10 +377,10 @@ export async function refreshEndpoints() {
 /** Sign in to an organization's furnish address again, then set up its collections. */
 export async function signIn(origin: string) {
   try {
-    for (const problem of await api.signIn(origin)) toast('error', "Couldn't set up a collection", problem);
-    toast('success', `Signed in to ${store.endpoints.find((e) => e.origin === origin)?.name ?? origin}`);
+    for (const problem of await api.signIn(origin)) toast('error', t('toast.setupCollection'), problem);
+    toast('success', t('toast.signedIn', { name: store.endpoints.find((e) => e.origin === origin)?.name ?? origin }));
   } catch (e) {
-    toast('error', "Couldn't sign in", message(e));
+    toast('error', t('toast.signInFailed'), message(e));
   } finally {
     store.signInUrl = null;
   }
@@ -417,10 +417,11 @@ export async function changeSettings(change: Partial<Settings>) {
   try {
     for (const [key, value] of Object.entries(change)) await api.setSetting(key as keyof Settings, value);
     store.settings = { ...store.settings, ...change };
+    if (change.language) setLanguage(change.language);
     schedule();
     if ('loadAwareUpdates' in change) await updateApps(); // postponed updates may go ahead now
   } catch (e) {
-    toast('error', "Couldn't save the settings", message(e));
+    toast('error', t('toast.saveSettings'), message(e));
   }
 }
 
@@ -457,7 +458,7 @@ export async function setOption(target: string, name: string, value: unknown) {
   try {
     await api.setOption(target, name, value);
   } catch (e) {
-    toast('error', `Couldn't change ${name}`, message(e));
+    toast('error', t('toast.changeOption', { name }), message(e));
   }
   await reloadApps();
 }
@@ -483,7 +484,7 @@ export async function answerQuestions(answers: { collection: string; name: strin
     try {
       await api.setOption(a.collection, a.name, a.value);
     } catch (e) {
-      toast('error', `Couldn't save the answer for ${a.collection}`, message(e));
+      toast('error', t('toast.saveAnswer', { collection: a.collection }), message(e));
     }
   }
   await reloadApps();
@@ -494,7 +495,7 @@ async function reloadApps() {
   try {
     [store.apps, store.collections] = await Promise.all([api.listApps(), api.listCollections()]);
   } catch (e) {
-    toast('error', "Couldn't load the apps", message(e));
+    toast('error', t('toast.loadApps'), message(e));
   }
 }
 

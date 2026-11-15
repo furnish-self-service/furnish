@@ -12,6 +12,7 @@
   import KitCard from './lib/KitCard.svelte';
   import KitDetail from './lib/KitDetail.svelte';
   import Toasts from './lib/Toasts.svelte';
+  import { t, formatTime } from './lib/i18n.svelte';
 
   start();
 
@@ -37,8 +38,10 @@
   );
   const detail = $derived(view.page === 'app' ? store.apps.find((a) => a.key === view.key) : undefined);
 
-  const titles: Record<string, string> = { discover: 'Discover', installed: 'Installed', updates: 'Updates' };
-  const title = $derived(view.page === 'category' ? view.name : titles[view.page] ?? '');
+  const titles = { discover: 'nav.discover', installed: 'nav.installed', updates: 'nav.updates' } as const;
+  const title = $derived(
+    view.page === 'category' ? view.name : view.page in titles ? t(titles[view.page as keyof typeof titles]) : '',
+  );
 
   function go(next: View) {
     store.view = next;
@@ -48,35 +51,35 @@
 </script>
 
 <div class="shell">
-  <nav aria-label="Sections">
-    <button class="brand" onclick={() => go({ page: 'discover' })} aria-label="{store.brand.name}, go to Discover">
+  <nav aria-label={t('nav.sections')}>
+    <button class="brand" onclick={() => go({ page: 'discover' })} aria-label={t('nav.home', { brand: store.brand.name })}>
       <img src={store.brand.logo ?? logo} alt="" width="34" height="34" />
       <span>{store.brand.name}</span>
     </button>
 
-    <button class:active={isActive('discover')} onclick={() => go({ page: 'discover' })}>Discover</button>
+    <button class:active={isActive('discover')} onclick={() => go({ page: 'discover' })}>{t('nav.discover')}</button>
     <button class:active={isActive('installed')} onclick={() => go({ page: 'installed' })}>
-      Installed <span class="count">{count('installed') || ''}</span>
+      {t('nav.installed')} <span class="count">{count('installed') || ''}</span>
     </button>
     <button class:active={isActive('updates')} onclick={() => go({ page: 'updates' })}>
-      Updates
+      {t('nav.updates')}
       {#if count('updates')}<span class="count pending">{count('updates')}</span>{/if}
     </button>
 
     <button class:active={isActive('activity')} onclick={() => go({ page: 'activity' })}>
-      Activity
+      {t('nav.activity')}
       {#if activity}<span class="count running">{activity}</span>{/if}
     </button>
 
     {#if categories.length}
-      <h2>Categories</h2>
+      <h2>{t('nav.categories')}</h2>
       {#each categories as name}
         <button class:active={isActive('category', name)} onclick={() => go({ page: 'category', name })}>{name}</button>
       {/each}
     {/if}
 
     <div class="spacer"></div>
-    <button class:active={isActive('collections')} onclick={() => go({ page: 'collections' })}>Collections</button>
+    <button class:active={isActive('collections')} onclick={() => go({ page: 'collections' })}>{t('nav.collections')}</button>
   </nav>
 
   <main>
@@ -99,48 +102,55 @@
         {#if view.page === 'updates'}
           <div class="check">
             <button class="secondary" disabled={store.autoUpdate.running} onclick={checkForUpdates}>
-              {store.autoUpdate.running ? 'Checking…' : 'Check for updates'}
+              {store.autoUpdate.running ? t('catalog.checking') : t('catalog.checkForUpdates')}
             </button>
             <span class="muted" aria-live="polite">
               {#if store.autoUpdate.postponed}
-                <span class="postponed">Updates postponed: {store.autoUpdate.postponed.startsWith('measuring')
-                  ? store.autoUpdate.postponed
-                  : `this computer is busy (${store.autoUpdate.postponed})`}</span>
-              {:else if store.autoUpdate.error}Last check failed{:else if store.autoUpdate.lastAt}Last checked
-                {new Date(store.autoUpdate.lastAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{/if}
+                <span class="postponed">{t('catalog.postponed', {
+                  reason: store.autoUpdate.postponed.startsWith('measuring')
+                    ? store.autoUpdate.postponed
+                    : t('catalog.busy', { load: store.autoUpdate.postponed }),
+                })}</span>
+              {:else if store.autoUpdate.error}{t('catalog.lastCheckFailed')}{:else if store.autoUpdate.lastAt}{t('catalog.lastChecked', {
+                  time: formatTime(store.autoUpdate.lastAt),
+                })}{/if}
             </span>
           </div>
         {/if}
         <input
           class="search"
           type="search"
-          placeholder="Search apps"
-          aria-label="Search apps"
+          placeholder={t('catalog.search')}
+          aria-label={t('catalog.search')}
           bind:value={store.query}
         />
       </div>
 
       {#if store.loading}
-        <p class="empty">Loading the catalog…</p>
+        <p class="empty">{t('catalog.loading')}</p>
       {:else if !store.collections.length}
         <div class="empty">
-          <h2>Add a collection to see apps</h2>
-          <p>Your organization publishes its apps in a git repository. Add its URL to get started.</p>
-          <button class="primary" onclick={() => go({ page: 'collections' })}>Add a collection</button>
+          <h2>{t('catalog.noCollections')}</h2>
+          <p>{t('catalog.noCollectionsText')}</p>
+          <button class="primary" onclick={() => go({ page: 'collections' })}>{t('catalog.addCollection')}</button>
         </div>
       {:else if !apps.length && !kits.length}
         <p class="empty">
-          {store.query ? `No apps match “${store.query}”.` : view.page === 'updates' ? `All apps are up to date. ${store.brand.name} installs updates automatically unless you turn that off for an app.` : 'No apps here yet.'}
+          {store.query
+            ? t('catalog.noMatch', { query: store.query })
+            : view.page === 'updates'
+              ? t('catalog.upToDate', { brand: store.brand.name })
+              : t('catalog.empty')}
         </p>
       {:else}
         {#if recommended.length}
-          <h2 class="row-title">Recommended for you</h2>
+          <h2 class="row-title">{t('catalog.recommended')}</h2>
           <div class="grid recommended">
             {#each recommended as app (app.key)}
               <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
             {/each}
           </div>
-          <h2 class="row-title">All apps</h2>
+          <h2 class="row-title">{t('catalog.allApps')}</h2>
         {/if}
         <div class="grid">
           {#each kits as k (k.key)}

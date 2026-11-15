@@ -3,22 +3,25 @@
   // (app → collection → default) or has the user's own value; the admin policy can lock it.
   import type { Option } from './api';
   import { setOption } from './state.svelte';
+  import { t } from './i18n.svelte';
 
   let { target, options, scope }: { target: string; options: Option[]; scope: 'app' | 'collection' } = $props();
 
-  const show = (v: unknown) => (v === true ? 'Yes' : v === false ? 'No' : v == null ? 'not set' : String(v));
+  const show = (v: unknown) =>
+    v === true ? t('common.yes') : v === false ? t('common.no') : v == null ? t('options.notSet') : String(v);
   // A dropdown: the declared values with their labels, or yes/no.
   const choices = (o: Option) =>
-    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: 'Yes' }, { value: false, label: 'No' }] : [];
+    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: t('common.yes') }, { value: false, label: t('common.no') }] : [];
   /** A value as the user knows it: its label if it has one. */
   const shown = (o: Option, v: unknown) => choices(o).find((c) => c.value === v)?.label ?? show(v);
 
   /** What the option follows when the user has no value of their own here. */
   function inherited(o: Option) {
-    const what = scope === 'app' ? 'Same as the collection' : 'Default';
+    const what = scope === 'app' ? t('options.sameAsCollection') : t('options.default');
     // With an own value set, the value it would fall back to isn't known here.
-    if (o.missing) return 'Choose…';
-    return o.ownValue == null ? `${what} (${shown(o, o.value)}${o.source === 'policy' ? ', from your organization' : ''})` : what;
+    if (o.missing) return t('common.choose');
+    if (o.ownValue != null) return what;
+    return t(o.source === 'policy' ? 'options.inheritedFromOrg' : 'options.inherited', { what, value: shown(o, o.value) });
   }
 
   /** `raw` is JSON from a select, or the text of an input; empty goes back to the inherited value. */
@@ -36,7 +39,7 @@
         {#if o.description}<span class="desc">{o.description}</span>{/if}
       </label>
       {#if o.locked}
-        <span class="value">{shown(o, o.value)} <span class="org">Set by your organization</span></span>
+        <span class="value">{shown(o, o.value)} <span class="org">{t('common.setByOrg')}</span></span>
       {:else if choices(o).length}
         <select
           id="opt-{target}-{o.name}"

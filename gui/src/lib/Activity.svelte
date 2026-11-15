@@ -3,6 +3,7 @@
   import { store, dequeue, clearQueue } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
+  import { t } from './i18n.svelte';
 
   let { onopen }: { onopen: (key: string) => void } = $props();
 
@@ -14,35 +15,36 @@
     store.queue.map((q) => ({ ...q, app: store.apps.find((a) => a.key === q.key) })).filter((q) => q.app),
   );
   const actionLabel = (key: string, action: string) =>
-    action === 'uninstall' ? 'Uninstall' : store.status[key] === 'needsUpdate' ? 'Update' : 'Install';
+    action === 'uninstall' ? t('common.uninstall') : store.status[key] === 'needsUpdate' ? t('common.update') : t('common.install');
+  const kindLabel = { install: 'run.installing', update: 'run.updating', uninstall: 'run.uninstalling', reinstall: 'run.reinstalling' } as const;
 </script>
 
 <section>
-  <h1>Activity</h1>
+  <h1>{t('activity.title')}</h1>
 
-  <h2>Now</h2>
+  <h2>{t('activity.now')}</h2>
   {#if running}
     <div class="row now">
-      <button class="open" onclick={() => onopen(running.key)} aria-label="Open {running.id}">
+      <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: running.id })}>
         <AppIcon app={running} size={44} />
         <span class="text">
           <span class="name">{running.id}</span>
           <span class="meta">
-            {run ? `${{ install: 'Installing', update: 'Updating', uninstall: 'Uninstalling', reinstall: 'Reinstalling' }[run.kind]}` : 'Starting'}
-            {#if run?.steps.length} · step {Math.min(done + 1, run.steps.length)} of {run.steps.length}{/if}
+            {run ? t(kindLabel[run.kind]) : t('run.starting')}
+            {#if run?.steps.length} · {t('run.stepOf', { n: Math.min(done + 1, run.steps.length), total: run.steps.length })}{/if}
           </span>
         </span>
       </button>
       <ActionButton app={running} />
     </div>
   {:else}
-    <p class="empty">Nothing is running. Installs, updates and uninstalls you start show up here.</p>
+    <p class="empty">{t('activity.nothingRunning')}</p>
   {/if}
 
   <div class="heading">
-    <h2>Up next {#if queued.length}<span class="count">{queued.length}</span>{/if}</h2>
+    <h2>{t('activity.upNext')} {#if queued.length}<span class="count">{queued.length}</span>{/if}</h2>
     {#if queued.length > 1}
-      <button class="secondary" onclick={clearQueue}>Clear queue</button>
+      <button class="secondary" onclick={clearQueue}>{t('activity.clearQueue')}</button>
     {/if}
   </div>
   {#if queued.length}
@@ -50,19 +52,19 @@
       {#each queued as q, i (q.key)}
         <li class="row">
           <span class="position">{i + 1}</span>
-          <button class="open" onclick={() => onopen(q.key)} aria-label="Open {q.app!.id}">
+          <button class="open" onclick={() => onopen(q.key)} aria-label={t('common.open', { name: q.app!.id })}>
             <AppIcon app={q.app!} size={36} />
             <span class="text">
               <span class="name">{q.app!.id}</span>
               <span class="meta">{actionLabel(q.key, q.action)} · {q.app!.collection}</span>
             </span>
           </button>
-          <button class="secondary" aria-label="Remove {q.app!.id} from the queue" onclick={() => dequeue(q.key)}>Remove</button>
+          <button class="secondary" aria-label={t('action.removeFromQueue', { app: q.app!.id })} onclick={() => dequeue(q.key)}>{t('common.remove')}</button>
         </li>
       {/each}
     </ol>
   {:else}
-    <p class="empty">The queue is empty. Click Install on more apps while one is running to line them up.</p>
+    <p class="empty">{t('activity.queueEmpty')}</p>
   {/if}
 </section>
 

@@ -5,6 +5,7 @@
   import type { AppInfo, Step } from './api';
   import { store, type RunStep } from './state.svelte';
   import { describeCondition } from './conditions';
+  import { t, parts, formatTime, formatDuration } from './i18n.svelte';
 
   let { app }: { app: AppInfo } = $props();
 
@@ -18,7 +19,7 @@
   // While an operation runs, always follow it; otherwise show what the user picked, or the
   // preview of the app's primary action.
   const mode: Mode = $derived(running ? 'run' : (picked ?? (status === 'installed' ? 'uninstall' : 'install')));
-  const installLabel = $derived(status === 'needsUpdate' ? 'Update' : 'Install');
+  const installLabel = $derived(status === 'needsUpdate' ? t('common.update') : t('common.install'));
 
   // Once a run starts, keep showing it after it ends, so its results stay visible.
   $effect(() => {
@@ -56,21 +57,11 @@
     mode === 'run' ? (run?.steps ?? []) : (preview ?? []).map((step) => ({ step, state: 'pending' as const })),
   );
 
-  const labels: Record<Step['action'], string> = {
-    install: 'Install',
-    remove: 'Remove',
-    change: 'Change',
-    nothing: 'No change',
-    skipped: 'Skipped',
-  };
-  const kindVerb = { install: 'Installing', update: 'Updating', uninstall: 'Uninstalling', reinstall: 'Reinstalling' } as const;
-  const kindDone = { install: 'Installed', update: 'Updated', uninstall: 'Uninstalled', reinstall: 'Reinstalled' } as const;
-  const kindNoun = { install: 'Installation', update: 'Update', uninstall: 'Uninstall', reinstall: 'Reinstall' } as const;
 
   const active = $derived(rows.filter((r) => r.step.action !== 'skipped'));
   const changing = $derived(active.filter((r) => r.step.action !== 'nothing').length);
   const skippedCount = $derived(rows.length - active.length);
-  const previewVerb = $derived(mode === 'uninstall' ? 'Uninstalling' : status === 'needsUpdate' ? 'Updating' : 'Installing');
+  const previewKind = $derived(mode === 'uninstall' ? 'uninstall' : status === 'needsUpdate' ? 'update' : 'install');
   const finished = $derived(rows.filter((r) => r.state !== 'pending' && r.state !== 'running').length);
   const failedRow = $derived(rows.find((r) => r.state === 'failed'));
   const total = $derived(run ? (run.finishedAt ?? now) - run.startedAt : 0);
@@ -78,37 +69,41 @@
   /** "Run as administrator: cmd" → who + command, rendered as a command line. */
   function command(detail: string) {
     const m = detail.match(/^Run(?: as (administrator|your user))?: (.+)$/);
-    return m ? { who: m[1] === 'administrator' ? 'Runs as administrator' : m[1] ? 'Runs as you' : 'Runs', cmd: m[2] } : null;
+    return m
+      ? { who: m[1] === 'administrator' ? t('plan.runsAsAdmin') : m[1] ? t('plan.runsAsYou') : t('plan.runs'), cmd: m[2] }
+      : null;
   }
   /** Skipped steps carry "Not on this system: <condition>". */
   function skipReason(detail: string) {
     const condition = detail.match(/^Not on this system: (.+)$/)?.[1];
-    return condition ? { text: describeCondition(condition) ?? 'Its condition is false here', condition } : null;
+    return condition ? { text: describeCondition(condition) ?? t('plan.conditionFalse'), condition } : null;
   }
   const show = (v: unknown) => (v === null || v === undefined ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
-  const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
-  const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const seconds = formatDuration;
+  const clock = (ms: number) => formatTime(ms, true);
 
   function result(row: RunStep): string {
     const o = row.outcome;
     if (!o) return '';
-    if (o.cancelled) return 'Cancelled';
-    if (o.error) return 'Failed';
-    return { install: 'Installed', remove: 'Removed', change: 'Changed', nothing: 'Already as described', skipped: 'Skipped' }[o.action];
+    if (o.cancelled) return t('plan.result.cancelled');
+    if (o.error) return t('plan.result.failed');
+    return t(`plan.result.${o.action}`);
   }
 </script>
 
+{#snippet marked(text: string, strongClass = '')}{#each parts(text) as p}{#if p.tag}<strong class={strongClass}>{p.text}</strong>{:else}{p.text}{/if}{/each}{/snippet}
+
 <div class="plan">
-  <div class="switch" role="radiogroup" aria-label="Show">
+  <div class="switch" role="radiogroup" aria-label={t('plan.show')}>
     <button role="radio" aria-checked={mode === 'install'} class:on={mode === 'install'} disabled={running} onclick={() => (picked = 'install')}>
       {installLabel}
     </button>
     <button role="radio" aria-checked={mode === 'uninstall'} class:on={mode === 'uninstall'} disabled={running || !installed} onclick={() => (picked = 'uninstall')}>
-      Uninstall
+      {t('common.uninstall')}
     </button>
     {#if run}
       <button role="radio" aria-checked={mode === 'run'} class:on={mode === 'run'} onclick={() => (picked = 'run')}>
-        {running ? 'Running' : 'Last run'}
+        {running ? t('plan.running') : t('plan.lastRun')}
       </button>
     {/if}
   </div>
@@ -117,33 +112,40 @@
     <p class="summary" aria-live="polite">
       {#if running}
         <span class="pulse" aria-hidden="true"></span>
-        {kindVerb[run.kind]} {app.id}: <strong>step {Math.min(finished + 1, rows.length || 1)} of {rows.length || '…'}</strong>
+        {@render marked(
+          t('plan.runningSummary', {
+            what: t(`plan.running.${run.kind}`, { app: app.id }),
+            step: t('run.stepOf', { n: Math.min(finished + 1, rows.length || 1), total: rows.length || '…' }),
+          }),
+        )}
         <span class="muted">· {seconds(total)}</span>
-        {#if run.stopping === 'abort'}<span class="stopping">Stopping after this step…</span>
-        {:else if run.stopping === 'force'}<span class="stopping">Interrupting this step…</span>{/if}
+        {#if run.stopping === 'abort'}<span class="stopping">{t('plan.stoppingAfter')}</span>
+        {:else if run.stopping === 'force'}<span class="stopping">{t('plan.interrupting')}</span>{/if}
       {:else if run.cancelled}
-        <strong>{kindNoun[run.kind]} of {app.id} cancelled</strong> after {seconds(total)}.
-        <span class="muted">Steps already done stay done.</span>
+        {@render marked(t('plan.cancelledAfter', { what: t(`run.cancelled.${run.kind}`, { app: app.id }), time: seconds(total) }))}
+        <span class="muted">{t('plan.doneStepsStay')}</span>
       {:else if failedRow}
-        <strong class="failed-text">{kindVerb[run.kind]} {app.id} failed</strong> at “{failedRow.step.name}” after {seconds(total)}.
+        {@render marked(
+          t('plan.failedAt', { what: t(`plan.failed.${run.kind}`, { app: app.id }), step: failedRow.step.name, time: seconds(total) }),
+          'failed-text',
+        )}
       {:else}
-        <strong>{kindDone[run.kind]} {app.id}</strong> in {seconds(total)}
-        <span class="muted">· started {clock(run.startedAt)}</span>
+        {@render marked(t('plan.doneIn', { what: t(`run.done.${run.kind}`, { app: app.id }), time: seconds(total) }))}
+        <span class="muted">· {t('plan.started', { time: clock(run.startedAt) })}</span>
       {/if}
     </p>
   {:else if error}
-    <p class="error">Couldn't prepare the preview: {error}</p>
+    <p class="error">{t('plan.previewError', { error })}</p>
   {:else if !preview}
-    <p class="muted">Preparing the preview…</p>
+    <p class="muted">{t('plan.preparing')}</p>
   {:else}
     <p class="summary" class:stale={loading}>
-      {previewVerb} {app.id} would
-      {#if changing === 0}
-        <strong>change nothing</strong>: everything is already as described.
-      {:else}
-        make <strong>{changing} change{changing === 1 ? '' : 's'}</strong>.
-      {/if}
-      {#if skippedCount}<span class="muted">{skippedCount} step{skippedCount === 1 ? ' does' : 's do'} not apply to this system.</span>{/if}
+      {@render marked(
+        changing === 0
+          ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: app.id }) })
+          : t('plan.changes', { subject: t(`plan.subject.${previewKind}`, { app: app.id }), n: changing }),
+      )}
+      {#if skippedCount}<span class="muted">{t('plan.skipped', { n: skippedCount })}</span>{/if}
     </p>
   {/if}
 
@@ -152,7 +154,7 @@
       {@const step = row.step}
       <li class="{step.action} {row.state}">
         {#if mode === 'run'}
-          <span class="marker" title={row.state} aria-label={row.state}>
+          <span class="marker" title={t(`plan.state.${row.state}`)} aria-label={t(`plan.state.${row.state}`)}>
             {#if row.state === 'running'}<span class="spinner"></span>
             {:else if row.state === 'done'}✓
             {:else if row.state === 'failed'}✕
@@ -161,7 +163,7 @@
             {:else}{i + 1}{/if}
           </span>
         {/if}
-        <span class="badge">{labels[step.action]}</span>
+        <span class="badge">{t(`plan.action.${step.action}`)}</span>
         <div class="body">
           <div class="title">
             <span class="name">{step.name}</span>
@@ -171,7 +173,7 @@
             {@const c = command(detail)}
             {@const skip = skipReason(detail)}
             {#if skip}
-              <p class="detail">Not for this system: {skip.text}. <span class="type">{skip.condition}</span></p>
+              <p class="detail">{t('plan.notForSystem', { reason: skip.text })} <span class="type">{skip.condition}</span></p>
             {:else if c}
               <div class="command">
                 <span class="who">{c.who}</span>
@@ -182,17 +184,17 @@
             {/if}
           {/each}
           {#each row.outcome?.changes ?? step.changes as change}
-            <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label="becomes">→</span> {show(change.after)}</p>
+            <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
           {/each}
           {#if row.outcome?.error}
             <pre class="failure">{row.outcome.error}</pre>
           {/if}
         </div>
         {#if mode === 'run' && row.state === 'pending' && !running}
-          <div class="timing"><span class="muted">Not run</span></div>
+          <div class="timing"><span class="muted">{t('plan.notRun')}</span></div>
         {:else if mode === 'run' && row.state !== 'pending' && row.state !== 'skipped'}
           <div class="timing">
-            <span class="result">{row.state === 'running' ? 'Running' : result(row)}</span>
+            <span class="result">{row.state === 'running' ? t('plan.running') : result(row)}</span>
             <span class="muted">
               {row.startedAt ? clock(row.startedAt) : ''} ·
               {seconds(row.durationMs ?? (row.startedAt ? now - row.startedAt : 0))}
@@ -203,7 +205,7 @@
     {/each}
   </ol>
   {#if mode !== 'run' && preview}
-    <p class="note">This is a preview. Nothing has been changed on this computer.</p>
+    <p class="note">{t('plan.note')}</p>
   {/if}
 </div>
 

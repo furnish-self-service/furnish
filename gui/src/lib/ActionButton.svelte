@@ -5,6 +5,7 @@
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
   import { store, requestInstall, uninstall, stop, dequeue, askQuestions } from './state.svelte';
+  import { t } from './i18n.svelte';
 
   // `oninstall` replaces the default (asking about optional dependencies, then installing).
   let { app, large = false, oninstall }: { app: AppInfo; large?: boolean; oninstall?: () => void } = $props();
@@ -19,19 +20,19 @@
 
   const label = $derived(
     stopping
-      ? 'Stopping…'
+      ? t('action.stopping')
       : busy === 'install'
-        ? status === 'needsUpdate' ? 'Updating…' : 'Installing…'
+        ? status === 'needsUpdate' ? t('common.updating') : t('common.installing')
         : busy === 'uninstall'
-          ? 'Uninstalling…'
+          ? t('common.uninstalling')
           : status === 'installed'
-            ? 'Uninstall'
+            ? t('common.uninstall')
             : status === 'needsUpdate'
-              ? 'Update'
-              : 'Install',
+              ? t('common.update')
+              : t('common.install'),
   );
   const quiet = $derived(!busy && status === 'installed');
-  const verb = $derived(busy === 'uninstall' ? 'uninstalling' : status === 'needsUpdate' ? 'updating' : 'installing');
+  const verb = $derived(busy === 'uninstall' ? 'uninstall' : status === 'needsUpdate' ? 'update' : 'install');
 
   function run(event: MouseEvent) {
     event.stopPropagation();
@@ -47,25 +48,25 @@
 </script>
 
 {#if status === undefined}
-  <span class="checking" class:large>Checking…</span>
+  <span class="checking" class:large>{t('catalog.checking')}</span>
 {:else if status === 'error'}
-  <span class="checking" class:large>Status unknown</span>
+  <span class="checking" class:large>{t('action.status')}</span>
 {:else if app.unanswered.length && !busy && !queued && status !== 'installed' && status !== 'needsUpdate'}
   <!-- The collection asks something first (e.g. your role); installing waits for the answer. -->
-  <button class="action" class:large onclick={(e) => { e.stopPropagation(); askQuestions(true); }}>Answer first</button>
+  <button class="action" class:large onclick={(e) => { e.stopPropagation(); askQuestions(true); }}>{t('action.answerFirst')}</button>
 {:else if status === 'blocked' && !app.dependencies.some((d) => d.required || d.selected) && !busy && !queued}
   <!-- A tool this app needs is missing and the collection doesn't provide it. -->
-  <span class="checking needs" class:large title="Needs {store.reasons[app.key]}">
-    Needs {(store.reasons[app.key] ?? 'a missing tool').split(' (')[0]}
+  <span class="checking needs" class:large title={t('action.needs', { what: store.reasons[app.key] ?? t('common.missingTool') })}>
+    {t('action.needs', { what: (store.reasons[app.key] ?? t('common.missingTool')).split(' (')[0] })}
   </span>
 {:else if queued}
   <!-- Waiting: same slot, removable from the queue. -->
-  <div class="action queued" class:large role="group" aria-label="{app.id} is queued, position {position}">
-    <span class="label">Queued{store.queue.length > 1 ? ` · ${position}` : ''}</span>
+  <div class="action queued" class:large role="group" aria-label={t('action.queuedPosition', { app: app.id, n: position })}>
+    <span class="label">{t('common.queued')}{store.queue.length > 1 ? ` · ${position}` : ''}</span>
     <button
       class="halt"
-      aria-label="Remove {app.id} from the queue"
-      title="Remove from the queue"
+      aria-label={t('action.removeFromQueue', { app: app.id })}
+      title={t('action.removeFromQueueTitle')}
       onclick={(e) => { e.stopPropagation(); dequeue(app.key); }}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7m0-7l-7 7" /></svg>
@@ -73,13 +74,13 @@
   </div>
 {:else if busy}
   <!-- Running: same slot, now progress + stop. -->
-  <div class="action busy" class:large role="group" aria-label="{label} {app.id}" aria-busy="true">
+  <div class="action busy" class:large role="group" aria-label={t('action.busyLabel', { label, app: app.id })} aria-busy="true">
     <span class="fill" aria-hidden="true"></span>
     <span class="label">{label}</span>
     <button
       class="halt"
-      aria-label={stopping ? 'Force stop' : 'Abort'}
-      title={stopping ? `Interrupt the current step now` : `Stop ${verb} after the current step`}
+      aria-label={stopping ? t('action.forceStop') : t('action.abort')}
+      title={stopping ? t('action.interrupt') : t(`action.stopAfter.${verb}`)}
       disabled={stopping === 'force'}
       onclick={halt}
     >
@@ -95,7 +96,11 @@
     class="action"
     class:large
     class:quiet
-    title={status === 'blocked' ? `Installs ${app.dependencies.map((d) => d.key.split('/')[1]).join(', ')} first` : engineBusy ? 'Starts after what is already running' : undefined}
+    title={status === 'blocked'
+      ? t('action.installsFirst', { deps: app.dependencies.map((d) => d.key.split('/')[1]).join(', ') })
+      : engineBusy
+        ? t('action.startsAfter')
+        : undefined}
     onclick={run}
   >
     <span class="label">{label}</span>
@@ -127,6 +132,13 @@
     width: 10.5rem;
     height: 2.75rem;
     font-size: 1rem;
+  }
+  /* German labels are longer ("Deinstallation…"); still one fixed width per language. */
+  :global(html[lang='de']) .action {
+    width: 10rem;
+  }
+  :global(html[lang='de']) .large {
+    width: 12rem;
   }
   button.action:hover:not(:disabled) {
     background: var(--accent-strong);

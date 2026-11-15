@@ -4,6 +4,7 @@
   import type { AppInfo } from './api';
   import { store, appByKey, isInstalled, isPending } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
+  import { t } from './i18n.svelte';
 
   let { app, chosen = $bindable() }: { app: AppInfo; chosen: string[] } = $props();
 
@@ -12,10 +13,10 @@
     dep.required || isInstalled(dep.key) || isPending(dep.key) || unavailable(dep.key);
 
   function badge(dep: AppInfo['dependencies'][number]) {
-    if (unavailable(dep.key)) return 'Not for this system';
-    if (isPending(dep.key)) return 'Queued';
-    if (isInstalled(dep.key)) return 'Installed';
-    return dep.required ? 'Required' : 'Optional';
+    if (unavailable(dep.key)) return t('common.notForThisSystem');
+    if (isPending(dep.key)) return t('common.queued');
+    if (isInstalled(dep.key)) return t('common.installed');
+    return dep.required ? t('common.required') : t('common.optional');
   }
 
   function toggle(key: string, on: boolean) {
@@ -37,7 +38,7 @@
         {#if depApp}<AppIcon app={depApp} size={32} />{/if}
         <span class="text">
           <span class="name">{depApp?.id ?? dep.key.split('/')[1]}</span>
-          <span class="desc">{depApp?.description ?? 'Not found in this collection'}</span>
+          <span class="desc">{depApp?.description ?? t('deps.notFound')}</span>
         </span>
       </label>
       <span class="badge" class:required={dep.required && !isInstalled(dep.key)}>{badge(dep)}</span>

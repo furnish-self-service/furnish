@@ -359,6 +359,21 @@ const steps = [
     await click(button('Open-source licenses'));
     await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
   }],
+  ['the language setting switches to German and back, without a restart', async () => {
+    await click(button('Collections'));
+    await click("//select[@id='language']/option[@value='de']");
+    await waitFor('German saved', () => log('data/settings.json').includes('"language": "de"'));
+    await waitFor('German Collections page', async () => (await text('//h1')) === 'Sammlungen');
+    await find(button('Alle aktualisieren'));
+    await click(button('Entdecken'));
+    await waitFor('German Discover page', async () => (await text('//h1')) === 'Entdecken');
+    await find("//input[@placeholder='Apps durchsuchen']");
+    await find(`${card('fresh')}${button('Installieren')}`);
+    await click(button('Sammlungen'));
+    await click("//select[@id='language']/option[@value='en']");
+    await waitFor('English again', async () => (await text('//h1')) === 'Collections');
+    await waitFor('English saved', () => log('data/settings.json').includes('"language": "en"'));
+  }],
   ['the logo leads back to Discover', async () => {
     await click("//button[@aria-label='Acme Apps, go to Discover']");
     await waitFor('Discover page', async () => (await text('//h1')) === 'Discover');

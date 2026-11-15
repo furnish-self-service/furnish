@@ -3,6 +3,7 @@
   // launch until answered. "Later" postpones: that collection's apps can't be installed meanwhile.
   import type { Option } from './api';
   import { store, unansweredCollections, answerQuestions, postponeQuestions } from './state.svelte';
+  import { t } from './i18n.svelte';
 
   let dialog = $state<HTMLDialogElement>();
   const collections = $derived(store.asking ? unansweredCollections() : []);
@@ -20,7 +21,7 @@
   });
 
   const choices = (o: Option) =>
-    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: 'Yes' }, { value: false, label: 'No' }] : [];
+    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: t('common.yes') }, { value: false, label: t('common.no') }] : [];
   const complete = $derived(collections.every((c) => c.options.filter((o) => o.missing).every((o) => answers[c.name]?.[o.name])));
 
   function close() {
@@ -46,9 +47,9 @@
 <dialog bind:this={dialog} onclose={() => store.asking && postponeQuestions()} aria-labelledby="questions-title">
   <h2 id="questions-title">
     {#if collections.length === 1 && collections[0].icon}<img src={collections[0].icon} alt="" width="32" height="32" />{/if}
-    {collections.length === 1 ? `${collections[0].name} asks` : 'A few questions'}
+    {collections.length === 1 ? t('questions.asks', { collection: collections[0].name }) : t('questions.title')}
   </h2>
-  <p>Your answers decide what is recommended and how apps are set up. You can change them later on the Collections page.</p>
+  <p>{t('questions.text')}</p>
   {#each collections as c (c.name)}
     <section>
       {#if collections.length > 1}
@@ -63,7 +64,7 @@
           {#if o.description}<span class="desc">{o.description}</span>{/if}
           {#if choices(o).length}
             <select data-question={o.name} bind:value={answers[c.name][o.name]}>
-              <option value="" disabled>Choose…</option>
+              <option value="" disabled>{t('common.choose')}</option>
               {#each choices(o) as choice}
                 <option value={JSON.stringify(choice.value)}>{choice.label ?? String(choice.value)}</option>
               {/each}
@@ -76,8 +77,8 @@
     </section>
   {/each}
   <div class="actions">
-    <button class="secondary" onclick={close}>Later</button>
-    <button class="primary" disabled={!complete} onclick={save}>Save answers</button>
+    <button class="secondary" onclick={close}>{t('questions.later')}</button>
+    <button class="primary" disabled={!complete} onclick={save}>{t('questions.save')}</button>
   </div>
 </dialog>
 

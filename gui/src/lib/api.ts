@@ -228,6 +228,8 @@ export interface Settings {
   reporting: 'off' | 'errors' | 'all';
   /** Include this computer's name in reports. */
   reportHostname: boolean;
+  /** The app's language; `system` follows the system language. */
+  language: 'system' | 'en' | 'de';
 }
 
 export interface Load {

@@ -39,6 +39,18 @@ pub struct Settings {
     pub report_hostname: bool,
     /// The user's values for the four settings above for single collections, keyed by collection.
     pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
+    /// The desktop app's language: the system's, English or German.
+    pub language: Language,
+}
+
+/// The desktop app's language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Language {
+    /// German if the system language is German, else English.
+    System,
+    En,
+    De,
 }
 
 /// What furnish does when installing or updating an app fails.
@@ -89,6 +101,7 @@ impl Default for Settings {
             reporting: crate::reports::Level::Off,
             report_hostname: false,
             collections: Default::default(),
+            language: Language::System,
         }
     }
 }
@@ -297,5 +310,19 @@ mod tests {
         // Defaults: blobless, whole history, ask.
         let none = collection_merge(&Policy::default(), &Map::new(), "x").settings;
         assert_eq!((none.checkout_depth, none.blobs_on_demand, none.fallback), (0, true, Fallback::Ask));
+    }
+
+    #[test]
+    fn language_defaults_to_system_and_can_be_locked() {
+        assert_eq!(Settings::default().language, Language::System);
+        let choices = json!({"language": "de"});
+        let e = merge(&Policy::default(), choices.as_object().unwrap());
+        assert_eq!(e.settings.language, Language::De);
+        let p = policy(json!({"settings": {"language": {"value": "en", "locked": true}}}));
+        let e = merge(&p, choices.as_object().unwrap());
+        assert_eq!(e.settings.language, Language::En);
+        assert_eq!(e.locked, ["language"]);
+        // Unknown languages are rejected.
+        assert!(strict_merge(&Policy::default(), json!({"language": "fr"}).as_object().unwrap()).is_err());
     }
 }

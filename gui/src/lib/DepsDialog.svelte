@@ -2,6 +2,7 @@
   // Opens when installing an app with optional dependencies from a card: choose which to include.
   import { store, appByKey, install, defaultDependencies } from './state.svelte';
   import DependencyList from './DependencyList.svelte';
+  import { t } from './i18n.svelte';
 
   let dialog = $state<HTMLDialogElement>();
   const app = $derived(store.choosing ? appByKey(store.choosing) : undefined);
@@ -26,12 +27,12 @@
 
 <dialog bind:this={dialog} onclose={() => (store.choosing = null)} aria-labelledby="deps-title">
   {#if app}
-    <h2 id="deps-title">Install {app.id}</h2>
-    <p>{app.id} comes with these apps. Deselect the optional ones you don't want.</p>
+    <h2 id="deps-title">{t('deps.title', { app: app.id })}</h2>
+    <p>{t('deps.text', { app: app.id })}</p>
     <DependencyList {app} bind:chosen />
     <div class="actions">
-      <button class="secondary" onclick={close}>Cancel</button>
-      <button class="primary" onclick={confirm}>Install</button>
+      <button class="secondary" onclick={close}>{t('common.cancel')}</button>
+      <button class="primary" onclick={confirm}>{t('common.install')}</button>
     </div>
   {/if}
 </dialog>

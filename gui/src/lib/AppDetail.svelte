@@ -9,6 +9,7 @@
   import { highlightYaml } from './highlight';
   import Plan from './Plan.svelte';
   import { describeCondition } from './conditions';
+  import { t, formatDate } from './i18n.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
@@ -31,37 +32,39 @@
 
   const status = $derived(store.status[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
-  const statusText = $derived(
-    ({
-      installed: 'Installed and up to date',
-      needsUpdate: 'Installed, update available',
-      notInstalled: 'Not installed',
-      unavailable: 'Not available on this system',
-      blocked: `Needs ${store.reasons[app.key] ?? 'a missing tool'}${app.dependencies.length ? `: installing ${app.id} installs its dependencies first` : ''}`,
-      error: "Couldn't check the status",
-    } as Record<string, string>)[status ?? ''] ?? 'Checking status…',
-  );
+  const statusText = $derived.by(() => {
+    const what = store.reasons[app.key] ?? t('common.missingTool');
+    switch (status) {
+      case 'installed': return t('app.status.installed');
+      case 'needsUpdate': return t('app.status.needsUpdate');
+      case 'notInstalled': return t('app.status.notInstalled');
+      case 'unavailable': return t('app.status.unavailable');
+      case 'blocked': return app.dependencies.length ? t('app.status.blockedDeps', { what, app: app.id }) : t('app.status.blocked', { what });
+      case 'error': return t('app.status.error');
+      default: return t('app.status.checking');
+    }
+  });
 </script>
 
 <section class="detail">
-  <button class="back" onclick={onback}>← Back</button>
+  <button class="back" onclick={onback}>{t('common.back')}</button>
 
   <header>
     <AppIcon {app} size={96} />
     <div class="heading">
       <h1>{app.id}</h1>
-      <p class="meta">{app.categories.join(' · ')}{app.categories.length ? ' — ' : ''}from <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
+      <p class="meta">{app.categories.join(' · ')}{app.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
       <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate' || status === 'blocked'}>{statusText}</p>
     </div>
     <div class="cta">
       {#if status === 'installed' && confirming}
-        <p class="confirm">Uninstall {app.id} from this computer?</p>
+        <p class="confirm">{t('app.confirmUninstall', { app: app.id })}</p>
         <div class="row">
-          <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>Uninstall</button>
-          <button class="secondary" onclick={() => (confirming = false)}>Cancel</button>
+          <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>{t('common.uninstall')}</button>
+          <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
-        <button class="secondary large" onclick={() => (confirming = true)}>Uninstall</button>
+        <button class="secondary large" onclick={() => (confirming = true)}>{t('common.uninstall')}</button>
       {:else}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
@@ -73,66 +76,67 @@
             disabled={isLocked('noAutoUpdate')}
             onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)}
           />
-          Update automatically{isLocked('noAutoUpdate') ? ' (set by your organization)' : ''}
+          {isLocked('noAutoUpdate') ? t('app.autoUpdateLocked') : t('app.autoUpdate')}
         </label>
       {/if}
     </div>
   </header>
 
-  <p class="description">{app.description || 'No description.'}</p>
+  <p class="description">{app.description || t('common.noDescription')}</p>
 
   {#if app.held}
     <div class="differ" role="status">
-      <span>
-        This is the version of {app.id} from {app.held.date}: installing the collection's current version failed.
-        {app.id} stays at this version until the collection changes it.
-      </span>
+      <span>{t('app.held', { app: app.id, date: formatDate(app.held.date) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => installCurrent(app)}>
-        {isPending(app.key) ? 'Installing…' : 'Try the current version'}
+        {isPending(app.key) ? t('common.installing') : t('app.tryCurrent')}
       </button>
     </div>
   {:else if store.failed[app.key]?.previous}
     {@const previous = store.failed[app.key].previous!}
     <div class="differ" role="status">
-      <span>Installing {app.id} failed. Its version from {previous.date} may work.</span>
+      <span>{t('app.previousWorks', { app: app.id, date: formatDate(previous.date) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => installPrevious(app)}>
-        {isPending(app.key) ? 'Installing…' : `Install the version from ${previous.date}`}
+        {isPending(app.key) ? t('common.installing') : t('app.installPrevious', { date: formatDate(previous.date) })}
       </button>
     </div>
   {/if}
 
   {#if installed && app.optionsDiffer}
     <div class="differ" role="status">
-      <span>{app.id} is installed with different options. Reinstall it to apply the current ones.</span>
+      <span>{t('app.optionsDiffer', { app: app.id })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => reinstall(app)}>
-        {isPending(app.key) ? 'Reinstalling…' : 'Reinstall with these options'}
+        {isPending(app.key) ? t('app.reinstalling') : t('app.reinstall')}
       </button>
     </div>
   {/if}
 
   {#if app.options.length}
-    <h2>Options</h2>
+    <h2>{t('app.options')}</h2>
     <p class="lead">
-      {installed ? 'Changes apply when you reinstall.' : `Used when you install ${app.id}.`}
-      Options you don't set follow the {app.collection} collection.
+      {installed ? t('app.optionsOnReinstall') : t('app.optionsOnInstall', { app: app.id })}
+      {t('app.optionsFollow', { collection: app.collection })}
     </p>
     <Options target={app.key} options={app.options} scope="app" />
   {/if}
 
   {#if app.dependencies.length}
-    <h2>Dependencies</h2>
-    <p class="lead">Installed along with {app.id}{app.dependencies.some((d) => !d.required) ? '. Deselect optional ones you don’t want.' : '.'}</p>
+    <h2>{t('app.dependencies')}</h2>
+    <p class="lead">
+      {app.dependencies.some((d) => !d.required)
+        ? t('app.dependenciesLeadOptional', { app: app.id })
+        : t('app.dependenciesLead', { app: app.id })}
+    </p>
     <DependencyList {app} bind:chosen />
   {/if}
 
-  <h2>What this sets up</h2>
+  <h2>{t('app.setsUp')}</h2>
   <ul class="resources">
     {#each app.resources as resource}
       <li>
         <span class="name">{resource.name}</span>
         <span class="mono type">{resource.type}</span>
         {#if resource.condition}
-          <span class="condition">{describeCondition(resource.condition) ?? 'Only if'}</span>
+          <span class="condition">{describeCondition(resource.condition) ?? t('app.onlyIf')}</span>
           <span class="mono condition">{resource.condition}</span>
         {/if}
       </li>
@@ -141,15 +145,15 @@
 
   <!-- Expert details: collapsed by default, one click to reveal. -->
   <details class="expert" bind:open={planOpen}>
-    <summary>Steps <span class="hint">preview and live progress</span></summary>
+    <summary>{t('app.steps')} <span class="hint">{t('app.stepsHint')}</span></summary>
     <!-- Mounted only while open: the preview asks DSC, which takes a moment. -->
     {#if planOpen}<Plan {app} />{/if}
   </details>
 
   <details class="expert">
     <summary>
-      Activity log
-      {#if busy}<span class="live">live</span>{:else if lines.length}<span class="hint">{lines.length} lines</span>{/if}
+      {t('app.log')}
+      {#if busy}<span class="live">{t('app.live')}</span>{:else if lines.length}<span class="hint">{t('app.lines', { n: lines.length })}</span>{/if}
     </summary>
     {#if lines.length}
       <ol class="panel log" bind:this={logList}>
@@ -158,12 +162,12 @@
         {/each}
       </ol>
     {:else}
-      <p class="empty">Install, update or uninstall this app to see each step and the package manager's output here.</p>
+      <p class="empty">{t('app.logEmpty')}</p>
     {/if}
   </details>
 
   <details class="expert">
-    <summary>DSC configuration <span class="hint">apps/{app.id}.dsc.yaml</span></summary>
+    <summary>{t('app.configuration')} <span class="hint">apps/{app.id}.dsc.yaml</span></summary>
     <!-- highlightYaml escapes the source before adding markup. -->
     <pre class="panel code">{@html highlightYaml(app.source)}</pre>
   </details>

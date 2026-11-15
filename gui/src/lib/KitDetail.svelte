@@ -14,6 +14,7 @@
     otherKitsWith,
   } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
+  import { t } from './i18n.svelte';
 
   let { kit, onback, onopen }: { kit: KitInfo; onback: () => void; onopen: (key: string) => void } = $props();
 
@@ -35,16 +36,15 @@
   const installedItems = $derived(kit.items.filter((i) => isInstalled(i.key)));
   const defaults = $derived(defaultUninstall(kit));
   const toRemove = $derived(installedItems.filter((i) => removePicked[i.key] ?? defaults.includes(i.key)).map((i) => i.key));
-  const count = (n: number) => `${n} app${n === 1 ? '' : 's'}`;
 
   function badge(item: KitInfo['items'][number]) {
     const key = item.key;
-    if (store.busy[key]) return store.busy[key] === 'uninstall' ? 'Uninstalling…' : 'Installing…';
-    if (store.queue.some((q) => q.key === key)) return 'Queued';
-    if (unavailable(key)) return 'Not for this system';
-    if (store.status[key] === 'needsUpdate') return 'Update available';
-    if (isInstalled(key)) return 'Installed';
-    if (item.required) return 'Required';
+    if (store.busy[key]) return store.busy[key] === 'uninstall' ? t('common.uninstalling') : t('common.installing');
+    if (store.queue.some((q) => q.key === key)) return t('common.queued');
+    if (unavailable(key)) return t('common.notForThisSystem');
+    if (store.status[key] === 'needsUpdate') return t('common.updateAvailable');
+    if (isInstalled(key)) return t('common.installed');
+    if (item.required) return t('common.required');
     return '';
   }
 
@@ -60,20 +60,20 @@
 </script>
 
 <section class="detail">
-  <button class="back" onclick={onback}>← Back</button>
+  <button class="back" onclick={onback}>{t('common.back')}</button>
 
   <header>
     <AppIcon app={kit} size={96} />
     <div class="heading">
-      <p class="eyebrow">Kit · {count(kit.items.length)}</p>
+      <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
       <h1>{kit.id}</h1>
-      <p class="meta">{kit.categories.join(' · ')}{kit.categories.length ? ' — ' : ''}from <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
+      <p class="meta">{kit.categories.join(' · ')}{kit.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
     </div>
   </header>
   {#if kit.description}<p class="description">{kit.description}</p>{/if}
 
   {#if !removing}
-    <h2>Choose apps to install</h2>
+    <h2>{t('kit.chooseInstall')}</h2>
     <ul class="items">
       {#each kit.items as item (item.key)}
         {@const app = appByKey(item.key)}
@@ -92,23 +92,23 @@
                 <span class="desc">{app.description}</span>
               </span>
             </label>
-            {#if badge(item)}<span class="badge" class:required={badge(item) === 'Required'}>{badge(item)}</span>{/if}
-            <button class="link" onclick={() => onopen(item.key)} aria-label="Details of {app.id}">Details</button>
+            {#if badge(item)}<span class="badge" class:required={badge(item) === t('common.required')}>{badge(item)}</span>{/if}
+            <button class="link" onclick={() => onopen(item.key)} aria-label={t('kit.detailsOf', { app: app.id })}>{t('kit.details')}</button>
           </li>
         {/if}
       {/each}
     </ul>
     <div class="actions">
       <button class="primary big" disabled={!toInstall.length} onclick={install}>
-        {toInstall.length ? `Install ${count(toInstall.length)}` : 'Nothing to install'}
+        {toInstall.length ? t('kit.install', { n: toInstall.length }) : t('kit.nothingToInstall')}
       </button>
       {#if installedItems.length}
-        <button class="secondary big" onclick={() => (removing = true)}>Uninstall apps…</button>
+        <button class="secondary big" onclick={() => (removing = true)}>{t('kit.uninstallApps')}</button>
       {/if}
     </div>
-    <p class="hint">Installs run one after another; follow them under Activity.</p>
+    <p class="hint">{t('kit.hint')}</p>
   {:else}
-    <h2>Choose apps to uninstall</h2>
+    <h2>{t('kit.chooseUninstall')}</h2>
     <ul class="items">
       {#each installedItems as item (item.key)}
         {@const app = appByKey(item.key)}
@@ -126,7 +126,7 @@
               <span class="text">
                 <span class="name">{app.id}</span>
                 {#if others.length}
-                  <span class="desc">Also in {others.map((k) => k.id).join(', ')}, which is installed</span>
+                  <span class="desc">{t('kit.alsoIn', { kits: others.map((k) => k.id).join(', ') })}</span>
                 {:else}
                   <span class="desc">{app.description}</span>
                 {/if}
@@ -138,9 +138,9 @@
     </ul>
     <div class="actions">
       <button class="danger big" disabled={!toRemove.length} onclick={uninstall}>
-        {toRemove.length ? `Uninstall ${count(toRemove.length)}` : 'Nothing selected'}
+        {toRemove.length ? t('kit.uninstall', { n: toRemove.length }) : t('kit.nothingSelected')}
       </button>
-      <button class="secondary big" onclick={() => ((removing = false), (removePicked = {}))}>Cancel</button>
+      <button class="secondary big" onclick={() => ((removing = false), (removePicked = {}))}>{t('common.cancel')}</button>
     </div>
   {/if}
 </section>

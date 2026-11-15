@@ -4,27 +4,28 @@
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
+  import { t } from './i18n.svelte';
 
   let { app, onopen }: { app: AppInfo; onopen: () => void } = $props();
   const status = $derived(store.status[app.key]);
 </script>
 
 <article class="card">
-  <button class="open" onclick={onopen} aria-label="Open {app.id}"></button>
+  <button class="open" onclick={onopen} aria-label={t('common.open', { name: app.id })}></button>
   <header>
     <AppIcon {app} />
     <div class="title">
       <h3>{app.id}</h3>
-      {#if app.recommended}<span class="recommended">Recommended</span>{/if}
+      {#if app.recommended}<span class="recommended">{t('card.recommended')}</span>{/if}
       <p class="meta">{app.categories.join(' · ') || app.collection}</p>
     </div>
   </header>
-  <p class="description">{app.description || 'No description.'}</p>
+  <p class="description">{app.description || t('common.noDescription')}</p>
   <footer>
     {#if status === 'installed'}
-      <span class="state installed">Installed</span>
+      <span class="state installed">{t('common.installed')}</span>
     {:else if status === 'needsUpdate'}
-      <span class="state update">Update available</span>
+      <span class="state update">{t('common.updateAvailable')}</span>
     {:else}
       <span class="collection"><CollectionAvatar name={app.collection} /> {app.collection}</span>
     {/if}

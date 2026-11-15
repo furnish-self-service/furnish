@@ -4,22 +4,23 @@
   import CollectionSettings from './CollectionSettings.svelte';
   import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
+  import { t, parts, formatTime } from './i18n.svelte';
 
-  const intervals = [
-    [15, 'Every 15 minutes'],
-    [30, 'Every 30 minutes'],
-    [60, 'Every hour'],
-    [240, 'Every 4 hours'],
-    [1440, 'Every day'],
-    [0, 'Never'],
-  ] as const;
+  const intervals = $derived([
+    [15, t('collections.every15')],
+    [30, t('collections.every30')],
+    [60, t('collections.everyHour')],
+    [240, t('collections.every4Hours')],
+    [1440, t('collections.everyDay')],
+    [0, t('collections.dontCheck')],
+  ] as [number, string][]);
   // A value set outside the app (settings.json) still shows up as a choice.
   const options = $derived(
     store.settings && !intervals.some(([m]) => m === store.settings!.updateIntervalMinutes)
-      ? [...intervals, [store.settings.updateIntervalMinutes, `Every ${store.settings.updateIntervalMinutes} minutes`] as const]
+      ? [...intervals, [store.settings.updateIntervalMinutes, t('collections.everyMinutes', { n: store.settings.updateIntervalMinutes })]]
       : intervals,
   );
-  const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const clock = (ms: number) => formatTime(ms);
 
   let version = $state('');
   api.version().then((v) => (version = v));
@@ -45,14 +46,14 @@
     const ok = await collectionAction(async () => {
       try {
         const added = await api.addCollection(url, name || null, username, password);
-        if (!added.length) return 'Signed in; its collections were already there';
-        return `Added ${added.map((c) => c.name).join(', ')}`;
+        if (!added.length) return t('collections.signedInAlready');
+        return t('collections.added', { names: added.map((c) => c.name).join(', ') });
       } catch (e) {
         // The server wants a login: show the fields (furnish keeps it in the credential store).
         if (String(e).includes('needs a username and password')) needsLogin = true;
         throw e;
       }
-    }, "Couldn't add the collection");
+    }, t('collections.addFailed'));
     adding = false;
     store.signInUrl = null;
     await refreshEndpoints();
@@ -68,15 +69,15 @@
     if (target === '*') {
       try {
         const changed = await updateCollections();
-        toast('success', changed.length ? `Updated ${changed.join(', ')}` : 'Everything is up to date');
+        toast('success', changed.length ? t('collections.updated', { names: changed.join(', ') }) : t('collections.allUpToDate'));
       } catch (e) {
-        toast('error', "Couldn't update every collection", e instanceof Error ? e.message : String(e));
+        toast('error', t('collections.updateAllFailed'), e instanceof Error ? e.message : String(e));
       }
     } else {
       await collectionAction(async () => {
         const r = await api.updateCollection(target);
-        return r.old !== r.new ? `Updated ${target}` : `${target} is up to date`;
-      }, "Couldn't update");
+        return r.old !== r.new ? t('collections.updated', { names: target }) : t('collections.isUpToDate', { name: target });
+      }, t('collections.updateFailed'));
     }
     working = null;
   }
@@ -86,54 +87,51 @@
     confirmRemove = null;
     await collectionAction(async () => {
       await api.removeCollection(target);
-      return `Removed ${target}`;
-    }, `Couldn't remove ${target}`);
+      return t('collections.removed', { name: target });
+    }, t('collections.removeFailed', { name: target }));
     working = null;
   }
 </script>
 
 <section>
-  <h1>Collections</h1>
-  <p class="lead">
-    A collection is a git repository with app definitions. Apps you installed stay installed when you
-    remove their collection.
-  </p>
+  <h1>{t('collections.title')}</h1>
+  <p class="lead">{t('collections.lead')}</p>
 
   {#if store.usersCanAddCollections}
   <form onsubmit={add}>
     <label class="url">
-      <span>Git URL, or your organization's furnish address</span>
+      <span>{t('collections.url')}</span>
       <input bind:value={url} required placeholder="git@github.com:your-org/apps.git" spellcheck="false" />
     </label>
     <label class="name">
-      <span>Name <em>(optional)</em></span>
-      <input bind:value={name} placeholder="from the URL" spellcheck="false" />
+      <span>{t('collections.name')} <em>{t('collections.optional')}</em></span>
+      <input bind:value={name} placeholder={t('collections.namePlaceholder')} spellcheck="false" />
     </label>
-    <button class="primary" disabled={adding || !url.trim()}>{adding ? 'Adding…' : 'Add collection'}</button>
+    <button class="primary" disabled={adding || !url.trim()}>{adding ? t('collections.adding') : t('collections.add')}</button>
     {#if https}
       <details class="login" bind:open={needsLogin}>
-        <summary>Needs a login?</summary>
-        <p class="explain flush">For a private repository: your username and a password or access token. furnish keeps them in your system's credential store and sends them to this repository only. SSH URLs use your SSH keys and agent instead.</p>
+        <summary>{t('collections.needsLogin')}</summary>
+        <p class="explain flush">{t('collections.loginText')}</p>
         <label class="name">
-          <span>Username</span>
+          <span>{t('collections.username')}</span>
           <input bind:value={username} autocomplete="username" spellcheck="false" />
         </label>
         <label class="name">
-          <span>Password or access token</span>
+          <span>{t('collections.password')}</span>
           <input bind:value={password} type="password" autocomplete="current-password" />
         </label>
       </details>
     {/if}
   </form>
-  <p class="warning">Apps run with administrator rights. Only add collections from people you trust.</p>
+  <p class="warning">{t('collections.warning')}</p>
   {:else}
-    <p class="managed-note">Your organization manages the collections on this computer.</p>
+    <p class="managed-note">{t('collections.managedNote')}</p>
   {/if}
 
   {#if store.settings}
     <section class="auto" aria-labelledby="auto-title">
-      <h2 id="auto-title">Automatic updates</h2>
-      <p class="explain flush">Installed apps update automatically; turn that off for an app on its page.</p>
+      <h2 id="auto-title">{t('collections.autoUpdates')}</h2>
+      <p class="explain flush">{t('collections.autoUpdatesText')}</p>
       <label class="check">
         <input
           type="checkbox"
@@ -141,21 +139,21 @@
           disabled={isLocked('updateOnLaunch')}
           onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
         />
-        Update collections when {store.brand.name} starts
-        {#if isLocked('updateOnLaunch')}<span class="org">Set by your organization</span>{/if}
+        {t('collections.updateOnLaunch', { brand: store.brand.name })}
+        {#if isLocked('updateOnLaunch')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
       <label class="interval">
-        <span>While {store.brand.name} is open</span>
+        <span>{t('collections.whileOpen', { brand: store.brand.name })}</span>
         <select
           value={store.settings.updateIntervalMinutes}
           disabled={isLocked('updateIntervalMinutes')}
           onchange={(e) => changeSettings({ updateIntervalMinutes: Number(e.currentTarget.value) })}
         >
           {#each options as [minutes, text]}
-            <option value={minutes}>{minutes === 0 ? "Don't check" : text}</option>
+            <option value={minutes}>{text}</option>
           {/each}
         </select>
-        {#if isLocked('updateIntervalMinutes')}<span class="org">Set by your organization</span>{/if}
+        {#if isLocked('updateIntervalMinutes')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
       <label class="check">
         <input
@@ -164,21 +162,24 @@
           disabled={isLocked('loadAwareUpdates')}
           onchange={(e) => changeSettings({ loadAwareUpdates: e.currentTarget.checked })}
         />
-        Postpone automatic updates while this computer is busy
-        {#if isLocked('loadAwareUpdates')}<span class="org">Set by your organization</span>{/if}
+        {t('collections.loadAware')}
+        {#if isLocked('loadAwareUpdates')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
       <p class="explain">
-        Busy means the last 5 minutes averaged over {store.settings.loadLimits.cpuPercent}% CPU,
-        {store.settings.loadLimits.memoryPercent}% memory or {store.settings.loadLimits.networkKbps} KB/s of network
-        traffic, not counting {store.brand.name} itself.
+        {t('collections.busyMeans', {
+          cpu: store.settings.loadLimits.cpuPercent,
+          memory: store.settings.loadLimits.memoryPercent,
+          network: store.settings.loadLimits.networkKbps,
+          brand: store.brand.name,
+        })}
       </p>
       <p class="last" aria-live="polite">
         {#if store.autoUpdate.running}
-          Checking for updates…
+          {t('collections.checking')}
         {:else if store.autoUpdate.error}
-          <span class="failed">Last automatic check failed:</span> {store.autoUpdate.error}
+          <span class="failed">{t('collections.lastFailed')}</span> {store.autoUpdate.error}
         {:else if store.autoUpdate.lastAt}
-          Last checked at {clock(store.autoUpdate.lastAt)}.
+          {t('collections.lastChecked', { time: clock(store.autoUpdate.lastAt) })}
         {/if}
       </p>
     </section>
@@ -186,27 +187,26 @@
 
   {#if store.settings && (destinations.length || isLocked('reporting'))}
     <section class="auto" aria-labelledby="reports-title">
-      <h2 id="reports-title">Reports to your organization</h2>
+      <h2 id="reports-title">{t('collections.reports')}</h2>
       <p class="explain flush">
         {#if destinations.length}
-          {store.brand.name} can tell {destinations.join(', ')} which apps it installed, updated or removed on
-          this computer and whether that worked. Reports name you as you are signed in.
+          {t('collections.reportsText', { brand: store.brand.name, destinations: destinations.join(', ') })}
         {:else}
-          No furnish address of your organization takes reports, so nothing is sent.
+          {t('collections.noReports')}
         {/if}
       </p>
       <label class="interval">
-        <span>Send</span>
+        <span>{t('collections.send')}</span>
         <select
           value={store.settings.reporting}
           disabled={isLocked('reporting')}
           onchange={(e) => changeSettings({ reporting: e.currentTarget.value as 'off' | 'errors' | 'all' })}
         >
-          <option value="off">Nothing</option>
-          <option value="errors">Failures and fallbacks</option>
-          <option value="all">Everything, and the installed apps once a day</option>
+          <option value="off">{t('collections.sendNothing')}</option>
+          <option value="errors">{t('collections.sendErrors')}</option>
+          <option value="all">{t('collections.sendAll')}</option>
         </select>
-        {#if isLocked('reporting')}<span class="org">Set by your organization</span>{/if}
+        {#if isLocked('reporting')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
       <label class="check">
         <input
@@ -215,18 +215,41 @@
           disabled={isLocked('reportHostname') || store.settings.reporting === 'off'}
           onchange={(e) => changeSettings({ reportHostname: e.currentTarget.checked })}
         />
-        Include this computer's name
-        {#if isLocked('reportHostname')}<span class="org">Set by your organization</span>{/if}
+        {t('collections.hostname')}
+        {#if isLocked('reportHostname')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
-      <p class="explain">Reports waiting to be sent are in <code>reports/queue.ndjson</code> in {store.brand.name}'s data folder; <code>furnish reports</code> shows them.</p>
+      <p class="explain">
+        {#each parts(t('collections.reportsQueue', { brand: store.brand.name })) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}
+      </p>
+    </section>
+  {/if}
+
+  {#if store.settings}
+    <section class="auto" aria-labelledby="language-title">
+      <h2 id="language-title">{t('collections.language')}</h2>
+      <label class="interval">
+        <span>{t('collections.languageLabel', { brand: store.brand.name })}</span>
+        <select
+          id="language"
+          value={store.settings.language}
+          disabled={isLocked('language')}
+          onchange={(e) => changeSettings({ language: e.currentTarget.value as 'system' | 'en' | 'de' })}
+        >
+          <option value="system">{t('collections.languageSystem')}</option>
+          <!-- Each language in its own words, so people find theirs whatever is shown. -->
+          <option value="en" lang="en">English</option>
+          <option value="de" lang="de">Deutsch</option>
+        </select>
+        {#if isLocked('language')}<span class="org">{t('common.setByOrg')}</span>{/if}
+      </label>
     </section>
   {/if}
 
   {#if store.collections.length}
     <div class="toolbar">
-      <h2>{store.collections.length} collection{store.collections.length === 1 ? '' : 's'}</h2>
+      <h2>{t('collections.count', { n: store.collections.length })}</h2>
       <button class="secondary" disabled={working !== null} onclick={() => update('*')}>
-        {working === '*' ? 'Updating…' : 'Update all'}
+        {working === '*' ? t('collections.updating') : t('collections.updateAll')}
       </button>
     </div>
     <ul>
@@ -237,40 +260,40 @@
             <span class="cname">{c.name}</span>
             <span class="mono">{c.url}</span>
           </div>
-          <span class="mono rev" title="Revision">{c.revision}</span>
-          <span class="count">{c.apps} app{c.apps === 1 ? '' : 's'}</span>
+          <span class="mono rev" title={t('collections.revision')}>{c.revision}</span>
+          <span class="count">{t('common.apps', { n: c.apps })}</span>
           {#if c.managed}
             <span class="actions">
-              <span class="org">Managed by your organization</span>
+              <span class="org">{t('collections.managed')}</span>
               <button class="secondary" disabled={working !== null} onclick={() => update(c.name)}>
-                {working === c.name ? 'Updating…' : 'Update'}
+                {working === c.name ? t('collections.updating') : t('common.update')}
               </button>
             </span>
           {:else if confirmRemove === c.name}
             <span class="confirm">
-              Remove {c.name}?
-              <button class="danger" onclick={() => remove(c.name)}>Remove</button>
-              <button class="secondary" onclick={() => (confirmRemove = null)}>Cancel</button>
+              {t('collections.confirmRemove', { name: c.name })}
+              <button class="danger" onclick={() => remove(c.name)}>{t('common.remove')}</button>
+              <button class="secondary" onclick={() => (confirmRemove = null)}>{t('common.cancel')}</button>
             </span>
           {:else}
             <span class="actions">
               <button class="secondary" disabled={working !== null} onclick={() => update(c.name)}>
-                {working === c.name ? 'Updating…' : 'Update'}
+                {working === c.name ? t('collections.updating') : t('common.update')}
               </button>
-              <button class="secondary" disabled={working !== null} onclick={() => (confirmRemove = c.name)}>Remove</button>
+              <button class="secondary" disabled={working !== null} onclick={() => (confirmRemove = c.name)}>{t('common.remove')}</button>
             </span>
           {/if}
           {#if c.options.length}
             <details class="copts">
               <summary>
-                Options for all {c.name} apps
-                {#if c.options.some((o) => o.missing)}<span class="org">Needs your answer</span>{/if}
+                {t('collections.optionsFor', { name: c.name })}
+                {#if c.options.some((o) => o.missing)}<span class="org">{t('collections.needsAnswer')}</span>{/if}
               </summary>
               <Options target={c.name} options={c.options} scope="collection" />
             </details>
           {/if}
           <details class="copts">
-            <summary>Downloads and earlier versions</summary>
+            <summary>{t('collections.downloads')}</summary>
             <CollectionSettings collection={c} />
           </details>
         </li>
@@ -280,7 +303,7 @@
 
   <p class="about">
     furnish {version}
-    · <button class="link" onclick={() => api.openLicenses().catch((e) => toast('error', "Couldn't open the licenses", String(e)))}>Open-source licenses</button>
+    · <button class="link" onclick={() => api.openLicenses().catch((e) => toast('error', t('collections.licensesFailed'), String(e)))}>{t('collections.licenses')}</button>
   </p>
 </section>
 

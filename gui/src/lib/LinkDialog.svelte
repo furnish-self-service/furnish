@@ -3,6 +3,7 @@
   // yes, since anyone can send a link.
   import * as api from './api';
   import { store, collectionAction, refreshEndpoints, askQuestions } from './state.svelte';
+  import { t, parts } from './i18n.svelte';
 
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
@@ -19,8 +20,8 @@
     if (!origin) return;
     const ok = await collectionAction(async () => {
       const added = await api.addCollection(origin, null);
-      return added.length ? `Added ${added.map((c) => c.name).join(', ')}` : 'Signed in; its collections were already there';
-    }, `Couldn't add ${origin}`);
+      return added.length ? t('collections.added', { names: added.map((c) => c.name).join(', ') }) : t('collections.signedInAlready');
+    }, t('link.addFailed', { origin }));
     store.signInUrl = null;
     await refreshEndpoints();
     if (ok) askQuestions(true);
@@ -28,15 +29,14 @@
 </script>
 
 <dialog bind:this={dialog} onclose={() => (store.linkOrigin = null)} aria-labelledby="link-title">
-  <h2 id="link-title">Add your organization's apps?</h2>
+  <h2 id="link-title">{t('link.title')}</h2>
   <p>
-    A link wants to add <strong>{store.linkOrigin}</strong>. You'll sign in there with your organization's account, and
-    its apps show up here.
+    {#each parts(t('link.text', { origin: store.linkOrigin ?? '' })) as p}{#if p.tag}<strong>{p.text}</strong>{:else}{p.text}{/if}{/each}
   </p>
-  <p class="warning">Only continue if the link comes from your organization: its apps can change this computer.</p>
+  <p class="warning">{t('link.warning')}</p>
   <div class="actions">
-    <button class="secondary" onclick={close}>Cancel</button>
-    <button class="primary" onclick={add}>Sign in and add</button>
+    <button class="secondary" onclick={close}>{t('common.cancel')}</button>
+    <button class="primary" onclick={add}>{t('link.add')}</button>
   </div>
 </dialog>
 

@@ -3,59 +3,62 @@
   // fails. Values the organization sets per collection or in general are shown, not editable.
   import * as api from './api';
   import { store, toast } from './state.svelte';
+  import { t } from './i18n.svelte';
 
   let { collection }: { collection: api.CollectionInfo } = $props();
 
   type Key = keyof api.CollectionSettings;
-  const rows: { key: Key; label: string; desc: string; choices: [unknown, string][] }[] = [
+  // A function, so the texts follow the language.
+  const rows = (): { key: Key; label: string; desc: string; choices: [unknown, string][] }[] => [
     {
       key: 'fallback',
-      label: 'When installing an app fails',
-      desc: 'An earlier version of the app may still work.',
+      label: t('cs.fallback'),
+      desc: t('cs.fallbackDesc'),
       choices: [
-        ['ask', 'Offer the previous version'],
-        ['automatic', 'Install the previous version'],
-        ['off', 'Nothing'],
+        ['ask', t('cs.fallbackAsk')],
+        ['automatic', t('cs.fallbackAutomatic')],
+        ['off', t('cs.fallbackOff')],
       ],
     },
     {
       key: 'fallbackMaxAgeDays',
-      label: 'Earlier versions',
-      desc: 'How much older than the failing version the previous one may be.',
+      label: t('cs.maxAge'),
+      desc: t('cs.maxAgeDesc'),
       choices: [
-        [0, 'Any age'],
-        [7, 'Up to 7 days older'],
-        [30, 'Up to 30 days older'],
-        [90, 'Up to 90 days older'],
+        [0, t('cs.anyAge')],
+        [7, t('cs.upToDays', { n: 7 })],
+        [30, t('cs.upToDays', { n: 30 })],
+        [90, t('cs.upToDays', { n: 90 })],
       ],
     },
     {
       key: 'blobsOnDemand',
-      label: 'Installer files',
-      desc: 'Installer files (.msi, .deb, …) and earlier versions take space on this computer.',
+      label: t('cs.blobs'),
+      desc: t('cs.blobsDesc'),
       choices: [
-        [true, 'Download when an app needs them'],
-        [false, 'Download all with the collection'],
+        [true, t('cs.blobsOnDemand')],
+        [false, t('cs.blobsAll')],
       ],
     },
     {
       key: 'checkoutDepth',
-      label: 'History',
-      desc: 'Earlier versions come from the commits furnish keeps.',
+      label: t('cs.history'),
+      desc: t('cs.historyDesc'),
       choices: [
-        [0, 'All commits'],
-        [100, 'Last 100 commits'],
-        [20, 'Last 20 commits'],
-        [1, 'Latest commit only'],
+        [0, t('cs.allCommits')],
+        [100, t('cs.lastCommits', { n: 100 })],
+        [20, t('cs.lastCommits', { n: 20 })],
+        [1, t('cs.latestOnly')],
       ],
     },
   ];
+  type Row = ReturnType<typeof rows>[number];
 
   const value = (key: Key) => collection.settings.settings[key];
   // A value set outside the app (settings.json, the policy) still shows up as a choice.
-  const choices = (row: (typeof rows)[number]) =>
+  const choices = (row: Row) =>
     row.choices.some(([v]) => v === value(row.key)) ? row.choices : [...row.choices, [value(row.key), String(value(row.key))] as [unknown, string]];
-  const label = (row: (typeof rows)[number]) => choices(row).find(([v]) => v === value(row.key))?.[1];
+  const label = (row: Row) => choices(row).find(([v]) => v === value(row.key))?.[1];
   let saving = $state(false);
 
   async function change(key: Key, raw: string) {
@@ -64,21 +67,21 @@
       await api.setCollectionSetting(collection.name, key, JSON.parse(raw));
       store.collections = await api.listCollections();
     } catch (e) {
-      toast('error', `Couldn't change the setting for ${collection.name}`, String(e));
+      toast('error', t('cs.changeFailed', { name: collection.name }), String(e));
     }
     saving = false;
   }
 </script>
 
 <ul class="settings">
-  {#each rows as row (row.key)}
+  {#each rows() as row (row.key)}
     <li>
       <label for="cs-{collection.name}-{row.key}">
         <span class="label">{row.label}</span>
         <span class="desc">{row.desc}</span>
       </label>
       {#if collection.settings.locked.includes(row.key)}
-        <span class="value">{label(row)} <span class="org">Set by your organization</span></span>
+        <span class="value">{label(row)} <span class="org">{t('common.setByOrg')}</span></span>
       {:else}
         <select
           id="cs-{collection.name}-{row.key}"
