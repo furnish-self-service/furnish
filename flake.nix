@@ -85,7 +85,7 @@
           npmRoot = "gui";
           buildAndTestSubdir = "gui";
           nativeBuildInputs = with pkgs; [ cargo-tauri.hook nodejs npmHooks.npmConfigHook pkg-config wrapGAppsHook3 ];
-          buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg ];
+          buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg libayatana-appindicator ];
           doCheck = false; # the library's tests run in `furnish`
           postInstall = "mkdir -p $out/lib/furnish && ln -s ${dsc-resources} $out/lib/furnish/dsc";
           # The tray icon loads libayatana-appindicator at runtime.

@@ -9,7 +9,7 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq curl ca-certificates build-essential pkg-config git musl-tools \
-    libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev patchelf >/dev/null
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf >/dev/null
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
 apt-get install -y -qq nodejs >/dev/null
 curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --target x86_64-unknown-linux-musl
