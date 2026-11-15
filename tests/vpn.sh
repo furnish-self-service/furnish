@@ -17,13 +17,13 @@ export FURNISH_DATA_DIR="$tmp/data"
 # Linux: acme-vpn writes to /etc and NetworkManager, so furnish runs as root (as the service
 # would). Windows: the runner is an elevated administrator. macOS: furnish runs as the user,
 # because Homebrew (openvpn-client) refuses root; acme-vpn's steps get root through sudo.
-run=()
+run=()  # bash 3.2 (macOS): an empty array is "unbound", hence ${run[@]+...} below
 [ "$(uname -s)" = Linux ] && run=(sudo --preserve-env=FURNISH_DATA_DIR)
 
 step() {
     echo "+ furnish $*" >&2
     local out rc=0
-    out=$("${run[@]}" "$furnish" "$@" 2>&1) || rc=$?
+    out=$(${run[@]+"${run[@]}"} "$furnish" "$@" 2>&1) || rc=$?
     echo "$out" >&2
     echo "$out"
     return $rc
