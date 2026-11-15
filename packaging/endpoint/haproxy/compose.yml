@@ -1,0 +1,28 @@
+# The HAProxy proxy for the furnish endpoint; see haproxy/haproxy.cfg and haproxy/README.md.
+#   docker compose -f docker-compose.yml -f haproxy/compose.yml up -d
+# HAProxy verifies the ID tokens itself, so oauth2-proxy from docker-compose.yml is not used.
+services:
+  proxy:
+    image: haproxy:3.2.26-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    entrypoint: ["/bin/sh", "/usr/local/etc/haproxy/start.sh"]
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?set OIDC_ISSUER_URL}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-furnish}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-*}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy/start.sh:/usr/local/etc/haproxy/start.sh:ro
+      - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/furnish.json:ro
+      # tls.crt (with intermediates) and tls.key.
+      - ${TLS_DIR:-./certs}:/certs:ro
+      # The IdP's signing key as PEM, from haproxy/jwks-to-pem.sh.
+      - ${JWT_KEY_FILE:-./haproxy/idp.pem}:/etc/haproxy/idp.pem:ro
+    depends_on: [vector]

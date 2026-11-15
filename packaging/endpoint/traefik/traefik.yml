@@ -1,0 +1,46 @@
+# Static configuration of the Traefik proxy for the furnish endpoint; routers, middlewares and
+# services are in traefik/dynamic.yml. See traefik/README.md.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint: { to: websecure, scheme: https }
+      aliasHeadersStrategy: delete
+  websecure:
+    address: ":443"
+    # Routers without entryPoints (all in dynamic.yml) only serve HTTPS.
+    asDefault: true
+    http:
+      tls: {}
+      # Keep /./, /../ and // in the path, so a router's Path() only matches the exact path.
+      # (Cleaning them would let /git/./acme.git/... or /git//acme.git/... match.)
+      sanitizePath: false
+      # Turn ";" in the query into %3B, so it can't act as a parameter separator; the URI checks in
+      # dynamic.yml reject any request with "%" in it.
+      encodeQuerySemicolons: true
+      # Drop headers whose names alias others (X_Furnish_User for X-Furnish-User), so a client
+      # can't slip a user name past the headers that forwardAuth replaces.
+      aliasHeadersStrategy: delete
+      # Let encoded "/", "\", NUL and the like through to routing instead of answering 400: no client
+      # path reaches a backend, and the URI checks in dynamic.yml answer 404 for any of them.
+      encodedCharacters:
+        allowEncodedSlash: true
+        allowEncodedBackSlash: true
+        allowEncodedNullCharacter: true
+        allowEncodedSemicolon: true
+        allowEncodedPercent: true
+        allowEncodedQuestionMark: true
+        allowEncodedHash: true
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+
+log:
+  level: INFO
+accessLog: {}

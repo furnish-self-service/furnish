@@ -112,6 +112,11 @@ req "e-mail outside ALLOWED_EMAIL_DOMAINS" "401 403" -H "Authorization: Bearer $
 req "email_verified=false" "401 403" -H "Authorization: Bearer $UNVERIFIED" "$REFS"
 req "no e-mail claim" "401 403" -H "Authorization: Bearer $NO_EMAIL" "$REFS"
 req "JWT sent as Basic password" 401 -u "x:$GOOD" "$REFS"
+# Two Authorization headers: refused (nginx answers 400 itself before any configuration runs).
+BASIC_JWT="Authorization: Basic $(printf 'x:%s' "$GOOD" | openssl base64 -A)"
+req "Basic JWT header, then a Bearer header" "400 401" -H "$BASIC_JWT" -H "$AUTH" "$REFS"
+req "Bearer header, then a Basic JWT header" "400 401" -H "$AUTH" -H "$BASIC_JWT" "$REFS"
+req "report: Basic JWT header, then a Bearer header" "400 401" -X POST -H "$BASIC_JWT" -H "$AUTH" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
 for t in none "$WRONG_AUD" "$OTHER_ISS"; do
     if [ $t = none ]; then hdr="X-None: 1"; label="no token"; else hdr="Authorization: Bearer $t"; label="bad token"; fi
     git -c http.extraHeader="$hdr" clone -q $E/git/acme.git /tmp/w/denied >>$OUT/denied.log 2>&1 \
@@ -136,7 +141,11 @@ while read -r method path; do
     case $method in
         HEAD) req "$method $path" 404 -H "$AUTH" --path-as-is -I "$E$path" ;;
         POST) req "$method $path" 404 -H "$AUTH" --path-as-is -X POST -H 'Content-Type: application/x-git-upload-pack-request' --data-binary 0000 "$E$path" ;;
-        *)    req "$method $path" 404 -H "$AUTH" --path-as-is -X "$method" "$E$path" ;;
+        *)    want=404
+              # Traefik decodes %XX of unreserved characters before routing (RFC 3986 calls the forms
+              # equivalent); GitLab still only gets the fixed URI. See packaging/endpoint/traefik/README.md.
+              [ "${PROXY:-}" = traefik ] && [ "$path" = "/git/acme.git/info/r%65fs?service=git-upload-pack" ] && want=200
+              req "$method $path" "$want" -H "$AUTH" --path-as-is -X "$method" "$E$path" ;;
     esac
 done <<'EOF'
 GET /git/secret.git/info/refs?service=git-upload-pack

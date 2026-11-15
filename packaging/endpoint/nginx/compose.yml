@@ -1,0 +1,21 @@
+# The nginx proxy for the furnish endpoint; see nginx/default.conf.template.
+#   docker compose -f docker-compose.yml -f nginx/compose.yml up -d
+services:
+  proxy:
+    image: nginx:1.30.6-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      FURNISH_HOST: ${FURNISH_HOST:?set FURNISH_HOST, e.g. furnish.myorg.tld}
+      GITLAB_URL: ${GITLAB_URL:?set GITLAB_URL, e.g. https://gitlab.myorg.internal}
+      # One credentials variable per collection (base64 of "deploy-token-username:deploy-token").
+      ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH:?set ACME_GITLAB_AUTH}
+    volumes:
+      # The image renders /etc/nginx/templates/*.template into /etc/nginx/conf.d at start.
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/furnish.json:ro
+      # Your own certificate: tls.crt (with the chain) and tls.key. nginx does not do ACME.
+      - ${TLS_DIR:-./certs}:/certs:ro
+    depends_on: [oauth2-proxy, vector]

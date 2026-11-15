@@ -26,6 +26,7 @@ services:
     image: furnish-endpoint-test-client
     profiles: [client]
     environment:
+      PROXY: ${PROXY}
       DEPLOY_TOKEN: ${DEPLOY_TOKEN}
       ACME_GITLAB_AUTH: ${ACME_GITLAB_AUTH}
     volumes:

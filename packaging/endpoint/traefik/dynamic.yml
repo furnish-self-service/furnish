@@ -1,0 +1,207 @@
+# Dynamic configuration of the Traefik proxy for the furnish endpoint: lets furnish users clone
+# selected internal GitLab repositories with their own OIDC sign-in, without exposing GitLab
+# itself, and send reports to Vector.
+#
+#   furnish ──HTTPS, Bearer <ID token>──▶ Traefik ──forwardAuth──▶ oauth2-proxy (checks the JWT)
+#                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
+#                                           └──POST /events, X-Furnish-User──▶ Vector
+#
+# Traefik renders this file as a Go template once at startup; settings come from environment
+# variables (see traefik/compose.yml and README.md):
+#   FURNISH_HOST   public host name, e.g. furnish.myorg.tld
+#   GITLAB_URL     internal GitLab base URL, e.g. https://gitlab.myorg.internal
+#   <collection credentials>  one variable per collection, named in its line below
+#
+# A collection: one public, read-only path mapped to exactly one upstream repository.
+#   append $collections (list "<public name>" "<upstream repository path>" "<credentials variable>")
+# Add the same collection to furnish.json, and the variable to traefik/compose.yml.
+{{- $collections := list }}
+{{- $collections = append $collections (list "acme" "/it/catalog.git" "ACME_GITLAB_AUTH") }}
+
+{{- $host := printf "Host(`%s`)" (env "FURNISH_HOST") }}
+# Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take a JWT sent as
+# a Basic password, or a session cookie; neither is needed, so neither is allowed.) Traefik's
+# HeaderRegexp matches if any one Authorization header matches, while oauth2-proxy reads the
+# first, so the second regexp rejects requests in which any Authorization header is not a bearer
+# token: shorter than "Bearer x", a different first 7 characters, or white space in the token.
+{{- $notBearer := "^(?:.{0,7}$|[^B]|.[^e]|..[^a]|...[^r]|....[^e]|.....[^r]|......[^ ]|.{7}.*\\s)" }}
+{{- $bearer := printf "HeaderRegexp(`Authorization`, `^Bearer \\S+$`) && !HeaderRegexp(`Authorization`, `%s`)" $notBearer }}
+
+http:
+  routers:
+    # Discovery document for furnish; public, no sign-in needed. Traefik can't serve files, so the
+    # files container (busybox httpd) does.
+    furnish-json:
+      rule: '{{ $host }} && (Method(`GET`) || Method(`HEAD`)) && Path(`/.well-known/furnish.json`)'
+      middlewares: [furnish-json]
+      service: files
+
+    # Per collection, only these two requests are proxied:
+    #   GET  /git/<public name>.git/info/refs?service=git-upload-pack
+    #   POST /git/<public name>.git/git-upload-pack
+    # Git protocol v2 uses exactly these two requests too (it signals v2 in the Git-Protocol
+    # header). Everything else, including pushes (git-receive-pack) and the dumb protocol, matches
+    # no router and gets Traefik's 404. Path() compares the decoded path, Query() one decoded
+    # parameter, so the uri-* middlewares then check the request URI itself (see below).
+    # The *-401 routers take the same requests without a bearer token.
+{{- range $c := $collections }}
+{{- $name := index $c 0 }}
+{{- $refs := printf "%s && Method(`GET`) && Path(`/git/%s.git/info/refs`) && Query(`service`, `git-upload-pack`)" $host $name }}
+{{- $pack := printf "%s && Method(`POST`) && Path(`/git/%s.git/git-upload-pack`)" $host $name }}
+    {{ $name }}-refs:
+      rule: '{{ $refs }} && {{ $bearer }}'
+      priority: 200
+      middlewares: [uri-mismatch-404, uri-only-service-query, signed-in, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-refs]
+      service: gitlab
+    {{ $name }}-refs-401:
+      rule: '{{ $refs }}'
+      priority: 100
+      middlewares: [uri-mismatch-404, uri-only-service-query, unauthorized-401]
+      service: noop@internal
+    {{ $name }}-pack:
+      rule: '{{ $pack }} && {{ $bearer }}'
+      priority: 200
+      middlewares: [uri-mismatch-404, uri-no-query, signed-in, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-pack]
+      service: gitlab
+    {{ $name }}-pack-401:
+      rule: '{{ $pack }}'
+      priority: 100
+      middlewares: [uri-mismatch-404, uri-no-query, unauthorized-401]
+      service: noop@internal
+{{- end }}
+
+    # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
+    events:
+      rule: '{{ $host }} && Method(`POST`) && Path(`/events`) && {{ $bearer }}'
+      priority: 200
+      middlewares: [uri-mismatch-404, uri-no-query, events-size, events-signed-in, events-user, events-headers]
+      service: vector
+    events-401:
+      rule: '{{ $host }} && Method(`POST`) && Path(`/events`)'
+      priority: 100
+      middlewares: [uri-mismatch-404, uri-no-query, unauthorized-401]
+      service: noop@internal
+
+  middlewares:
+    furnish-json:
+      chain:
+        middlewares: [furnish-json-path, furnish-json-cache]
+    furnish-json-path:
+      replacePath: { path: /furnish.json }
+    furnish-json-cache:
+      headers:
+        customResponseHeaders: { Cache-Control: "max-age=300" }
+
+    # The router has already matched the decoded path and the service parameter. What is left is
+    # to reject a request URI that differs from the allowlisted one byte for byte: any
+    # percent-encoding, and for info/refs any further query parameter ("&", or ";" which the entry
+    # point encodes as %3B), for the other requests any query at all. Traefik has no "respond"
+    # handler, so redirectRegex flags these requests with a 301/308 (it is the only middleware that
+    # sees the request URI), and uri-mismatch-404 turns that into an empty 404.
+    uri-only-service-query:
+      redirectRegex: { regex: '[%&;]', replacement: '_', permanent: true }
+    uri-no-query:
+      redirectRegex: { regex: '[%?]', replacement: '_', permanent: true }
+    uri-mismatch-404:
+      errors:
+        status: ["301", "308"]
+        statusRewrites: { "301": 404, "308": 404 }
+        service: noop@internal
+        query: /
+
+    # noop@internal answers 418 to everything; this turns it into an empty 401.
+    unauthorized-401:
+      errors:
+        status: ["418"]
+        statusRewrites: { "418": 401 }
+        service: noop@internal
+        query: /
+
+    # oauth2-proxy answers 202 for a valid bearer JWT (issuer, signature, expiry, audience = client
+    # ID) and 401/403 otherwise; anything but 2xx is returned to the client and nothing is proxied.
+    # Only the Authorization header is sent, so a cookie can never stand in for the bearer token.
+    signed-in:
+      forwardAuth:
+        address: http://oauth2-proxy:4180/oauth2/auth
+        trustForwardHeader: false
+        maxResponseBodySize: 65536
+        authRequestHeaders: [Authorization]
+
+    # If GitLab rejects the deploy token, say so instead of making git ask the user for a password.
+    # The rejected response, with its WWW-Authenticate, is dropped.
+    gitlab-denied-502:
+      errors:
+        status: ["401", "403"]
+        statusRewrites: { "401": 502, "403": 502 }
+        service: noop@internal
+        query: /
+
+{{- range $c := $collections }}
+{{- $name := index $c 0 }}
+{{- $repo := index $c 1 }}
+    # Replace the user's ID token with the read-only deploy token (base64 of "username:token"), and
+    # drop other ways the client could present GitLab credentials of its own.
+    {{ $name }}-gitlab:
+      headers:
+        customRequestHeaders:
+          Authorization: 'Basic {{ env (index $c 2) }}'
+          Cookie: ""
+          Private-Token: ""
+          Job-Token: ""
+          Deploy-Token: ""
+        customResponseHeaders:
+          Set-Cookie: ""
+          WWW-Authenticate: ""
+    # The upstream path is fixed; the query is the one uri-only-service-query let through.
+    {{ $name }}-refs:
+      replacePath: { path: '{{ $repo }}/info/refs' }
+    {{ $name }}-pack:
+      replacePath: { path: '{{ $repo }}/git-upload-pack' }
+{{- end }}
+
+    events-size:
+      buffering: { maxRequestBodyBytes: 1048576 }
+    # Check the token and keep oauth2-proxy's X-Auth-Request-Email; forwardAuth first removes the
+    # client's own header of that name.
+    events-signed-in:
+      forwardAuth:
+        address: http://oauth2-proxy:4180/oauth2/auth
+        trustForwardHeader: false
+        maxResponseBodySize: 65536
+        authRequestHeaders: [Authorization]
+        authResponseHeaders: [X-Auth-Request-Email]
+    # Traefik can't rename a header. The files container answers with X-Furnish-User set to the
+    # X-Auth-Request-Email it gets; forwardAuth removes the client's X-Furnish-User and sets that.
+    events-user:
+      forwardAuth:
+        address: http://files:8080/user.sh
+        trustForwardHeader: false
+        maxResponseBodySize: 65536
+        authRequestHeaders: [X-Auth-Request-Email]
+        authResponseHeaders: [X-Furnish-User]
+    events-headers:
+      headers:
+        customRequestHeaders:
+          Authorization: ""
+          Cookie: ""
+          X-Auth-Request-Email: ""
+
+  services:
+    files:
+      loadBalancer:
+        servers: [{ url: "http://files:8080" }]
+    gitlab:
+      loadBalancer:
+        # Send GitLab's own host name, not the endpoint's.
+        passHostHeader: false
+        servers: [{ url: '{{ env "GITLAB_URL" }}' }]
+    vector:
+      loadBalancer:
+        servers: [{ url: "http://vector:8080" }]
+
+tls:
+  certificates:
+    - { certFile: /certs/tls.crt, keyFile: /certs/tls.key }
+  stores:
+    default:
+      defaultCertificate: { certFile: /certs/tls.crt, keyFile: /certs/tls.key }

@@ -11,7 +11,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-PROXY=${PROXY:-caddy}
+PROXY=${PROXY:-caddy}; export PROXY
 [ -f "$root/packaging/endpoint/$PROXY/compose.yml" ] || { echo "no proxy '$PROXY' in packaging/endpoint" >&2; exit 2; }
 project=furnish-endpoint-test-$PROXY-$(date +%s)-$$
 
