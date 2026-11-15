@@ -13,7 +13,7 @@ kits/<kit>.yaml          # apps that are installed together
 icons/                   # images the files above refer to
 ```
 
-furnish clones the repository for each user and pulls changes at start and every 30 minutes. The [example collection](https://github.com/furnish-self-service/self-service-example) uses everything on this page with real apps.
+furnish clones the repository for each user and pulls changes at start and every 30 minutes. It downloads the history's commits, but file contents only for the current version; earlier versions and installer files come when they are needed. The [example collection](https://github.com/furnish-self-service/self-service-example) uses everything on this page with real apps.
 
 ## Apps
 
@@ -53,7 +53,7 @@ Installs a package with the system's package manager: the first of pacman, apt, 
 
 ### Furnish/Installer
 
-Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe`. Store large files with Git LFS; furnish downloads them when it clones the collection.
+Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe`. furnish downloads the file when someone installs an app that uses it, so a computer only stores the installers of its own apps. Git LFS works too and keeps large files out of the repository's history.
 
 ```yaml
 - name: Company VPN

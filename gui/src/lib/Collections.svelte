@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
+  import CollectionSettings from './CollectionSettings.svelte';
   import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
 
@@ -224,6 +225,10 @@
               <Options target={c.name} options={c.options} scope="collection" />
             </details>
           {/if}
+          <details class="copts">
+            <summary>Downloads and earlier versions</summary>
+            <CollectionSettings collection={c} />
+          </details>
         </li>
       {/each}
     </ul>

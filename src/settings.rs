@@ -24,6 +24,49 @@ pub struct Settings {
     pub load_limits: crate::load::Limits,
     /// The user's option values (see `options`), keyed by collection or `collection/app`.
     pub parameters: std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
+    /// Commits of a collection's history to keep; 0 keeps all of them.
+    pub checkout_depth: u32,
+    /// Download file contents only when they are needed: those of earlier versions when furnish
+    /// falls back to one, installer files (.msi, .deb, …) when an app using them is installed.
+    pub blobs_on_demand: bool,
+    /// What to do when installing or updating an app fails.
+    pub fallback: Fallback,
+    /// Only fall back to versions at most this many days older than the failing one; 0: any age.
+    pub fallback_max_age_days: u32,
+    /// The user's values for the four settings above for single collections, keyed by collection.
+    pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
+}
+
+/// What furnish does when installing or updating an app fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Fallback {
+    /// Offer to install the previous version of the app.
+    Ask,
+    /// Install the previous version right away.
+    Automatic,
+    Off,
+}
+
+/// The settings that apply per collection.
+pub const PER_COLLECTION: [&str; 4] = ["checkoutDepth", "blobsOnDemand", "fallback", "fallbackMaxAgeDays"];
+
+/// The settings for one collection, in effect.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionSettings {
+    pub checkout_depth: u32,
+    pub blobs_on_demand: bool,
+    pub fallback: Fallback,
+    pub fallback_max_age_days: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionEffective {
+    pub settings: CollectionSettings,
+    /// Setting names users can't change for this collection.
+    pub locked: Vec<String>,
 }
 
 impl Default for Settings {
@@ -35,6 +78,11 @@ impl Default for Settings {
             load_aware_updates: true,
             load_limits: crate::load::Limits::default(),
             parameters: Default::default(),
+            checkout_depth: 0,
+            blobs_on_demand: true,
+            fallback: Fallback::Ask,
+            fallback_max_age_days: 0,
+            collections: Default::default(),
         }
     }
 }
@@ -70,10 +118,72 @@ pub fn set(key: &str, value: Value) -> Result<()> {
     let mut choices = user_choices();
     choices.insert(key.to_string(), value);
     strict_merge(&policy, &choices).with_context(|| format!("invalid value for '{key}'"))?;
+    write_choices(&choices)
+}
+
+fn write_choices(choices: &Map<String, Value>) -> Result<()> {
     let dir = data_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join("settings.json");
-    fs::write(&path, serde_json::to_string_pretty(&choices)? + "\n").with_context(|| format!("writing {}", path.display()))
+    fs::write(&path, serde_json::to_string_pretty(choices)? + "\n").with_context(|| format!("writing {}", path.display()))
+}
+
+/// The settings for one collection: the policy's value for the collection if it is locked; a
+/// locked general value unless the policy sets one for the collection; else the user's value for
+/// the collection, the policy's for the collection, the general value.
+pub fn for_collection(name: &str) -> CollectionEffective {
+    collection_merge(&crate::policy::load(), &user_choices(), name)
+}
+
+pub fn collection_merge(policy: &Policy, choices: &Map<String, Value>, name: &str) -> CollectionEffective {
+    let general = merge(policy, choices);
+    let defaults = serde_json::to_value(&general.settings).unwrap_or_default();
+    let theirs = policy.collection_settings.get(name);
+    let mine = general.settings.collections.get(name);
+    let mut values = Map::new();
+    let mut locked = Vec::new();
+    for key in PER_COLLECTION {
+        let policy_value = theirs.and_then(|t| t.get(key));
+        let value = match policy_value {
+            Some(e) if e.locked => Some(&e.value),
+            None if general.locked.iter().any(|k| k == key) => None,
+            _ => mine.and_then(|m| m.get(key)).or(policy_value.map(|e| &e.value)),
+        };
+        if policy_value.is_some_and(|e| e.locked) || (policy_value.is_none() && general.locked.iter().any(|k| k == key)) {
+            locked.push(key.to_string());
+        }
+        values.insert(key.to_string(), value.unwrap_or(&defaults[key]).clone());
+    }
+    let settings = serde_json::from_value(Value::Object(values)).unwrap_or_else(|err| {
+        eprintln!("warning: ignoring invalid settings for collection '{name}': {err}");
+        serde_json::from_value(defaults).expect("the general settings contain the collection settings")
+    });
+    CollectionEffective { settings, locked }
+}
+
+/// Change one setting for one collection; `null` removes the user's value.
+pub fn set_for_collection(name: &str, key: &str, value: Value) -> Result<()> {
+    if !PER_COLLECTION.contains(&key) {
+        bail!("'{key}' isn't a setting per collection (those are {})", PER_COLLECTION.join(", "));
+    }
+    let policy = crate::policy::load();
+    if collection_merge(&policy, &user_choices(), name).locked.iter().any(|k| k == key) {
+        bail!("'{key}' is set by your organization for collection '{name}'");
+    }
+    let mut choices = user_choices();
+    let mut collections = choices.get("collections").and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut own = collections.get(name).and_then(Value::as_object).cloned().unwrap_or_default();
+    if value.is_null() {
+        own.remove(key);
+    } else {
+        own.insert(key.to_string(), value.clone());
+        let mut check = serde_json::to_value(merge(&policy, &choices).settings)?;
+        check[key] = value;
+        serde_json::from_value::<Settings>(check).with_context(|| format!("invalid value for '{key}'"))?;
+    }
+    collections.insert(name.to_string(), own.into());
+    choices.insert("collections".into(), collections.into());
+    write_choices(&choices)
 }
 
 /// The user's own choices (only the settings they changed).
@@ -153,5 +263,33 @@ mod tests {
         let e = merge(&p, choices.as_object().unwrap());
         assert_eq!(e.settings.update_interval_minutes, 15);
         assert!(!e.settings.load_aware_updates);
+    }
+
+    #[test]
+    fn collection_settings_follow_policy_locks() {
+        let p = policy(json!({
+            "settings": {"fallback": {"value": "off", "locked": true}, "checkoutDepth": {"value": 50}},
+            "collectionSettings": {"tools": {"fallback": {"value": "ask"}, "fallbackMaxAgeDays": {"value": 30, "locked": true}}}
+        }));
+        let choices = json!({"checkoutDepth": 10, "collections": {
+            "tools": {"fallback": "automatic", "fallbackMaxAgeDays": 0, "checkoutDepth": 1},
+            "other": {"fallback": "ask", "blobsOnDemand": false}
+        }});
+        let choices = choices.as_object().unwrap();
+        // The policy sets fallback for "tools" without locking it: the user's value wins there.
+        let tools = collection_merge(&p, choices, "tools");
+        assert_eq!(tools.settings.fallback, Fallback::Automatic);
+        assert_eq!(tools.settings.fallback_max_age_days, 30);
+        assert_eq!(tools.settings.checkout_depth, 1);
+        assert_eq!(tools.locked, ["fallbackMaxAgeDays"]);
+        // Elsewhere the locked general value applies, whatever the user set for the collection.
+        let other = collection_merge(&p, choices, "other");
+        assert_eq!(other.settings.fallback, Fallback::Off);
+        assert!(!other.settings.blobs_on_demand);
+        assert_eq!(other.settings.checkout_depth, 10);
+        assert_eq!(other.locked, ["fallback"]);
+        // Defaults: blobless, whole history, ask.
+        let none = collection_merge(&Policy::default(), &Map::new(), "x").settings;
+        assert_eq!((none.checkout_depth, none.blobs_on_demand, none.fallback), (0, true, Fallback::Ask));
     }
 }

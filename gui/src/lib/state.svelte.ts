@@ -36,7 +36,7 @@ export interface Run {
 
 export interface Queued {
   key: string;
-  action: Busy | 'reinstall';
+  action: Busy | 'reinstall' | 'installPrevious' | 'installCurrent';
   /** Started by automatic updates, not by the user. */
   auto?: boolean;
 }
@@ -69,6 +69,8 @@ export const store = $state({
   runs: {} as Record<string, Run>,
   /** Operations waiting for the running one to finish, in order. */
   queue: [] as Queued[],
+  /** Installs that failed in this session, and the earlier version that may work. */
+  failed: {} as Record<string, { error: string; previous: api.Version | null }>,
   settings: null as Settings | null,
   /** Settings the admin policy locks. */
   locked: [] as string[],
@@ -183,20 +185,28 @@ const kindVerb = { install: 'install', update: 'update', uninstall: 'uninstall',
 
 /** Run one queued operation; resolves to whether it succeeded. */
 async function runOperation(app: AppInfo, action: Queued['action']): Promise<boolean> {
-  const kind: Run['kind'] = action === 'install' && store.status[app.key] === 'needsUpdate' ? 'update' : action;
+  const installs = action !== 'uninstall' && action !== 'reinstall';
+  const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
   startRun(app.key, kind);
   store.busy[app.key] = action === 'uninstall' ? 'uninstall' : 'install';
+  delete store.failed[app.key];
   let cancelled = false;
   let ok = false;
   try {
-    await api[action](app.key);
+    const fellBack = await api[action](app.key);
     ok = true;
-    toast('success', `${kindDone[kind]} ${app.id}`);
+    if (fellBack) toast('info', `Installed the version of ${app.id} from ${fellBack.date}`, `The current version failed: ${fellBack.error}`);
+    else toast('success', `${kindDone[kind]} ${app.id}`);
     if (autoInstalling.delete(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
     if (cancelled) toast('info', `${kindNoun[kind]} of ${app.id} cancelled`);
-    else toast('error', `Couldn't ${kindVerb[kind]} ${app.id}`, message(e));
+    else {
+      toast('error', `Couldn't ${kindVerb[kind]} ${app.id}`, message(e));
+      // An earlier version may work (fallback "ask"); none is offered for one furnish fell back to.
+      const offer = action === 'install' && !app.held;
+      store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };
+    }
   } finally {
     endRun(app.key, cancelled);
     delete store.busy[app.key];
@@ -488,6 +498,16 @@ async function recheckBlocked() {
   for (const key of Object.keys(store.status)) {
     if (store.status[key] === 'blocked') await checkStatus(key);
   }
+}
+
+/** Install the earlier version furnish offers after a failed install. */
+export function installPrevious(app: AppInfo) {
+  enqueue(app.key, 'installPrevious');
+}
+
+/** For an app held at an earlier version: try the collection's current version again. */
+export function installCurrent(app: AppInfo) {
+  enqueue(app.key, 'installCurrent');
 }
 
 /** Uninstall an app: right away, or after what is already running and queued. */

@@ -44,7 +44,12 @@ pub fn enabled() -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
 pub enum Request {
-    Install { app: String, values: Map<String, Value> },
+    Install {
+        app: String,
+        values: Map<String, Value>,
+        #[serde(default)]
+        which: crate::catalog::Which,
+    },
     Uninstall { app: String },
     Reinstall { app: String, values: Map<String, Value> },
     /// Stop the running operation after its step, or (force) now.
@@ -238,10 +243,10 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn() -> Result<()>) -> Re
         _ => authorize()?,
     }
     match request {
-        Request::Install { app: key, values } => {
+        Request::Install { app: key, values, which } => {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
-            operation(&|report| app.install_with(&values, report))
+            operation(&|report| app.install_here(&values, which, report))
         }
         Request::Uninstall { app: key } => {
             let app = app(&key)?;

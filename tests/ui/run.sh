@@ -35,6 +35,7 @@ case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
   -S) sleep 2  # slow enough to observe live progress
+      [ "\$4" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
       if [ -f "$work/pkgs/\$4.new" ]; then mv "$work/pkgs/\$4.new" "$work/pkgs/\$4"; else echo 1.0 > "$work/pkgs/\$4"; fi
       if [ "\$4" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
   -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
@@ -67,6 +68,12 @@ repo_from_fixture() {
 }
 mkdir -p "$work/data/collections"
 repo_from_fixture "$work/origin-src"
+# An app whose latest version fails to install; the one before works (falling back).
+flaky() {
+    printf 'metadata: { furnish: { description: Its latest version is broken, categories: [Test] } }\nresources:\n  - name: flaky\n    type: Furnish/Package\n    properties: { name: %s }\n' "$1" > "$work/origin-src/apps/flaky.dsc.yaml"
+    git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "flaky: $1"
+}
+flaky flaky; flaky broken
 git clone -q --bare "$work/origin-src" "$work/origin.git"
 git clone -q "$work/origin.git" "$work/data/collections/fixture"
 # The origin moves on after the app's clone: updating on launch must bring in this app.

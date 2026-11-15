@@ -1,7 +1,7 @@
 <script lang="ts">
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { store, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending } from './state.svelte';
+  import { store, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent } from './state.svelte';
   import Options from './Options.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
@@ -80,6 +80,26 @@
   </header>
 
   <p class="description">{app.description || 'No description.'}</p>
+
+  {#if app.held}
+    <div class="differ" role="status">
+      <span>
+        This is the version of {app.id} from {app.held.date}: installing the collection's current version failed.
+        {app.id} stays at this version until the collection changes it.
+      </span>
+      <button class="secondary" disabled={isPending(app.key)} onclick={() => installCurrent(app)}>
+        {isPending(app.key) ? 'Installing…' : 'Try the current version'}
+      </button>
+    </div>
+  {:else if store.failed[app.key]?.previous}
+    {@const previous = store.failed[app.key].previous!}
+    <div class="differ" role="status">
+      <span>Installing {app.id} failed. Its version from {previous.date} may work.</span>
+      <button class="secondary" disabled={isPending(app.key)} onclick={() => installPrevious(app)}>
+        {isPending(app.key) ? 'Installing…' : `Install the version from ${previous.date}`}
+      </button>
+    </div>
+  {/if}
 
   {#if installed && app.optionsDiffer}
     <div class="differ" role="status">

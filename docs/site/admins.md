@@ -23,6 +23,7 @@ An admin policy decides which collections people get and what they can change. f
     "trustedKeys": ["ssh-ed25519 AAAAC3Nz… it-team"]
   },
   "parameters": { "acme-it": { "role": { "value": "developer" } } },
+  "collectionSettings": { "acme-it": { "fallback": { "value": "off", "locked": true } } },
   "autoInstall": ["acme-it/vpn"]
 }
 ```
@@ -31,7 +32,21 @@ An admin policy decides which collections people get and what they can change. f
 - `collections.preset`: furnish adds these collections for everyone, and nobody can remove them. With `usersCanAdd: false`, people can't add other collections.
 - `collections.trustedKeys`: preset collections only move to commits signed with one of these SSH keys. Without them, anyone who can push to the repository can change what gets installed.
 - `parameters`: values for options and answers to questions, per collection or per app (`acme-it/gimp`), as defaults or `locked`. A question answered here isn't asked.
+- `collectionSettings`: values for one collection of the settings in [Disk use and earlier versions](#disk-use-and-earlier-versions), as defaults or `locked`.
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
+
+## Disk use and earlier versions
+
+Each person's computer keeps a git copy of every collection. Four settings decide how much of it, and what happens when an install fails. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `blobsOnDemand` | `true` | Download file contents only when needed: installer files (`.msi`, `.deb`, …) when an app that uses them is installed, earlier versions when furnish falls back to one. The copy holds the history's commits and file lists, which are small. |
+| `checkoutDepth` | `0` | Commits of history to keep; `0` keeps all. With `1`, nothing older than the current version is available to fall back to. |
+| `fallback` | `"ask"` | After a failed install or update: `"ask"` offers the app's previous version, `"automatic"` installs it, `"off"` does neither. |
+| `fallbackMaxAgeDays` | `0` | Fall back only to versions at most this many days older than the failing one; `0`: any age. |
+
+The previous version is the one that last installed on that computer, else the app's file before the collection's latest change to it. furnish installs it from the files of that commit and keeps the app there until the collection changes the app again. With `trustedKeys`, that commit must be signed by one of the keys, like the current one. Turn `fallback` off for collections where an older version must not come back, for example after a security fix, or limit it with `fallbackMaxAgeDays`.
 
 ## Sign-in without a VPN
 
