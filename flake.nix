@@ -88,6 +88,10 @@
           buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg ];
           doCheck = false; # the library's tests run in `furnish`
           postInstall = "mkdir -p $out/lib/furnish && ln -s ${dsc-resources} $out/lib/furnish/dsc";
+          # The tray icon loads libayatana-appindicator at runtime.
+          preFixup = ''
+            gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.libayatana-appindicator ]})
+          '';
           meta = furnish.meta // { mainProgram = "furnish-gui"; };
         });
 

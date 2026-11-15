@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="86 70 360 360">
+  <!-- The logo's armchair and sparkle in black on transparent: a macOS menu bar template image
+       (the menu bar tints it). Source of tray-template.png:
+       rsvg-convert -w 44 -h 44 -a tray-template.svg -o tray-template.png -->
+  <mask id="cushion">
+    <rect x="0" y="0" width="512" height="512" fill="#fff"/>
+    <rect x="172" y="262" width="168" height="62" rx="22" fill="#000"/>
+  </mask>
+  <g fill="#000" mask="url(#cushion)">
+    <rect x="150" y="118" width="212" height="170" rx="40"/>
+    <rect x="96" y="214" width="84" height="160" rx="38"/>
+    <rect x="332" y="214" width="84" height="160" rx="38"/>
+    <rect x="96" y="318" width="320" height="56" rx="26"/>
+    <rect x="128" y="360" width="30" height="48" rx="10"/>
+    <rect x="354" y="360" width="30" height="48" rx="10"/>
+  </g>
+  <path d="M398 92 l10 26 26 10 -26 10 -10 26 -10 -26 -26 -10 26 -10z" fill="#000"/>
+</svg>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, checkForUpdates, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -15,6 +15,8 @@
   import { t, formatTime } from './lib/i18n.svelte';
 
   start();
+  // The tray menu follows the language, the branding and what furnish is doing.
+  $effect(() => syncTray(trayTexts()));
 
   const view = $derived(store.view);
   const categories = $derived(

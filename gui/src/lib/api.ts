@@ -240,6 +240,8 @@ export const updateCollection = (name: string) =>
 export const removeCollection = (name: string) => invoke<void>('remove_collection', { name });
 
 export interface Settings {
+  /** Start at sign-in, hidden in the tray. */
+  startAtSignIn: boolean;
   /** Pull all collections when the app starts. */
   updateOnLaunch: boolean;
   /** Pull all collections this often while the app runs; 0 turns it off. */
@@ -269,5 +271,21 @@ export const systemLoad = () => invoke<Load>('system_load');
 export const getSettings = () =>
   invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean }>('get_settings');
 export const setSetting = (key: keyof Settings, value: unknown) => invoke<void>('set_setting', { key, value });
+
+/** The tray menu's texts; `status`: updates waiting or what furnish is doing, empty for nothing. */
+export interface TrayTexts {
+  open: string;
+  check: string;
+  quit: string;
+  status: string;
+  tooltip: string;
+}
+export const setTray = (texts: TrayTexts) => invoke<void>('set_tray', { texts });
+/** Check for updates, chosen in the tray menu. */
+export const onCheckUpdates = (handler: () => void) => listen('furnish://check-updates', () => handler());
+/** The window was closed, and furnish keeps running in the tray. */
+export const onToTray = (handler: () => void) => listen('furnish://to-tray', () => handler());
+/** The window was opened again (tray, starting furnish again). */
+export const onShown = (handler: () => void) => listen('furnish://shown', () => handler());
 /** Clone the admin's preset collections; returns problems (e.g. offline). */
 export const ensurePresets = () => invoke<string[]>('ensure_presets');

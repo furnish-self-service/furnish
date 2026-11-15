@@ -13,6 +13,8 @@ use crate::{catalog::data_dir, policy::Policy};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Start the desktop app at sign-in, in the tray, so updates run without anyone opening it.
+    pub start_at_sign_in: bool,
     /// Pull all collections when the desktop app starts.
     pub update_on_launch: bool,
     /// Pull all collections this often while the desktop app runs; 0 turns it off.
@@ -94,6 +96,7 @@ pub struct CollectionEffective {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            start_at_sign_in: true,
             update_on_launch: true,
             update_interval_minutes: 30,
             no_auto_update: Vec::new(),
@@ -317,6 +320,21 @@ mod tests {
         // Defaults: blobless, whole history, ask.
         let none = collection_merge(&Policy::default(), &Map::new(), "x").settings;
         assert_eq!((none.checkout_depth, none.blobs_on_demand, none.fallback), (0, true, Fallback::Ask));
+    }
+
+    #[test]
+    fn start_at_sign_in_is_on_by_default_and_follows_the_policy() {
+        assert!(Settings::default().start_at_sign_in);
+        let off = json!({"startAtSignIn": false});
+        assert!(!merge(&Policy::default(), off.as_object().unwrap()).settings.start_at_sign_in);
+        // A policy default yields to the user; a locked value doesn't.
+        let p = policy(json!({"settings": {"startAtSignIn": {"value": false}}}));
+        assert!(!merge(&p, &Map::new()).settings.start_at_sign_in);
+        assert!(merge(&p, json!({"startAtSignIn": true}).as_object().unwrap()).settings.start_at_sign_in);
+        let p = policy(json!({"settings": {"startAtSignIn": {"value": true, "locked": true}}}));
+        let e = merge(&p, off.as_object().unwrap());
+        assert!(e.settings.start_at_sign_in);
+        assert_eq!(e.locked, ["startAtSignIn"]);
     }
 
     #[test]

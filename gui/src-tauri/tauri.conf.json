@@ -12,6 +12,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "furnish",
         "width": 1120,
         "height": 740,
@@ -38,12 +40,12 @@
     "linux": {
       "deb": {
         "desktopTemplate": "furnish.desktop",
-        "depends": ["git"],
+        "depends": ["git", "libayatana-appindicator3-1"],
         "recommends": ["git-lfs"]
       },
       "rpm": {
         "desktopTemplate": "furnish.desktop",
-        "depends": ["git"],
+        "depends": ["git", "libayatana-appindicator3.so.1()(64bit)"],
         "recommends": ["git-lfs"]
       }
     }

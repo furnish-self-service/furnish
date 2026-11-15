@@ -374,6 +374,62 @@ export async function start() {
   else updateApps();
 }
 
+// --- Tray
+
+/** The tray menu's texts and what furnish is doing, in the app's language. */
+export function trayTexts(): api.TrayTexts {
+  const brand = store.brand.name;
+  const busy = Object.keys(store.busy)[0];
+  const updates = store.apps.filter((a) => store.status[a.key] === 'needsUpdate').length;
+  const app = busy && (appByKey(busy)?.id ?? busy);
+  const status = app
+    ? t(store.busy[busy] === 'uninstall' ? 'tray.uninstalling' : 'tray.installing', { app })
+    : store.autoUpdate.running
+      ? t('tray.checking')
+      : updates
+        ? t('tray.updates', { n: updates })
+        : '';
+  return {
+    open: t('tray.open', { brand }),
+    check: t('tray.check'),
+    quit: t('tray.quit', { brand }),
+    status,
+    tooltip: status ? t('tray.tooltip', { brand, status }) : brand,
+  };
+}
+
+let sentTray = '';
+/** Send the tray's texts when they changed. */
+export function syncTray(texts: api.TrayTexts) {
+  const json = JSON.stringify(texts);
+  if (json === sentTray) return;
+  sentTray = json;
+  api.setTray(texts).catch(() => {});
+}
+
+// The first time the window closes to the tray, say so when it opens again.
+const HINT = 'furnish.trayHintShown';
+let hintDue = false;
+const hintShown = () => {
+  try {
+    return localStorage.getItem(HINT) === '1';
+  } catch {
+    return false;
+  }
+};
+api.onToTray(() => {
+  if (!hintShown()) hintDue = true;
+});
+api.onShown(() => {
+  if (!hintDue) return;
+  hintDue = false;
+  toast('info', t('toast.inTray', { brand: store.brand.name }));
+  try {
+    localStorage.setItem(HINT, '1');
+  } catch {}
+});
+api.onCheckUpdates(() => checkForUpdates());
+
 api.onSignIn((started) => {
   store.signInUrl = started.url;
   store.signInOrigin = started.origin;

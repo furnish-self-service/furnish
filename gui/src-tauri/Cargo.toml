@@ -10,14 +10,22 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 furnish = { path = "../.." }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 base64 = "0.22"
 serde_json = "1"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# Starting at sign-in (Windows Run key, macOS LaunchAgent, Linux XDG autostart). Used directly
+# rather than through tauri-plugin-autostart, which always registers the running binary: on Nix
+# that is a store path the next update removes.
+auto-launch = "=0.6.0"
 
 # Same glib as Tauri's GTK stack, used to set the Wayland app ID (see main.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.18"
+# Whether the desktop shows tray icons (a StatusNotifierWatcher on the session bus).
+gio = "0.18"
+# Whether libayatana-appindicator is installed: the tray loads it at runtime and panics without it.
+libloading = "0.7"

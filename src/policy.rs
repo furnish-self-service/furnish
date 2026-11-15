@@ -185,7 +185,7 @@ fn local_remote(name: &str) -> Option<String> {
 /// Settings an endpoint may set for everything, as a default: when and how furnish updates,
 /// reports, and the language. Settings in `settings::PER_COLLECTION` apply to its own
 /// collections only; others (such as `parameters` or `noAutoUpdate`) aren't an endpoint's to set.
-pub const ENDPOINT_SETTINGS: [&str; 6] = ["updateOnLaunch", "updateIntervalMinutes", "loadAwareUpdates", "reporting", "reportHostname", "language"];
+pub const ENDPOINT_SETTINGS: [&str; 7] = ["startAtSignIn", "updateOnLaunch", "updateIntervalMinutes", "loadAwareUpdates", "reporting", "reportHostname", "language"];
 
 /// Add what the organization's endpoints say (as from `speaking_for_own`, the first added first):
 /// the collections of endpoints the policy names become presets. Each endpoint's option values,
@@ -336,7 +336,7 @@ mod tests {
             "name": "Acme", "issuer": "https://sso.acme.tld", "clientId": "furnish",
             "collections": [{"name": "acme", "url": "https://furnish.acme.tld/git/acme.git"}],
             "branding": {"name": "Acme Apps"},
-            "settings": {"updateIntervalMinutes": 5, "loadAwareUpdates": false},
+            "settings": {"updateIntervalMinutes": 5, "loadAwareUpdates": false, "startAtSignIn": false},
             "parameters": {"acme": {"role": "developer"}},
             "autoInstall": ["acme/vpn"]
         }))
@@ -349,6 +349,7 @@ mod tests {
         assert_eq!(p.branding.name.as_deref(), Some("Admin's"));
         assert_eq!(p.settings["updateIntervalMinutes"], Entry { value: 60.into(), locked: true });
         assert_eq!(p.settings["loadAwareUpdates"], Entry { value: false.into(), locked: false });
+        assert_eq!(p.settings["startAtSignIn"], Entry { value: false.into(), locked: false });
         assert!(!p.parameters["acme"]["role"].locked);
         assert_eq!(p.auto_install, ["acme/vpn"]);
     }

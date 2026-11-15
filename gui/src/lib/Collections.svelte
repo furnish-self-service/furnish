@@ -136,6 +136,17 @@
       <label class="check">
         <input
           type="checkbox"
+          checked={store.settings.startAtSignIn}
+          disabled={isLocked('startAtSignIn')}
+          onchange={(e) => changeSettings({ startAtSignIn: e.currentTarget.checked })}
+        />
+        {t('collections.startAtSignIn', { brand: store.brand.name })}
+        {#if isLocked('startAtSignIn')}<span class="org">{t('common.setByOrg')}</span>{/if}
+      </label>
+      <p class="explain">{t('collections.startAtSignInText', { brand: store.brand.name })}</p>
+      <label class="check">
+        <input
+          type="checkbox"
           checked={store.settings.updateOnLaunch}
           disabled={isLocked('updateOnLaunch')}
           onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}

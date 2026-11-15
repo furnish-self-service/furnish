@@ -3,6 +3,9 @@
 
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
+mod autostart;
+mod tray;
+
 use std::{
     fs,
     io::Read as _,
@@ -15,7 +18,7 @@ use furnish::{
     engine, options,
 };
 use serde::Serialize;
-use tauri::{Emitter, async_runtime::spawn_blocking};
+use tauri::{Emitter, Manager as _, async_runtime::spawn_blocking};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -299,6 +302,7 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
         Some("autoInstall") => "autoInstall",
         _ => "user",
     };
+    let running = tray::Running::start(&handle).ok_or("furnish is quitting")?;
     let result = blocking(move || furnish::reports::with_trigger(trigger, || {
         let app = catalog::find_app(&key)?;
         let report = |progress| {
@@ -320,6 +324,7 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
     }))
     .await;
     std::thread::spawn(furnish::reports::send);
+    drop(running); // quits now if Quit was chosen while this ran
     result
 }
 
@@ -449,7 +454,17 @@ fn get_settings() -> furnish::settings::Effective {
 /// Change one setting for this user (refused for settings the admin policy locks).
 #[tauri::command]
 fn set_setting(key: String, value: serde_json::Value) -> CmdResult<()> {
-    furnish::settings::set(&key, value).map_err(|e| format!("{e:#}"))
+    furnish::settings::set(&key, value).map_err(|e| format!("{e:#}"))?;
+    if key == "startAtSignIn" {
+        autostart::apply(furnish::settings::load().start_at_sign_in).map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(())
+}
+
+/// The tray menu's texts in the app's language, and what furnish is doing.
+#[tauri::command]
+fn set_tray(app: tauri::AppHandle, texts: tray::Texts) -> CmdResult<()> {
+    tray::update(&app, &texts).map_err(|e| e.to_string())
 }
 
 /// Clone the admin's preset collections this user doesn't have yet; returns problems.
@@ -630,12 +645,26 @@ fn main() {
     }
     furnish::load::start_sampler(load_interval());
     tauri::Builder::default()
-        // A furnish:// link while furnish runs: hand it to the running window.
-        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
+        // Started again while running (from the menu, a furnish:// link): show the window. The
+        // link itself reaches the window through the deep-link plugin.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            if !args.iter().any(|a| a == autostart::HIDDEN) {
+                tray::show(app);
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            use tauri::Manager;
             use tauri_plugin_deep_link::DeepLinkExt;
+            // Started at sign-in: only the tray icon, the window stays hidden until opened.
+            let hidden = std::env::args().any(|a| a == autostart::HIDDEN);
+            let brand = branding_info().name;
+            let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("no main window in tauri.conf.json")?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?.title(&brand).visible(!hidden).build()?;
+            if let Err(err) = tray::create(app.handle(), &tray::Texts::english(&brand)) {
+                eprintln!("warning: no tray icon: {err:#}");
+            }
+            // The policy may have changed the setting, or furnish moved (AppImage).
+            std::thread::spawn(autostart::sync);
             // Links (furnish://add?endpoint=…) go to the UI, which asks before adding anything.
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
@@ -645,15 +674,26 @@ fn main() {
             });
             #[cfg(any(target_os = "linux", windows))]
             let _ = app.deep_link().register_all();
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_title(&branding_info().name);
-            }
             // Stream what installs are doing to the UI's activity log.
             let handle = app.handle().clone();
             engine::capture_logs(move |line| {
                 let _ = handle.emit("furnish://log", line);
             });
             Ok(())
+        })
+        // Closing the window keeps furnish running in the tray. Without a tray it quits, but
+        // only after a running install.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let app = window.app_handle();
+                if tray::shown(app) {
+                    let _ = window.hide();
+                    let _ = app.emit("furnish://to-tray", ());
+                } else {
+                    tray::quit(app);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             get_branding,
@@ -683,6 +723,7 @@ fn main() {
             get_settings,
             system_load,
             set_setting,
+            set_tray,
             ensure_presets,
             list_collections,
             add_collection,
@@ -691,6 +732,17 @@ fn main() {
             update_collection,
             remove_collection
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to start the furnish window");
+        .build(tauri::generate_context!())
+        .expect("failed to start the furnish window")
+        .run(|app, event| match event {
+            // Quit from the macOS app menu (Cmd+Q) while installing: after the install.
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => {
+                api.prevent_exit();
+                tray::quit(app);
+            }
+            // macOS: the Dock icon clicked while the window is hidden.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { has_visible_windows: false, .. } => tray::show(app),
+            _ => {}
+        });
 }

@@ -59,6 +59,22 @@ const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/prope
 const button = (label) => `//button[normalize-space()='${label}']`;
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
 const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDir}/${file}`, 'utf8') : '');
+// The sign-in entry furnish writes (HOME=/tmp in the container).
+const AUTOSTART = '/tmp/.config/autostart/furnish.desktop';
+const autostartEntry = () => spawnSync('docker', ['exec', container, 'cat', AUTOSTART], { encoding: 'utf8' }).stdout;
+
+/** Start furnish (again: a new WebDriver session is a new process). */
+async function startSession() {
+  if (session) await wd('DELETE', s('')).catch(() => {});
+  session = null;
+  session = (
+    await waitFor('tauri-driver', () =>
+      wd('POST', '/session', {
+        capabilities: { alwaysMatch: { 'tauri:options': { application: '/usr/local/bin/furnish-gui' } } },
+      }),
+    )
+  ).sessionId;
+}
 
 const steps = [
   ['the organization branding: name, logo and colors', async () => {
@@ -388,17 +404,40 @@ const steps = [
     await click("//button[@aria-label='Acme Apps, go to Discover']");
     await waitFor('Discover page', async () => (await text('//h1')) === 'Discover');
   }],
+  ['starting at sign-in: on by default, the setting adds and removes the entry', async () => {
+    await waitFor('sign-in entry written at start', () => autostartEntry().includes('--hidden'));
+    if (!/^Exec=\/usr\/local\/bin\/furnish-gui --hidden$/m.test(autostartEntry())) throw new Error(`entry: ${autostartEntry()}`);
+    await click(button('Collections'));
+    const box = "//label[contains(., 'Start Acme Apps when you sign in')]/input";
+    if (!(await prop(box, 'checked'))) throw new Error('off by default');
+    await click(box);
+    await waitFor('turned off', () => log('data/settings.json').includes('"startAtSignIn": false'));
+    await waitFor('entry removed', () => !autostartEntry());
+    await click(box);
+    await waitFor('turned on', () => log('data/settings.json').includes('"startAtSignIn": true'));
+    await waitFor('entry back', () => autostartEntry().includes('--hidden'));
+  }],
+  ['the organization can lock starting at sign-in; furnish applies it when it starts', async () => {
+    const policy = log('policy.json');
+    const locked = JSON.parse(policy);
+    locked.settings.startAtSignIn = { value: false, locked: true };
+    writeFileSync(`${workDir}/policy.json`, JSON.stringify(locked));
+    try {
+      await startSession();
+      await waitFor('entry removed at start', () => !autostartEntry());
+      await click(button('Collections'));
+      const label = "//label[contains(., 'Start Acme Apps when you sign in')]";
+      await waitFor('locked', async () => (await prop(`${label}/input`, 'disabled')) && !(await prop(`${label}/input`, 'checked')));
+      if (!(await text(label)).includes('Set by your organization')) throw new Error('no hint that the organization sets it');
+    } finally {
+      writeFileSync(`${workDir}/policy.json`, policy);
+    }
+  }],
 ];
 
 let failed = false;
 try {
-  session = (
-    await waitFor('tauri-driver', () =>
-      wd('POST', '/session', {
-        capabilities: { alwaysMatch: { 'tauri:options': { application: '/usr/local/bin/furnish-gui' } } },
-      }),
-    )
-  ).sessionId;
+  await startSession();
   for (const [name, step] of steps) {
     try {
       await step();

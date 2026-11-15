@@ -37,6 +37,16 @@ An admin policy decides which collections people get and what they can change. f
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
 - `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own `Furnish/Package` and `Furnish/Installer`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
+## Starting at sign-in
+
+furnish installs updates only while it runs. With `startAtSignIn` on, which is the default, it starts when people sign in, with the window closed and its icon in the system tray or menu bar. furnish adds the entry for the current user: a value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, a LaunchAgent in `~/Library/LaunchAgents` on macOS, `~/.config/autostart/furnish.desktop` on Linux. It updates or removes the entry each time it starts, so a locked policy value applies from the next start on:
+
+```json
+{ "settings": { "startAtSignIn": { "value": true, "locked": true } } }
+```
+
+On Linux, the tray icon needs libayatana-appindicator, which the furnish packages and the Nix package bring along. GNOME shows tray icons only with the AppIndicator extension. Without a tray, closing the window quits furnish.
+
 ## Disk use and earlier versions
 
 Each person's computer keeps a git copy of every collection. Four settings decide how much of it, and what happens when an install fails. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.
@@ -77,7 +87,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname` and `language` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname` and `language` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
 | `branding` | the app's name and colors, and a logo from one of its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.
