@@ -313,7 +313,9 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
     let settings = crate::settings::for_collection(name).settings;
     let depth = format!("--depth={}", settings.checkout_depth);
     let mut args = vec!["clone", "--quiet", "--no-checkout"];
-    if settings.blobs_on_demand {
+    // A path on this computer is copied as it is, so there is nothing to download on demand; and
+    // a filter would make git serve it like a remote (git-upload-pack), as whoever clones.
+    if settings.blobs_on_demand && !Path::new(url).exists() {
         args.push("--filter=blob:none");
     }
     if settings.checkout_depth > 0 {
@@ -323,7 +325,10 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
     args.extend(["--config=gc.reflogExpireUnreachable=now", "--config=gc.pruneExpire=now"]);
     let target = dir.to_string_lossy();
     args.extend([url, &target]);
-    git(None, &args)?;
+    if let Err(err) = git(None, &args) {
+        remove_repository(&dir); // git may leave a partial copy behind
+        return Err(err);
+    }
     let collection = Collection { name: name.to_string(), dir, managed };
     let checkout = || -> Result<()> {
         collection.verify("HEAD")?;
@@ -331,7 +336,7 @@ fn clone(url: &str, name: &str, managed: bool) -> Result<Collection> {
         git(Some(&collection.dir), &["reset", "--quiet", "--hard"]).map(drop)
     };
     if let Err(err) = checkout() {
-        let _ = fs::remove_dir_all(&collection.dir); // no half-usable collection
+        remove_repository(&collection.dir); // no half-usable collection
         return Err(err);
     }
     Ok(collection)
@@ -622,9 +627,18 @@ impl Collection {
         if !path.starts_with(self.dir.canonicalize().ok()?) {
             return None;
         }
-        // Windows canonical paths start with \\?\, which installers like msiexec reject.
-        let plain = path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from);
-        Some(plain.unwrap_or(path))
+        Some(plain_path(path))
+    }
+
+    /// Where a file of the repository that isn't checked out yet will be (see blobs_on_demand).
+    /// Joined part by part onto the canonical directory: Windows installers such as msiexec reject
+    /// paths with a `/`.
+    fn file_in_repo_later(&self, relative: &str) -> Option<PathBuf> {
+        let parts = Path::new(relative).components();
+        if !parts.clone().all(|c| matches!(c, Component::Normal(_))) {
+            return None;
+        }
+        Some(parts.fold(plain_path(self.dir.canonicalize().ok()?), |p, c| p.join(c)))
     }
 
     fn load_app(&self, path: &Path) -> Result<App> {
@@ -641,11 +655,7 @@ impl Collection {
             }
             if let Some(file) = resource["properties"]["file"].as_str() {
                 // Not checked out yet (blobs_on_demand): installing the app checks it out.
-                // Joined part by part: Windows programs such as msiexec reject paths with a `/`.
-                let later = || {
-                    let parts = Path::new(file).components();
-                    parts.clone().all(|c| matches!(c, Component::Normal(_))).then(|| parts.fold(self.dir.clone(), |p, c| p.join(c)))
-                };
+                let later = || self.file_in_repo_later(file);
                 let resolved = self
                     .file_in_repo(file)
                     .or_else(later)
@@ -674,6 +684,20 @@ impl Collection {
             doc,
             held: None,
         })
+    }
+}
+
+/// Windows canonical paths start with \\?\, which installers like msiexec reject.
+fn plain_path(path: PathBuf) -> PathBuf {
+    path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(path)
+}
+
+/// Delete a copy git left behind.
+fn remove_repository(dir: &Path) {
+    if let Err(err) = fs::remove_dir_all(dir)
+        && dir.exists()
+    {
+        eprintln!("warning: couldn't remove {}: {err}", dir.display());
     }
 }
 

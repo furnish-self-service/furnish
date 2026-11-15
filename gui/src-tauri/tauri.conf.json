@@ -34,7 +34,6 @@
       "icons/icon.ico"
     ],
     "category": "Utility",
-    "resources": { "../../THIRD-PARTY-LICENSES.html": "THIRD-PARTY-LICENSES.html" },
     "shortDescription": "Install apps your organization provides",
     "linux": {
       "deb": {

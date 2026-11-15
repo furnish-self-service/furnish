@@ -37,7 +37,7 @@ const npm = ['svelte', '@tauri-apps/api', '@fontsource-variable/bricolage-grotes
   return `<section><h3>${repo ? link(repo, `${name} ${pkg.version}`) : esc(`${name} ${pkg.version}`)} (${esc(pkg.license)})</h3>${texts}</section>`;
 });
 
-// Programs the Windows installer contains (see gui/scripts/bundled-git.mjs).
+// Programs the Windows installer contains (see gui/scripts/bundle-resources.mjs).
 const git = JSON.parse(readFileSync(`${root}gui/scripts/bundled-git.json`, 'utf8'));
 const lfsLicense = await (await fetch(git.lfs.source.replace('github.com', 'raw.githubusercontent.com').replace('/tree/', '/') + '/LICENSE.md')).text();
 
