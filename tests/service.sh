@@ -7,13 +7,15 @@ set -eu
 if [ "${1:-}" != --inside ]; then
     binary=$(realpath "${1:?usage: $0 <furnish-binary>}")
     repo=$(cd "$(dirname "$0")/.." && pwd)
-    exec docker run --rm -v "$repo:/src:ro" -v "$binary:/usr/bin/furnish:ro" ubuntu:24.04 sh /src/tests/service.sh --inside
+    exec docker run --rm -v "$repo:/src:ro" -v "$binary:/furnish-bin:ro" ubuntu:24.04 sh /src/tests/service.sh --inside
 fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 as() { user=$1; shift; runuser -u "$user" -- env HOME="/home/$user" "$@"; }
 
 apt-get update -qq && apt-get install -y -qq git openssh-client >/dev/null
+# The mounted binary belongs to whoever built it; the service only runs one that root owns.
+install -m 755 /furnish-bin /usr/bin/furnish
 groupadd -f staff
 useradd -m -G staff alice
 useradd -m bob
@@ -69,6 +71,10 @@ JSON
 
 echo "== service install/uninstall register it with systemd and polkit"
 printf '#!/bin/sh\necho "$*" >> /tmp/systemctl.log\n' > /usr/local/bin/systemctl && chmod +x /usr/local/bin/systemctl
+install -o alice -m 755 /usr/bin/furnish /home/alice/furnish
+if out=$(/home/alice/furnish service install 2>&1); then fail "installed a service binary that alice can change"; fi
+echo "$out" | grep -q "not root" || fail "unexpected refusal: $out"
+[ ! -e /etc/systemd/system/furnish.service ] || fail "unit written for alice's binary"
 if as alice furnish service install 2>/dev/null; then fail "a user installed the service"; fi
 furnish service install >/dev/null || fail "service install failed"
 grep -q "^ExecStart=/usr/bin/furnish service$" /etc/systemd/system/furnish.service || fail "unit doesn't run this furnish"
@@ -81,6 +87,12 @@ grep -q "^disable --now furnish$" /tmp/systemctl.log || fail "not disabled"
 furnish service 2>/tmp/service.log &
 for _ in $(seq 50); do [ -S /run/furnish.sock ] && break; sleep 0.2; done
 [ -S /run/furnish.sock ] || { cat /tmp/service.log; fail "service didn't start"; }
+
+# A connection that never sends a request is closed after 30 s (checked at the end).
+perl -MIO::Socket::UNIX -MTime::HiRes=time -e '
+    my $s = IO::Socket::UNIX->new(Peer => "/run/furnish.sock") or die "connect: $!";
+    my $t = time; 1 while <$s>; printf "%d\n", time - $t' > /tmp/idle.txt &
+idle=$!
 
 echo "== a member of the allowed group installs system-wide"
 as alice furnish install hyperfine || { cat /tmp/service.log; fail "alice couldn't install"; }
@@ -124,6 +136,11 @@ echo "# unsigned" >> /srv/org/apps/hyperfine.dsc.yaml
 git -C /srv/org commit -q -a --no-gpg-sign -m unsigned
 if out=$(as alice furnish collection update org 2>&1); then fail "unsigned commit accepted"; fi
 echo "$out" | grep -q "isn't signed" || fail "unexpected error: $out"
+echo "== users who may not install don't see why an update failed; the service's log does"
+if out=$(as bob furnish collection update org 2>&1); then fail "unsigned commit accepted for bob"; fi
+echo "$out" | grep -q "details in its log" || fail "unexpected error for bob: $out"
+if echo "$out" | grep -q "isn't signed"; then fail "bob sees the details: $out"; fi
+grep -q "isn't signed" /tmp/service.log || fail "details not in the service's log"
 [ "$(git -C /var/lib/furnish/collections/org rev-parse HEAD)" = "$old" ] || fail "moved to the unsigned commit"
 git -C /srv/org commit -q --amend -S -m signed
 as alice furnish collection update org >/dev/null || fail "signed commit refused"
@@ -131,4 +148,8 @@ as alice furnish collection update org >/dev/null || fail "signed commit refused
 echo "== uninstall through the service"
 as alice furnish uninstall hyperfine >/dev/null || fail "alice couldn't uninstall"
 [ ! -f /var/fake-pkgs/hyperfine ] || fail "still installed"
+
+echo "== idle connections are closed"
+wait "$idle"
+[ "$(cat /tmp/idle.txt)" -ge 25 ] && [ "$(cat /tmp/idle.txt)" -le 40 ] || fail "idle connection closed after $(cat /tmp/idle.txt) s"
 echo "service OK"

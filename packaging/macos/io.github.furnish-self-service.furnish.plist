@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- The furnish service: installs your organization's apps for users without administrator
      rights. `sudo furnish service install` installs it to /Library/LaunchDaemons/ with the path
-     of that furnish binary. -->
+     of that furnish binary. PATH has only system folders: the service runs as root, and folders
+     like /usr/local/bin and /opt/homebrew/bin belong to whoever installed Homebrew. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -15,7 +16,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
