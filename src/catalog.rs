@@ -1070,13 +1070,54 @@ pub fn find_app(query: &str) -> Result<App> {
 /// Installer files, which blobs_on_demand leaves out of the checkout until an app needs one.
 const INSTALLERS: [&str; 6] = ["*.msi", "*.exe", "*.pkg", "*.dmg", "*.deb", "*.rpm"];
 
+/// The git program: the system's, else the copy the Windows installer ships next to furnish
+/// (MinGit with git-lfs, in `git\` beside furnish.exe).
+pub fn git_command() -> Command {
+    static BUNDLED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    let bundled = BUNDLED.get_or_init(|| {
+        let on_path = env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("git.exe").is_file()));
+        if !cfg!(windows) || on_path {
+            return None;
+        }
+        let git = env::current_exe().ok()?.parent()?.join("git").join("cmd").join("git.exe");
+        git.is_file().then_some(git)
+    });
+    let Some(git) = bundled else { return Command::new("git") };
+    let mut cmd = Command::new(git);
+    // furnish asks for logins itself; the bundled credential manager mustn't open windows.
+    cmd.env("GCM_INTERACTIVE", "never");
+    // Windows' own OpenSSH, so its ssh-agent service and keys work like with a system git.
+    let openssh = env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32").join("OpenSSH").join("ssh.exe"));
+    if let Some(ssh) = openssh.filter(|s| s.is_file())
+        && env::var_os("GIT_SSH_COMMAND").is_none()
+    {
+        cmd.env("GIT_SSH_COMMAND", format!("\"{}\"", ssh.display()).replace('\\', "/"));
+    }
+    cmd
+}
+
+/// Why git couldn't run, and what to do about it.
+fn git_missing(err: std::io::Error) -> anyhow::Error {
+    if err.kind() != std::io::ErrorKind::NotFound {
+        return anyhow::Error::new(err).context("failed to run git");
+    }
+    let how = if cfg!(windows) {
+        "reinstall furnish (its installer includes git), or install Git for Windows"
+    } else if cfg!(target_os = "macos") {
+        "install Apple's Command Line Tools (run `xcode-select --install`) or git from Homebrew"
+    } else {
+        "install the package git with your package manager"
+    };
+    anyhow::anyhow!("furnish needs git, which isn't installed: {how}")
+}
+
 fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&git_bytes(dir, args)?).trim().to_string())
 }
 
 fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     let _working = crate::load::activity(); // load-aware updates ignore furnish's own downloads
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     if let Some(dir) = dir {
         cmd.arg("-C").arg(dir);
         // The service's collections belong to root/SYSTEM; git refuses other users' repositories otherwise.
@@ -1097,16 +1138,20 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
         args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string())
     } else {
         dir.and_then(|d| {
-            let out = Command::new("git").arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
+            let out = git_command().arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
         })
     };
     if let Some(url) = &url {
         cmd.envs(crate::auth::git_env(url)?);
     }
-    let output = cmd.args(args).output().context("failed to run git (is it installed?)")?;
+    let output = cmd.args(args).output().map_err(git_missing)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // macOS: /usr/bin/git is a placeholder until the Command Line Tools are installed.
+        if stderr.contains("xcrun: error: invalid active developer path") || stderr.contains("No developer tools were found") {
+            return Err(git_missing(std::io::ErrorKind::NotFound.into()));
+        }
         if let Some(url) = url.filter(|u| u.starts_with("http") && crate::auth::is_auth_failure(&stderr)) {
             return Err(crate::auth::CredentialsRequired { url }.into());
         }

@@ -303,6 +303,19 @@ jobs:
             macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
+      # Windows has no git: furnish uses the MinGit the installer ships, with git-lfs.
+      - name: Without a system git, furnish uses the bundled one
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          grep -q 'git-lfs.exe' target/release/wix/x64/main.wxs
+          mkdir -p t/repo && cp target/release/furnish.exe t/ && cp -r gui/src-tauri/git t/git
+          cp -r tests/fixtures/collection/. t/repo/ && git -C t/repo init -q && git -C t/repo add -A
+          git -C t/repo -c user.name=t -c user.email=t@t commit -qm init
+          t/git/cmd/git.exe lfs version
+          export FURNISH_DATA_DIR="$PWD/t/data" PATH=/c/Windows/System32:/c/Windows
+          t/furnish.exe collection add "$(cygpath -m "$PWD/t/repo")" --name fixture
+          t/furnish.exe collection list | grep fixture
       # Real app under Xvfb, driven via WebDriver; also checks GUI elevation never uses sudo.
       - if: runner.os == 'Linux'
         run: tests/ui/run.sh target/release/furnish-gui

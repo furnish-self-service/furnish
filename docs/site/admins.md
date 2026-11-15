@@ -99,6 +99,8 @@ sudo furnish service install     # on Windows: furnish service install, in an ad
 | macOS | launchd daemon `io.github.furnish-self-service.furnish` | members of `allowedGroup`, including nested and directory groups |
 | Windows | service `furnish`, running as SYSTEM | administrators in an elevated session, and members of `allowedGroup` |
 
+The service uses git like furnish does. On macOS that means Apple's Command Line Tools, which nobody is asked to install on the service's behalf: install them along with furnish, for example with `xcode-select --install` or from your software distribution.
+
 The service accepts an app's name and option values, nothing else, and checks the values against the app's declared options and the policy. Apps that install into the user's account (`perUser` in their metadata) still install as the user.
 
 ## NixOS

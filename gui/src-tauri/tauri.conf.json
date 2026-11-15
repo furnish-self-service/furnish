@@ -37,10 +37,14 @@
     "shortDescription": "Install apps your organization provides",
     "linux": {
       "deb": {
-        "desktopTemplate": "furnish.desktop"
+        "desktopTemplate": "furnish.desktop",
+        "depends": ["git"],
+        "recommends": ["git-lfs"]
       },
       "rpm": {
-        "desktopTemplate": "furnish.desktop"
+        "desktopTemplate": "furnish.desktop",
+        "depends": ["git"],
+        "recommends": ["git-lfs"]
       }
     }
   },

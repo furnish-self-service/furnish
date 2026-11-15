@@ -161,7 +161,7 @@ pub fn ask_in_terminal(url: &str) -> Result<Option<(String, String)>> {
     if !std::io::stdin().is_terminal() {
         return Ok(None);
     }
-    let mut child = std::process::Command::new("git")
+    let mut child = crate::catalog::git_command()
         .args(["credential", "fill"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

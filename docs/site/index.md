@@ -33,7 +33,9 @@ sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-servi
 sudo apt update && sudo apt install furnish
 ```
 
-On Fedora, save `https://furnish-self-service.github.io/furnish/alpha/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish`. On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. The package contains the desktop app and the `furnish` command; updates arrive with the system's other updates.
+On Fedora, save `https://furnish-self-service.github.io/furnish/alpha/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish`. On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. The package contains the desktop app and the `furnish` command, and brings git along, which furnish uses for collections; updates arrive with the system's other updates.
+
+furnish uses git. The Windows installer includes it ([MinGit](https://github.com/git-for-windows/git/wiki/MinGit) with Git LFS); furnish uses a git you installed yourself first. On macOS, git comes with Apple's Command Line Tools: if they are missing, macOS offers to install them the first time furnish adds a collection, or run `xcode-select --install`.
 
 The macOS and Windows builds aren't signed yet. On macOS, open furnish once, then allow it under System Settings → Privacy & Security → Open Anyway. On Windows, choose More info → Run anyway when SmartScreen warns. Download a new alpha to update; furnish doesn't update itself on these systems yet.
 
