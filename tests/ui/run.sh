@@ -103,10 +103,14 @@ cat > "$work/policy.json" <<JSON
  "parameters": {"fixture": {"role": {"value": "developer"}}}}
 JSON
 
+# DSC's resources, if the build has them beside it (Tauri copies them there), where an installed app has them.
+dsc_dir="$(dirname "$binary")/dsc"
+dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
+[ -d "$dsc_dir" ] || dsc_mount=$work:/nonexistent:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
-    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" "$image" \
+    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.

@@ -8,3 +8,4 @@ gui/src-tauri/tauri.resources.conf.json
 gui/src-tauri/THIRD-PARTY-LICENSES.html
 .cache/
 result
+gui/src-tauri/dsc/

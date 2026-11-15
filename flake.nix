@@ -19,20 +19,51 @@
           ./gui/src ./gui/src-tauri ./logo.svg
         ];
       };
+      # DSC's own resources, which furnish includes (packaging/dsc.json): Microsoft's release, whose
+      # programs are static, without samples and test tools, and File/Content built from the same source.
+      dsc = builtins.fromJSON (builtins.readFile ./packaging/dsc.json);
+      dscResources = pkgs:
+        let
+          release = pkgs.fetchurl { inherit (dsc.releases.${pkgs.stdenv.hostPlatform.system}) url sha256; };
+          filecontent = pkgs.rustPlatform.buildRustPackage {
+            pname = "dsc-filecontent";
+            inherit (dsc) version;
+            src = pkgs.fetchFromGitHub {
+              owner = "PowerShell";
+              repo = "DSC";
+              rev = dsc.commit;
+              hash = "sha256-BPAiKwKmE8WcLczAoXq6xjFWEpoWMqegz/9T9yYRBV8=";
+            };
+            # It points at Microsoft's internal crate mirror.
+            postPatch = "rm -r .cargo";
+            cargoHash = "sha256-xI2qyy3IA6nr6fAPaofDoIKCuin0Y8ipMyTL5Tx0zt8=";
+            cargoBuildFlags = [ "-p" "filecontent" ];
+            doCheck = false;
+          };
+        in pkgs.runCommand "dsc-resources-${dsc.version}" { } ''
+          mkdir $out
+          tar -xzf ${release} -C $out
+          rm -f ${pkgs.lib.concatMapStringsSep " " (f: "$out/${f}") dsc.exclude}
+          cp ${filecontent}/bin/filecontent ${filecontent.src}/resources/filecontent/filecontent.dsc.resource.json $out/
+        '';
       cargoLock = {
         lockFile = ./Cargo.lock;
         outputHashes."dsc-lib-3.2.0" = "sha256-BPAiKwKmE8WcLczAoXq6xjFWEpoWMqegz/9T9yYRBV8=";
       };
     in {
       packages = forAll (pkgs: rec {
+        dsc-resources = dscResources pkgs;
+
         # The CLI (and the furnish service).
         furnish = pkgs.rustPlatform.buildRustPackage {
           pname = "furnish";
           inherit version src cargoLock;
           cargoBuildFlags = [ "-p" "furnish" ];
           cargoTestFlags = [ "-p" "furnish" "--lib" ];
+          # furnish finds DSC's resources in ../lib/furnish/dsc (engine.rs).
           postInstall = ''
             install -Dm644 packaging/linux/io.github.furnish.policy -t $out/share/polkit-1/actions
+            mkdir -p $out/lib/furnish && ln -s ${dsc-resources} $out/lib/furnish/dsc
           '';
           meta = {
             description = "Self-service app catalog: install apps your organization curated in git";
@@ -56,6 +87,7 @@
           nativeBuildInputs = with pkgs; [ cargo-tauri.hook nodejs npmHooks.npmConfigHook pkg-config wrapGAppsHook3 ];
           buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg ];
           doCheck = false; # the library's tests run in `furnish`
+          postInstall = "mkdir -p $out/lib/furnish && ln -s ${dsc-resources} $out/lib/furnish/dsc";
           meta = furnish.meta // { mainProgram = "furnish-gui"; };
         });
 

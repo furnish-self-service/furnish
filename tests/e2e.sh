@@ -101,6 +101,24 @@ while IFS='|' read -r file props; do
       [ -n "$props" ] && printf '%s\n' "$props"; } > "$tmp/repo/apps/installer-$n.dsc.yaml"
 done < "$tmp/installers"
 
+# DSC's own resources, when they are beside furnish (scripts/fetch-dsc.mjs; the installers ship them).
+dsc=false
+if [ -d "$(dirname "$furnish")/dsc" ]; then
+    dsc=true
+    cat > "$tmp/repo/apps/dsc-file.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: A file from DSC's resources
+    categories: [Test]
+resources:
+  - name: settings file
+    type: Microsoft.Filesystem.File/Content
+    properties:
+      path: $tmp/dsc-file.txt
+      content: furnish
+YAML
+fi
+
 git -C "$tmp/repo" init -q
 git -C "$tmp/repo" add -A
 git -C "$tmp/repo" -c user.name=t -c user.email=t@t commit -qm init
@@ -236,6 +254,14 @@ for i in $(seq 1 "$n"); do
     expect "$(step uninstall "$app")" "Uninstalled $app"
     expect "$(step list)" "·  $app "
 done
+if $dsc; then
+    expect "$(step list)" "·  dsc-file "
+    expect "$(step install dsc-file)" "Installed dsc-file"
+    [ "$(cat "$tmp/dsc-file.txt")" = furnish ] || { echo "FAIL: File/Content didn't write the file" >&2; exit 1; }
+    expect "$(step list)" "✓  dsc-file "
+    # DSC 3.3's File/Content can't delete (its manifest has no delete and doesn't handle _exist).
+    expect "$("$furnish" uninstall dsc-file 2>&1 || true)" "does not support \`delete\`"
+fi
 [ "$n" -gt 0 ] || echo "(no installer format can be built on this platform: installer test skipped)" >&2
 step collection remove fixture >/dev/null
 
@@ -288,5 +314,5 @@ expect "$(step option list org/cli-tool)" "userInstall *true *your organization 
 if "$furnish" list 2>&1 | grep -q "org asks"; then echo "FAIL: asked although the policy answers" >&2; exit 1; fi
 if step option set org/cli-tool userInstall false >/dev/null 2>&1; then echo "FAIL: changed a locked option" >&2; exit 1; fi
 drop
-echo "e2e OK ($lfs, $n installer(s), policy from $store)" >&2
+echo "e2e OK ($lfs, $n installer(s), policy from $store, DSC resources $($dsc && echo used || echo "not beside furnish"))" >&2
 echo "e2e OK ($($real && echo real || echo fake) package manager)"

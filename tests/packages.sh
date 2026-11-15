@@ -1,6 +1,7 @@
 #!/bin/sh
 # Install the Linux packages on a distro and check both programs can run there: the static
-# furnish CLI runs, git came along, and furnish-gui finds every library (and glibc version) it needs.
+# furnish CLI runs, git came along, furnish-gui finds every library (and glibc version) it needs,
+# and an app installs with DSC's resources from the package (/usr/lib/furnish/dsc).
 #
 #   tests/packages.sh <image> <dir with the .deb and .rpm>     e.g. debian:12 target/jammy/release/bundle
 set -eu
@@ -21,5 +22,10 @@ docker run --rm -v "$dir:/p:ro" "$image" sh -c "
     git --version >/dev/null || { echo 'the package did not bring git' >&2; exit 1; }
     missing=\$(ldd /usr/bin/furnish-gui | grep 'not found' || true)
     [ -z \"\$missing\" ] || { echo \"furnish-gui can't start: \$missing\" >&2; exit 1; }
+    mkdir -p /tmp/c/apps && cd /tmp/c
+    printf 'resources:\\n  - name: file\\n    type: Microsoft.Filesystem.File/Content\\n    properties: {path: /etc/furnish-test, content: furnish}\\n' > apps/file.dsc.yaml
+    git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm apps
+    furnish collection add /tmp/c --name c >/dev/null && furnish install file
+    [ \"\$(cat /etc/furnish-test)\" = furnish ] || { echo 'File/Content from /usr/lib/furnish/dsc did not run' >&2; exit 1; }
     echo 'packages OK on $image'
 "

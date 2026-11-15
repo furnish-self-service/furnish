@@ -86,6 +86,8 @@ Use the cargo aliases `cargo b`, `cargo t` and `cargo r`: a plain debug build fa
 
 The desktop app is in `gui/` (Tauri 2 and Svelte): `cd gui && npm ci && npx tauri dev -- --profile fast` runs it, `npm run bundle` builds its installers with the CLI inside, and `gui/scripts/dev-desktop-entry.sh` gives development builds their icon on Linux desktops. `packaging/linux/build.sh` builds the published Linux packages on Ubuntu 22.04.
 
+The installers include DSC's own resources (`packaging/dsc.json`). `node scripts/fetch-dsc.mjs target/fast/dsc` puts them beside a development build, where furnish finds them too.
+
 `vendor/tree-sitter-dscexpression` holds grammar sources that DSC generates at build time; `scripts/vendor-dsc-grammar.sh <tag>` regenerates them for a new DSC version.
 
 ## License

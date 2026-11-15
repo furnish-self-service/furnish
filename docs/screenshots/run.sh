@@ -56,12 +56,16 @@ echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-sr
 echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]},
   "branding": {"name": "Acme Apps", "logo": "example/icons/collection.svg", "accent": "#c2410c"}}' > "$work/policy-branded.json"
 
+# DSC's resources, if the build has them beside it (Tauri copies them there), where an installed app has them.
+dsc_dir="$(dirname "$binary")/dsc"
+dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
+[ -d "$dsc_dir" ] || dsc_mount=$work:/nonexistent:ro
 start() {  # start the app in a fresh container: $1 policy file, $2 extra env (e.g. GTK_THEME)
     docker rm -f "$container" >/dev/null 2>&1 || true
     docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
         -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$1" -e GDK_SCALE=2 -e "${2:-NO_EXTRA=1}" \
         -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
-        -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" furnish-screenshots \
+        -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" furnish-screenshots \
         sh -c 'Xvfb :99 -screen 0 2400x1600x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
 }
 shoot() { case " ${SCENES:-$1} " in *" $1 "*) node "$repo/docs/screenshots/shoot.mjs" "$1" "$work" "$out" ;; esac; }

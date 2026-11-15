@@ -2,12 +2,17 @@
 # The furnish service in a container: a user without administrator rights installs an app the
 # organization provides; other users can't; unsigned collection commits are refused.
 #
-#   tests/service.sh <path/to/furnish>      (built for glibc ≤ the image's, e.g. in CI)
+#   tests/service.sh <path/to/furnish> [DSC resources folder]   (built for glibc ≤ the image's, e.g. in CI)
+#
+# With the folder of DSC's resources (scripts/fetch-dsc.mjs), the service also installs an app
+# that uses them, from /usr/lib/furnish/dsc as in the Linux packages.
 set -eu
 if [ "${1:-}" != --inside ]; then
-    binary=$(realpath "${1:?usage: $0 <furnish-binary>}")
+    binary=$(realpath "${1:?usage: $0 <furnish-binary> [dsc folder]}")
     repo=$(cd "$(dirname "$0")/.." && pwd)
-    exec docker run --rm -v "$repo:/src:ro" -v "$binary:/furnish-bin:ro" ubuntu:24.04 sh /src/tests/service.sh --inside
+    dsc=${2:+-v $(realpath "$2"):/dsc:ro}
+    # shellcheck disable=SC2086 # $dsc is empty or two words
+    exec docker run --rm -v "$repo:/src:ro" -v "$binary:/furnish-bin:ro" $dsc ubuntu:24.04 sh /src/tests/service.sh --inside
 fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -57,6 +62,10 @@ git config --global user.email admin@example.com
 git config --global gpg.format ssh
 git config --global user.signingkey /root/signing
 cp -r /src/tests/fixtures/collection /srv/org
+if [ -d /dsc ]; then
+    mkdir -p /usr/lib/furnish && cp -r /dsc /usr/lib/furnish/dsc
+    printf 'metadata:\n  furnish:\n    categories: [Test]\nresources:\n  - name: file\n    type: Microsoft.Filesystem.File/Content\n    properties: {path: /etc/furnish-dsc-test, content: furnish}\n' > /srv/org/apps/dsc-file.dsc.yaml
+fi
 git -C /srv/org init -q -b main
 git -C /srv/org add -A
 git -C /srv/org commit -q -S -m apps
@@ -99,6 +108,12 @@ as alice furnish install hyperfine || { cat /tmp/service.log; fail "alice couldn
 [ -f /var/fake-pkgs/hyperfine ] || fail "not installed"
 as alice furnish list | grep "✓  hyperfine" >/dev/null || fail "alice doesn't see it installed"
 [ ! -e /home/alice/.local/share/furnish/collections/org ] || fail "alice got her own copy of the collection"
+
+if [ -d /dsc ]; then
+    echo "== an app with DSC's resources from /usr/lib/furnish/dsc"
+    as alice furnish install dsc-file || { cat /tmp/service.log; fail "alice couldn't install dsc-file"; }
+    [ "$(cat /etc/furnish-dsc-test)" = furnish ] && [ "$(stat -c %U /etc/furnish-dsc-test)" = root ] || fail "File/Content didn't run as root"
+fi
 
 echo "== others are refused"
 if out=$(as bob furnish uninstall hyperfine 2>&1); then fail "bob uninstalled"; fi

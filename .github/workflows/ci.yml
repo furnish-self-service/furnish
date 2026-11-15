@@ -24,7 +24,8 @@ jobs:
         with:
           path: tests/fixtures/collection
           furnish: target/fast/furnish
-      - run: cargo b && tests/e2e.sh
+      # With DSC's resources beside furnish, as the installers ship them (e2e installs an app with File/Content).
+      - run: cargo b && node scripts/fetch-dsc.mjs target/fast/dsc && tests/e2e.sh
 
   linux-binary:
     name: Static Linux binary
@@ -71,7 +72,8 @@ jobs:
         with:
           name: furnish-linux-x86_64
           path: bin
-      - run: chmod +x bin/furnish && tests/service.sh bin/furnish
+      - run: node scripts/fetch-dsc.mjs dsc
+      - run: chmod +x bin/furnish && tests/service.sh bin/furnish dsc
 
   nix:
     name: Nix (shared profile, updates)
@@ -184,6 +186,7 @@ jobs:
           dotnet tool install --global wix --version 5.0.2
           wix build tests/fixtures/installers/demo.wxs -bindpath tests/fixtures/installers -o target/furnish-demo.msi
           "FURNISH_TEST_MSI=$((Get-Location).Path -replace '\\','/')/target/furnish-demo.msi" >> $env:GITHUB_ENV
+      - run: node scripts/fetch-dsc.mjs target/release/dsc
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
 
@@ -338,13 +341,19 @@ jobs:
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis, each with the CLI.
       - run: npm run bundle
         working-directory: gui
-      - name: Installers include the CLI (the furnish service runs it)
+      - name: Installers include the CLI (the furnish service runs it) and DSC's resources
         shell: bash
         run: |
           case "$RUNNER_OS" in
             Linux)   dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$'
-                     dpkg-deb -c target/release/bundle/deb/*.deb | grep THIRD-PARTY-LICENSES.html ;;
-            macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish ;;
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep THIRD-PARTY-LICENSES.html
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep -E '^-rwxr-xr-x .* \./usr/lib/furnish/dsc/(dsc|filecontent|runcommandonset)$' | wc -l | grep -qx 3
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/lib/furnish/dsc/psDscAdapter/psDscAdapter.psm1$'
+                     if dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'dsc/(y2j|dscecho)$'; then exit 1; fi ;;
+            macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish
+                     test -x target/release/bundle/macos/furnish.app/Contents/Resources/dsc/dsc
+                     test -x target/release/bundle/macos/furnish.app/Contents/Resources/dsc/filecontent
+                     test -f target/release/bundle/macos/furnish.app/Contents/Resources/dsc/NOTICE.txt ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
       # Windows has no git: furnish uses the MinGit the installer ships, with git-lfs.
@@ -358,6 +367,10 @@ jobs:
           if ($p.ExitCode) { throw "msiexec exited with $($p.ExitCode)" }
           $app = "$env:ProgramFiles\furnish"
           if (-not (Test-Path "$app\THIRD-PARTY-LICENSES.html")) { throw 'no THIRD-PARTY-LICENSES.html' }
+          foreach ($f in 'dsc.exe', 'filecontent.exe', 'environment_variable.exe', 'registry.exe', 'NOTICE.txt', 'psDscAdapter\psDscAdapter.psm1') {
+            if (-not (Test-Path "$app\dsc\$f")) { throw "no dsc\$f" }
+          }
+          if (Test-Path "$app\dsc\y2j.exe") { throw 'dsc\y2j.exe is shipped' }
           & "$app\git\cmd\git.exe" lfs version
           New-Item -ItemType Directory t\repo | Out-Null
           Copy-Item -Recurse tests\fixtures\collection\* t\repo

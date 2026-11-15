@@ -66,7 +66,7 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 
 ### Other DSC resources
 
-An app can also use resources that DSC finds on the computer: the ones that come with DSC, such as `Microsoft.Windows/Registry` or `Microsoft.DSC.Transitional/RunCommandOnSet`, and resources installed elsewhere. An app that sets up a VPN connection or a setting needs no package at all.
+An app can also use other DSC resources. An app that sets up a VPN connection or a setting needs no package at all.
 
 ```yaml
 - name: Acme proxy
@@ -78,7 +78,17 @@ An app can also use resources that DSC finds on the computer: the ones that come
     valueData: { String: proxy.acme.example }
 ```
 
-furnish looks for resources where DSC does: in the folders on `PATH` and where DSC is installed. A resource the computer doesn't have makes the app show "Needs the DSC resource ...". So install DSC, or the resource, on the computers that need it, for example as a dependency. A resource whose `condition` is false on a computer doesn't need to be there.
+furnish includes the resources of DSC 3.3.0, so computers don't need DSC installed for them. Among them:
+
+| System | Resources |
+|---|---|
+| Windows | `Microsoft.Windows/Registry`, `Microsoft.Windows/EnvironmentVariable`, `Microsoft.Windows/Service`, `Microsoft.Windows/FirewallRuleList`, `Microsoft.Windows/WindowsFeatureList`, `Microsoft.Windows/OptionalFeatureList`, `Microsoft.DSC.Transitional/WindowsPowerShellScript`, `Microsoft.Windows/WindowsPowerShell` (Windows PowerShell DSC resources) |
+| All systems | `Microsoft.Filesystem.File/Content`, `Microsoft.DSC.Transitional/RunCommandOnSet`, `Microsoft.DSC/Group`, `Microsoft.DSC/Include`, `Microsoft.DSC/Assertion` |
+| Where PowerShell 7 is installed | `Microsoft.DSC.Transitional/PowerShellScript`, `Microsoft.DSC/PowerShell` (PowerShell DSC resources) |
+
+Microsoft's [resource reference](https://learn.microsoft.com/powershell/dsc/reference/resources/builtin?view=dsc-3.0) describes their properties.
+
+furnish also finds resources where DSC does: in the folders on `PATH` and where DSC is installed. A resource the computer doesn't have makes the app show "Needs the DSC resource ...". So install the resource on the computers that need it, for example as a dependency. A resource whose `condition` is false on a computer doesn't need to be there. A folder elsewhere that declares a type furnish includes, such as an installed DSC of another version, isn't searched for resources: furnish's version is the one apps get.
 
 furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Uninstalling sets `_exist: false`, so an app whose resources don't support `_exist` can't be uninstalled with furnish. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell.
 

@@ -201,8 +201,9 @@ pub fn missing_reason(error: &str) -> Option<String> {
 /// Where furnish wrote its own resources (see `init`).
 static BUNDLED_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Write the bundled resources to `dir` and point DSC's resource discovery at them, then at the
-/// folders DSC normally searches (see `search_dirs`).
+/// Write the bundled resources to `dir` and point DSC's resource discovery at them, then at DSC's
+/// own resources that furnish ships (`bundled_dsc_dir`), then at the folders DSC normally searches
+/// (see `search_dirs`).
 /// Must run before any other thread starts, since it mutates the process environment.
 pub fn init(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)?;
@@ -218,19 +219,91 @@ pub fn init(dir: &Path) -> Result<()> {
     let _ = BUNDLED_DIR.set(dir.to_path_buf());
     let path: Vec<PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_default()).collect();
     let in_service = crate::service::in_service();
-    let mut dirs = vec![dir.to_path_buf()];
-    dirs.extend(search_dirs(&path, in_service, crate::service::admin_only));
-    let dirs = env::join_paths(dirs)?;
+    let dsc = bundled_dsc_dir().filter(|d| !in_service || crate::service::admin_only(d));
+    let others = search_dirs(&path, in_service, crate::service::admin_only);
+    let (programs, resources) = discovery_dirs(dir, dsc.as_deref(), others);
     let stop_file = STOP_FILE.get_or_init(|| dir.join(".stop"));
     // SAFETY: called once at startup from main, before any threads are spawned.
     unsafe {
         // DSC searches DSC_RESOURCE_PATH instead of PATH, and finds resources' programs on PATH,
-        // then in the resource's folder. The same list for both, furnish's own resources first.
-        env::set_var("DSC_RESOURCE_PATH", &dirs);
-        env::set_var("PATH", &dirs);
+        // then in the resource's folder. furnish's own resources first, then DSC's.
+        env::set_var("DSC_RESOURCE_PATH", env::join_paths(resources)?);
+        env::set_var("PATH", env::join_paths(programs)?);
         env::set_var("FURNISH_STOP_FILE", stop_file);
     }
     Ok(())
+}
+
+/// The folder with DSC's own resources that furnish's installers ship (scripts/fetch-dsc.mjs):
+/// beside the program (Windows, and builds in target/), in ../lib/furnish (Linux packages, Nix)
+/// or in ../Resources (the macOS app). `None` for a build without it: then only furnish's own
+/// resources and those installed on the computer are there.
+fn bundled_dsc_dir() -> Option<PathBuf> {
+    let exe = env::current_exe().ok()?;
+    // The real folder of the program, not of a link to it; Windows keeps plain paths for PATH.
+    let exe = if cfg!(windows) { exe } else { exe.canonicalize().ok()? };
+    let bin = exe.parent()?;
+    let prefix = bin.parent()?;
+    let program = if cfg!(windows) { "dsc.exe" } else { "dsc" };
+    [bin.join("dsc"), prefix.join("lib").join("furnish").join("dsc"), prefix.join("Resources").join("dsc")]
+        .into_iter()
+        .find(|d| d.join(program).is_file())
+}
+
+/// The folders for finding programs (PATH) and for finding resources (DSC_RESOURCE_PATH): furnish's
+/// own resources, DSC's own (`dsc`), then `others`. DSC uses the manifest with the highest version
+/// of a type (the first one found if versions are equal), so a folder elsewhere that declares a
+/// type of DSC's own resources isn't searched for resources: an older or newer DSC installed on the
+/// computer, or a manifest that pretends to be Microsoft.DSC/Group. Its programs stay on PATH,
+/// behind furnish's folders.
+fn discovery_dirs(own: &Path, dsc: Option<&Path>, others: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let first: Vec<PathBuf> = std::iter::once(own.to_path_buf()).chain(dsc.map(Path::to_path_buf)).collect();
+    let others: Vec<PathBuf> = others.into_iter().filter(|d| !first.contains(d)).collect();
+    let reserved = dsc.map(declared_types).unwrap_or_default();
+    let mut resources = first.clone();
+    for d in &others {
+        match declared_types(d).into_iter().find(|t| reserved.contains(t)) {
+            Some(kind) => emit_log(
+                "warn",
+                format!("Not searching {} for DSC resources: it declares {kind}, which furnish provides", d.display()),
+            ),
+            None => resources.push(d.clone()),
+        }
+    }
+    let mut programs = first;
+    programs.extend(others);
+    (programs, resources)
+}
+
+/// The resource and extension types the manifests in `dir` declare (lowercase), whatever their
+/// conditions, as DSC finds them: files with DSC's manifest extensions, not in subfolders.
+fn declared_types(dir: &Path) -> std::collections::HashSet<String> {
+    use dsc_lib::discovery::command_discovery::{
+        DSC_ADAPTED_RESOURCE_EXTENSIONS, DSC_EXTENSION_EXTENSIONS, DSC_MANIFEST_LIST_EXTENSIONS, DSC_RESOURCE_EXTENSIONS,
+    };
+    let extensions = [DSC_RESOURCE_EXTENSIONS, DSC_MANIFEST_LIST_EXTENSIONS, DSC_ADAPTED_RESOURCE_EXTENSIONS, DSC_EXTENSION_EXTENSIONS];
+    let is_manifest = |name: &str| {
+        let name = name.to_lowercase();
+        extensions.iter().flatten().any(|ext| name.ends_with(ext))
+    };
+    let mut types = std::collections::HashSet::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if !entry.file_name().to_str().is_some_and(is_manifest) {
+            continue;
+        }
+        // YAML reads JSON too.
+        let Ok(manifest) = fs::read_to_string(entry.path()).map_err(anyhow::Error::from).and_then(|t| Ok(serde_yaml::from_str::<Value>(&t)?))
+        else {
+            continue;
+        };
+        let listed = ["resources", "adaptedResources", "extensions"].into_iter().flat_map(|k| manifest[k].as_array().cloned().unwrap_or_default());
+        for m in std::iter::once(manifest.clone()).chain(listed) {
+            if let Some(kind) = m["type"].as_str() {
+                types.insert(kind.to_lowercase());
+            }
+        }
+    }
+    types
 }
 
 /// The folders DSC searches for resources besides furnish's own: PATH, as DSC does, and where DSC
@@ -825,6 +898,49 @@ mod tests {
         assert_eq!(foreign.len(), 1);
         assert_eq!(foreign[0].1, PathBuf::from("/opt/homebrew/bin/evil.dsc.resource.json"));
         fs::remove_dir_all(bundled).unwrap();
+    }
+
+    #[test]
+    fn dscs_own_resources_come_first_and_cant_be_shadowed() {
+        let tmp = env::temp_dir().join(format!("furnish-discovery-{}", std::process::id()));
+        let folder = |name: &str, files: &[(&str, &str)]| {
+            let d = tmp.join(name);
+            fs::create_dir_all(&d).unwrap();
+            for (file, contents) in files {
+                fs::write(d.join(file), contents).unwrap();
+            }
+            d
+        };
+        let own = folder("own", &[]);
+        let dsc = folder("dsc", &[
+            ("group.dsc.resource.json", r#"{"type": "Microsoft.DSC/Group", "version": "0.1.0"}"#),
+            ("registry.dsc.manifests.json", r#"{"resources": [{"type": "Microsoft.Windows/Registry", "version": "1.0.0"}]}"#),
+        ]);
+        // A higher version of a type furnish ships (any case), in a manifest list or a YAML file.
+        let newer = folder("newer", &[("x.dsc.manifests.yaml", "resources:\n  - type: microsoft.windows/registry\n    version: 9.0.0\n")]);
+        let fake = folder("fake", &[("group.dsc.resource.json", r#"{"type": "Microsoft.DSC/Group", "version": "99.0.0"}"#)]);
+        let other = folder("other", &[("vpn.dsc.resource.json", r#"{"type": "Acme/Vpn", "version": "1.0.0"}"#), ("readme.txt", "not a manifest")]);
+        let others = vec![newer.clone(), dsc.clone(), other.clone(), fake.clone()];
+
+        let (programs, resources) = discovery_dirs(&own, Some(&dsc), others.clone());
+        assert_eq!(resources, [own.clone(), dsc.clone(), other.clone()]);
+        assert_eq!(programs, [own.clone(), dsc.clone(), newer.clone(), other.clone(), fake.clone()]);
+
+        // Without DSC's resources (e.g. a plain `cargo build`), DSC installed elsewhere counts.
+        let (programs, resources) = discovery_dirs(&own, None, others);
+        assert_eq!(resources, programs);
+        assert_eq!(resources[..2], [own, newer]);
+        fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[test]
+    fn shipped_dsc_resources_match_the_embedded_dsc() {
+        let dsc: Value = serde_json::from_str(include_str!("../packaging/dsc.json")).unwrap();
+        let version = dsc["version"].as_str().unwrap();
+        let tag = format!(r#"dsc-lib = {{ git = "https://github.com/PowerShell/DSC", tag = "v{version}" }}"#);
+        assert!(include_str!("../Cargo.toml").contains(&tag), "packaging/dsc.json has DSC {version}, Cargo.toml another dsc-lib");
+        let commit = dsc["commit"].as_str().unwrap();
+        assert!(include_str!("../Cargo.lock").contains(&format!("?tag=v{version}#{commit}")), "packaging/dsc.json: commit");
     }
 
     #[test]

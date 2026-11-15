@@ -39,6 +39,7 @@ const npm = ['svelte', '@tauri-apps/api', '@fontsource-variable/bricolage-grotes
 
 // Programs the Windows installer contains (see gui/scripts/bundle-resources.mjs).
 const git = JSON.parse(readFileSync(`${root}gui/scripts/bundled-git.json`, 'utf8'));
+const dsc = JSON.parse(readFileSync(`${root}packaging/dsc.json`, 'utf8'));
 const lfsLicense = await (await fetch(git.lfs.source.replace('github.com', 'raw.githubusercontent.com').replace('/tree/', '/') + '/LICENSE.md')).text();
 
 const html = `<!doctype html>
@@ -58,6 +59,12 @@ const html = `<!doctype html>
 <body>
 <h1>Open-source licenses</h1>
 <p>furnish is open source under the ${link('https://github.com/furnish-self-service/furnish/blob/main/LICENSE', 'MIT license')}. It contains the components below, under their own licenses.</p>
+
+<h2>In every installer</h2>
+<section>
+<h3>${link(`${dsc.source}/releases/tag/v${dsc.version}`, `DSC ${dsc.version} resources`)} (MIT)</h3>
+<p>DSC's own resources and the <code>dsc</code> program, from Microsoft's release and built from its source code: ${link(`${dsc.source}/tree/v${dsc.version}`)}. The license notices of their components are in <code>dsc/NOTICE.txt</code> in furnish's installation folder (Linux: <code>/usr/lib/furnish/dsc</code>, macOS: <code>furnish.app/Contents/Resources/dsc</code>).</p>
+</section>
 
 <h2>In the Windows installer</h2>
 <section>
@@ -80,4 +87,4 @@ ${crates.join('\n')}
 </html>
 `;
 writeFileSync(`${root}THIRD-PARTY-LICENSES.html`, html);
-console.log(`THIRD-PARTY-LICENSES.html: ${about.crates.length} crates, ${npm.length} npm packages, 2 bundled programs`);
+console.log(`THIRD-PARTY-LICENSES.html: ${about.crates.length} crates, ${npm.length} npm packages, 3 bundled programs`);
