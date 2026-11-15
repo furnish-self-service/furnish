@@ -347,7 +347,7 @@ jobs:
           case "$RUNNER_OS" in
             Linux)   dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$'
                      dpkg-deb -c target/release/bundle/deb/*.deb | grep THIRD-PARTY-LICENSES.html
-                     dpkg-deb -c target/release/bundle/deb/*.deb | grep -E '^-rwxr-xr-x .* \./usr/lib/furnish/dsc/(dsc|filecontent|runcommandonset)$' | wc -l | grep -qx 3
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep -E '^-rwxr-xr-x .* (\./)?usr/lib/furnish/dsc/(dsc|filecontent|runcommandonset)$' | wc -l | grep -qx 3
                      dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/lib/furnish/dsc/psDscAdapter/psDscAdapter.psm1$'
                      if dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'dsc/(y2j|dscecho)$'; then exit 1; fi ;;
             macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish
