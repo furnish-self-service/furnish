@@ -68,6 +68,7 @@ fi
 expect "$(step list)" "·  acme-vpn "
 
 expect "$(step -v install acme-vpn)" "Installed acme-vpn"
+[ "$(uname -s)" = Darwin ] && { echo "DEBUG brew as carol:"; ${run[@]+"${run[@]}"} sh -c 'command -v brew; brew list --cask --versions tunnelblick; echo "rc=$?"' 2>&1 || true; }
 list=$(step list)
 expect "$list" "✓  acme-vpn "
 expect "$list" "✓  openvpn-client "
