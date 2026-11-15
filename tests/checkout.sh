@@ -13,6 +13,8 @@ if [ "${1:-}" != --inside ]; then
 fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# Behind a symlink, like /tmp on macOS: paths furnish resolves must still match.
+mkdir -p /tmp/real-data && ln -s /tmp/real-data /tmp/data
 export FURNISH_DATA_DIR=/tmp/data
 git config --global user.name t; git config --global user.email t@t; git config --global init.defaultBranch main
 # A file:// server that allows partial clones, like GitHub and GitLab do.

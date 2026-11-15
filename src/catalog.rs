@@ -913,8 +913,10 @@ impl App {
                 continue;
             };
             let applies = resource["condition"].as_str().is_none_or(|c| crate::options::condition_holds(c, values).unwrap_or(true));
+            // Paths of files not checked out start from the canonical directory (file_in_repo_later).
+            let base = self.collection_dir.canonicalize().map(plain_path).unwrap_or_else(|_| self.collection_dir.clone());
             if applies && !Path::new(file).is_file()
-                && let Ok(relative) = Path::new(file).strip_prefix(&self.collection_dir)
+                && let Ok(relative) = Path::new(file).strip_prefix(&base).or_else(|_| Path::new(file).strip_prefix(&self.collection_dir))
             {
                 files.push(relative.to_string_lossy().into_owned());
             }
