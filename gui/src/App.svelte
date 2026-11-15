@@ -46,9 +46,30 @@
   function go(next: View) {
     store.view = next;
   }
+  // The install button keeps one width whatever it says; measure that width from this
+  // language's labels in the system font (see the sizer below and ActionButton.svelte).
+  let actionWidth = $state(0);
+  let actionLargeWidth = $state(0);
+  $effect(() => {
+    const root = document.documentElement.style;
+    if (actionWidth) root.setProperty('--action-width', `${actionWidth}px`);
+    if (actionLargeWidth) root.setProperty('--action-large-width', `${actionLargeWidth}px`);
+  });
+  const idleLabels = $derived([t('common.install'), t('common.update'), t('common.uninstall'), t('action.answerFirst')]);
+  const busyLabels = $derived([
+    t('common.installing'), t('common.updating'), t('common.uninstalling'), t('action.stopping'), `${t('common.queued')} · 99`,
+  ]);
+
   const isActive = (page: string, name?: string) =>
     view.page === page && (name === undefined || (view.page === 'category' && view.name === name));
 </script>
+
+{#snippet sizer()}
+  {#each idleLabels as label}<span>{label}</span>{/each}
+  {#each busyLabels as label}<span class="busy">{label}</span>{/each}
+{/snippet}
+<div class="sizer" aria-hidden="true" bind:clientWidth={actionWidth}>{@render sizer()}</div>
+<div class="sizer large" aria-hidden="true" bind:clientWidth={actionLargeWidth}>{@render sizer()}</div>
 
 <div class="shell">
   <nav aria-label={t('nav.sections')}>
@@ -171,6 +192,29 @@
 <LinkDialog />
 
 <style>
+  /* Paddings, border and font match ActionButton.svelte's .action, .busy and .large. */
+  .sizer {
+    position: absolute;
+    visibility: hidden;
+    pointer-events: none;
+    display: grid;
+    font: 600 0.85rem/1 var(--font-body);
+  }
+  .sizer span {
+    grid-area: 1 / 1;
+    padding: 0 1rem;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .sizer span.busy {
+    padding-right: 2.3rem;
+  }
+  .sizer.large {
+    font-size: 1rem;
+  }
+  .sizer.large span.busy {
+    padding-right: 2.9rem;
+  }
   .shell {
     display: grid;
     grid-template-columns: 14.5rem 1fr;

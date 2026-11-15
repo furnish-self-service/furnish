@@ -117,8 +117,8 @@
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    /* Fits the longest label, "Uninstalling…", with the stop control. */
-    width: 9.25rem;
+    /* App.svelte measures the longest label of the current language, stop control included. */
+    width: max(9.25rem, var(--action-width, 0px));
     height: 2.1rem;
     padding: 0 1rem;
     border: 1px solid transparent;
@@ -130,16 +130,9 @@
     transition: background 0.15s;
   }
   .large {
-    width: 11.75rem;
+    width: max(11.75rem, var(--action-large-width, 0px));
     height: 2.75rem;
     font-size: 1rem;
-  }
-  /* German labels are longer ("Deinstallation…"); still one fixed width per language. */
-  :global(html[lang='de']) .action {
-    width: 10rem;
-  }
-  :global(html[lang='de']) .large {
-    width: 12rem;
   }
   button.action:hover:not(:disabled) {
     background: var(--accent-strong);

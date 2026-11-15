@@ -41,7 +41,7 @@ export function resolve(choice: 'system' | Lang | undefined, systemLanguage: str
 
 export function translate(lang: Lang, key: Key, params: Params = {}): string {
   const entry = dictionaries[lang][key] ?? en[key];
-  const text = typeof entry === 'string' ? entry : (entry[new Intl.PluralRules(lang).select(Number(params.n))] ?? entry.other);
+  const text = typeof entry === 'string' ? entry : (entry[pluralRules(lang).select(Number(params.n))] ?? entry.other);
   return text.replace(/\{(\w+)\}/g, (all, name) => (name in params ? String(params[name]) : all));
 }
 
@@ -69,3 +69,6 @@ export function placeholders(entry: Entry): string[] {
   const texts = typeof entry === 'string' ? [entry] : Object.values(entry);
   return [...new Set(texts.flatMap((t) => [...t.matchAll(/\{(\w+)\}/g)].map((m) => m[1])))].sort();
 }
+
+// Portugal counts 0 as plural; plain 'pt' follows Brazil, where 0 takes the singular.
+export const pluralRules = (lang: Lang) => new Intl.PluralRules(lang === 'pt' ? 'pt-PT' : lang);

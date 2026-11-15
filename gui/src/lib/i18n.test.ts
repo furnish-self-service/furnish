@@ -1,7 +1,7 @@
 // node --test --experimental-strip-types src/lib/i18n.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dictionaries, markedParts, parts, placeholders, resolve, translate, type Lang } from './i18n.ts';
+import { dictionaries, markedParts, parts, placeholders, pluralRules, resolve, translate, type Lang } from './i18n.ts';
 
 const { en } = dictionaries;
 const others = Object.entries(dictionaries).filter(([lang]) => lang !== 'en') as [Lang, typeof en][];
@@ -12,13 +12,16 @@ for (const [lang, d] of others) {
     assert.deepEqual(Object.keys(d).sort(), Object.keys(en).sort(), 'keys');
     const marks = (e: string | object) => JSON.stringify(e).match(/<\/?(b|code)>/g)?.length ?? 0;
     // The plural categories whole numbers take in this language (Polish: one, few, many, other).
-    const rules = new Intl.PluralRules(lang);
-    const needed = [...new Set(Array.from({ length: 1001 }, (_, n) => rules.select(n)))].sort();
+    // `other` is always required: translate falls back to it.
+    const rules = pluralRules(lang);
+    const needed = [...new Set([...Array.from({ length: 1001 }, (_, n) => rules.select(n)), 'other'])].sort();
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
       assert.deepEqual(placeholders(d[key]), placeholders(en[key]), `placeholders of ${key}`);
       assert.equal(typeof d[key], typeof en[key], `plural or not: ${key}`);
       if (typeof d[key] === 'object') assert.deepEqual(Object.keys(d[key]).sort(), needed, `plural forms of ${key}`);
-      assert.equal(marks(d[key]), marks(en[key]), `<b>/<code> marks of ${key}`);
+      const forms = (e: unknown) => (typeof e === 'string' ? [e] : Object.values(e as object));
+      const want = marks(typeof en[key] === 'string' ? en[key] : (en[key] as { other: string }).other);
+      for (const form of forms(d[key])) assert.equal(marks(form), want, `<b>/<code> marks of ${key}`);
     }
   });
 }
@@ -40,6 +43,9 @@ test('parameters and plurals', () => {
   assert.equal(translate('en', 'common.apps', { n: 2 }), '2 apps');
   assert.equal(translate('de', 'common.apps', { n: 0 }), '0 Apps');
   assert.equal(translate('de', 'kit.install', { n: 1 }), '1 App installieren');
+  assert.equal(translate('pl', 'common.apps', { n: 2 }), '2 aplikacje');
+  assert.equal(translate('pl', 'common.apps', { n: 12 }), '12 aplikacji');
+  assert.equal(translate('pt', 'common.apps', { n: 0 }), '0 apps');
   assert.equal(translate('de', 'nav.home', { brand: 'Acme Apps' }), 'Acme Apps, zu Entdecken wechseln');
 });
 

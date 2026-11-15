@@ -68,6 +68,6 @@ Some apps can be installed in more than one way, for example for all users or on
 
 ## Language
 
-furnish is available in English and German. It follows the system language; Language on the Collections page sets one of them instead.
+furnish is available in English, German, French, Spanish, Italian, Polish, Portuguese and Dutch. It follows the system language; Language on the Collections page sets one of them instead. For any other system language it uses English.
 
 ![The Discover page in German.](images/discover-de.webp)

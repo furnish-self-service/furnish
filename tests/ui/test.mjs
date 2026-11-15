@@ -362,6 +362,10 @@ const steps = [
   }],
   ['the language setting switches to German and back, without a restart', async () => {
     await click(button('Collections'));
+    const englishWidth = await wd('POST', s('/execute/sync'), {
+      script: "return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--action-width'))", args: [],
+    });
+    if (!(englishWidth > 0)) throw new Error(`--action-width in English: ${englishWidth}`);
     await click("//select[@id='language']/option[@value='de']");
     await waitFor('German saved', () => log('data/settings.json').includes('"language": "de"'));
     await waitFor('German Collections page', async () => (await text('//h1')) === 'Sammlungen');
@@ -370,6 +374,11 @@ const steps = [
     await waitFor('German Discover page', async () => (await text('//h1')) === 'Entdecken');
     await find("//input[@placeholder='Apps durchsuchen']");
     await find(`${card('fresh')}${button('Installieren')}`);
+    // The install button widens to fit the longest German label ("Erst beantworten").
+    const width = () => wd('POST', s('/execute/sync'), {
+      script: "return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--action-width'))", args: [],
+    });
+    await waitFor('German button width', async () => (await width()) > englishWidth);
     await click(button('Sammlungen'));
     await click("//select[@id='language']/option[@value='en']");
     await waitFor('English again', async () => (await text('//h1')) === 'Collections');
