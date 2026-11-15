@@ -190,6 +190,36 @@ jobs:
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
 
+  # The example collection's VPN apps (configuration files, removal steps) on each OS.
+  vpn:
+    name: example VPN app ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    env:
+      # The commit of github.com/furnish-self-service/self-service-example to test. To bump it,
+      # set the commit you want (git ls-remote <url> main) and check that this job passes.
+      EXAMPLE_REF: f391788e8a3083582c0cf12525eb61aaf75e94c2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - shell: bash
+        run: cargo build --release && mkdir -p bin && cp target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }} bin/
+      # NetworkManager for the connection, kept away from the runner's network interfaces.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo mkdir -p /etc/NetworkManager/conf.d
+          printf '[keyfile]\nunmanaged-devices=*\n' | sudo tee /etc/NetworkManager/conf.d/99-ci-unmanaged.conf
+          sudo apt-get update -qq && sudo apt-get install -y -qq network-manager
+          sudo systemctl start NetworkManager && nmcli general status
+      - run: node scripts/fetch-dsc.mjs bin/dsc
+      - shell: bash
+        run: tests/vpn.sh bin/furnish${{ runner.os == 'Windows' && '.exe' || '' }} "$EXAMPLE_REF"
+
   service-macos:
     name: service macos-latest
     runs-on: macos-latest
@@ -262,7 +292,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, git-auth, checkout, endpoint, native, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui]
     runs-on: ubuntu-latest
     permissions:
       pages: write
