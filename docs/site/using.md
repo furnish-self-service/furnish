@@ -66,7 +66,7 @@ Updates only run while furnish runs. So furnish starts when you sign in, with it
 
 ![The Settings page with its Startup and Updates sections.](images/settings.webp)
 
-When a collection has changed on its server but furnish hasn't brought the change in yet, for example between checks or because checking is turned off, the sidebar shows a count next to Collections, and the Collections page marks the collection with Update available. Its Update button brings the change in. furnish only asks the server for its newest commit for this, without downloading or changing anything, and shows nothing while it is offline.
+When a collection has changed on its server but furnish hasn't brought the change in yet, for example between checks or because checking is turned off, the sidebar shows a count next to Collections, and the Collections page marks the collection with Update available. Its Update button brings the change in. furnish only asks the server for its newest commit for this, without downloading or changing anything, and shows nothing while it is offline. With checking set to Never and When furnish starts turned off, furnish doesn't contact the servers on its own, and the mark only changes after Check now or Update.
 
 On GNOME, tray icons only show with the AppIndicator extension. Without a tray, closing the window quits furnish. If furnish started at sign-in, open it from the app list to see its window.
 

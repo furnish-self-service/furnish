@@ -3,6 +3,7 @@ import * as api from './api';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, formatDate, lang } from './i18n.svelte';
+import { serverLooks } from './schedule';
 import { contentLanguage, lookup, matches, searchTexts, valueKey } from './content';
 
 export type View =
@@ -348,16 +349,16 @@ export function setAutoUpdate(key: string, on: boolean) {
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let lookTimer: ReturnType<typeof setInterval> | undefined;
-/** Between update checks further apart than this, or with none: only ask the collections' servers
- *  whether they have something new (cheap, nothing is downloaded or applied). */
-const LOOK_MINUTES = 30;
+/** When to only ask the collections' servers whether they have something new (see schedule.ts). */
+const looks = () => serverLooks(store.settings?.updateIntervalMinutes ?? 0, store.settings?.updateOnLaunch ?? false);
 /** (Re)start the update interval from the current settings. */
 function schedule() {
   clearInterval(timer);
   clearInterval(lookTimer);
   const minutes = store.settings?.updateIntervalMinutes ?? 0;
   if (minutes > 0) timer = setInterval(checkForUpdates, minutes * 60_000);
-  if (minutes === 0 || minutes > LOOK_MINUTES) lookTimer = setInterval(lookForCollectionUpdates, LOOK_MINUTES * 60_000);
+  const every = looks().everyMinutes;
+  if (every) lookTimer = setInterval(lookForCollectionUpdates, every * 60_000);
 }
 
 /** Which collections have an update that isn't applied yet: asks their servers, then reloads the
@@ -411,7 +412,7 @@ export async function start() {
   if (store.settings?.updateOnLaunch) await checkForUpdates();
   else {
     updateApps();
-    lookForCollectionUpdates();
+    if (looks().atStart) lookForCollectionUpdates();
   }
 }
 

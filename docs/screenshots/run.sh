@@ -54,6 +54,7 @@ GIT_AUTHOR_DATE=$then GIT_COMMITTER_DATE=$then git -C "$work/example-src" -c use
 sed -i 's/^      name: 7zip$/      name: 7zip-git/' "$work/example-src/apps/7zip.dsc.yaml"
 git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qam '7zip from git'
 mkdir -p "$work/data/collections"
+mkdir -p "$work/home/.local/share/furnish"  # where the data folder is mounted (see start)
 # LibreOffice's update stays for the Updates page instead of installing itself.
 echo '{"noAutoUpdate": ["example/libreoffice"]}' > "$work/data/settings.json"
 git clone -q "$work/example-src" "$work/data/collections/example"
@@ -68,8 +69,10 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 [ -d "$dsc_dir" ] || dsc_mount=$work:/nonexistent:ro
 start() {  # start the app in a fresh container: $1 policy file, $2 extra env (e.g. GTK_THEME)
     docker rm -f "$container" >/dev/null 2>&1 || true
-    docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-        -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$1" -e GDK_SCALE=2 -e "${2:-NO_EXTRA=1}" \
+    # A home like a person's, so the data folder furnish shows is the one it uses normally.
+    docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/home/alex \
+        -v "$work/home:/home/alex" -v "$work/data:/home/alex/.local/share/furnish" \
+        -e FURNISH_POLICY_FILE="$1" -e GDK_SCALE=2 -e "${2:-NO_EXTRA=1}" \
         -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
         -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" furnish-screenshots \
         sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 2400x1600x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null

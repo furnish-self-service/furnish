@@ -312,7 +312,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'settings.updatesText': 'Aplikacje aktualizują się same. Aby wykluczyć którąś, wyłącz „Aktualizuj automatycznie” na jej stronie.',
   'settings.lookForUpdates': 'Szukaj aktualizacji',
   'settings.onStart': 'Po uruchomieniu aplikacji {brand}',
-  'settings.whileOpen': 'Gdy aplikacja {brand} jest otwarta',
+  'settings.whileRunning': 'Gdy aplikacja {brand} działa',
   'settings.every15': 'Co 15 minut',
   'settings.every30': 'Co 30 minut',
   'settings.everyHour': 'Co godzinę',

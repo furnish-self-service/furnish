@@ -122,7 +122,7 @@
               {@render locked('updateOnLaunch')}
             </label>
             <label class="inline interval">
-              {t('settings.whileOpen', { brand })}
+              {t('settings.whileRunning', { brand })}
               <select
                 id="interval"
                 value={store.settings.updateIntervalMinutes}

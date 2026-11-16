@@ -293,7 +293,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'settings.updatesText': 'Apps werden von selbst aktualisiert. Um eine auszunehmen, schalten Sie auf ihrer Seite „Automatisch aktualisieren“ aus.',
   'settings.lookForUpdates': 'Nach Updates suchen',
   'settings.onStart': 'Beim Start von {brand}',
-  'settings.whileOpen': 'Während {brand} geöffnet ist',
+  'settings.whileRunning': 'Während {brand} läuft',
   'settings.every15': 'Alle 15 Minuten',
   'settings.every30': 'Alle 30 Minuten',
   'settings.everyHour': 'Jede Stunde',

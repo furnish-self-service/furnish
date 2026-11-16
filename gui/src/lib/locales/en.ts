@@ -292,7 +292,7 @@ export const en = {
   'settings.updatesText': 'Apps update by themselves. To leave one out, turn off Update automatically on its page.',
   'settings.lookForUpdates': 'Look for updates',
   'settings.onStart': 'When {brand} starts',
-  'settings.whileOpen': 'While {brand} is open',
+  'settings.whileRunning': 'While {brand} is running',
   'settings.every15': 'Every 15 minutes',
   'settings.every30': 'Every 30 minutes',
   'settings.everyHour': 'Every hour',

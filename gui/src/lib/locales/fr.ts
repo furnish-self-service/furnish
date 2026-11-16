@@ -295,7 +295,7 @@ export const fr: Record<keyof typeof en, Entry> = {
   'settings.updatesText': 'Les apps se mettent à jour d’elles-mêmes. Pour en exclure une, désactivez « Mettre à jour automatiquement » sur sa page.',
   'settings.lookForUpdates': 'Rechercher des mises à jour',
   'settings.onStart': 'Au démarrage de {brand}',
-  'settings.whileOpen': 'Pendant que {brand} est ouvert',
+  'settings.whileRunning': 'Pendant que {brand} fonctionne',
   'settings.every15': 'Toutes les 15 minutes',
   'settings.every30': 'Toutes les 30 minutes',
   'settings.everyHour': 'Toutes les heures',

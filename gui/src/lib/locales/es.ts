@@ -295,7 +295,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'settings.updatesText': 'Las aplicaciones se actualizan solas. Para excluir una, desactiva «Actualizar automáticamente» en su página.',
   'settings.lookForUpdates': 'Buscar actualizaciones',
   'settings.onStart': 'Al iniciar {brand}',
-  'settings.whileOpen': 'Mientras {brand} está abierto',
+  'settings.whileRunning': 'Mientras {brand} está en marcha',
   'settings.every15': 'Cada 15 minutos',
   'settings.every30': 'Cada 30 minutos',
   'settings.everyHour': 'Cada hora',

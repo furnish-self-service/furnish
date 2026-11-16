@@ -295,7 +295,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'settings.updatesText': 'Apps worden vanzelf bijgewerkt. Om er een uit te sluiten, schakelt u Automatisch bijwerken uit op de pagina van die app.',
   'settings.lookForUpdates': 'Zoeken naar updates',
   'settings.onStart': 'Wanneer {brand} start',
-  'settings.whileOpen': 'Terwijl {brand} geopend is',
+  'settings.whileRunning': 'Terwijl {brand} actief is',
   'settings.every15': 'Elke 15 minuten',
   'settings.every30': 'Elke 30 minuten',
   'settings.everyHour': 'Elk uur',
