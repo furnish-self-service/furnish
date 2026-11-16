@@ -17,6 +17,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'catalog.checkForUpdates': 'Procurar atualizações',
   'catalog.postponed': 'Atualizações adiadas: {reason}',
   'catalog.busy': 'este computador está ocupado ({load})',
+  'catalog.measuring': 'a medir a carga deste computador',
   'catalog.lastCheckFailed': 'A última verificação falhou',
   'catalog.lastChecked': 'Última verificação às {time}',
   'catalog.search': 'Procurar apps',

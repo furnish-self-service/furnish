@@ -15,6 +15,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'catalog.checkForUpdates': 'Nach Updates suchen',
   'catalog.postponed': 'Updates verschoben: {reason}',
   'catalog.busy': 'Dieser Computer ist ausgelastet ({load})',
+  'catalog.measuring': 'Die Auslastung dieses Computers wird gemessen',
   'catalog.lastCheckFailed': 'Letzte Prüfung fehlgeschlagen',
   'catalog.lastChecked': 'Zuletzt geprüft um {time}',
   'catalog.search': 'Apps durchsuchen',

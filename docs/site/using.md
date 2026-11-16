@@ -32,7 +32,7 @@ Click an app for its description, its source and what it installs. Three closed 
 
 While an app installs, its button shows the progress and a stop control. The first click stops after the current step; a second click stops the current step too. With Steps open, you see each step's start time, duration and result.
 
-![An install in progress: the current step and the one after it.](images/install-progress.webp)
+![An install in progress: a step skipped on this system, then the running step.](images/install-progress.webp)
 
 If a step needs administrator rights, your system asks for your password. Cancelling the password dialog cancels the install.
 

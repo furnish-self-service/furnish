@@ -14,6 +14,7 @@ export const en = {
   'catalog.checkForUpdates': 'Check for updates',
   'catalog.postponed': 'Updates postponed: {reason}',
   'catalog.busy': 'this computer is busy ({load})',
+  'catalog.measuring': 'measuring how busy this computer is',
   'catalog.lastCheckFailed': 'Last check failed',
   'catalog.lastChecked': 'Last checked {time}',
   'catalog.search': 'Search apps',

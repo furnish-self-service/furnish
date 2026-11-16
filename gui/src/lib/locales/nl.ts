@@ -17,6 +17,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'catalog.checkForUpdates': 'Controleren op updates',
   'catalog.postponed': 'Updates uitgesteld: {reason}',
   'catalog.busy': 'deze computer is bezet ({load})',
+  'catalog.measuring': 'de belasting van deze computer wordt gemeten',
   'catalog.lastCheckFailed': 'Laatste controle mislukt',
   'catalog.lastChecked': 'Laatst gecontroleerd om {time}',
   'catalog.search': 'Apps zoeken',

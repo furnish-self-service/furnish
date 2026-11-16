@@ -134,8 +134,9 @@
             <span class="muted" aria-live="polite">
               {#if store.autoUpdate.postponed}
                 <span class="postponed">{t('catalog.postponed', {
+                  // The backend says "measuring …" until it has a first sample (src/load.rs).
                   reason: store.autoUpdate.postponed.startsWith('measuring')
-                    ? store.autoUpdate.postponed
+                    ? t('catalog.measuring')
                     : t('catalog.busy', { load: store.autoUpdate.postponed }),
                 })}</span>
               {:else if store.autoUpdate.error}{t('catalog.lastCheckFailed')}{:else if store.autoUpdate.lastAt}{t('catalog.lastChecked', {
