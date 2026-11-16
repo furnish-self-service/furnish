@@ -49,7 +49,7 @@ On Linux, the tray icon needs libayatana-appindicator, which the furnish package
 
 ## Updates of furnish
 
-furnish looks for new versions of itself when it starts and every `updateIntervalMinutes` (with `0`, only when it starts). It reads one small file per channel: `https://furnish-self-service.github.io/furnish/alpha/latest.json` for alpha builds. Offline, it shows nothing. `selfUpdate` decides what furnish does with a new version:
+furnish looks for new versions of itself when it starts and every `updateIntervalMinutes`. With `updateIntervalMinutes` at `0` and `updateOnLaunch` off, it doesn't look, and Check now on the Settings page looks once. It reads one small file per channel: `https://furnish-self-service.github.io/furnish/alpha/latest.json` for alpha builds. Offline, it shows nothing. `selfUpdate` decides what furnish does with a new version:
 
 | `selfUpdate` | Installed from the Windows or macOS download | Installed with Homebrew, a Linux package or Nix |
 |---|---|---|

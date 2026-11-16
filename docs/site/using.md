@@ -74,7 +74,7 @@ On GNOME, tray icons only show with the AppIndicator extension. Without a tray, 
 
 ## New versions of furnish
 
-When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one when it starts and as often as it looks for app updates. Offline, it shows nothing.
+When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one whenever it looks for app updates. Offline, it shows nothing.
 
 If you installed furnish from the Windows or macOS download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
 

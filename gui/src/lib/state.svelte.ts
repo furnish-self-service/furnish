@@ -355,7 +355,7 @@ export function setAutoUpdate(key: string, on: boolean) {
 // --- furnish's own updates
 
 let selfCheckedAt = 0;
-/** Ask for a newer furnish (one small request; offline it says nothing). On launch, with the
+/** Ask for a newer furnish (one small request; offline it says nothing). At start, with the
  *  update interval and from Check now; at most once a minute. */
 export async function checkSelfUpdate(download = false) {
   if (!download && Date.now() - selfCheckedAt < 60_000) return;
@@ -447,7 +447,8 @@ async function reloadSettings() {
 export async function start() {
   await reloadSettings();
   api.selfUpdateStatus().then((s) => (store.selfUpdate ??= s)).catch(() => {});
-  checkSelfUpdate();
+  // At start unless checking is Never and updating at start is off (then no network traffic at all).
+  if (store.settings?.updateOnLaunch || (store.settings?.updateIntervalMinutes ?? 0) > 0) checkSelfUpdate();
   // furnish:// links: the one furnish started with, and those arriving while it runs.
   api.onLink(openLink);
   api.pendingLink().then((url) => url && openLink(url)).catch(() => {});
