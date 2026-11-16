@@ -400,10 +400,11 @@ async fn check_self_update(app: tauri::AppHandle, download: bool) -> selfupdate:
 }
 
 /// Install the downloaded version and restart into it, unless something is installing (or, with
-/// `onlyHidden`, the window is open). Returns whether it did; on success furnish restarts.
+/// `onlyHidden`, the window is open). Returns whether it did; on success furnish restarts. Off
+/// the main thread: on macOS the updater may ask there for an administrator's password.
 #[tauri::command]
-fn apply_self_update(app: tauri::AppHandle, only_hidden: bool) -> CmdResult<bool> {
-    selfupdate::apply(&app, only_hidden)
+async fn apply_self_update(app: tauri::AppHandle, only_hidden: bool) -> CmdResult<bool> {
+    spawn_blocking(move || selfupdate::apply(&app, only_hidden)).await.map_err(|e| e.to_string())?
 }
 
 /// Show the open-source components and their licenses: the installer's copy, else the website's.
