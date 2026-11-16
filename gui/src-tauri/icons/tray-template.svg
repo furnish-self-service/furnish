@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="86 70 360 360">
-  <!-- The logo's armchair and sparkle in black on transparent: a macOS menu bar template image
-       (the menu bar tints it). Source of tray-template.png:
-       rsvg-convert -w 44 -h 44 -a tray-template.svg -o tray-template.png -->
+  <!-- The logo's armchair and sparkle in black on transparent: furnish's tray icon. The app
+       renders it at runtime (src/tray_icon.rs): a template image on macOS (the menu bar tints
+       it), black or white to suit the taskbar on Windows and Linux. -->
   <mask id="cushion">
     <rect x="0" y="0" width="512" height="512" fill="#fff"/>
     <rect x="172" y="262" width="168" height="62" rx="22" fill="#000"/>

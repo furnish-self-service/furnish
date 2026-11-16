@@ -215,7 +215,15 @@ pub fn get(name: &str) -> Result<Collection> {
 /// The branding logo (`branding.logo` in the policy): an absolute path, or `<collection>/<path>`
 /// inside a preset collection. `None` if missing or outside that collection.
 pub fn branding_logo() -> Option<PathBuf> {
-    let spec = crate::policy::load().branding.logo?;
+    branding_file(crate::policy::load().branding.logo?)
+}
+
+/// The policy's `branding.trayIcon`, found like `branding_logo`.
+pub fn branding_tray_icon() -> Option<PathBuf> {
+    branding_file(crate::policy::load().branding.tray_icon?)
+}
+
+fn branding_file(spec: String) -> Option<PathBuf> {
     if Path::new(&spec).is_absolute() {
         return Path::new(&spec).is_file().then(|| PathBuf::from(spec));
     }

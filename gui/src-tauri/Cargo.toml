@@ -21,6 +21,12 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # rather than through tauri-plugin-autostart, which always registers the running binary: on Nix
 # that is a store path the next update removes.
 auto-launch = "=0.6.0"
+# Tray icons from SVG, PNG, JPEG and WebP (see tray_icon.rs). Without text: no font loading.
+resvg = { version = "=0.50.0", default-features = false, features = ["raster-images"] }
+
+[dev-dependencies]
+png = "0.18"
+tempfile = "3"
 
 # Same glib as Tauri's GTK stack, used to set the Wayland app ID (see main.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -29,3 +35,7 @@ glib = "0.18"
 gio = "0.18"
 # Whether libayatana-appindicator is installed: the tray loads it at runtime and panics without it.
 libloading = "0.7"
+
+# The taskbar's theme (SystemUsesLightTheme) and when it changes, for the tray icon's color.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }

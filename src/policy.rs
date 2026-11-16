@@ -58,6 +58,9 @@ pub struct Branding {
     /// SVG, PNG, JPEG or WebP: an absolute path, or `<preset collection>/<path>` inside a
     /// collection the policy presets (so it ships with the collection).
     pub logo: Option<String>,
+    /// A one-color tray icon (black on transparent), given like `logo`. macOS uses it as a
+    /// template image; on Windows and Linux furnish colors it black or white to suit the taskbar.
+    pub tray_icon: Option<String>,
     /// Brand color (`#rrggbb`); the app derives its accent shades from it.
     pub accent: Option<String>,
     /// Brand color for the dark theme; defaults to a lighter `accent`.
@@ -205,10 +208,12 @@ pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint
         && let Some((_, d)) = brander
         && let Some(mut b) = d.branding.clone().and_then(|b| serde_json::from_value::<Branding>(b).ok())
     {
-        // A logo only from inside the endpoint's own collections.
-        let own_logo = b.logo.as_deref().and_then(|l| l.split_once('/')).is_some_and(|(c, _)| d.collections.iter().any(|o| o.name == c));
-        if !own_logo {
-            b.logo = None;
+        // Images only from inside the endpoint's own collections.
+        let own = |file: &Option<String>| file.as_deref().and_then(|l| l.split_once('/')).is_some_and(|(c, _)| d.collections.iter().any(|o| o.name == c));
+        for file in [&mut b.logo, &mut b.tray_icon] {
+            if !own(file) {
+                *file = None;
+            }
         }
         policy.branding = b;
     }
@@ -408,19 +413,20 @@ mod tests {
     fn branding_comes_from_named_or_the_first_added_endpoint() {
         let first = description(serde_json::json!({
             "collections": [{"name": "a", "url": "https://a.tld/git/a.git"}],
-            "branding": {"name": "A", "logo": "b/logo.svg"}}));
+            "branding": {"name": "A", "logo": "b/logo.svg", "trayIcon": "b/tray.svg"}}));
         let second = description(serde_json::json!({
             "collections": [{"name": "b", "url": "https://b.tld/git/b.git"}],
-            "branding": {"name": "B", "logo": "b/logo.svg"}}));
+            "branding": {"name": "B", "logo": "b/logo.svg", "trayIcon": "b/tray.svg"}}));
         let both = [("https://a.tld".to_string(), first.clone()), ("https://b.tld".to_string(), second.clone())];
         let mut p = Policy::default();
         with_endpoints(&mut p, &both);
         // The first added; its logo points into another address's collection, so no logo.
-        assert_eq!((p.branding.name.as_deref(), p.branding.logo), (Some("A"), None));
+        assert_eq!((p.branding.name.as_deref(), p.branding.logo, p.branding.tray_icon), (Some("A"), None, None));
         // An endpoint the policy names wins, with a logo from its own collection.
         let mut p: Policy = serde_json::from_str(r#"{"endpoints": ["b.tld"]}"#).unwrap();
         with_endpoints(&mut p, &both);
         assert_eq!((p.branding.name.as_deref(), p.branding.logo.as_deref()), (Some("B"), Some("b/logo.svg")));
+        assert_eq!(p.branding.tray_icon.as_deref(), Some("b/tray.svg"));
         // The first added without branding: none, even if a later one has some.
         let plain = description(serde_json::json!({"collections": []}));
         let mut p = Policy::default();
