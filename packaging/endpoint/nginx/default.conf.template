@@ -1,9 +1,9 @@
 # furnish endpoint with nginx: lets furnish users clone selected internal GitLab repositories
-# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to the receiver.
 #
 #   furnish ──HTTPS, Bearer <ID token>──▶ nginx ──auth_request──▶ oauth2-proxy (checks the JWT)
 #                                          ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
-#                                          └──POST /events, X-Furnish-User──▶ Vector
+#                                          └──POST /v1/logs, X-Furnish-User──▶ OTLP receiver
 #
 # The official image runs envsubst on this template at start, replacing ${FURNISH_HOST},
 # ${GITLAB_URL} and the credentials variables (see nginx/compose.yml). Only variables defined in
@@ -29,10 +29,10 @@ map $request_method$request_uri $furnish_gitlab_auth {
     "~^POST/git/acme\.git/git-upload-pack$"                   "Basic ${ACME_GITLAB_AUTH}";
 }
 
-# Reports: exactly POST /events, no query.
+# Reports (OpenTelemetry logs): exactly POST /v1/logs, no query.
 map $request_method$request_uri $furnish_events {
-    default          0;
-    "~^POST/events$" 1;
+    default           0;
+    "~^POST/v1/logs$" 1;
 }
 
 # Only "Authorization: Bearer <JWT>" may authenticate. (oauth2-proxy would also take a JWT sent as
@@ -42,10 +42,11 @@ map $http_authorization $furnish_bearer {
     "~^Bearer [!-~]+$" 1;
 }
 
-# Git requests per sign-in (limit_req in /_furnish_gitlab): 2 a second on average, bursts of up to
-# 60 (a clone or fetch takes 2 to 4 requests). The key is the client's token, so people behind one
-# address don't share a limit.
-limit_req_zone $http_authorization zone=furnish_git:10m rate=2r/s;
+# Git requests and reports per sign-in (limit_req in /_furnish_gitlab and /_furnish_events): 2 a
+# second on average, bursts of up to 60 (a clone or fetch takes 2 to 4 requests, furnish sends its
+# queue of at most 5 MB in about 1 MiB requests). The key is the client's token, so people behind
+# one address don't share a limit.
+limit_req_zone $http_authorization zone=furnish_user:10m rate=2r/s;
 limit_req_status 429;
 
 # Docker's DNS. proxy_pass with variables resolves at request time, so containers that restart
@@ -113,7 +114,7 @@ server {
         internal;
         # git's upload-pack requests are small (the commits the client wants and has).
         client_max_body_size 32m;
-        limit_req zone=furnish_git burst=60 nodelay;
+        limit_req zone=furnish_user burst=60 nodelay;
         if ($furnish_bearer = 0) {
             return 401;
         }
@@ -149,20 +150,23 @@ server {
         proxy_request_buffering off;
     }
 
-    # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
+    # Reports from furnish: signed-in users only, at most 1 MiB, to the OTLP receiver with the
+    # user's e-mail.
     location = /_furnish_events {
         internal;
         client_max_body_size 1m;
+        limit_req zone=furnish_user burst=60 nodelay;
         if ($furnish_bearer = 0) {
             return 401;
         }
         auth_request /_furnish_auth;
         auth_request_set $furnish_user $upstream_http_x_auth_request_email;
 
-        set $furnish_vector http://vector:8080;
-        proxy_pass $furnish_vector/events;
+        set $furnish_receiver http://receiver:4318;
+        proxy_pass $furnish_receiver/v1/logs;
         proxy_http_version 1.1;
-        # Only the proxy names the user: what the client sent under these names is replaced.
+        # Only the proxy names the user: what the client sent under these names is replaced. The
+        # receiver adds it to every log record.
         proxy_set_header X-Furnish-User $furnish_user;
         proxy_set_header X-Auth-Request-Email "";
         proxy_set_header Authorization "";

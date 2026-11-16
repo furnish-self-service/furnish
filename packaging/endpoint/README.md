@@ -2,15 +2,16 @@
 
 The reverse proxy behind a furnish address such as `furnish.myorg.tld`: people get your
 organization's collections from an internal GitLab with their organization account, without a
-VPN, and send reports to your log system through Vector. The setup guide is
+VPN, and send reports as OpenTelemetry logs to your log system. The setup guide is
 [docs/site/endpoint.md](../../docs/site/endpoint.md), published at
 <https://furnish-self-service.github.io/docs/alpha/endpoint.html>; it shows the files in this
 folder as they are.
 
 | Path | What it is |
 | --- | --- |
-| [`docker-compose.yml`](docker-compose.yml) | oauth2-proxy and Vector, used with every proxy |
-| [`vector/vector.yaml`](vector/vector.yaml) | Where reports go |
+| [`docker-compose.yml`](docker-compose.yml) | oauth2-proxy and the OpenTelemetry Collector, used with every proxy |
+| [`collector/collector.yaml`](collector/collector.yaml) | Where reports go |
+| [`vector/`](vector) | Optional: Vector instead of the Collector |
 | [`furnish.json`](furnish.json) | Example discovery document |
 | [`.env.example`](.env.example) | Settings to copy into `.env` |
 | [`reports/`](reports) | Optional: Loki and Grafana with a dashboard of the reports |

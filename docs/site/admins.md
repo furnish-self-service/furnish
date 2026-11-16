@@ -130,7 +130,7 @@ Behind the address runs a reverse proxy: it checks the token and forwards only g
 
 ## Reports
 
-furnish can report to your organization what it installed, updated or removed on each computer and whether that worked, through your furnish address. Its proxy accepts `POST /events` from signed-in users only, adds the user's e-mail address from the sign-in, and passes the reports to [Vector](https://vector.dev), which writes them where you keep logs: a file, Loki, Elasticsearch, Splunk and others. The [endpoint setup](endpoint.md) contains the configuration.
+furnish can report to your organization what it installed, updated or removed on each computer and whether that worked, through your furnish address. Reports are OpenTelemetry logs, sent over OTLP/HTTP. Any OTLP receiver takes them: the OpenTelemetry Collector, Grafana Alloy, Vector, Datadog, Grafana Cloud and others. The address's proxy accepts them from signed-in users only and names the user to the receiver. The receiver adds that user to each record. furnish itself never sends a user name, and one a client puts in a record is dropped. The [endpoint setup](endpoint.md) contains the configuration, with the OpenTelemetry Collector as the receiver.
 
 To look at reports without a log system of your own, add Loki and Grafana to the endpoint: the dashboard "furnish reports" shows failed operations per app, fallbacks to earlier versions, the furnish versions in use and devices that stopped reporting. See [Look at the reports](endpoint.md#look-at-the-reports).
 
@@ -152,25 +152,26 @@ To turn reports on for everyone, set it in the policy, and lock it if people mus
 { "settings": { "reporting": { "value": "errors", "locked": true }, "reportHostname": { "value": false } } }
 ```
 
-The address's `furnish.json` names where reports go, on the address itself: `"events": "https://furnish.myorg.tld/events"`. Each address gets only the reports about its own collections, and the daily list of installed apps only with its apps; with several addresses, each sees its part. Error messages go out without passwords or tokens: furnish replaces credentials in URLs (`https://user:password@host`), `Bearer` and `Basic` credentials and JWTs with `***`. furnish keeps reports in `reports/queue.ndjson` in its data folder, readable only by the person, until the address accepts them, at most 5 MB, so computers that are offline report later.
+The address's `furnish.json` names where reports go, on the address itself: `"events": "https://furnish.myorg.tld/v1/logs"`. It is the full OTLP logs URL, like `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. Each address gets only the reports about its own collections, and the daily list of installed apps only with its apps; with several addresses, each sees its part. Error messages go out without passwords or tokens: furnish replaces credentials in URLs (`https://user:password@host`), `Bearer` and `Basic` credentials and JWTs with `***`. furnish keeps reports in `reports/queue.ndjson` in its data folder, readable only by the person, until the address accepts them, at most 5 MB, so computers that are offline report later. If the address answers 429, 502, 503 or 504, furnish waits as long as `Retry-After` says, or from 1 minute up to 1 hour, and tries again. Reports the address refuses with 400 or 413 are dropped, so they don't hold up the rest.
 
-Each report is one JSON object:
+Each report is one log record. furnish sets the time it happened, the severity (`ERROR` for failures, `WARN` for fallbacks, `INFO` otherwise), a short text such as `install acme/vpn failed` and these attributes:
 
-| Field | Meaning |
+| Attribute | Meaning |
 |---|---|
-| `time` | When it happened, UTC, such as `2026-11-15T08:03:06Z` |
-| `user` | The signed-in user's e-mail address, added by the proxy |
-| `device` | A random ID furnish created for this user on this computer |
-| `host` | The computer's name, only with `reportHostname: true` |
-| `os`, `osVersion`, `furnish` | The system and furnish's version |
-| `event` | `install`, `update`, `uninstall`, `reinstall`, `fallback`, `collectionUpdate` or `inventory` |
-| `outcome` | `succeeded`, `failed`, `cancelled`; `reported` for an inventory |
-| `app`, `collection`, `version` | The app (`collection/app`), its collection, and the collection's commit it was installed from |
-| `trigger` | `user`, `update` (automatic updates) or `autoInstall` |
-| `error`, `durationMs` | The error message of a failure, and how long it took |
-| `apps` | For an inventory: each installed app with `installed` or `needsUpdate` |
+| `service.name`, `service.version` | `furnish` and its version (resource) |
+| `os.type`, `os.version` | `windows`, `darwin` or `linux`, and the system's version (resource) |
+| `device.id` | A random ID furnish created for this user on this computer (resource) |
+| `host.name` | The computer's name, only with `reportHostname: true` (resource) |
+| `user.email` | The signed-in user's e-mail address, added by the receiver from the proxy's header |
+| `furnish.event` | `install`, `update`, `uninstall`, `reinstall`, `fallback`, `collectionUpdate` or `inventory` |
+| `furnish.outcome` | `succeeded`, `failed`, `cancelled`; `reported` for an inventory |
+| `furnish.app`, `furnish.collection` | The app (`collection/app`) and its collection |
+| `furnish.collection.commit` | The collection's commit the app was installed from, or a collection update went to |
+| `furnish.trigger` | `user`, `update` (automatic updates) or `autoInstall` |
+| `error.message`, `furnish.duration_ms` | The error message of a failure, and how long it took |
+| `furnish.apps` | For an inventory: each installed app as `app` and `status` (`installed` or `needsUpdate`) |
 
-Loki, in the endpoint's reports add-on, indexes `event` and `outcome` and files values other than these under `other`, because a client could otherwise create so many streams that Loki stops taking reports.
+Loki, in the endpoint's reports add-on, makes labels of `furnish.event` and `furnish.outcome` and files values other than these under `other`, because a client could otherwise create so many streams that Loki stops taking reports.
 
 Reports about the software people install are personal data, and in Germany a works council has a say before they are collected (§ 87 (1) 6 BetrVG). `errors` without host names collects the least that helps fix broken apps. To send reports without user names, remove the line that sets `X-Furnish-User` from the proxy's configuration.
 

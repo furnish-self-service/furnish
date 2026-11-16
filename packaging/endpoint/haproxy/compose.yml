@@ -32,4 +32,4 @@ services:
       - ${TLS_DIR:-./certs}:/certs:ro
       # The IdP's signing key as PEM, from haproxy/jwks-to-pem.sh.
       - ${JWT_KEY_FILE:-./haproxy/idp.pem}:/etc/haproxy/idp.pem:ro
-    depends_on: [vector]
+    depends_on: [receiver]

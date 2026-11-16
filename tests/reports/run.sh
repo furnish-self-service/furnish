@@ -1,11 +1,12 @@
 #!/bin/sh
-# Test of the reports add-on (packaging/endpoint/reports): Vector, Loki and Grafana.
+# Test of the reports add-on (packaging/endpoint/reports): the OpenTelemetry Collector, Loki and
+# Grafana.
 #
 #   tests/reports/run.sh
 #
 # Runs packaging/endpoint/docker-compose.yml with reports/compose.yml, the files the docs show,
 # plus tests/reports/compose.yml (free host ports) under a fresh compose project. Sends the reports
-# of reports.sh to Vector as the proxy would, then checks what Loki stored, with the queries of
+# of reports.sh as OTLP logs (otlp.jq) to the Collector as the proxy would, then checks what Loki stored, with the queries of
 # the dashboard, and that every panel of the dashboard gets data through Grafana. Removes
 # everything on exit. Prints one line per check; exits non-zero on any failure.
 set -eu
@@ -35,12 +36,14 @@ bad() { echo "FAIL $*"; failed=1; }
 # wait_for <seconds> <command...>: retry until the command succeeds.
 wait_for() { n=$1; shift; while ! "$@" >/dev/null 2>&1; do n=$((n - 1)); [ $n -gt 0 ] || return 1; sleep 1; done; }
 
-dc up -d --quiet-pull vector loki grafana 2>/dev/null
-vector=http://$(dc port vector 8080) loki=http://$(dc port loki 3100) grafana=http://$(dc port grafana 3000)
+dc up -d --quiet-pull receiver loki grafana 2>/dev/null
+receiver=http://$(dc port receiver 4318) loki=http://$(dc port loki 3100) grafana=http://$(dc port grafana 3000)
+# otlp <user>: post the OTLP request on stdin to the Collector as the proxy forwards it.
+otlp() { curl -sf -o /dev/null -H "X-Furnish-User: $1" -H 'Content-Type: application/json' --data-binary @- "$receiver/v1/logs"; }
 gf() { curl -s -u "admin:$GRAFANA_ADMIN_PASSWORD" -H 'Content-Type: application/json' "$@"; }
 
 wait_for 60 curl -sf "$loki/ready" && ok "Loki is ready" || bad "Loki isn't ready"
-wait_for 60 curl -sf -X POST --data-binary '' "$vector/events" && ok "Vector accepts reports" || bad "Vector doesn't accept reports"
+wait_for 60 curl -sf -H 'Content-Type: application/json' --data-binary '{}' "$receiver/v1/logs" && ok "the Collector accepts reports" || bad "the Collector doesn't accept reports"
 
 # Each user's reports with that user's header, as the proxy forwards them. The second batch comes
 # a few seconds later: alice's device updates furnish in between, and dave's and erin's devices
@@ -49,7 +52,7 @@ wait_for 60 curl -sf -X POST --data-binary '' "$vector/events" && ok "Vector acc
 send() {
     for u in $users; do
         lines=$($1 "$u")
-        [ -z "$lines" ] || printf '%s\n' "$lines" | curl -sf -H "X-Furnish-User: $u" --data-binary @- "$vector/events" || bad "Vector rejected $1 of $u"
+        [ -z "$lines" ] || printf '%s\n' "$lines" | jq -sc -f "$here/otlp.jq" | otlp "$u" || bad "the Collector rejected $1 of $u"
     done
 }
 send batch1
@@ -63,12 +66,12 @@ loki() {
     curl -s -G "$loki/loki/api/v1/query" --data-urlencode "query=$1" \
         | jq -r '[.data.result[]? | "\(.metric | [to_entries[].value] | join(","))=\(.value[1])"] | sort | join(" ")'
 }
-stored() { [ "$(loki 'sum(count_over_time({job="furnish"}[10m]))')" = "=$expected" ]; }
-wait_for 30 stored && ok "Loki stored all $expected reports" || bad "Loki has $(loki 'sum(count_over_time({job="furnish"}[10m]))') of $expected reports"
+stored() { [ "$(loki 'sum(count_over_time({service_name="furnish"}[10m]))')" = "=$expected" ]; }
+wait_for 30 stored && ok "Loki stored all $expected reports" || bad "Loki has $(loki 'sum(count_over_time({service_name="furnish"}[10m]))') of $expected reports"
 
 labels=$(curl -s "$loki/loki/api/v1/labels" | jq -r '.data | sort | join(" ")')
-[ "$labels" = "event job outcome service_name" ] && ok "Loki labels are only: $labels" || bad "unexpected Loki labels: $labels"
-[ "$(loki 'count(sum by (user) (count_over_time({job="furnish"} | json user | user=~".+@myorg.tld" [10m])))')" = "=5" ] \
+[ "$labels" = "event outcome service_name" ] && ok "Loki labels are only: $labels" || bad "unexpected Loki labels: $labels"
+[ "$(loki 'count(sum by (user_email) (count_over_time({service_name="furnish"} | user_email=~".+@myorg.tld" [10m])))')" = "=5" ] \
     && ok "reports carry the user from X-Furnish-User" || bad "reports without the user from X-Furnish-User"
 
 # The dashboard's own queries: expr <panel title> [refId], with the time range and $stale set.
@@ -89,7 +92,7 @@ check "furnish versions from each device's latest report" "0.10.0=3 0.9.0=2" "fu
 # Long enough to include the second batch, too short for the first.
 stale=$(( $(date +%s) - batch2_at + 2 ))s
 got=$(loki "$(expr "Devices without inventory for \$stale")" | sed 's/=[0-9]*//g')
-[ "$got" = "91bd-dave,,dave@myorg.tld 5c02-erin,,erin@myorg.tld" ] || [ "$got" = "5c02-erin,,erin@myorg.tld 91bd-dave,,dave@myorg.tld" ] \
+[ "$got" = "5c02-erin,erin@myorg.tld 91bd-dave,dave@myorg.tld" ] \
     && ok "devices without inventory for $stale: $got" || bad "devices without inventory for $stale: expected dave's and erin's, got '$got'"
 lines=$(curl -s -G "$loki/loki/api/v1/query_range" --data-urlencode "query=$(expr "Recent failures")" --data-urlencode since=10m \
     | jq -r '.data.result[].values[][1]')
@@ -126,7 +129,7 @@ while read -r q; do
         && ok "panel $title: $(printf '%s\n' "$result" | jq .rows) rows in the time range" || bad "panel $title: $result"
     case $title in
     "furnish versions in use (A)")
-        got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.furnish)=\(.data.values[1][0])"] | sort | join(" ")')
+        got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.service_version)=\(.data.values[1][0])"] | sort | join(" ")')
         [ "$got" = "0.10.0=3 0.9.0=2" ] && ok "panel $title: one series per version: $got" || bad "panel $title: expected 0.10.0=3 0.9.0=2, got $got" ;;
     esac
 done <<EOF
@@ -148,19 +151,31 @@ unnamed=$(jq -r '.panels[] | select(.type == "table") | .title as $t
 # Made-up values in the fields Loki uses as labels: each new value would be a new stream, and Loki
 # refuses reports once there are too many. They are stored, with "other" as label.
 made_up=$(i=0; while [ $i -lt 200 ]; do
-    printf '{"time":"%s","device":"ffff-mallory","event":"ev%d","outcome":"out%d","collection":"c%d","check":"labels"}\n' \
+    printf '{"time":"%s","device":"ffff-mallory","os":"linux","osVersion":"1","furnish":"0.10.0","event":"ev%d","outcome":"out%d","collection":"c%d"}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" $i $i $i
     i=$((i + 1)); done)
-printf '%s\n' "$made_up" | curl -sf -H "X-Furnish-User: mallory@myorg.tld" --data-binary @- "$vector/events" || bad "Vector rejected the made-up reports"
-others() { [ "$(loki 'sum(count_over_time({job="furnish", event="other", outcome="other"}[10m]))')" = "=200" ]; }
+printf '%s\n' "$made_up" | jq -sc -f "$here/otlp.jq" | otlp mallory@myorg.tld || bad "the Collector rejected the made-up reports"
+others() { [ "$(loki 'sum(count_over_time({service_name="furnish", event="other", outcome="other"}[10m]))')" = "=200" ]; }
 wait_for 30 others && ok "reports with made-up event and outcome are stored under \"other\"" \
-    || bad "made-up reports: $(loki 'sum by (event, outcome) (count_over_time({job="furnish"}[10m]))')"
+    || bad "made-up reports: $(loki 'sum by (event, outcome) (count_over_time({service_name="furnish"}[10m]))')"
 events=$(curl -s "$loki/loki/api/v1/label/event/values" | jq -r '.data | sort | join(" ")')
 outcomes=$(curl -s "$loki/loki/api/v1/label/outcome/values" | jq -r '.data | sort | join(" ")')
 [ "$events" = "collectionUpdate fallback install inventory other reinstall uninstall update" ] && ok "event labels: $events" || bad "event labels: $events"
 [ "$outcomes" = "cancelled failed other reported succeeded" ] && ok "outcome labels: $outcomes" || bad "outcome labels: $outcomes"
-streams=$(curl -s -G "$loki/loki/api/v1/series" --data-urlencode 'match[]={job="furnish"}' | jq '.data | length')
+streams=$(curl -s -G "$loki/loki/api/v1/series" --data-urlencode 'match[]={service_name="furnish"}' | jq '.data | length')
 [ "$streams" -le 40 ] && ok "Loki streams: $streams" || bad "Loki streams: $streams, want at most 40"
+
+# A client that names a user itself, at every level of the request, with a time a day ahead: the
+# Collector replaces the user with the proxy's and Loki gets the time the report arrived.
+s() { printf '{"key":"%s","value":{"stringValue":"%s"}}' "$1" "$2"; }
+ahead=$(( ($(date +%s) + 86400) * 1000000000 ))
+printf '{"resourceLogs":[{"resource":{"attributes":[%s,%s,%s]},"scopeLogs":[{"scope":{"name":"furnish","attributes":[%s]},"logRecords":[{"timeUnixNano":"%s","body":{"stringValue":"forged"},"attributes":[%s,%s,%s,%s,%s]}]}]}]}' \
+    "$(s service.name furnish)" "$(s device.id ffff-forger)" "$(s user.email mallory@myorg.tld)" "$(s user.name mallory)" "$ahead" \
+    "$(s furnish.event install)" "$(s furnish.outcome failed)" "$(s user.email mallory@myorg.tld)" "$(s user.id mallory)" "$(s furnish.user mallory@myorg.tld)" \
+    | otlp frank@myorg.tld || bad "the Collector rejected the forged report"
+forged() { [ "$(loki 'sum by (user_email, user_name, user_id, furnish_user) (count_over_time({service_name="furnish"} | device_id="ffff-forger" [10m]))')" = "frank@myorg.tld=1" ]; }
+wait_for 30 forged && ok "a user the client names is replaced by the proxy's, and a time ahead by the arrival" \
+    || bad "forged report: $(loki 'sum by (user_email, user_name, user_id, furnish_user) (count_over_time({service_name="furnish"} | device_id="ffff-forger" [10m]))')"
 
 if [ $failed -ne 0 ]; then
     echo "--- container logs ---"

@@ -27,7 +27,7 @@ services:
       - ${TLS_DIR:-./certs}:/certs:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [oauth2-proxy, vector]
+    depends_on: [oauth2-proxy, receiver]
 
 volumes:
   caddy-data:

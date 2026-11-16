@@ -28,6 +28,18 @@ schema_config:
         period: 24h
 
 limits_config:
+  # Labels: only these resource attributes (the Collector moves event and outcome there and sets
+  # service.name). Loki's default list also has attributes such as k8s.pod.name, which a client
+  # could fill with new values for each report. Everything else becomes structured metadata.
+  otlp_config:
+    resource_attributes:
+      ignore_defaults: true
+      attributes_config:
+        - action: index_label
+          attributes: [service.name, event, outcome]
+  # Reports come with the time they happened: a computer that was offline for weeks sends them
+  # when it is back.
+  reject_old_samples: false
   # Reports older than this are deleted by the compactor.
   retention_period: ${REPORTS_RETENTION:-90d}
   # Long enough for "Last inventory" queries over the whole retention.

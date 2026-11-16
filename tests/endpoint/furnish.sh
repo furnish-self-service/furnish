@@ -59,7 +59,7 @@ echo "$out" | grep -q "sign in to Acme first: furnish login furnish.test" && ok 
 out=$(furnish login furnish.test 2>&1) && echo "$out" | grep -q "Signed in to Acme" && ok "furnish login signs in again" || bad "login: $out"
 furnish collection update acme >/dev/null 2>&1 && ok "updates again after signing in" || bad "update after login failed"
 
-# Reports: queued, sent with the sign-in when the command ends (run.sh checks what Vector got).
+# Reports: queued, sent with the sign-in when the command ends (run.sh checks what the receiver got).
 furnish settings --reporting all >/dev/null
 [ "$(stat -c %a /tmp/furnish/settings.json)" = 600 ] && ok "settings.json is readable only by its owner" || bad "settings.json permissions"
 furnish collection update acme >/dev/null 2>&1

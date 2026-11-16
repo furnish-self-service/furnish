@@ -3,21 +3,22 @@
 #
 #   docker compose -f docker-compose.yml -f caddy/compose.yml -f reports/compose.yml up -d
 #
-# Vector then reads reports/vector.yaml as well as vector/vector.yaml and sends every report to
-# Loki in addition to its log output. Settings come from .env (see reports/README.md).
+# The OpenTelemetry Collector then reads reports/collector.yaml as well as
+# collector/collector.yaml and sends every report to Loki in addition to its log output. Settings
+# come from .env (see reports/README.md).
 #
-# Networks: Vector reaches Loki on "loki-ingest", Grafana reaches Loki on "loki-query"; both are
-# internal (no way out). Grafana's port is published from the "grafana" network, which only
+# Networks: the Collector reaches Loki on "loki-ingest", Grafana reaches Loki on "loki-query"; both
+# are internal (no way out). Grafana's port is published from the "grafana" network, which only
 # Grafana is on. So neither the proxy nor oauth2-proxy can reach Loki or Grafana.
 services:
-  vector:
-    command: ["--config", "/etc/vector/vector.yaml", "--config", "/etc/vector/loki.yaml"]
+  receiver:
+    command: ["--config=/etc/otelcol-contrib/config.yaml", "--config=/etc/otelcol-contrib/loki.yaml"]
     networks: [backend, loki-ingest]
     volumes:
-      - ./reports/vector.yaml:/etc/vector/loki.yaml:ro
+      - ./reports/collector.yaml:/etc/otelcol-contrib/loki.yaml:ro
     depends_on: [loki]
 
-  # Not published: only Vector and Grafana reach it.
+  # Not published: only the Collector and Grafana reach it.
   loki:
     image: grafana/loki:3.7.9
     restart: unless-stopped

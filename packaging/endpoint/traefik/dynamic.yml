@@ -1,10 +1,10 @@
 # Dynamic configuration of the Traefik proxy for the furnish endpoint: lets furnish users clone
 # selected internal GitLab repositories with their own OIDC sign-in, without exposing GitLab
-# itself, and send reports to Vector.
+# itself, and send reports to the receiver.
 #
 #   furnish ──HTTPS, Bearer <ID token>──▶ Traefik ──forwardAuth──▶ oauth2-proxy (checks the JWT)
 #                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
-#                                           └──POST /events, X-Furnish-User──▶ Vector
+#                                           └──POST /v1/logs, X-Furnish-User──▶ OTLP receiver
 #
 # Traefik renders this file as a Go template once at startup; settings come from environment
 # variables (see traefik/compose.yml and README.md):
@@ -70,15 +70,16 @@ http:
       service: noop@internal
 {{- end }}
 
-    # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
-    # The size check reads the body, so it comes after the sign-in check.
+    # Reports from furnish (OpenTelemetry logs): signed-in users only, at most 1 MiB, to the OTLP
+    # receiver with the user's e-mail, which it adds to every log record. The size check reads the
+    # body, so it comes after the sign-in check.
     events:
-      rule: '{{ $host }} && Method(`POST`) && Path(`/events`) && {{ $bearer }}'
+      rule: '{{ $host }} && Method(`POST`) && Path(`/v1/logs`) && {{ $bearer }}'
       priority: 200
-      middlewares: [uri-mismatch-404, uri-no-query, events-signed-in, events-size, events-user, events-headers]
-      service: vector
+      middlewares: [uri-mismatch-404, uri-no-query, events-signed-in, git-rate, events-size, events-user, events-headers]
+      service: receiver
     events-401:
-      rule: '{{ $host }} && Method(`POST`) && Path(`/events`)'
+      rule: '{{ $host }} && Method(`POST`) && Path(`/v1/logs`)'
       priority: 100
       middlewares: [uri-mismatch-404, uri-no-query, unauthorized-401]
       service: noop@internal
@@ -128,8 +129,9 @@ http:
         maxResponseBodySize: 65536
         authRequestHeaders: [Authorization]
 
-    # Git requests per sign-in: 2 a second on average, bursts of up to 60 (a clone or fetch takes 2
-    # to 4 requests); more get 429. The key is the client's token, so people behind one address
+    # Git requests and reports per sign-in: 2 a second on average, bursts of up to 60 (a clone or
+    # fetch takes 2 to 4 requests, furnish sends its queue of at most 5 MB in about 1 MiB
+    # requests); more get 429. The key is the client's token, so people behind one address
     # don't share a limit.
     git-rate:
       rateLimit:
@@ -214,9 +216,9 @@ http:
         # Send GitLab's own host name, not the endpoint's.
         passHostHeader: false
         servers: [{ url: '{{ env "GITLAB_URL" }}' }]
-    vector:
+    receiver:
       loadBalancer:
-        servers: [{ url: "http://vector:8080" }]
+        servers: [{ url: "http://receiver:4318" }]
 
   serversTransports:
     # Give up on GitLab if it doesn't connect within 5 s or doesn't answer within 5 minutes.

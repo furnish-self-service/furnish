@@ -2,7 +2,7 @@
 
 This variant runs `haproxy:3.2.26-alpine` as the proxy instead of Caddy. It lets through the same
 requests as the Caddy variant described in [the endpoint setup](https://furnish-self-service.github.io/docs/alpha/endpoint.html), with the same deploy
-token handling and the same `POST /events` forwarding to Vector. The configuration is
+token handling and the same `POST /v1/logs` forwarding to the OTLP receiver. The configuration is
 [`haproxy.cfg`](haproxy.cfg).
 
 The difference is the token check. HAProxy cannot ask oauth2-proxy about a request, so it
@@ -109,7 +109,7 @@ way: as a string, or as an element of the array's JSON text. Tokens that fail an
 (signature, issuer, audience, expiry, `nbf`) or 403 (e-mail, groups).
 
 The 1 MiB limit on reports is checked against `Content-Length`, because HAProxy streams request
-bodies. `POST /events` without exactly one `Content-Length` header gets 411; furnish always sends
+bodies. `POST /v1/logs` without exactly one `Content-Length` header gets 411; furnish always sends
 one. HAProxy itself rejects a body longer than its declared length. The 32 MiB limit on
 `git-upload-pack` is checked the same way, but git sends requests over 1 MiB without a length
 (chunked), and HAProxy has no native way to count those bytes, so they pass without a limit.

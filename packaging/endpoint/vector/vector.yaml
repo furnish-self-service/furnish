@@ -1,16 +1,17 @@
-# furnish's reports: the proxy forwards POST /events (JSON lines, at most 1 MiB) here, after
-# checking the user's sign-in, and names the user in the X-Furnish-User header. The event schema
-# is documented in the admins' docs ("Reports"). Change the sink to send them where you keep logs.
+# Vector instead of the OpenTelemetry Collector as the endpoint's OTLP receiver (see the endpoint
+# docs, "Vector instead of the Collector"). Vector's opentelemetry source takes only protobuf, and
+# furnish sends JSON, so an http_server source reads the requests. Each log record becomes one
+# event with its resource's attributes. Like collector/collector.yaml, it adds the user the proxy
+# names in X-Furnish-User as user.email and drops any user attribute the client sent itself.
 
 sources:
   furnish:
     type: http_server
-    address: 0.0.0.0:8080
-    path: /events
-    decoding: { codec: json }
-    framing: { method: newline_delimited }
+    address: 0.0.0.0:4318
+    path: /v1/logs
+    decoding: {codec: json}
     headers: [X-Furnish-User]
-    # Headers go into metadata, so a field in the report can't stand in for one.
+    # Headers go into metadata, so a field in the request can't stand in for one.
     log_namespace: true
 
 transforms:
@@ -18,15 +19,40 @@ transforms:
     type: remap
     inputs: [furnish]
     source: |
-      # The user the proxy verified; a "user" in the report itself is replaced. Null when the proxy
-      # doesn't send it (see "Reports without user names" in the README).
-      .user = %http_server.headers."X-Furnish-User"
-      del(."X-Furnish-User")
+      user = %http_server.headers."X-Furnish-User"
+      skip = r'^(user\..*|furnish\.user)$'
+      events = []
+      for_each(array(.resourceLogs) ?? []) -> |_i, resource_logs| {
+        resource = {}
+        for_each(array(resource_logs.resource.attributes) ?? []) -> |_j, a| {
+          if is_string(a.key) && !match(string!(a.key), skip) { resource = set!(resource, [a.key], values(object(a.value) ?? {})[0]) }
+        }
+        resource."service.name" = "furnish"
+        for_each(array(resource_logs.scopeLogs) ?? []) -> |_j, scope_logs| {
+          for_each(array(scope_logs.logRecords) ?? []) -> |_k, record| {
+            attributes = {}
+            for_each(array(record.attributes) ?? []) -> |_l, a| {
+              if is_string(a.key) && !match(string!(a.key), skip) { attributes = set!(attributes, [a.key], values(object(a.value) ?? {})[0]) }
+            }
+            # The user the proxy verified.
+            if is_string(user) { attributes."user.email" = user }
+            nanos = to_int(record.timeUnixNano) ?? 0
+            events = push(events, {
+              "timestamp": from_unix_timestamp!(nanos, unit: "nanoseconds"),
+              "severity": record.severityText,
+              "message": record.body.stringValue,
+              "attributes": attributes,
+              "resources": resource,
+            })
+          }
+        }
+      }
+      . = events
 
 sinks:
-  # One JSON line per report on Vector's output (docker compose logs vector). Replace or add sinks,
-  # for example file, loki, elasticsearch, splunk_hec or http: https://vector.dev/docs/reference/configuration/sinks/
+  # One JSON line per report on Vector's output (docker compose logs receiver). Replace or add
+  # sinks: https://vector.dev/docs/reference/configuration/sinks/
   stdout:
     type: console
     inputs: [reports]
-    encoding: { codec: json }
+    encoding: {codec: json}

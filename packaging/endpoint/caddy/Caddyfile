@@ -1,9 +1,9 @@
 # furnish endpoint with Caddy: lets furnish users clone selected internal GitLab repositories
-# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to the receiver.
 #
 #   furnish ──HTTPS, Bearer <ID token>──▶ Caddy ──forward_auth──▶ oauth2-proxy (checks the JWT)
 #                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
-#                                           └──POST /events, X-Furnish-User──▶ Vector
+#                                           └──POST /v1/logs, X-Furnish-User──▶ OTLP receiver
 #
 # Settings come from environment variables (see caddy/compose.yml and README.md):
 #   FURNISH_HOST   public host name, e.g. furnish.myorg.tld
@@ -117,8 +117,9 @@
 	# One line per collection; add the same collection to furnish.json.
 	import collection acme /it/catalog.git ACME_GITLAB_AUTH
 
-	# Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the user's e-mail.
-	@events expression `{method} == "POST" && {uri} == "/events"`
+	# Reports from furnish (OpenTelemetry logs): signed-in users only, at most 1 MiB, to the OTLP
+	# receiver with the user's e-mail, which it adds to every log record.
+	@events expression `{method} == "POST" && {uri} == "/v1/logs"`
 	handle @events {
 		request_body {
 			max_size 1MiB
@@ -133,8 +134,8 @@
 				header_up -Cookie
 				copy_headers X-Auth-Request-Email>X-Furnish-User
 			}
-			reverse_proxy vector:8080 {
-				rewrite /events
+			reverse_proxy receiver:4318 {
+				rewrite /v1/logs
 				header_up -Authorization
 				header_up -Cookie
 				header_up X-Real-IP {remote_host}

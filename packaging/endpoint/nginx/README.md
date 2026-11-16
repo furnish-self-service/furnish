@@ -2,7 +2,7 @@
 
 This variant runs `nginx:1.30.6-alpine` as the proxy instead of Caddy. It behaves like the Caddy
 variant described in [the endpoint setup](https://furnish-self-service.github.io/docs/alpha/endpoint.html): same allowlist, same token check through
-oauth2-proxy, same deploy token handling and the same `POST /events` forwarding to Vector.
+oauth2-proxy, same deploy token handling and the same `POST /v1/logs` forwarding to the OTLP receiver.
 The configuration is [`default.conf.template`](default.conf.template).
 
 ## Start
@@ -55,7 +55,7 @@ For an `https` `GITLAB_URL`, nginx verifies GitLab's certificate against the ima
 If GitLab uses a certificate from an internal CA, mount that CA and point
 `proxy_ssl_trusted_certificate` at it.
 
-The proxy resolves `oauth2-proxy`, `vector` and the GitLab host through Docker's DNS server
+The proxy resolves `oauth2-proxy`, `receiver` and the GitLab host through Docker's DNS server
 (`resolver 127.0.0.11`) at request time. If GitLab's name is only resolvable through another
 DNS server, change the `resolver` line.
 

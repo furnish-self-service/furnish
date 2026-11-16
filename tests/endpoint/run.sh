@@ -3,16 +3,19 @@
 #
 #   PROXY=nginx tests/endpoint/run.sh            # the proxy alone (caddy, nginx, traefik, envoy, haproxy)
 #   FURNISH_BIN=<static furnish> tests/endpoint/run.sh   # and furnish signing in and fetching through it
+#   RECEIVER=vector tests/endpoint/run.sh        # Vector instead of the OpenTelemetry Collector
 #
-# Runs packaging/endpoint/docker-compose.yml with packaging/endpoint/$PROXY/compose.yml, the files
-# the docs show, plus tests/endpoint/compose.yml under a fresh compose project. Runs checks.sh in a
-# client container, checks the fake GitLab's access log and what Vector received, and removes
-# everything on exit. Prints one line per check; exits non-zero on any failure.
+# Runs packaging/endpoint/docker-compose.yml with packaging/endpoint/$PROXY/compose.yml (and
+# vector/compose.yml with RECEIVER=vector), the files the docs show, plus tests/endpoint/compose.yml
+# under a fresh compose project. Runs checks.sh in a client container, checks the fake GitLab's
+# access log and what the receiver got, and removes everything on exit. Prints one line per check; exits non-zero on any failure.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 PROXY=${PROXY:-caddy}; export PROXY
 [ -f "$root/packaging/endpoint/$PROXY/compose.yml" ] || { echo "no proxy '$PROXY' in packaging/endpoint" >&2; exit 2; }
+RECEIVER=${RECEIVER:-collector}
+case $RECEIVER in collector) receiver_file= ;; vector) receiver_file=vector/compose.yml ;; *) echo "RECEIVER is collector or vector" >&2; exit 2 ;; esac
 project=furnish-endpoint-test-$PROXY-$(date +%s)-$$
 
 rand() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
@@ -36,15 +39,15 @@ export DEPLOY_USER DEPLOY_TOKEN
 ACME_GITLAB_AUTH=$(printf '%s:%s' "$DEPLOY_USER" "$DEPLOY_TOKEN" | base64 | tr -d '\n'); export ACME_GITLAB_AUTH
 
 dc() { docker compose -p "$project" --project-directory "$root/packaging/endpoint" -f "$root/packaging/endpoint/docker-compose.yml" \
-    -f "$root/packaging/endpoint/$PROXY/compose.yml" -f "$here/compose.yml" "$@"; }
+    -f "$root/packaging/endpoint/$PROXY/compose.yml" ${receiver_file:+-f "$root/packaging/endpoint/$receiver_file"} -f "$here/compose.yml" "$@"; }
 trap 'dc --profile client down -v -t 2 --remove-orphans >/dev/null 2>&1 || true; rm -rf "$TLS_DIR"' EXIT
 trap 'exit 130' INT TERM
 
 dc --profile client build -q
 # Optional per-proxy preparation (e.g. HAProxy needs the IdP's public key), sourced here.
 [ -f "$here/$PROXY.sh" ] && . "$here/$PROXY.sh"
-dc up -d --quiet-pull proxy oauth2-proxy vector mock-oidc gitlab 2>$TLS_DIR/up.log || { cat $TLS_DIR/up.log >&2; exit 1; }
-echo "proxy: $PROXY"
+dc up -d --quiet-pull proxy oauth2-proxy receiver mock-oidc gitlab 2>$TLS_DIR/up.log || { cat $TLS_DIR/up.log >&2; exit 1; }
+echo "proxy: $PROXY, receiver: $RECEIVER"
 
 failed=0
 dc run --rm -T client sh /checks.sh || failed=1
@@ -70,17 +73,26 @@ spoofed=$(echo "$log" | grep -E '6\.6\.6\.6|evil\.example|spoofed|6666' || true)
 unset_fwd=$(echo "$log" | grep -vE ' xff="[0-9.]+" xri="[0-9.]+" xfh="furnish\.test" xfp="https" ' || true)
 [ -z "$unset_fwd" ] && ok "upstream got X-Forwarded-For, X-Real-IP, -Host and -Proto from the connection" || bad "upstream without the proxy's forwarding headers: $(echo "$unset_fwd" | head -3)"
 
-# What Vector received (checks.sh sent reports, with and without attempts to pose as someone else).
-reports=$(dc logs --no-color --no-log-prefix vector | grep '"event"' || true)
-echo "$reports" | grep -q '"check":"events"' && ok "Vector received the reports" || bad "Vector received no reports"
-echo "$reports" | grep '"check":"events"' | grep -vq '"user":"alice@myorg.tld"' \
-    && bad "a report reached Vector without the signed-in user: $(echo "$reports" | grep -v alice | head -1)" \
-    || ok "every report carries the signed-in user"
-echo "$reports" | grep -q mallory && bad "a client named another user in a report" || ok "clients can't name another user"
-echo "$reports" | grep -q '"check":"unauthenticated"' && bad "a report without sign-in reached Vector" || ok "reports without sign-in never reach Vector"
+# What the receiver got (checks.sh sent reports, with and without attempts to pose as someone else):
+# one JSON object per log record with the attributes of its resource and its own. The Collector
+# prints OTLP requests, Vector one event per record.
+reports=$(dc logs --no-color --no-log-prefix receiver | grep '^{' | jq -c '
+    def flat: map({(.key): (.value.stringValue // .value)}) | add // {};
+    if .resourceLogs then .resourceLogs[] | (.resource.attributes // [] | flat) as $r
+        | .scopeLogs[] | (.scope.attributes // [] | flat) as $s | .logRecords[] | $r + $s + (.attributes // [] | flat)
+    else (.resources // {}) + (.attributes // {}) end' 2>/dev/null | grep -v '"check":"size"' || true)
+check() { echo "$reports" | jq -e -s "$1" >/dev/null; }
+check 'any(.check == "events")' && ok "the receiver got the reports" || bad "the receiver got no reports: $reports"
+check 'map(select(.check == "events" or .check == "forged")) | length >= 3 and all(."user.email" == "alice@myorg.tld")' \
+    && ok "every report carries the signed-in user" || bad "a report without the signed-in user: $reports"
+echo "$reports" | grep -q mallory && bad "a client named another user in a report: $(echo "$reports" | grep mallory)" || ok "clients can't name another user"
+check 'map(select(.check == "forged")) | length == 1 and all(keys - ["check", "furnish.event", "service.name", "user.email"] == [])' \
+    && ok "user attributes the client sent (user.*, furnish.user) are dropped" || bad "client user attributes kept: $(echo "$reports" | grep forged)"
+check 'all(."service.name" == "furnish")' && ok "the receiver sets service.name" || bad "records without service.name furnish"
+check 'any(.check == "unauthenticated")' && bad "a report without sign-in reached the receiver" || ok "reports without sign-in never reach the receiver"
 if [ -n "${FURNISH_BIN:-}" ]; then
-    echo "$reports" | grep '"event":"collectionUpdate"' | grep -q '"user":"alice@myorg.tld"' \
-        && ok "furnish's own report arrived with the signed-in user" || bad "no collectionUpdate report from furnish: $reports"
+    check 'any(."furnish.event" == "collectionUpdate" and ."user.email" == "alice@myorg.tld" and ."device.id" != null and ."service.version" != null)' \
+        && ok "furnish's own report arrived as OTLP with the signed-in user" || bad "no collectionUpdate report from furnish: $reports"
 fi
 
 # Misconfigured deploy token: GitLab answers 401, the client must get 502 and no Basic challenge.

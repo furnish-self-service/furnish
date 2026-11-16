@@ -1,7 +1,7 @@
 # furnish endpoint with Envoy
 
 This variant runs the endpoint behind Envoy instead of Caddy. It lets through the same requests,
-checks tokens with the same oauth2-proxy and sends reports to the same Vector, so the
+checks tokens with the same oauth2-proxy and sends reports to the same OTLP receiver, so the
 [endpoint setup](https://furnish-self-service.github.io/docs/alpha/endpoint.html) applies, apart from the points below.
 
 ## Start

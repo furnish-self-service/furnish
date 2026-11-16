@@ -103,12 +103,12 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "sum by (app) (count_over_time({job=\"furnish\", outcome=\"failed\"} | json app | app != \"\" [$__auto] offset -$__auto))",
+          "expr": "sum by (furnish_app) (count_over_time({service_name=\"furnish\", outcome=\"failed\"} | furnish_app != \"\" [$__auto] offset -$__auto))",
           "queryType": "range",
           "editorMode": "code",
           "range": true,
           "instant": false,
-          "legendFormat": "{{app}}"
+          "legendFormat": "{{furnish_app}}"
         }
       ],
       "id": 1,
@@ -193,7 +193,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "(sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} | json app [$__range])) or on (app) 0 * sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"succeeded\"} | json app [$__range]))) / sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} | json app [$__range]))",
+          "expr": "(sum by (furnish_app) (count_over_time({service_name=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} [$__range])) or on (furnish_app) 0 * sum by (furnish_app) (count_over_time({service_name=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"succeeded\"} [$__range]))) / sum by (furnish_app) (count_over_time({service_name=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} [$__range]))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
@@ -205,7 +205,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} | json app [$__range]))",
+          "expr": "sum by (furnish_app) (count_over_time({service_name=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=\"failed\"} [$__range]))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
@@ -217,7 +217,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "sum by (app) (count_over_time({job=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} | json app [$__range]))",
+          "expr": "sum by (furnish_app) (count_over_time({service_name=\"furnish\", event=~\"install|update|uninstall|reinstall\", outcome=~\"succeeded|failed\"} [$__range]))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
@@ -236,13 +236,13 @@
               "Time": true
             },
             "renameByName": {
-              "app": "App",
+              "furnish_app": "App",
               "Value #A": "Failure rate",
               "Value #B": "Failed",
               "Value #C": "Operations"
             },
             "indexByName": {
-              "app": 0,
+              "furnish_app": 0,
               "Value #A": 1,
               "Value #B": 2,
               "Value #C": 3
@@ -286,7 +286,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "count by (app, version) (sum by (app, version, device) (count_over_time({job=\"furnish\", event=\"fallback\", outcome=\"succeeded\"} | json app, version, device [$__range])))",
+          "expr": "count by (furnish_app, furnish_collection_commit) (sum by (furnish_app, furnish_collection_commit, device_id) (count_over_time({service_name=\"furnish\", event=\"fallback\", outcome=\"succeeded\"} [$__range])))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
@@ -301,14 +301,14 @@
               "Time": true
             },
             "renameByName": {
-              "app": "App",
-              "version": "Installed commit",
+              "furnish_app": "App",
+              "furnish_collection_commit": "Installed commit",
               "Value": "Devices",
               "Value #A": "Devices"
             },
             "indexByName": {
-              "app": 0,
-              "version": 1,
+              "furnish_app": 0,
+              "furnish_collection_commit": 1,
               "Value": 2,
               "Value #A": 2
             }
@@ -361,12 +361,12 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "count by (furnish) (max by (device, furnish) (max_over_time({job=\"furnish\"} | json device, furnish | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) == on (device) group_left max by (device) (max by (device, furnish) (max_over_time({job=\"furnish\"} | json device, furnish | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range]))))",
+          "expr": "count by (service_version) (max by (device_id, service_version) (max_over_time({service_name=\"furnish\"} | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) == on (device_id) group_left max by (device_id) (max by (device_id, service_version) (max_over_time({service_name=\"furnish\"} | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range]))))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
           "range": false,
-          "legendFormat": "{{furnish}}"
+          "legendFormat": "{{service_version}}"
         }
       ],
       "id": 4,
@@ -418,7 +418,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "1000 * (max by (device, user, host) (max_over_time({job=\"furnish\", event=\"inventory\"} | json device, user, host | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) unless on (device) sum by (device) (count_over_time({job=\"furnish\", event=\"inventory\"} | json device [$stale])))",
+          "expr": "1000 * (max by (device_id, user_email, host_name) (max_over_time({service_name=\"furnish\", event=\"inventory\"} | label_format ts=`{{ __timestamp__ | unixEpoch }}` | unwrap ts [$__range])) unless on (device_id) sum by (device_id) (count_over_time({service_name=\"furnish\", event=\"inventory\"} [$stale])))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,
@@ -433,16 +433,16 @@
               "Time": true
             },
             "renameByName": {
-              "device": "Device",
-              "user": "User",
-              "host": "Host",
+              "device_id": "Device",
+              "user_email": "User",
+              "host_name": "Host",
               "Value": "Last inventory",
               "Value #A": "Last inventory"
             },
             "indexByName": {
-              "device": 0,
-              "user": 1,
-              "host": 2,
+              "device_id": 0,
+              "user_email": 1,
+              "host_name": 2,
               "Value": 3,
               "Value #A": 3
             }
@@ -479,7 +479,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "{job=\"furnish\", outcome=\"failed\"} | json | line_format `{{.user}} on {{.device}}: {{.event}} {{if .app}}{{.app}}{{else}}{{.collection}}{{end}} failed: {{.error}}`",
+          "expr": "{service_name=\"furnish\", outcome=\"failed\"} | line_format `{{.user_email}} on {{.device_id}}: {{.furnish_event}} {{if .furnish_app}}{{.furnish_app}}{{else}}{{.furnish_collection}}{{end}} failed: {{.error_message}}`",
           "queryType": "range",
           "editorMode": "code",
           "range": true,

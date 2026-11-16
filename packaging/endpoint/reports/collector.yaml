@@ -1,0 +1,38 @@
+# Loaded by the Collector together with collector/collector.yaml when reports/compose.yml is used:
+# a second pipeline sends every report to Loki's OTLP endpoint as well. Loki indexes the labels
+# event, outcome and service_name (see reports/loki.yaml); the other attributes, such as
+# user.email, device.id and furnish.app, become structured metadata (user_email, device_id,
+# furnish_app) that LogQL filters and groups by directly.
+#
+# Each distinct set of labels is a stream in Loki, and Loki refuses reports once there are too
+# many (5000 by default). A report's attributes come from the client, so the event and outcome
+# labels only take the values furnish sends (see "Reports" in the admins' docs) and "other" for
+# anything else; furnish.event and furnish.outcome stay as sent.
+
+processors:
+  transform/loki:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          # Loki refuses entries too far in the future; a computer whose clock runs ahead gets
+          # the time the report arrived.
+          - set(time, Now()) where time > Now()
+          - set(attributes["event"], "other")
+          - set(attributes["event"], attributes["furnish.event"]) where IsMatch(attributes["furnish.event"], "^(install|update|uninstall|reinstall|fallback|collectionUpdate|inventory)$")
+          - set(attributes["outcome"], "other")
+          - set(attributes["outcome"], attributes["furnish.outcome"]) where IsMatch(attributes["furnish.outcome"], "^(succeeded|failed|cancelled|reported)$")
+  # Loki makes labels only of resource attributes: move event and outcome there.
+  groupbyattrs/loki:
+    keys: [event, outcome]
+
+exporters:
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+
+service:
+  pipelines:
+    logs/loki:
+      receivers: [otlp]
+      processors: [transform/drop_client_user, attributes/proxy_user, resource/furnish, transform/loki, groupbyattrs/loki, batch]
+      exporters: [otlp_http/loki]

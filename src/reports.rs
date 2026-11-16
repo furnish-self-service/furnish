@@ -1,6 +1,7 @@
 //! Reports to the organization: what furnish installed, updated or removed on this computer and
-//! whether it worked, sent to the `events` URL of the organization's furnish address (see
-//! `endpoint`), whose proxy adds the signed-in user and passes them to the admins' log collector.
+//! whether it worked, sent as OpenTelemetry logs (OTLP/HTTP with JSON) to the `events` URL of the
+//! organization's furnish address (see `endpoint`). Its proxy names the signed-in user to the
+//! admins' OTLP receiver, which adds it to each record; furnish never sends a user name itself.
 //!
 //! The setting `reporting` decides what is recorded: `off` (default), `errors` (failures and
 //! fallbacks) or `all` (also successes and a daily inventory). Events wait in
@@ -114,7 +115,8 @@ pub fn queue_path() -> PathBuf {
 
 /// The queue keeps at most this much; older reports go first.
 const MAX_QUEUE: u64 = 5 << 20;
-/// At most this much per request (the endpoint's proxies accept 1 MiB).
+/// At most this much log records per request (the endpoint's proxies accept 1 MiB), leaving room
+/// for the resources around them.
 const MAX_BATCH: usize = 900 << 10;
 
 pub fn level() -> Level {
@@ -163,7 +165,7 @@ pub fn record(event: Event) {
 fn append(event: &Event) -> Result<()> {
     let settings = crate::settings::load();
     let report = Report {
-        time: rfc3339(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())),
+        time: rfc3339(SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)),
         device: device_id()?,
         host: settings.report_hostname.then(sysinfo::System::host_name).flatten(),
         os: std::env::consts::OS.into(),
@@ -276,7 +278,7 @@ pub fn destination_names() -> Vec<String> {
 pub fn send() {
     static SENDING: Mutex<()> = Mutex::new(());
     let Ok(_one) = SENDING.try_lock() else { return };
-    if IN_SERVICE.load(Ordering::Relaxed) {
+    if IN_SERVICE.load(Ordering::Relaxed) || waiting() {
         return;
     }
     // One sender across processes too (the desktop app and the CLI), so no batch goes twice.
@@ -298,16 +300,21 @@ pub fn send() {
                 continue;
             }
             let Ok(token) = crate::endpoint::token(origin, description) else { return };
-            let sent = crate::endpoint::http()
-                .post(url)
-                .header("Authorization", &format!("Bearer {token}"))
-                .header("Content-Type", "application/x-ndjson")
-                .send(&theirs);
-            if let Err(err) = sent {
-                eprintln!("warning: couldn't send reports to {}: {err}", description.name);
-                return;
+            match post(url, &token, &otlp(&theirs)) {
+                Answer::Accepted => {}
+                Answer::Rejected(why) => eprintln!("warning: {} refused {} reports, dropping them: {why}", description.name, theirs.lines().count()),
+                Answer::Offline(why) => {
+                    eprintln!("warning: couldn't send reports to {}: {why}", description.name);
+                    return;
+                }
+                Answer::Later(why, retry_after) => {
+                    eprintln!("warning: couldn't send reports to {}: {why}", description.name);
+                    back_off(retry_after);
+                    return;
+                }
             }
         }
+        let _ = fs::remove_file(dir().join("retry-at"));
         // Drop what was sent (reports about no endpoint's collections go nowhere); reports queued
         // meanwhile stay.
         let Ok(now) = fs::read_to_string(queue_path()) else { return };
@@ -316,6 +323,171 @@ pub fn send() {
         {
             return;
         }
+    }
+}
+
+/// What an endpoint answered, following OTLP/HTTP: 2xx accepted (rejected records in a partial
+/// success are only logged), 429, 502, 503 and 504 retry later (after Retry-After), 400 and 413
+/// drop the batch, since sending it again would fail again and hold up the queue.
+enum Answer {
+    Accepted,
+    Rejected(String),
+    /// Retry later, with the server's Retry-After in seconds if it sent one.
+    Later(String, Option<u64>),
+    /// No answer, or a sign-in problem: try again next time.
+    Offline(String),
+}
+
+fn post(url: &str, token: &str, body: &str) -> Answer {
+    let sent = crate::endpoint::http()
+        .post(url)
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .send(body);
+    let mut response = match sent {
+        Ok(response) => response,
+        Err(err) => return Answer::Offline(err.to_string()),
+    };
+    let status = response.status().as_u16();
+    let retry_after = response.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
+    let text = response.body_mut().with_config().limit(64 << 10).read_to_string().unwrap_or_default();
+    let message = || {
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let message = parsed["message"].as_str().map_or_else(|| text.trim().chars().take(200).collect(), str::to_string);
+        format!("HTTP {status} {message}").trim().to_string()
+    };
+    match status {
+        200..=299 => {
+            let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            let partial = &parsed["partialSuccess"];
+            let rejected = partial["rejectedLogRecords"].as_str().and_then(|n| n.parse().ok()).or(partial["rejectedLogRecords"].as_u64()).unwrap_or(0);
+            if rejected > 0 || partial["errorMessage"].as_str().is_some_and(|m| !m.is_empty()) {
+                eprintln!("warning: the endpoint dropped {rejected} reports: {}", partial["errorMessage"].as_str().unwrap_or_default());
+            }
+            Answer::Accepted
+        }
+        429 | 502 | 503 | 504 => Answer::Later(message(), retry_after),
+        400 | 413 => Answer::Rejected(message()),
+        401 | 403 => Answer::Offline(message()),
+        _ => Answer::Later(message(), None),
+    }
+}
+
+/// After an answer to retry later: no sending before the server's Retry-After, or a delay that
+/// doubles from 1 minute up to 1 hour with each failed try.
+fn back_off(retry_after: Option<u64>) {
+    let previous = fs::read_to_string(dir().join("retry-at")).ok().and_then(|t| t.split_whitespace().nth(1)?.parse::<u64>().ok());
+    let delay = retry_after.unwrap_or_else(|| previous.map_or(60, |d| d * 2)).clamp(1, 3600);
+    let at = unix_now() + delay;
+    let _ = crate::auth::write_private(&dir().join("retry-at"), format!("{at} {delay}").as_bytes());
+}
+
+/// Whether an endpoint asked to wait before the next try.
+fn waiting() -> bool {
+    let at = fs::read_to_string(dir().join("retry-at")).ok().and_then(|t| t.split_whitespace().next()?.parse::<u64>().ok());
+    at.is_some_and(|at| unix_now() < at)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// Report fields and the log record attributes they become.
+const ATTRIBUTES: &[(&str, &str)] = &[
+    ("event", "furnish.event"),
+    ("outcome", "furnish.outcome"),
+    ("app", "furnish.app"),
+    ("collection", "furnish.collection"),
+    ("version", "furnish.collection.commit"),
+    ("trigger", "furnish.trigger"),
+    ("error", "error.message"),
+    ("durationMs", "furnish.duration_ms"),
+    ("apps", "furnish.apps"),
+];
+
+/// Queued reports as an OTLP ExportLogsServiceRequest in JSON: one resource per device and
+/// furnish version, one log record per report.
+fn otlp(lines: &str) -> String {
+    let mut resources: Vec<(serde_json::Value, Vec<serde_json::Value>)> = Vec::new();
+    for line in lines.lines() {
+        let Ok(report) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let resource = otlp_resource(&report);
+        let record = otlp_record(&report);
+        match resources.iter_mut().find(|(r, _)| *r == resource) {
+            Some((_, records)) => records.push(record),
+            None => resources.push((resource, vec![record])),
+        }
+    }
+    let resource_logs: Vec<_> = resources
+        .into_iter()
+        .map(|(attributes, records)| {
+            serde_json::json!({
+                "resource": {"attributes": attributes},
+                "scopeLogs": [{"scope": {"name": "furnish"}, "logRecords": records}],
+            })
+        })
+        .collect();
+    serde_json::json!({"resourceLogs": resource_logs}).to_string()
+}
+
+/// Who sent a report, with OpenTelemetry's semantic conventions.
+fn otlp_resource(report: &serde_json::Value) -> serde_json::Value {
+    let os = match report["os"].as_str().unwrap_or_default() {
+        "macos" => "darwin",
+        os => os,
+    };
+    let mut attributes = vec![attribute("service.name", &"furnish".into()), attribute("service.version", &report["furnish"])];
+    attributes.push(attribute("os.type", &os.into()));
+    attributes.push(attribute("os.version", &report["osVersion"]));
+    attributes.push(attribute("device.id", &report["device"]));
+    if report["host"].is_string() {
+        attributes.push(attribute("host.name", &report["host"]));
+    }
+    attributes.into()
+}
+
+fn otlp_record(report: &serde_json::Value) -> serde_json::Value {
+    let text = |key: &str| report[key].as_str().unwrap_or_default();
+    let (number, severity) = match (text("event"), text("outcome")) {
+        (_, "failed") => (17, "ERROR"),
+        ("fallback", _) => (13, "WARN"),
+        _ => (9, "INFO"),
+    };
+    let body = match report["apps"].as_array() {
+        Some(apps) => format!("{} of {} app{}", text("event"), apps.len(), if apps.len() == 1 { "" } else { "s" }),
+        None => {
+            let subject = if report["app"].is_string() { text("app") } else { text("collection") };
+            format!("{} {subject} {}", text("event"), text("outcome")).split_whitespace().collect::<Vec<_>>().join(" ")
+        }
+    };
+    let attributes: Vec<_> = ATTRIBUTES.iter().filter(|(field, _)| !report[*field].is_null()).map(|(field, key)| attribute(key, &report[*field])).collect();
+    serde_json::json!({
+        "timeUnixNano": (parse_rfc3339(text("time")).unwrap_or_else(|| unix_now() * 1000) * 1_000_000).to_string(),
+        "severityNumber": number,
+        "severityText": severity,
+        "body": {"stringValue": body},
+        "attributes": attributes,
+    })
+}
+
+fn attribute(key: &str, value: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"key": key, "value": any_value(value)})
+}
+
+/// A JSON value as an OTLP AnyValue (64-bit integers as strings, as OTLP's JSON encoding wants).
+fn any_value(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Value, json};
+    match value {
+        Value::Bool(b) => json!({"boolValue": b}),
+        Value::Number(n) if n.is_i64() || n.is_u64() => json!({"intValue": n.to_string()}),
+        Value::Number(n) => json!({"doubleValue": n}),
+        Value::String(s) => json!({"stringValue": s}),
+        Value::Array(items) => json!({"arrayValue": {"values": items.iter().map(any_value).collect::<Vec<_>>()}}),
+        Value::Object(map) => json!({"kvlistValue": {"values": map.iter().map(|(k, v)| attribute(k, v)).collect::<Vec<_>>()}}),
+        Value::Null => json!({}),
     }
 }
 
@@ -365,11 +537,14 @@ impl Drop for Lock {
     }
 }
 
-/// Whole lines from the start of the queue, at most MAX_BATCH bytes (one line at least).
+/// Whole lines from the start of the queue whose log records take at most MAX_BATCH bytes (one
+/// line at least).
 fn first_batch(text: &str) -> &str {
-    let mut end = 0;
+    let (mut end, mut size) = (0, 0);
     for (i, _) in text.match_indices('\n') {
-        if i + 1 > MAX_BATCH && end > 0 {
+        let line = &text[end..i];
+        size += serde_json::from_str::<serde_json::Value>(line).map_or(line.len(), |r| otlp_record(&r).to_string().len() + 1);
+        if size > MAX_BATCH && end > 0 {
             break;
         }
         end = i + 1;
@@ -383,18 +558,20 @@ pub fn inventory_due() -> bool {
         return false;
     }
     let last = fs::read_to_string(dir().join("inventory-at")).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) > last + 86_400
+    unix_now() > last + 86_400
 }
 
 /// Record which apps are installed (with `reporting: all`, once a day).
 pub fn inventory(apps: Vec<Installed>) {
     record(Event { event: "inventory", outcome: "reported", apps: Some(apps), ..Default::default() });
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now = unix_now();
     let _ = private_dir().and_then(|()| Ok(crate::auth::write_private(&dir().join("inventory-at"), now.to_string().as_bytes())?));
 }
 
-/// Seconds since 1970 as `2026-11-15T08:03:06Z`.
-fn rfc3339(secs: u64) -> String {
+/// Milliseconds since 1970 as `2026-11-15T08:03:06.042Z`. Milliseconds keep two reports of the
+/// same second apart (Loki keeps only one of two equal entries with the same time).
+fn rfc3339(millis: u64) -> String {
+    let secs = millis / 1000;
     // Days to civil date (Howard Hinnant's algorithm), valid from 1970 on.
     let days = (secs / 86_400) as i64 + 719_468;
     let era = days / 146_097;
@@ -406,7 +583,33 @@ fn rfc3339(secs: u64) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     let s = secs % 86_400;
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", s / 3600, s / 60 % 60, s % 60)
+    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z", s / 3600, s / 60 % 60, s % 60, millis % 1000)
+}
+
+/// `2026-11-15T08:03:06.042Z` or `2026-11-15T08:03:06Z` as milliseconds since 1970 (only the
+/// forms `rfc3339` writes and wrote).
+fn parse_rfc3339(text: &str) -> Option<u64> {
+    let b = text.as_bytes();
+    let millis = match b.len() {
+        20 => 0,
+        24 if b[19] == b'.' => text.get(20..23)?.parse::<u64>().ok()?,
+        _ => return None,
+    };
+    if b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[b.len() - 1] != b'Z' {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| text.get(r)?.parse::<i64>().ok();
+    let (year, month, day) = (n(0..4)?, n(5..7)?, n(8..10)?);
+    // Civil date to days (Howard Hinnant's algorithm).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = u64::try_from(days * 86_400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?).ok()?;
+    Some(secs * 1000 + millis)
 }
 
 #[cfg(test)]
@@ -415,9 +618,66 @@ mod tests {
 
     #[test]
     fn formats_utc_times() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
-        assert_eq!(rfc3339(1_794_729_786), "2026-11-15T08:03:06Z");
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(rfc3339(951_782_400_000), "2000-02-29T00:00:00.000Z");
+        assert_eq!(rfc3339(1_794_729_786_042), "2026-11-15T08:03:06.042Z");
+        for millis in [0, 951_782_400_000, 1_794_729_786_042, 4_102_444_799_999] {
+            assert_eq!(parse_rfc3339(&rfc3339(millis)), Some(millis));
+        }
+        assert_eq!(parse_rfc3339("2026-11-15T08:03:06Z"), Some(1_794_729_786_000));
+        assert_eq!(parse_rfc3339("2026-11-15 08:03:06"), None);
+    }
+
+    #[test]
+    fn reports_become_otlp_log_records() {
+        let lines = concat!(
+            r#"{"time":"2026-11-15T08:03:06Z","device":"7f3a","os":"macos","osVersion":"15.1","furnish":"0.10.0","event":"install","outcome":"failed","app":"acme/vpn","collection":"acme","version":"c0ffee1","trigger":"user","error":"exit 1","durationMs":4200}"#, "\n",
+            r#"{"time":"2026-11-15T08:03:07Z","device":"7f3a","os":"macos","osVersion":"15.1","furnish":"0.10.0","event":"inventory","outcome":"reported","apps":[{"app":"acme/vpn","status":"installed"}]}"#, "\n",
+            r#"{"time":"2026-11-15T08:03:08Z","device":"7f3a","host":"mac-1","os":"macos","osVersion":"15.1","furnish":"0.10.0","event":"fallback","outcome":"succeeded","app":"acme/vpn","collection":"acme"}"#, "\n",
+        );
+        let request: serde_json::Value = serde_json::from_str(&otlp(lines)).unwrap();
+        let resources = request["resourceLogs"].as_array().unwrap();
+        assert_eq!(resources.len(), 2, "the host name makes another resource");
+        let attributes = |v: &serde_json::Value| -> Vec<(String, serde_json::Value)> {
+            v.as_array().unwrap().iter().map(|a| (a["key"].as_str().unwrap().to_string(), a["value"].clone())).collect()
+        };
+        let s = |v: &str| serde_json::json!({"stringValue": v});
+        assert_eq!(
+            attributes(&resources[0]["resource"]["attributes"]),
+            [("service.name", s("furnish")), ("service.version", s("0.10.0")), ("os.type", s("darwin")), ("os.version", s("15.1")), ("device.id", s("7f3a"))]
+                .map(|(k, v)| (k.to_string(), v))
+        );
+        assert_eq!(attributes(&resources[1]["resource"]["attributes"]).last().unwrap(), &("host.name".to_string(), s("mac-1")));
+        let records = resources[0]["scopeLogs"][0]["logRecords"].as_array().unwrap();
+        assert_eq!(records[0]["timeUnixNano"], "1794729786000000000");
+        assert_eq!((records[0]["severityNumber"].as_u64(), records[0]["severityText"].as_str()), (Some(17), Some("ERROR")));
+        assert_eq!(records[0]["body"], s("install acme/vpn failed"));
+        assert_eq!(
+            attributes(&records[0]["attributes"]),
+            [
+                ("furnish.event", s("install")),
+                ("furnish.outcome", s("failed")),
+                ("furnish.app", s("acme/vpn")),
+                ("furnish.collection", s("acme")),
+                ("furnish.collection.commit", s("c0ffee1")),
+                ("furnish.trigger", s("user")),
+                ("error.message", s("exit 1")),
+                ("furnish.duration_ms", serde_json::json!({"intValue": "4200"})),
+            ]
+            .map(|(k, v)| (k.to_string(), v))
+        );
+        assert_eq!(records[1]["severityText"], "INFO");
+        assert_eq!(records[1]["body"], s("inventory of 1 app"));
+        assert_eq!(
+            attributes(&records[1]["attributes"])[2],
+            (
+                "furnish.apps".to_string(),
+                serde_json::json!({"arrayValue": {"values": [{"kvlistValue": {"values": [
+                    {"key": "app", "value": s("acme/vpn")}, {"key": "status", "value": s("installed")}]}}]}})
+            )
+        );
+        assert_eq!(resources[1]["scopeLogs"][0]["logRecords"][0]["severityText"], "WARN");
+        assert!(!otlp(lines).contains("\"user."), "only the endpoint names the user");
     }
 
     #[test]
@@ -458,5 +718,11 @@ mod tests {
         assert_eq!(first_batch("a\nb"), "a\n"); // a line still being written waits
         let long = format!("{}\nx\n", "y".repeat(MAX_BATCH + 10));
         assert_eq!(first_batch(&long).len(), MAX_BATCH + 11); // one oversized line alone
+        // The limit counts the log records the lines become.
+        let line = format!(r#"{{"event":"install","outcome":"failed","error":"{}"}}"#, "e".repeat(1000));
+        let many = format!("{line}\n").repeat(2000);
+        let batch = first_batch(&many);
+        assert!(batch.len() < MAX_BATCH && batch.ends_with('\n'));
+        assert!(otlp(batch).len() <= MAX_BATCH + 1024 && otlp(&many[..batch.len() + line.len() + 1]).len() > MAX_BATCH);
     }
 }

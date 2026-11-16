@@ -138,7 +138,8 @@ req "JWT sent as Basic password" 401 -u "x:$GOOD" "$REFS"
 BASIC_JWT="Authorization: Basic $(printf 'x:%s' "$GOOD" | openssl base64 -A)"
 req "Basic JWT header, then a Bearer header" "400 401" -H "$BASIC_JWT" -H "$AUTH" "$REFS"
 req "Bearer header, then a Basic JWT header" "400 401" -H "$AUTH" -H "$BASIC_JWT" "$REFS"
-req "report: Basic JWT header, then a Bearer header" "400 401" -X POST -H "$BASIC_JWT" -H "$AUTH" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
+req "report: Basic JWT header, then a Bearer header" "400 401" -X POST -H "$BASIC_JWT" -H "$AUTH" -H 'Content-Type: application/json' \
+    --data-binary '{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"attributes":[{"key":"check","value":{"stringValue":"unauthenticated"}}]}]}]}]}' $E/v1/logs
 for t in none "$WRONG_AUD" "$OTHER_ISS"; do
     if [ $t = none ]; then hdr="X-None: 1"; label="no token"; else hdr="Authorization: Bearer $t"; label="bad token"; fi
     git -c http.extraHeader="$hdr" clone -q $E/git/acme.git /tmp/w/denied >>$OUT/denied.log 2>&1 \
@@ -253,41 +254,55 @@ else ok "deploy token in no response (headers, bodies, git traces)"; fi
 if grep -rqiE 'fake-gitlab|www-authenticate: basic|set-cookie' $OUT/*.head $OUT/*.curl; then bad "upstream auth challenge or cookie leaked"
 else ok "no upstream WWW-Authenticate or Set-Cookie in responses"; fi
 
-# --- 8. reports (POST /events) -----------------------------------------------------------------
-EV='{"event":"install","outcome":"failed","app":"acme/x","check":"events"}'
-req "report without a token" "401 403" -X POST -H 'Content-Type: application/x-ndjson' --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
-req "report with a bad token" "401 403" -X POST -H "Authorization: Bearer $WRONG_AUD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
-req "report as JWT in a Basic password" 401 -X POST -u "x:$GOOD" --data-binary '{"event":"x","check":"unauthenticated"}' $E/events
-req "reports, signed in" "200 204" -X POST -H "$AUTH" -H 'Content-Type: application/x-ndjson' --data-binary "$EV
-$EV" $E/events
-req "report naming another user in a header" "200 204" -X POST -H "$AUTH" -H 'X-Furnish-User: mallory@myorg.tld' \
-    -H 'X-Auth-Request-Email: mallory@myorg.tld' --data-binary "$EV" $E/events
-req "report naming another user in its fields" "200 204" -X POST -H "$AUTH" \
-    --data-binary '{"event":"install","check":"events","user":"mallory@myorg.tld","X-Furnish-User":"mallory@myorg.tld"}' $E/events
-# report_of_size <bytes> <file>: one valid report line of exactly that many bytes.
+# --- 8. reports (POST /v1/logs, OpenTelemetry logs) ---------------------------------------------
+# otlp <check> [resource attributes] [log record attributes]: an OTLP/HTTP JSON request with one
+# log record whose attribute "check" names the check (run.sh looks for it in the receiver's output).
+otlp() {
+    printf '{"resourceLogs":[{"resource":{"attributes":[%s]},"scopeLogs":[{"scope":{"name":"furnish"},"logRecords":[{"severityText":"ERROR","body":{"stringValue":"install acme/x failed"},"attributes":[{"key":"check","value":{"stringValue":"%s"}},{"key":"furnish.event","value":{"stringValue":"install"}}%s]}]}]}]}' \
+        "${2:-}" "$1" "${3:+,$3}"
+}
+kv() { printf '{"key":"%s","value":{"stringValue":"%s"}}' "$1" "$2"; }
+EV=$(otlp events)
+UNAUTH=$(otlp unauthenticated)
+JSON='Content-Type: application/json'
+req "report without a token" "401 403" -X POST -H "$JSON" --data-binary "$UNAUTH" $E/v1/logs
+req "report with a bad token" "401 403" -X POST -H "$JSON" -H "Authorization: Bearer $WRONG_AUD" --data-binary "$UNAUTH" $E/v1/logs
+req "report as JWT in a Basic password" 401 -X POST -H "$JSON" -u "x:$GOOD" --data-binary "$UNAUTH" $E/v1/logs
+req "reports, signed in" 200 -X POST -H "$AUTH" -H "$JSON" --data-binary "$EV" $E/v1/logs
+req "report naming another user in a header" 200 -X POST -H "$AUTH" -H "$JSON" -H 'X-Furnish-User: mallory@myorg.tld' \
+    -H 'X-Auth-Request-Email: mallory@myorg.tld' --data-binary "$EV" $E/v1/logs
+# A client naming users in the attributes of its resource and record: run.sh checks they are gone.
+req "report naming another user in its attributes" 200 -X POST -H "$AUTH" -H "$JSON" --data-binary "$(otlp forged \
+    "$(kv user.email mallory@myorg.tld),$(kv user.name mallory)" \
+    "$(kv user.email mallory@myorg.tld),$(kv user.id mallory),$(kv furnish.user mallory@myorg.tld)")" $E/v1/logs
+# report_of_size <bytes> <file>: one valid OTLP request of exactly that many bytes.
 report_of_size() {
-    { printf '{"event":"x","check":"size","pad":"'; head -c $(($1 - 38)) /dev/zero | tr '\0' 'x'; printf '"}\n'; } > "$2"
+    pre='{"resourceLogs":[{"scopeLogs":[{"logRecords":[{"attributes":[{"key":"check","value":{"stringValue":"size"}}],"body":{"stringValue":"'
+    post='"}}]}]}]}'
+    { printf %s "$pre"; head -c $(($1 - ${#pre} - ${#post})) /dev/zero | tr '\0' 'x'; printf %s "$post"; } > "$2"
 }
 report_of_size 1015812 /tmp/r1; report_of_size 1048576 /tmp/r2; report_of_size 1048577 /tmp/r3
 [ "$(wc -c < /tmp/r3)" = 1048577 ] || bad "report_of_size makes the wrong size"
-req "report of 1,015,812 bytes" "200 204" -X POST -H "$AUTH" --data-binary @/tmp/r1 $E/events
-req "report of 1 MiB" "200 204" -X POST -H "$AUTH" --data-binary @/tmp/r2 $E/events
-req "report of 1 MiB + 1 byte" 413 -X POST -H "$AUTH" --data-binary @/tmp/r3 $E/events
+req "report of 1,015,812 bytes" 200 -X POST -H "$AUTH" -H "$JSON" --data-binary @/tmp/r1 $E/v1/logs
+req "report of 1 MiB" 200 -X POST -H "$AUTH" -H "$JSON" --data-binary @/tmp/r2 $E/v1/logs
+req "report of 1 MiB + 1 byte" 413 -X POST -H "$AUTH" -H "$JSON" --data-binary @/tmp/r3 $E/v1/logs
 # Without a length (chunked): HAProxy only checks the declared length and refuses the request.
-req "report of 1 MiB + 1 byte, chunked" "$(by_proxy 413 haproxy=411)" --http1.1 -X POST -H "$AUTH" -H 'Transfer-Encoding: chunked' --data-binary @/tmp/r3 $E/events
+req "report of 1 MiB + 1 byte, chunked" "$(by_proxy 413 haproxy=411)" --http1.1 -X POST -H "$AUTH" -H "$JSON" -H 'Transfer-Encoding: chunked' --data-binary @/tmp/r3 $E/v1/logs
 head -c 33554433 /dev/zero > /tmp/pack
 req "git-upload-pack request over 32 MiB" 413 -X POST -H "$AUTH" -H 'Content-Type: application/x-git-upload-pack-request' --data-binary @/tmp/pack $E/git/acme.git/git-upload-pack
 rm -f /tmp/r1 /tmp/r2 /tmp/r3 /tmp/pack
-req "GET /events" "404 405" -H "$AUTH" $E/events
-req "POST /events/x" 404 -X POST -H "$AUTH" --data-binary "$EV" $E/events/x
-req "POST /events?x=1" 404 -X POST -H "$AUTH" --data-binary "$EV" "$E/events?x=1"
+req "GET /v1/logs" "404 405" -H "$AUTH" $E/v1/logs
+req "POST /v1/logs/x" 404 -X POST -H "$AUTH" -H "$JSON" --data-binary "$EV" $E/v1/logs/x
+req "POST /v1/logs?x=1" 404 -X POST -H "$AUTH" -H "$JSON" --data-binary "$EV" "$E/v1/logs?x=1"
+req "POST /v1/traces" 404 -X POST -H "$AUTH" -H "$JSON" --data-binary '{}' $E/v1/traces
+req "POST /events (the path before OTLP)" 404 -X POST -H "$AUTH" -H "$JSON" --data-binary "$EV" $E/events
 
 # --- 9. bodies of requests that aren't signed in are never read -----------------------------------
 # A client that isn't signed in and sends 1 MB at 20 KB/s must get its 401 at once: the proxy may
 # not wait for (and hold) the body before checking the token.
 head -c 1000000 /dev/zero > /tmp/slow
 for http in --http1.1 --http2; do
-    for path in /events /git/acme.git/git-upload-pack; do
+    for path in /v1/logs /git/acme.git/git-upload-pack; do
         n=$((n + 1)); t0=$(date +%s)
         code=$(curl -sS --cacert $CA -m 8 $http --limit-rate 20k -o /dev/null -w '%{http_code}' -X POST \
             -H 'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.e30.x' --data-binary @/tmp/slow "$E$path" 2>>$OUT/$n.err)

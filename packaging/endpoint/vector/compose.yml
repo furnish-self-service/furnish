@@ -1,0 +1,15 @@
+# Vector instead of the OpenTelemetry Collector as the receiver of furnish's reports. Add this file
+# after the proxy's:
+#
+#   docker compose -f docker-compose.yml -f caddy/compose.yml -f vector/compose.yml up -d
+#
+# See vector/vector.yaml for where reports go. reports/compose.yml (Loki and Grafana) uses the
+# Collector, so don't combine the two.
+services:
+  receiver:
+    image: timberio/vector:0.61.0-alpine
+    command: ["--config", "/etc/vector/vector.yaml"]
+    # Vector's buffers and checkpoints; reports pass through without being kept here.
+    tmpfs: [/var/lib/vector, /tmp]
+    volumes: !override
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro

@@ -23,10 +23,10 @@ services:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       - ${TLS_DIR:-./certs}:/certs:ro
-    depends_on: [oauth2-proxy, vector, files]
+    depends_on: [oauth2-proxy, receiver, files]
 
   # Traefik can't serve files or rename headers: this busybox httpd serves furnish.json and tells
-  # Traefik the user name to pass to Vector (traefik/files/user.sh). Not published.
+  # Traefik the user name to pass to the receiver (traefik/files/user.sh). Not published.
   files:
     image: busybox:1.37.0-musl
     restart: unless-stopped

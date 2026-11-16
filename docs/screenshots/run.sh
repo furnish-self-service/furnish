@@ -95,7 +95,7 @@ start "$work/policy.json" && shoot endpoint
 # Reports: the organization's furnish address takes them, the policy suggests errors only.
 echo '{"origin": "https://furnish.acme.example", "description": {"name": "Acme", "issuer": "https://sso.acme.example",
   "clientId": "furnish", "collections": [{"name": "acme", "url": "https://furnish.acme.example/git/acme.git"}],
-  "events": "https://furnish.acme.example/events"}}' > "$work/data/endpoints/https_furnish.acme.example.json"
+  "events": "https://furnish.acme.example/v1/logs"}}' > "$work/data/endpoints/https_furnish.acme.example.json"
 echo '{"collections": {"preset": [{"name": "example", "url": "'"$url"'"}]},
   "settings": {"reporting": {"value": "errors"}}}' > "$work/policy-reports.json"
 start "$work/policy-reports.json" && shoot reports

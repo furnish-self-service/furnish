@@ -1,9 +1,9 @@
 # furnish endpoint with Envoy: lets furnish users clone selected internal GitLab repositories
-# with their own OIDC sign-in, without exposing GitLab itself, and send reports to Vector.
+# with their own OIDC sign-in, without exposing GitLab itself, and send reports to the receiver.
 #
 #   furnish ──HTTPS, Bearer <ID token>──▶ Envoy ──ext_authz──▶ auth hop (127.0.0.1) ──▶ oauth2-proxy
 #                                           ├──Basic <deploy token>──▶ GitLab (one fixed repository path)
-#                                           └──POST /events, X-Furnish-User──▶ Vector
+#                                           └──POST /v1/logs, X-Furnish-User──▶ OTLP receiver
 #
 # Envoy does not read environment variables in its configuration: envoy/entrypoint.sh replaces
 # every ${NAME} in this file with the variable's value before starting Envoy, and refuses to start
@@ -117,12 +117,12 @@ static_resources:
                   # On denial, pass back only the status and body.
                   allowed_client_headers:
                     patterns: [{exact: content-type, ignore_case: true}]
-          # Turned on only for the GitLab routes: requests per signed-in user (see git_rate).
+          # Turned on for the GitLab routes and reports: requests per signed-in user (see git_rate).
           - name: envoy.filters.http.local_ratelimit
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
               stat_prefix: git_rate
-          # Turned on for POST /events (1 MiB) and git-upload-pack (32 MiB): collects the body and
+          # Turned on for POST /v1/logs (1 MiB) and git-upload-pack (32 MiB): collects the body and
           # answers 413 above the limit. After the token check, so only signed-in users' bodies
           # are collected. While the check runs, Envoy reads at most per_connection_buffer_limit_bytes
           # (32 KiB) of the body, so a body over the limit always reaches this filter in pieces
@@ -150,8 +150,8 @@ static_resources:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                   disabled: true
               # Evaluated after the routes' own header changes, so a route can still copy
-              # x-auth-request-email before it is dropped here. What GitLab and Vector learn about
-              # the client comes from the connection, not from the client (Envoy itself sets
+              # x-auth-request-email before it is dropped here. What GitLab and the receiver learn
+              # about the client comes from the connection, not from the client (Envoy itself sets
               # x-forwarded-proto); removing happens before adding.
               request_headers_to_remove: [x-auth-request-email, cookie, x-forwarded-for, x-real-ip, x-forwarded-host, forwarded, x-forwarded-port, x-forwarded-prefix]
               request_headers_to_add:
@@ -276,28 +276,32 @@ static_resources:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                     buffer: {max_request_bytes: 33554432}
 
-              # Reports from furnish: signed-in users only, at most 1 MiB, to Vector with the
-              # user's e-mail. A declared length over 1 MiB gets 413 right away; the buffer filter
-              # counts the body itself.
+              # Reports from furnish (OpenTelemetry logs): signed-in users only, at most 1 MiB, to
+              # the OTLP receiver with the user's e-mail, which it adds to every log record. A
+              # declared length over 1 MiB gets 413 right away; the buffer filter counts the body
+              # itself.
               - match:
-                  path: /events
+                  path: /v1/logs
                   headers:
                   - {name: ":method", string_match: {exact: POST}}
-                  - {name: ":path", string_match: {exact: /events}}
+                  - {name: ":path", string_match: {exact: /v1/logs}}
                   - {name: content-length, range_match: {start: 1048577, end: 9223372036854775807}}
                 direct_response: {status: 413}
                 typed_per_filter_config: *public
               - match:
-                  path: /events
+                  path: /v1/logs
                   headers:
                   - {name: ":method", string_match: {exact: POST}}
-                  - {name: ":path", string_match: {exact: /events}}
-                route: {cluster: vector}
+                  - {name: ":path", string_match: {exact: /v1/logs}}
+                route: {cluster: receiver}
                 request_headers_to_add:
                 - header: {key: x-furnish-user, value: "%REQ(x-auth-request-email)%"}
                   append_action: OVERWRITE_IF_EXISTS_OR_ADD
                 request_headers_to_remove: [authorization]
                 typed_per_filter_config:
+                  # The same limit per signed-in user as for git requests (furnish sends its queue
+                  # of at most 5 MB in about 1 MiB requests).
+                  envoy.filters.http.local_ratelimit: *git_rate
                   envoy.filters.http.buffer:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                     buffer: {max_request_bytes: 1048576}
@@ -421,15 +425,15 @@ static_resources:
       endpoints:
       - lb_endpoints:
         - endpoint: {address: {socket_address: {address: oauth2-proxy, port_value: 4180}}}
-  - name: vector
+  - name: receiver
     type: STRICT_DNS
     dns_lookup_family: V4_PREFERRED
     connect_timeout: 5s
     load_assignment:
-      cluster_name: vector
+      cluster_name: receiver
       endpoints:
       - lb_endpoints:
-        - endpoint: {address: {socket_address: {address: vector, port_value: 8080}}}
+        - endpoint: {address: {socket_address: {address: receiver, port_value: 4318}}}
   - name: auth_hop
     type: STATIC
     connect_timeout: 1s

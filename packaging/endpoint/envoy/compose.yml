@@ -26,4 +26,4 @@ services:
       - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/furnish.json:ro
       # tls.crt and tls.key, read at start (restart the proxy after renewing them).
       - ${TLS_DIR:-./certs}:/certs:ro
-    depends_on: [oauth2-proxy, vector]
+    depends_on: [oauth2-proxy, receiver]

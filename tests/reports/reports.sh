@@ -1,9 +1,10 @@
-# Sourced by run.sh: report lines as furnish sends them. batch1 and batch2 print one batch each,
-# per user (run.sh posts each user's lines with that user's X-Furnish-User header).
+# Sourced by run.sh: report lines as furnish queues them. batch1 and batch2 print one batch each,
+# per user (run.sh turns each user's lines into an OTLP request with otlp.jq and posts it with that
+# user's X-Furnish-User header).
 # report <device> <furnish version> <fields...>
 report() {
     printf '{"time":"%s","device":"%s","os":"windows","osVersion":"10.0.26100","furnish":"%s",%s}\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3"
+        "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$1" "$2" "$3"
 }
 op() { # op <event> <outcome> <app> <version> [error]
     err=${5:+,\"error\":\"$5\"}

@@ -241,16 +241,21 @@ jobs:
       - run: chmod +x bin/furnish && tests/checkout.sh bin/furnish
 
   endpoint:
-    name: endpoint with ${{ matrix.proxy }} (SSO, git allowlist, reports)
+    name: endpoint with ${{ matrix.proxy }}${{ matrix.receiver == 'vector' && ' and Vector' || '' }} (SSO, git allowlist, reports)
     needs: linux-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # Each one runs packaging/endpoint/<proxy>/, the files the docs show.
+        # Each one runs packaging/endpoint/<proxy>/, the files the docs show, with the
+        # OpenTelemetry Collector as the reports' receiver; one also with Vector instead.
         proxy: [caddy, nginx, traefik, envoy, haproxy]
+        receiver: [collector]
+        include:
+          - {proxy: nginx, receiver: vector}
     env:
       PROXY: ${{ matrix.proxy }}
+      RECEIVER: ${{ matrix.receiver }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

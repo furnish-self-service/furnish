@@ -1,10 +1,10 @@
 # Test overlay for packaging/endpoint/docker-compose.yml with reports/compose.yml, used by
-# tests/reports/run.sh: Vector, Loki and Grafana on free ports of 127.0.0.1, so the test reaches
+# tests/reports/run.sh: the Collector, Loki and Grafana on free ports of 127.0.0.1, so the test reaches
 # them from the host and doesn't collide with a Grafana already on port 3000.
 # Loki is only on internal networks; "test" is the one its port is published from.
 services:
-  vector:
-    ports: ["127.0.0.1::8080"]
+  receiver:
+    ports: ["127.0.0.1::4318"]
   loki:
     ports: ["127.0.0.1::3100"]
     networks: [test]

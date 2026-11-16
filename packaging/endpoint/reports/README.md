@@ -1,8 +1,9 @@
 # furnish reports in Grafana
 
 This folder adds Loki (`grafana/loki:3.7.9`), which stores the reports, and Grafana
-(`grafana/grafana:13.3.0`) with the dashboard "furnish reports" to the endpoint. Vector keeps
-printing each report to its log and also sends it to Loki.
+(`grafana/grafana:13.3.0`) with the dashboard "furnish reports" to the endpoint. The
+OpenTelemetry Collector keeps printing each report to its log and also sends it to Loki's OTLP
+endpoint.
 
 ## Start
 
@@ -48,17 +49,21 @@ for every app that appears, and devices send no inventory. A device in the fallb
 at the earlier version until a later update succeeds, which the table doesn't show. A device is
 one user on one computer; its host name appears only with `reportHostname: true`.
 
-Loki indexes reports by `event` and `outcome` only. The other fields, `collection` among them, stay
-in the JSON line, and the queries read them with LogQL's `| json`. Edit queries in Grafana's
-Explore view with the data source "Loki", for example
-`{job="furnish", event="install"} | json | app="acme/zoom"`.
+Loki indexes reports by the labels `service_name`, `event` and `outcome` only. The other
+attributes are structured metadata, with `_` for `.`: `furnish_app`, `furnish_collection`,
+`device_id`, `user_email`, `service_version` and so on. Queries filter and group by them without a
+parser. Edit queries in Grafana's Explore view with the data source "Loki", for example
+`{service_name="furnish", event="install"} | furnish_app="acme/zoom"`.
 
 Each combination of labels is a stream in Loki, and Loki refuses all reports once there are more
-than 5000. Since the fields of a report come from the client, `reports/vector.yaml` labels only the
-values furnish sends and files everything else under `event="other"` or `outcome="other"`; the
-report itself stays as it was. It also passes at most 10000 reports per user and minute to Loki,
-so that one user can't use up what Loki takes in. The provisioned dashboard can't be
-saved from Grafana: save a copy, or change `grafana/dashboards/furnish-reports.json`.
+than 5000. Since the attributes of a report come from the client, `reports/collector.yaml` labels
+only the values furnish sends and files everything else under `event="other"` or
+`outcome="other"`; the attributes stay as they were. `reports/loki.yaml` turns off Loki's default
+list of resource attributes it makes labels of, so a client can't add labels. The proxies,
+apart from Caddy, limit requests per user, so one user can't use up what Loki takes in. Reports
+keep the time they happened, also when a computer sends them weeks later; a time in the future
+becomes the time the report arrived. The provisioned dashboard can't be saved from Grafana: save
+a copy, or change `grafana/dashboards/furnish-reports.json`.
 
 ## Retention
 
@@ -70,8 +75,9 @@ long as you need them to fix problems. The data lives in the volumes `loki-data`
 
 ## Another log system
 
-Loki receives reports through the `loki` sink in `reports/vector.yaml`, which Vector loads in
-addition to `vector/vector.yaml`. To send reports elsewhere, start the endpoint without
-`reports/compose.yml` and replace the `stdout` sink in `vector/vector.yaml` with the
-[sink](https://vector.dev/docs/reference/configuration/sinks/) for your system, such as
-`elasticsearch`, `splunk_hec`, `file` or `http`, with `inputs: [reports]`.
+Loki receives reports through the pipeline `logs/loki` in `reports/collector.yaml`, which the
+Collector loads in addition to `collector/collector.yaml`. To send reports elsewhere, start the
+endpoint without `reports/compose.yml` and replace the `file/stdout` exporter in
+`collector/collector.yaml` with the
+[exporter](https://opentelemetry.io/docs/collector/components/exporter/) for your system. Any
+OTLP backend, such as Grafana Cloud or Datadog, takes them through `otlp_http`.

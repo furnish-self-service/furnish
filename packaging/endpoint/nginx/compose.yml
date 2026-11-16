@@ -31,4 +31,4 @@ services:
       - ${FURNISH_JSON:-./furnish.json}:/srv/furnish/furnish.json:ro
       # Your own certificate: tls.crt (with the chain) and tls.key. nginx does not do ACME.
       - ${TLS_DIR:-./certs}:/certs:ro
-    depends_on: [oauth2-proxy, vector]
+    depends_on: [oauth2-proxy, receiver]

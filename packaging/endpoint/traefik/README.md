@@ -1,10 +1,10 @@
 # furnish endpoint with Traefik
 
 This variant runs the endpoint described in [the endpoint setup](https://furnish-self-service.github.io/docs/alpha/endpoint.html) with Traefik
-(`traefik:v3.7.17`) instead of Caddy. oauth2-proxy and Vector come from the shared
+(`traefik:v3.7.17`) instead of Caddy. oauth2-proxy and the OTLP receiver come from the shared
 `docker-compose.yml`. Traefik cannot serve files or copy a header under another name, so a small
 busybox httpd container (`busybox:1.37.0-musl`, service `files`) serves `furnish.json` and
-answers Traefik with the user name it passes to Vector. That container is not published.
+answers Traefik with the user name it passes to the receiver. That container is not published.
 
 | File | Purpose |
 | --- | --- |

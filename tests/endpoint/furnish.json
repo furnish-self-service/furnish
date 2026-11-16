@@ -6,7 +6,7 @@
   "collections": [
     {"name": "acme", "url": "https://furnish.test/git/acme.git"}
   ],
-  "events": "https://furnish.test/events",
+  "events": "https://furnish.test/v1/logs",
   "settings": {"updateIntervalMinutes": 7, "fallback": "off", "noAutoUpdate": ["other/app"]},
   "parameters": {"acme": {"role": "developer"}, "other": {"role": "admin"}},
   "autoInstall": ["acme/vpn", "other/app"]

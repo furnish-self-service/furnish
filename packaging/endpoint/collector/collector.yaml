@@ -1,0 +1,55 @@
+# furnish's reports arrive here as OpenTelemetry logs (OTLP/HTTP). The proxy forwards
+# POST /v1/logs (at most 1 MiB) after checking the user's sign-in, and names the user in the
+# X-Furnish-User header. This configuration adds that user to every log record as user.email and
+# drops any user attribute the client sent itself. The attributes are listed in the admins' docs
+# ("Reports"). Replace the exporter to send reports where you keep logs.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        # Request headers go into the client metadata, where the processors below read the user.
+        include_metadata: true
+        # Also after decompression.
+        max_request_body_size: 1048576
+
+processors:
+  # Only the proxy names the user: remove user.* (and furnish.user) wherever the client put it.
+  transform/drop_client_user:
+    error_mode: ignore
+    log_statements:
+      - context: resource
+        statements: ['delete_matching_keys(attributes, "^(user\\..*|furnish\\.user)$")']
+      - context: scope
+        statements: ['delete_matching_keys(attributes, "^(user\\..*|furnish\\.user)$")']
+      - context: log
+        statements: ['delete_matching_keys(attributes, "^(user\\..*|furnish\\.user)$")']
+  # The user the proxy verified. Without the header (see "Reports without user names" in the
+  # endpoint docs) records have no user.
+  attributes/proxy_user:
+    actions:
+      - {key: user.email, from_context: metadata.x-furnish-user, action: insert}
+  resource/furnish:
+    attributes:
+      - {key: service.name, value: furnish, action: upsert}
+  # After the processors that read the client metadata: batches mix requests.
+  batch: {}
+
+exporters:
+  # One JSON line per request on the Collector's output (docker compose logs receiver). Replace
+  # or add exporters, for example otlp_http to Grafana Cloud or Datadog, elasticsearch, splunk_hec
+  # or loki: https://opentelemetry.io/docs/collector/components/exporter/
+  file/stdout:
+    path: /dev/stdout
+    format: json
+
+service:
+  telemetry:
+    logs: {level: warn}
+    metrics: {level: none}
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [transform/drop_client_user, attributes/proxy_user, resource/furnish, batch]
+      exporters: [file/stdout]
