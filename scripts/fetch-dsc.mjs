@@ -11,9 +11,9 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dsc, dscSource } from './dsc-source.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const dsc = JSON.parse(readFileSync(`${root}packaging/dsc.json`, 'utf8'));
 const dest = resolve(process.argv[2] ?? '');
 if (!process.argv[2]) throw new Error('usage: node scripts/fetch-dsc.mjs <folder> [target triple]');
 const target =
@@ -49,16 +49,8 @@ rmSync(dest, { recursive: true, force: true });
 const excluded = (file) => dsc.exclude.includes(basename(file).replace(/\.exe$/i, ''));
 cpSync(unpacked, dest, { recursive: true, filter: (file) => !excluded(file) });
 
-// Resources the release doesn't contain, from the same commit, without DSC's .cargo/config.toml: it
-// points at Microsoft's internal crate mirror.
-const src = `${cache}src-${dsc.commit}`;
-if (!existsSync(src)) {
-  run('git', ['-c', 'advice.detachedHead=false', 'clone', '-q', '--depth', '1', '--branch', `v${dsc.version}`, dsc.source, `${src}.part`]);
-  rmSync(`${src}.part/.cargo`, { recursive: true });
-  renameSync(`${src}.part`, src);
-}
-const head = execFileSync('git', ['-C', src, 'rev-parse', 'HEAD']).toString().trim();
-if (head !== dsc.commit) throw new Error(`DSC v${dsc.version} is ${head}, expected ${dsc.commit}`);
+// Resources the release doesn't contain, from the same commit.
+const src = dscSource();
 const exe = windows ? '.exe' : '';
 const installed = `${cache}build-${target}/`;
 // Like DSC's own Windows builds: no dependency on the optional Visual C++ runtime.

@@ -109,6 +109,8 @@ jobs:
           path: bin
       - run: chmod +x bin/furnish && tests/git-auth.sh bin/furnish
 
+  # Rust crates of furnish, furnish-gui and the DSC resources built from source (all shipped
+  # targets), the npm packages Vite bundles, and the bundled programs: scripts/licenses.mjs.
   licenses:
     name: THIRD-PARTY-LICENSES.html is up to date
     runs-on: ubuntu-latest
