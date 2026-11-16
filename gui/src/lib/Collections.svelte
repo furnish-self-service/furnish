@@ -3,31 +3,8 @@
   import Options from './Options.svelte';
   import CollectionSettings from './CollectionSettings.svelte';
   import { askQuestions, refreshEndpoints } from './state.svelte';
-  import { store, collectionAction, changeSettings, updateCollections, toast, isLocked } from './state.svelte';
-  import { t, parts, formatTime } from './i18n.svelte';
-  import { languages, type Lang } from './i18n.ts';
-
-  const intervals = $derived([
-    [15, t('collections.every15')],
-    [30, t('collections.every30')],
-    [60, t('collections.everyHour')],
-    [240, t('collections.every4Hours')],
-    [1440, t('collections.everyDay')],
-    [0, t('collections.dontCheck')],
-  ] as [number, string][]);
-  // A value set outside the app (settings.json) still shows up as a choice.
-  const options = $derived(
-    store.settings && !intervals.some(([m]) => m === store.settings!.updateIntervalMinutes)
-      ? [...intervals, [store.settings.updateIntervalMinutes, t('collections.everyMinutes', { n: store.settings.updateIntervalMinutes })]]
-      : intervals,
-  );
-  const clock = (ms: number) => formatTime(ms);
-
-  let version = $state('');
-  api.version().then((v) => (version = v));
-  // The organization's furnish addresses that take reports; the section shows only with one.
-  let destinations = $state<string[]>([]);
-  api.reportDestinations().then((d) => (destinations = d));
+  import { store, collectionAction, updateCollections, toast } from './state.svelte';
+  import { t } from './i18n.svelte';
 
   let url = $state('');
   let name = $state('');
@@ -129,150 +106,6 @@
     <p class="managed-note">{t('collections.managedNote')}</p>
   {/if}
 
-  {#if store.settings}
-    <section class="auto" aria-labelledby="auto-title">
-      <h2 id="auto-title">{t('collections.autoUpdates')}</h2>
-      <p class="explain flush">{t('collections.autoUpdatesText')}</p>
-      <label class="check">
-        <input
-          type="checkbox"
-          checked={store.settings.startAtSignIn}
-          disabled={isLocked('startAtSignIn')}
-          onchange={(e) => changeSettings({ startAtSignIn: e.currentTarget.checked })}
-        />
-        {t('collections.startAtSignIn', { brand: store.brand.name })}
-        {#if isLocked('startAtSignIn')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <p class="explain">{t('collections.startAtSignInText', { brand: store.brand.name })}</p>
-      <label class="check">
-        <input
-          type="checkbox"
-          checked={store.settings.updateOnLaunch}
-          disabled={isLocked('updateOnLaunch')}
-          onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
-        />
-        {t('collections.updateOnLaunch', { brand: store.brand.name })}
-        {#if isLocked('updateOnLaunch')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <label class="interval">
-        <span>{t('collections.whileOpen', { brand: store.brand.name })}</span>
-        <select
-          value={store.settings.updateIntervalMinutes}
-          disabled={isLocked('updateIntervalMinutes')}
-          onchange={(e) => changeSettings({ updateIntervalMinutes: Number(e.currentTarget.value) })}
-        >
-          {#each options as [minutes, text]}
-            <option value={minutes}>{text}</option>
-          {/each}
-        </select>
-        {#if isLocked('updateIntervalMinutes')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <label class="check">
-        <input
-          type="checkbox"
-          checked={store.settings.loadAwareUpdates}
-          disabled={isLocked('loadAwareUpdates')}
-          onchange={(e) => changeSettings({ loadAwareUpdates: e.currentTarget.checked })}
-        />
-        {t('collections.loadAware')}
-        {#if isLocked('loadAwareUpdates')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <p class="explain">
-        {t('collections.busyMeans', {
-          cpu: store.settings.loadLimits.cpuPercent,
-          memory: store.settings.loadLimits.memoryPercent,
-          network: store.settings.loadLimits.networkKbps,
-          brand: store.brand.name,
-        })}
-      </p>
-      <p class="last" aria-live="polite">
-        {#if store.autoUpdate.running}
-          {t('collections.checking')}
-        {:else if store.autoUpdate.error}
-          <span class="failed">{t('collections.lastFailed')}</span> {store.autoUpdate.error}
-        {:else if store.autoUpdate.lastAt}
-          {t('collections.lastChecked', { time: clock(store.autoUpdate.lastAt) })}
-        {/if}
-      </p>
-    </section>
-  {/if}
-
-  {#if store.settings && (destinations.length || isLocked('reporting'))}
-    <section class="auto" aria-labelledby="reports-title">
-      <h2 id="reports-title">{t('collections.reports')}</h2>
-      <p class="explain flush">
-        {#if destinations.length}
-          {t('collections.reportsText', { brand: store.brand.name, destinations: destinations.join(', ') })}
-        {:else}
-          {t('collections.noReports')}
-        {/if}
-      </p>
-      <label class="interval">
-        <span>{t('collections.send')}</span>
-        <select
-          value={store.settings.reporting}
-          disabled={isLocked('reporting')}
-          onchange={(e) => changeSettings({ reporting: e.currentTarget.value as 'off' | 'errors' | 'all' })}
-        >
-          <option value="off">{t('collections.sendNothing')}</option>
-          <option value="errors">{t('collections.sendErrors')}</option>
-          <option value="all">{t('collections.sendAll')}</option>
-        </select>
-        {#if isLocked('reporting')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <label class="check">
-        <input
-          type="checkbox"
-          checked={store.settings.reportHostname}
-          disabled={isLocked('reportHostname') || store.settings.reporting === 'off'}
-          onchange={(e) => changeSettings({ reportHostname: e.currentTarget.checked })}
-        />
-        {t('collections.hostname')}
-        {#if isLocked('reportHostname')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <p class="explain">
-        {#each parts(t('collections.reportsQueue', { brand: store.brand.name })) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}
-      </p>
-    </section>
-  {/if}
-
-  {#if store.settings}
-    <section class="auto" aria-labelledby="language-title">
-      <h2 id="language-title">{t('collections.language')}</h2>
-      <label class="interval">
-        <span>{t('collections.languageLabel', { brand: store.brand.name })}</span>
-        <select
-          id="language"
-          value={store.settings.language}
-          disabled={isLocked('language')}
-          onchange={(e) => changeSettings({ language: e.currentTarget.value as 'system' | Lang })}
-        >
-          <option value="system">{t('collections.languageSystem')}</option>
-          <!-- Each language in its own words, so people find theirs whatever is shown. -->
-          {#each Object.entries(languages) as [code, name]}<option value={code} lang={code}>{name}</option>{/each}
-        </select>
-        {#if isLocked('language')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <label class="interval">
-        <span>{t('collections.fallbackLanguage')}</span>
-        <select
-          id="fallback-language"
-          value={store.settings.fallbackLanguage}
-          disabled={isLocked('fallbackLanguage')}
-          onchange={(e) => changeSettings({ fallbackLanguage: e.currentTarget.value })}
-        >
-          {#each Object.entries(languages) as [code, name]}<option value={code} lang={code}>{name}</option>{/each}
-          <!-- The organization may choose a language furnish itself doesn't come in. -->
-          {#if !(store.settings.fallbackLanguage in languages)}
-            <option value={store.settings.fallbackLanguage}>{store.settings.fallbackLanguage}</option>
-          {/if}
-        </select>
-        {#if isLocked('fallbackLanguage')}<span class="org">{t('common.setByOrg')}</span>{/if}
-      </label>
-      <p class="explain">{t('collections.fallbackLanguageText')}</p>
-    </section>
-  {/if}
-
   {#if store.collections.length}
     <div class="toolbar">
       <h2>{t('collections.count', { n: store.collections.length })}</h2>
@@ -295,6 +128,7 @@
           </div>
           <span class="mono rev" title={t('collections.revision')}>{c.revision}</span>
           <span class="count">{t('common.apps', { n: c.apps })}</span>
+          {#if c.updateAvailable}<span class="available">{t('common.updateAvailable')}</span>{/if}
           {#if c.managed}
             <span class="actions">
               <span class="org">{t('collections.managed')}</span>
@@ -334,29 +168,11 @@
     </ul>
   {/if}
 
-  <p class="about">
-    furnish {version}
-    · <button class="link" onclick={() => api.openLicenses().catch((e) => toast('error', t('collections.licensesFailed'), String(e)))}>{t('collections.licenses')}</button>
-  </p>
 </section>
 
 <style>
   section {
     max-width: 56rem;
-  }
-  .about {
-    margin-top: 2.5rem;
-    color: var(--muted);
-    font-size: 0.85rem;
-  }
-  .about .link {
-    padding: 0;
-    border: 0;
-    background: none;
-    color: inherit;
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
   }
   h1 {
     margin: 0;
@@ -396,41 +212,6 @@
     font-size: 0.8rem;
     color: var(--muted);
   }
-  .auto {
-    display: grid;
-    gap: 0.6rem;
-    margin-top: 2.5rem;
-    max-width: 36rem;
-  }
-  .check {
-    display: flex;
-    gap: 0.55rem;
-    align-items: center;
-    font-size: 0.92rem;
-    font-weight: 400;
-    color: var(--ink);
-  }
-  .check input {
-    width: 1.05rem;
-    height: 1.05rem;
-    accent-color: var(--accent);
-  }
-  .interval {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    font-size: 0.92rem;
-    font-weight: 400;
-    color: var(--ink);
-  }
-  select {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 0.92rem var(--font-body);
-  }
   .org {
     margin-left: 0.4rem;
     padding: 0.1rem 0.5rem;
@@ -445,23 +226,10 @@
     margin-top: 1.5rem;
     color: var(--ink-soft);
   }
-  .explain.flush {
-    margin-left: 0;
-  }
   .explain {
-    margin: -0.3rem 0 0 1.6rem;
+    margin: 0;
     font-size: 0.8rem;
     color: var(--muted);
-  }
-  .last {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--muted);
-    white-space: pre-line;
-  }
-  .failed {
-    color: var(--danger);
-    font-weight: 600;
   }
   .toolbar {
     display: flex;
@@ -528,6 +296,15 @@
     color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .available {
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: var(--highlight-soft);
+    color: var(--highlight-ink);
+    white-space: nowrap;
   }
   .count {
     font-size: 0.85rem;

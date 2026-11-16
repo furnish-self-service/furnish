@@ -108,6 +108,9 @@ struct CollectionInfo {
     /// The language of the collection's own texts, and its translations (`locales/`).
     language: String,
     locales: std::collections::BTreeMap<String, furnish::locale::LocaleFile>,
+    /// The server had a newer commit than the one checked out, when furnish last looked.
+    #[serde(rename = "updateAvailable")]
+    update_available: bool,
 }
 
 /// The organization's branding (policy `branding`), checked: colors are `#rgb`/`#rrggbb`, theme
@@ -259,6 +262,7 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         settings: furnish::settings::for_collection(&c.name),
         language: locales.language,
         locales: locales.files,
+        update_available: c.update_available(),
     })
 }
 
@@ -623,6 +627,25 @@ async fn update_collection(name: String) -> CmdResult<Revisions> {
     .await
 }
 
+/// Ask each collection's server for its newest commit without applying it (for the "update
+/// available" marks). Offline or failing: nothing changes and nothing is reported.
+#[tauri::command]
+async fn check_collection_servers() -> CmdResult<()> {
+    blocking(|| {
+        for collection in catalog::collections()? {
+            let _ = collection.check_server();
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The folder furnish keeps its collections, settings and logs in.
+#[tauri::command]
+fn data_dir() -> String {
+    catalog::data_dir().display().to_string()
+}
+
 /// Where reports go (the organization's furnish addresses that take them).
 #[tauri::command]
 fn report_destinations() -> Vec<String> {
@@ -762,6 +785,8 @@ fn main() {
             link_preview,
             add_endpoint,
             update_collection,
+            check_collection_servers,
+            data_dir,
             remove_collection
         ])
         .build(tauri::generate_context!())

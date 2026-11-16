@@ -58,9 +58,13 @@ On the Collections page, Downloads and earlier versions sets this per collection
 
 ## Updates
 
-furnish checks for updates when it starts and every 30 minutes, and installs them. It waits while the computer is busy: when the last 5 minutes averaged over 50% CPU, 90% memory or 1000 KB/s network traffic, not counting furnish's own work. You can turn automatic updates off for one app on its page, and change the schedule or the busy check on the Collections page.
+furnish checks for updates when it starts and every 30 minutes, and installs them. It waits while the computer is busy: when the last 5 minutes averaged over 50% CPU, 90% memory or 1000 KB/s network traffic, not counting furnish's own work. You can turn automatic updates off for one app on its page, and change the schedule or the busy check on the Settings page. Check now there looks for updates right away.
 
-Updates only run while furnish runs. So furnish starts when you sign in, with its window closed, and waits in the system tray on Windows and Linux or in the menu bar on macOS. Closing the window keeps it running there. Its icon, or your organization's, opens the window, checks for updates or quits furnish. Quitting waits for an install that is running. To stop starting furnish at sign-in, turn off Start furnish when you sign in on the Collections page.
+Updates only run while furnish runs. So furnish starts when you sign in, with its window closed, and waits in the system tray on Windows and Linux or in the menu bar on macOS. Closing the window keeps it running there. Its icon, or your organization's, opens the window, checks for updates or quits furnish. Quitting waits for an install that is running. To stop starting furnish at sign-in, turn off Start furnish when you sign in on the Settings page. The tray menu's Settings… opens that page.
+
+![The Settings page with its Startup and Updates sections.](images/settings.webp)
+
+When a collection has changed on its server but furnish hasn't brought the change in yet, for example between checks or because checking is turned off, the sidebar shows a count next to Collections, and the Collections page marks the collection with Update available. Its Update button brings the change in. furnish only asks the server for its newest commit for this, without downloading or changing anything, and shows nothing while it is offline.
 
 On GNOME, tray icons only show with the AppIndicator extension. Without a tray, closing the window quits furnish. If furnish started at sign-in, open it from the app list to see its window.
 
@@ -74,8 +78,8 @@ Some apps can be installed in more than one way, for example for all users or on
 
 ## Language
 
-furnish is available in English, German, French, Spanish, Italian, Polish, Portuguese and Dutch. It follows the system language; Language on the Collections page sets one of them instead. For any other system language it uses English.
+furnish is available in English, German, French, Spanish, Italian, Polish, Portuguese and Dutch. It follows the system language; Language on the Settings page sets one of them instead. For any other system language it uses English.
 
-Collections can translate their app names, descriptions, categories and questions. furnish shows them in its own language if the collection has that translation. Otherwise it uses the fallback language, which you choose under Fallback language on the Collections page. It is English unless your organization sets another. Texts that exist in neither language appear as the collection wrote them.
+Collections can translate their app names, descriptions, categories and questions. furnish shows them in its own language if the collection has that translation. Otherwise it uses the fallback language, which you choose under Fallback language on the Settings page. It is English unless your organization sets another. Texts that exist in neither language appear as the collection wrote them.
 
 ![The Discover page in German.](images/discover-de.webp)

@@ -160,6 +160,11 @@ const scenes = {
     await click("//summary[contains(., 'Options for all example apps')]");
     await shot('collections');
     await crop('collections', "//li[.//details[contains(@class,'copts')]]");
+
+    await click(nav('Settings'));
+    await waitFor('settings', () => find("//section[@aria-labelledby='updates-title']"));
+    await shot('settings');
+    await crop('settings', "//section[@aria-labelledby='startup-title']", "//section[@aria-labelledby='updates-title']");
   },
   async branded() {
     await settled();
@@ -183,7 +188,7 @@ const scenes = {
   },
   async reports() {
     await settled();
-    await click(nav('Collections'));
+    await click(nav('Settings'));
     const section = "//section[@aria-labelledby='reports-title']";
     await waitFor('reports section', () => find(section));
     await js(`document.evaluate("${section}", document, null, 9, null).singleNodeValue.scrollIntoView({block: "center"})`);
@@ -193,7 +198,7 @@ const scenes = {
   async fallback() {
     await settled();
     // Discover in German, then back to the system's language.
-    await click(nav('Collections'));
+    await click(nav('Settings'));
     await click("//select[@id='language']/option[@value='de']");
     await click(nav('Entdecken'));
     await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='Thunderbird']"));
@@ -201,9 +206,10 @@ const scenes = {
     await js('window.scrollTo(0, 0)');
     await shot('discover-de');
     await crop('discover-de', "//div[contains(@class,'recommended')]");
-    await click(nav('Sammlungen'));
+    await click(nav('Einstellungen'));
     await click("//select[@id='language']/option[@value='system']");
     await waitFor('English', () => find(nav('Discover')));
+    await click(nav('Collections'));
 
     // A collection's downloads and earlier versions.
     await click("//summary[normalize-space()='Downloads and earlier versions']");

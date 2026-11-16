@@ -27,6 +27,7 @@ const ID: &str = "furnish";
 pub struct Texts {
     pub open: String,
     pub check: String,
+    pub settings: String,
     pub quit: String,
     /// Updates waiting or what furnish is installing; empty: nothing.
     pub status: String,
@@ -39,6 +40,7 @@ impl Texts {
         Texts {
             open: format!("Open {brand}"),
             check: "Check for updates".into(),
+            settings: "Settings…".into(),
             quit: format!("Quit {brand}"),
             status: String::new(),
             tooltip: brand.into(),
@@ -118,6 +120,13 @@ fn menu(app: &AppHandle, texts: &Texts) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         None::<&str>,
     )?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        "settings",
+        &texts.settings,
+        true,
+        None::<&str>,
+    )?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(
         app,
@@ -150,6 +159,10 @@ pub fn create(app: &AppHandle, texts: &Texts) -> tauri::Result<()> {
             "open" => show(app),
             "check" => {
                 let _ = app.emit("furnish://check-updates", ());
+            }
+            "settings" => {
+                show(app);
+                let _ = app.emit("furnish://open-settings", ());
             }
             "quit" => quit(app),
             _ => {}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, categoryName, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -8,6 +8,7 @@
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
   import Collections from './lib/Collections.svelte';
+  import Settings from './lib/Settings.svelte';
   import Activity from './lib/Activity.svelte';
   import KitCard from './lib/KitCard.svelte';
   import KitDetail from './lib/KitDetail.svelte';
@@ -106,13 +107,21 @@
     {/if}
 
     <div class="spacer"></div>
-    <button class:active={isActive('collections')} onclick={() => go({ page: 'collections' })}>{t('nav.collections')}</button>
+    <button class:active={isActive('collections')} onclick={() => go({ page: 'collections' })}>
+      {t('nav.collections')}
+      {#if collectionUpdates()}
+        <span class="count pending" role="img" aria-label={t('nav.collectionUpdates', { n: collectionUpdates() })}>{collectionUpdates()}</span>
+      {/if}
+    </button>
+    <button class:active={isActive('settings')} onclick={() => go({ page: 'settings' })}>{t('nav.settings')}</button>
   </nav>
 
   <main>
     <SignInBanner />
     {#if view.page === 'collections'}
       <Collections />
+    {:else if view.page === 'settings'}
+      <Settings />
     {:else if view.page === 'activity'}
       <Activity onopen={(key) => go({ page: 'app', key, back: view })} />
     {:else if view.page === 'kit' && kit}

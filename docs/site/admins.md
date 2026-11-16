@@ -97,7 +97,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored, and so does the app at the top of its Settings page. |
 | `branding` | the app's name and colors, and a logo and tray icon from its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.
@@ -120,7 +120,7 @@ The setting `reporting` decides what furnish sends:
 | `errors` | failed installs, updates and uninstalls, failed collection updates, and installs of an earlier version after a failure |
 | `all` | also successful ones, and once a day the list of installed apps |
 
-People see the setting under Reports to your organization on the Collections page, and `furnish reports` shows what is waiting to be sent.
+People see the setting under Reports to your organization on the Settings page, and `furnish reports` shows what is waiting to be sent.
 
 ![The Reports to your organization section, set to send failures and fallbacks.](images/reports-setting.webp)
 

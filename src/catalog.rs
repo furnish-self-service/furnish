@@ -454,6 +454,38 @@ fn lock(parent: &Path, name: &str) -> Result<Option<fs::File>> {
     }
 }
 
+/// The newest commit each collection's server had when furnish last looked, with when that was
+/// (`remote-heads.json` in the data folder). An update is available while it differs from the
+/// commit checked out: looking never applies anything, and a commit that fails the checks (e.g. a
+/// missing signature) stays available, not applied.
+fn remote_heads_file() -> PathBuf {
+    data_dir().join("remote-heads.json")
+}
+
+fn read_remote_heads(file: &Path) -> serde_json::Map<String, Value> {
+    fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn remember_remote_head(file: &Path, name: &str, commit: &str) {
+    let mut heads = read_remote_heads(file);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    heads.insert(name.into(), serde_json::json!({ "commit": commit, "checkedAt": now }));
+    // Losing this only loses the indicator until the next look.
+    let _ = fs::write(file, serde_json::to_vec_pretty(&heads).unwrap_or_default());
+}
+
+fn remote_head_differs(file: &Path, name: &str, head: &str) -> bool {
+    read_remote_heads(file).get(name).and_then(|h| h["commit"].as_str()).is_some_and(|c| c != head)
+}
+
+/// The commit the server's branch points to, without downloading anything (`git ls-remote`).
+fn server_head(dir: &Path) -> Result<String> {
+    let upstream = git(Some(dir), &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])?;
+    let (remote, branch) = upstream.split_once('/').with_context(|| format!("no remote branch in '{upstream}'"))?;
+    let out = git(Some(dir), &["ls-remote", "--end-of-options", remote, &format!("refs/heads/{branch}")])?;
+    out.split_whitespace().next().map(str::to_string).with_context(|| format!("the server has no branch {branch}"))
+}
+
 pub fn remove(name: &str) -> Result<()> {
     let collection = get(name)?;
     if collection.managed {
@@ -500,9 +532,27 @@ impl Collection {
         self.file_in_repo(&crate::options::collection_icons(&self.dir).icon_dark?)
     }
 
+    /// Ask the server for its newest commit (cheap: nothing is downloaded) and remember it.
+    /// Offline or failing: an error, and what was remembered stays.
+    pub fn check_server(&self) -> Result<()> {
+        let commit = server_head(&self.dir)?;
+        remember_remote_head(&remote_heads_file(), &self.name, &commit);
+        Ok(())
+    }
+
+    /// The server had a commit this copy hasn't checked out, when furnish last looked.
+    pub fn update_available(&self) -> bool {
+        self.head().is_ok_and(|head| remote_head_differs(&remote_heads_file(), &self.name, &head))
+    }
+
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
         let result = self.update_unreported();
+        if result.is_ok()
+            && let Ok(head) = self.head()
+        {
+            remember_remote_head(&remote_heads_file(), &self.name, &head);
+        }
         crate::reports::record(crate::reports::Event {
             event: "collectionUpdate",
             outcome: if result.is_ok() { "succeeded" } else { "failed" },
@@ -531,6 +581,8 @@ impl Collection {
         git(Some(&self.dir), &fetch)?;
         // One commit, resolved once: what is verified is what gets checked out.
         let new = git(Some(&self.dir), &["rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"])?;
+        // Fetched, not applied yet: available until checked out (it may still fail the checks).
+        remember_remote_head(&remote_heads_file(), &self.name, &new);
         self.verify(&new)?;
         self.require_descendant(&new)?;
         self.prepare_checkout(&settings, &new, false)?;
@@ -1675,6 +1727,38 @@ mod tests {
         assert_eq!(sparse_pattern("i/*.deb").unwrap(), "/i/\\*.deb\n");
         assert_eq!(sparse_pattern("i/[x]?!#\\ .msi").unwrap(), "/i/\\[x\\]\\?\\!\\#\\\\\\ .msi\n");
         assert!(sparse_pattern("a\n/*").is_err());
+    }
+
+    #[test]
+    fn an_update_is_available_until_its_commit_is_checked_out() {
+        let dir = env::temp_dir().join(format!("furnish-remote-{}", unique()));
+        let (origin, copy, file) = (dir.join("origin"), dir.join("copy"), dir.join("remote-heads.json"));
+        fs::create_dir_all(&origin).unwrap();
+        let commit = |message: &str| {
+            git(Some(&origin), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", message]).unwrap();
+        };
+        git(Some(&origin), &["init", "-q"]).unwrap();
+        commit("one");
+        git(None, &["clone", "-q", "--end-of-options", &origin.to_string_lossy(), &copy.to_string_lossy()]).unwrap();
+        let head = || git(Some(&copy), &["rev-parse", "HEAD"]).unwrap();
+        let look = || remember_remote_head(&file, "c", &server_head(&copy).unwrap());
+
+        assert!(!remote_head_differs(&file, "c", &head()), "never looked");
+        look();
+        assert!(!remote_head_differs(&file, "c", &head()), "up to date");
+        commit("two");
+        look();
+        assert!(remote_head_differs(&file, "c", &head()), "the server moved on");
+        assert!(!remote_head_differs(&file, "other", &head()), "per collection");
+        // Offline: no answer, and what was seen before stays.
+        fs::rename(&origin, dir.join("gone")).unwrap();
+        assert!(server_head(&copy).is_err());
+        assert!(remote_head_differs(&file, "c", &head()));
+        fs::rename(dir.join("gone"), &origin).unwrap();
+        // Applied: the indicator goes.
+        git(Some(&copy), &["pull", "-q"]).unwrap();
+        assert!(!remote_head_differs(&file, "c", &head()));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -57,6 +57,8 @@ const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpa
 const prop = async (xpath, name) => wd('GET', s(`/element/${await find(xpath)}/property/${name}`));
 const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/property/open`));
 const button = (label) => `//button[normalize-space()='${label}']`;
+// A sidebar entry; Collections may carry a count after its name.
+const nav = (label) => `//nav//button[starts-with(normalize-space(), '${label}')]`;
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
 const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDir}/${file}`, 'utf8') : '');
 // The sign-in entry furnish writes (HOME=/tmp in the container).
@@ -290,8 +292,8 @@ const steps = [
     await click(button('Check for updates'));
     await waitFor('update postponed', async () => (await text("//*[contains(@class,'postponed')]")).includes('busy (CPU'), 20000);
     if (log('pkgs/hyperfine').trim() === '3.0') throw new Error('updated although the computer was busy');
-    await click(button('Collections'));
-    await click("//label[contains(., 'while this computer is busy')]/input");
+    await click(nav('Settings'));
+    await click("//label[contains(., 'Wait while this computer is busy')]//input");
     await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
@@ -313,12 +315,12 @@ const steps = [
     await waitFor('banner gone', async () => !(await findAll(button('Reinstall with these options'))).length);
   }],
   ['collection options apply to all its apps', async () => {
-    await click(button('Collections'));
+    await click(nav('Collections'));
     await click("//summary[contains(., 'Options for all fixture apps')]");
     await waitFor('collection option shown', async () => (await text("//details[contains(@class,'copts')]")).includes('Install just for me'));
   }],
   ['collections: add a repository, see its apps, remove it again', async () => {
-    await click(button('Collections'));
+    await click(nav('Collections'));
     await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);
     await click(button('Add collection'));
     await waitFor('second collection listed', () => find("//li[.//*[normalize-space()='second']]"), 30000);
@@ -333,13 +335,37 @@ const steps = [
     await waitFor('second collection gone', async () => !(await findAll("//li[.//*[normalize-space()='second']]")).length);
   }],
   ['automatic update settings are saved; locked ones are not editable', async () => {
-    await click(button('Collections'));
-    await click("//label[contains(., 'when Acme Apps starts')]/input");
+    await click(nav('Settings'));
+    await click("//label[contains(., 'When Acme Apps starts')]/input");
     await waitFor('settings.json', () => log('data/settings.json').includes('"updateOnLaunch": false'));
     // The admin policy locks the interval.
-    if (!(await prop('//select', 'disabled'))) throw new Error('locked interval is editable');
+    if (!(await prop("//select[@id='interval']", 'disabled'))) throw new Error('locked interval is editable');
     if (!(await text("//label[contains(@class,'interval')]")).includes('Set by your organization')) throw new Error('no hint');
     if (log('data/settings.json').includes('updateIntervalMinutes')) throw new Error('locked setting saved for the user');
+  }],
+  ['a collection update that is not applied yet is marked; updating clears the mark', async () => {
+    // The server moves on; with updating on launch off (the step before), furnish only asks it.
+    const git = (...args) => {
+      const r = spawnSync('git', ['-C', `${workDir}/origin-src`, ...args], { encoding: 'utf8' });
+      if (r.status) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    };
+    writeFileSync(`${workDir}/origin-src/apps/later.dsc.yaml`,
+      'metadata: { furnish: { description: Arrived later, categories: [Test] } }\nresources:\n  - name: later\n    type: Furnish/Package\n    properties: { name: later }\n');
+    git('add', '-A');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'later');
+    git('push', '-q', `${workDir}/origin.git`, 'HEAD');
+    await startSession();
+    const badge = `${nav('Collections')}//span[@aria-label='1 collection has an update']`;
+    await waitFor('indicator in the sidebar', () => find(badge), 30000);
+    if ((await findAll(card('later'))).length) throw new Error('the update was applied, not only found');
+    await click(nav('Collections'));
+    const row = "//li[.//*[normalize-space()='fixture']]";
+    await waitFor('collection marked', async () => (await text(row)).includes('Update available'));
+    await click(`${row}//button[normalize-space()='Update']`);
+    await waitFor('indicator gone', async () => !(await findAll(badge)).length, 30000);
+    if ((await text(row)).includes('Update available')) throw new Error('still marked after updating');
+    await click(nav('Discover'));
+    await waitFor('the update brought its app', () => find(card('later')), 30000);
   }],
   ['a failed install offers the earlier version; installing it holds the app there', async () => {
     await click(button('Discover'));
@@ -355,7 +381,7 @@ const steps = [
   ['per-collection settings: falling back, downloads, history', async () => {
     // Error notifications stay until dismissed; the one from the failed install would cover the list.
     for (const el of await findAll("//button[@aria-label='Dismiss']")) await wd('POST', s(`/element/${el}/click`), {});
-    await click(button('Collections'));
+    await click(nav('Collections'));
     await click("//li[.//*[normalize-space()='fixture']]//summary[contains(., 'Downloads and earlier versions')]");
     await click("//select[@id='cs-fixture-fallback']/option[normalize-space()='Install the previous version']");
     await waitFor('saved for the collection', () => /"fixture":\s*\{\s*"fallback":\s*"automatic"/.test(log('data/settings.json')));
@@ -366,29 +392,29 @@ const steps = [
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
   }],
   ["reports: the organization's setting shows and can't be changed", async () => {
-    await click(button('Collections'));
+    await click(nav('Settings'));
     const section = "//section[h2[normalize-space()='Reports to your organization']]";
     await waitFor('reports section', () => find(section));
     if (!(await text(section)).includes('Set by your organization')) throw new Error('no hint that the organization sets it');
     if (!(await prop(`${section}//select`, 'disabled'))) throw new Error('locked reporting setting is editable');
     if ((await prop(`${section}//select`, 'value')) !== 'errors') throw new Error('not the policy value');
   }],
-  ['the open-source licenses open from the Collections page', async () => {
-    await click(button('Collections'));
-    if (!/furnish \d+\.\d+\.\d+/.test(await text("//p[contains(@class,'about')]"))) throw new Error('no version shown');
+  ['the Settings page shows the version and opens the open-source licenses', async () => {
+    await click(nav('Settings'));
+    await waitFor('version shown', async () => /furnish \d+\.\d+\.\d+/.test(await text("//*[@id='version']")));
     await click(button('Open-source licenses'));
     await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
   }],
   ['the language setting switches to German and back, without a restart', async () => {
-    await click(button('Collections'));
+    await click(nav('Settings'));
     const englishWidth = await wd('POST', s('/execute/sync'), {
       script: "return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--action-width'))", args: [],
     });
     if (!(englishWidth > 0)) throw new Error(`--action-width in English: ${englishWidth}`);
     await click("//select[@id='language']/option[@value='de']");
     await waitFor('German saved', () => log('data/settings.json').includes('"language": "de"'));
-    await waitFor('German Collections page', async () => (await text('//h1')) === 'Sammlungen');
-    await find(button('Alle aktualisieren'));
+    await waitFor('German Settings page', async () => (await text('//h1')) === 'Einstellungen');
+    await find(button('Jetzt prüfen'));
     await click(button('Entdecken'));
     await waitFor('German Discover page', async () => (await text('//h1')) === 'Entdecken');
     await find("//input[@placeholder='Apps durchsuchen']");
@@ -416,9 +442,9 @@ const steps = [
       script: "return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--action-width'))", args: [],
     });
     await waitFor('German button width', async () => (await width()) > englishWidth);
-    await click(button('Sammlungen'));
+    await click(nav('Einstellungen'));
     await click("//select[@id='language']/option[@value='en']");
-    await waitFor('English again', async () => (await text('//h1')) === 'Collections');
+    await waitFor('English again', async () => (await text('//h1')) === 'Settings');
     await waitFor('English saved', () => log('data/settings.json').includes('"language": "en"'));
   }],
   ['the logo leads back to Discover', async () => {
@@ -428,8 +454,8 @@ const steps = [
   ['starting at sign-in: on by default, the setting adds and removes the entry', async () => {
     await waitFor('sign-in entry written at start', () => autostartEntry().includes('--hidden'));
     if (!/^Exec=\/usr\/local\/bin\/furnish-gui --hidden$/m.test(autostartEntry())) throw new Error(`entry: ${autostartEntry()}`);
-    await click(button('Collections'));
-    const box = "//label[contains(., 'Start Acme Apps when you sign in')]/input";
+    await click(nav('Settings'));
+    const box = "//label[contains(., 'Start Acme Apps when you sign in')]//input";
     if (!(await prop(box, 'checked'))) throw new Error('off by default');
     await click(box);
     await waitFor('turned off', () => log('data/settings.json').includes('"startAtSignIn": false'));
@@ -446,9 +472,9 @@ const steps = [
     try {
       await startSession();
       await waitFor('entry removed at start', () => !autostartEntry());
-      await click(button('Collections'));
+      await click(nav('Settings'));
       const label = "//label[contains(., 'Start Acme Apps when you sign in')]";
-      await waitFor('locked', async () => (await prop(`${label}/input`, 'disabled')) && !(await prop(`${label}/input`, 'checked')));
+      await waitFor('locked', async () => (await prop(`${label}//input`, 'disabled')) && !(await prop(`${label}//input`, 'checked')));
       if (!(await text(label)).includes('Set by your organization')) throw new Error('no hint that the organization sets it');
     } finally {
       writeFileSync(`${workDir}/policy.json`, policy);

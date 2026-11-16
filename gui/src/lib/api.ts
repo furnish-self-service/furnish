@@ -165,6 +165,8 @@ export interface CollectionInfo {
   language: string;
   /** Its translations (`locales/<lang>.yaml`) by language tag. */
   locales: Record<string, import('./content.ts').LocaleFile>;
+  /** The server had a newer commit than the one checked out, when furnish last looked. */
+  updateAvailable: boolean;
 }
 
 export interface CollectionSettings {
@@ -248,6 +250,10 @@ export const onLink = (handler: (url: string) => void) => listen<string>('furnis
 /** Apps to install on first launch (organization's choice), not installed that way yet. */
 export const autoInstallPending = () => invoke<string[]>('auto_install_pending');
 export const autoInstallDone = (app: string) => invoke<void>('auto_install_done', { app });
+/** Ask each collection's server for its newest commit, without applying it (see updateAvailable). */
+export const checkCollectionServers = () => invoke<void>('check_collection_servers');
+/** The folder furnish keeps its collections, settings and logs in. */
+export const dataDir = () => invoke<string>('data_dir');
 export const updateCollection = (name: string) =>
   invoke<{ old: string; new: string }>('update_collection', { name });
 export const removeCollection = (name: string) => invoke<void>('remove_collection', { name });
@@ -284,13 +290,14 @@ export interface Load {
 export const systemLoad = () => invoke<Load>('system_load');
 /** Settings in effect plus what the admin policy restricts. */
 export const getSettings = () =>
-  invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean }>('get_settings');
+  invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean; warnings: string[] }>('get_settings');
 export const setSetting = (key: keyof Settings, value: unknown) => invoke<void>('set_setting', { key, value });
 
 /** The tray menu's texts; `status`: updates waiting or what furnish is doing, empty for nothing. */
 export interface TrayTexts {
   open: string;
   check: string;
+  settings: string;
   quit: string;
   status: string;
   tooltip: string;
@@ -298,6 +305,8 @@ export interface TrayTexts {
 export const setTray = (texts: TrayTexts) => invoke<void>('set_tray', { texts });
 /** Check for updates, chosen in the tray menu. */
 export const onCheckUpdates = (handler: () => void) => listen('furnish://check-updates', () => handler());
+/** Settings…, chosen in the tray menu (the window is shown already). */
+export const onOpenSettings = (handler: () => void) => listen('furnish://open-settings', () => handler());
 /** The window was closed, and furnish keeps running in the tray. */
 export const onToTray = (handler: () => void) => listen('furnish://to-tray', () => handler());
 /** The window was opened again (tray, starting furnish again). */

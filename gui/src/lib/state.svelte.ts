@@ -11,6 +11,7 @@ export type View =
   | { page: 'updates' }
   | { page: 'category'; name: string }
   | { page: 'collections' }
+  | { page: 'settings' }
   | { page: 'activity' }
   | { page: 'kit'; key: string; back: View }
   | { page: 'app'; key: string; back: View };
@@ -78,6 +79,8 @@ export const store = $state({
   settings: null as Settings | null,
   /** Settings the admin policy locks. */
   locked: [] as string[],
+  /** Values from the policy, a furnish address or settings.json that were ignored, and why. */
+  warnings: [] as string[],
   /** From the admin policy: whether users may add collections. */
   usersCanAddCollections: true,
   /** App whose optional dependencies the install dialog asks about. */
@@ -255,7 +258,7 @@ export function visibleApps(view: View, query: string): AppInfo[] {
 
 /**
  * Pull all collections. Returns the names that changed; reloads the catalog if any did.
- * Automatic runs stay quiet on failure (e.g. offline): the Collections page shows the last error.
+ * Automatic runs stay quiet on failure (e.g. offline): the Settings page shows the last error.
  */
 export async function updateCollections(): Promise<string[]> {
   const changed: string[] = [];
@@ -271,6 +274,8 @@ export async function updateCollections(): Promise<string[]> {
     }
   }
   if (changed.length) await loadAll();
+  // A collection whose update failed (e.g. a commit its checks refuse) shows its update as available.
+  else store.collections = await api.listCollections().catch(() => store.collections);
   if (errors.length) throw new Error(errors.join('\n'));
   return changed;
 }
@@ -338,12 +343,32 @@ export function setAutoUpdate(key: string, on: boolean) {
 }
 
 let timer: ReturnType<typeof setInterval> | undefined;
+let lookTimer: ReturnType<typeof setInterval> | undefined;
+/** Between update checks further apart than this, or with none: only ask the collections' servers
+ *  whether they have something new (cheap, nothing is downloaded or applied). */
+const LOOK_MINUTES = 30;
 /** (Re)start the update interval from the current settings. */
 function schedule() {
   clearInterval(timer);
+  clearInterval(lookTimer);
   const minutes = store.settings?.updateIntervalMinutes ?? 0;
   if (minutes > 0) timer = setInterval(checkForUpdates, minutes * 60_000);
+  if (minutes === 0 || minutes > LOOK_MINUTES) lookTimer = setInterval(lookForCollectionUpdates, LOOK_MINUTES * 60_000);
 }
+
+/** Which collections have an update that isn't applied yet: asks their servers, then reloads the
+ *  list. Offline: the marks stay as they were, no error. */
+export async function lookForCollectionUpdates() {
+  try {
+    await api.checkCollectionServers();
+    store.collections = await api.listCollections();
+  } catch {
+    // offline or a server that doesn't answer: nothing to show
+  }
+}
+
+/** Collections with an update that isn't applied yet. */
+export const collectionUpdates = () => store.collections.filter((c) => c.updateAvailable).length;
 
 /** Load branding and settings (at start, and after the organizations' descriptions changed). */
 async function reloadSettings() {
@@ -357,6 +382,7 @@ async function reloadSettings() {
     const effective = await api.getSettings();
     store.settings = effective.settings;
     store.locked = effective.locked;
+    store.warnings = effective.warnings ?? [];
     store.usersCanAddCollections = effective.usersCanAddCollections;
     setLanguage(effective.settings.language);
   } catch (e) {
@@ -379,7 +405,10 @@ export async function start() {
   await loadAll();
   await autoInstall();
   if (store.settings?.updateOnLaunch) await checkForUpdates();
-  else updateApps();
+  else {
+    updateApps();
+    lookForCollectionUpdates();
+  }
 }
 
 // --- Tray
@@ -401,6 +430,7 @@ export function trayTexts(): api.TrayTexts {
   return {
     open: t('tray.open', { brand }),
     check: t('tray.check'),
+    settings: t('tray.settings'),
     quit: t('tray.quit', { brand }),
     status,
     tooltip: status ? t('tray.tooltip', { brand, status }) : brand,
@@ -438,6 +468,7 @@ api.onShown(() => {
   } catch {}
 });
 api.onCheckUpdates(() => checkForUpdates());
+api.onOpenSettings(() => (store.view = { page: 'settings' }));
 
 api.onSignIn((started) => {
   store.signInUrl = started.url;
