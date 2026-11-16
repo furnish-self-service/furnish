@@ -15,7 +15,13 @@ root=$(cd "$here/../.." && pwd)
 PROXY=${PROXY:-caddy}; export PROXY
 [ -f "$root/packaging/endpoint/$PROXY/compose.yml" ] || { echo "no proxy '$PROXY' in packaging/endpoint" >&2; exit 2; }
 RECEIVER=${RECEIVER:-collector}
-case $RECEIVER in collector) receiver_file= ;; vector) receiver_file=vector/compose.yml ;; *) echo "RECEIVER is collector or vector" >&2; exit 2 ;; esac
+# The Collector writes what it receives to OUT_DIR (collector.yml); Vector prints one line per record.
+OUT_DIR=$(mktemp -d); export OUT_DIR; chmod 777 "$OUT_DIR"
+case $RECEIVER in
+    collector) receiver_file= test_file=$here/collector.yml ;;
+    vector) receiver_file=$root/packaging/endpoint/vector/compose.yml test_file= ;;
+    *) echo "RECEIVER is collector or vector" >&2; exit 2 ;;
+esac
 project=furnish-endpoint-test-$PROXY-$(date +%s)-$$
 
 rand() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
@@ -39,8 +45,8 @@ export DEPLOY_USER DEPLOY_TOKEN
 ACME_GITLAB_AUTH=$(printf '%s:%s' "$DEPLOY_USER" "$DEPLOY_TOKEN" | base64 | tr -d '\n'); export ACME_GITLAB_AUTH
 
 dc() { docker compose -p "$project" --project-directory "$root/packaging/endpoint" -f "$root/packaging/endpoint/docker-compose.yml" \
-    -f "$root/packaging/endpoint/$PROXY/compose.yml" ${receiver_file:+-f "$root/packaging/endpoint/$receiver_file"} -f "$here/compose.yml" "$@"; }
-trap 'dc --profile client down -v -t 2 --remove-orphans >/dev/null 2>&1 || true; rm -rf "$TLS_DIR"' EXIT
+    -f "$root/packaging/endpoint/$PROXY/compose.yml" ${receiver_file:+-f "$receiver_file"} -f "$here/compose.yml" ${test_file:+-f "$test_file"} "$@"; }
+trap 'dc --profile client down -v -t 2 --remove-orphans >/dev/null 2>&1 || true; rm -rf "$TLS_DIR" "$OUT_DIR"' EXIT
 trap 'exit 130' INT TERM
 
 dc --profile client build -q
@@ -76,7 +82,8 @@ unset_fwd=$(echo "$log" | grep -vE ' xff="[0-9.]+" xri="[0-9.]+" xfh="furnish\.t
 # What the receiver got (checks.sh sent reports, with and without attempts to pose as someone else):
 # one JSON object per log record with the attributes of its resource and its own. The Collector
 # prints OTLP requests, Vector one event per record.
-reports=$(dc logs --no-color --no-log-prefix receiver | grep '^{' | jq -c '
+received() { if [ -n "$test_file" ]; then cat "$OUT_DIR/reports.ndjson"; else dc logs --no-color --no-log-prefix receiver | grep '^{'; fi; }
+reports=$(received | jq -c '
     def flat: map({(.key): (.value.stringValue // .value)}) | add // {};
     if .resourceLogs then .resourceLogs[] | (.resource.attributes // [] | flat) as $r
         | .scopeLogs[] | (.scope.attributes // [] | flat) as $s | .logRecords[] | $r + $s + (.attributes // [] | flat)

@@ -1,0 +1,6 @@
+# Loaded by the Collector after packaging/endpoint/collector/collector.yaml in tests/endpoint/run.sh:
+# the requests go to a file run.sh reads, not to the container's log, which splits long lines
+# (the size checks send 1 MiB).
+exporters:
+  file/stdout:
+    path: /out/reports.ndjson

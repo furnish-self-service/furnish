@@ -1,0 +1,7 @@
+# Test overlay for the Collector (tests/endpoint/run.sh): writes what it receives to ${OUT_DIR}.
+services:
+  receiver:
+    command: ["--config=/etc/otelcol-contrib/config.yaml", "--config=/etc/otelcol-contrib/test.yaml"]
+    volumes:
+      - ${TEST_DIR}/collector.yaml:/etc/otelcol-contrib/test.yaml:ro
+      - ${OUT_DIR}:/out
