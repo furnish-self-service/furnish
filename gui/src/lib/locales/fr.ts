@@ -147,7 +147,6 @@ export const fr: Record<keyof typeof en, Entry> = {
   'app.dependenciesLead': 'Installées avec {app}.',
   'app.dependenciesLeadOptional': 'Installées avec {app}. Désélectionnez les dépendances facultatives dont vous ne voulez pas.',
   'app.setsUp': 'Ce que cette app configure',
-  'app.onlyIf': 'Seulement si',
   'app.steps': 'Étapes',
   'app.stepsHint': 'aperçu et progression en direct',
   'app.log': 'Journal d’activité',

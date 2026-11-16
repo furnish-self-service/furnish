@@ -613,7 +613,7 @@ fn applicable(doc: &Value) -> Option<Value> {
 
 /// Whether a resource's `condition` holds on this computer with the document's parameter values.
 /// A condition furnish can't evaluate is left to DSC.
-fn applies_here(resource: &Value, doc: &Value) -> bool {
+pub fn applies_here(resource: &Value, doc: &Value) -> bool {
     let Some(condition) = resource["condition"].as_str() else { return true };
     let values: serde_json::Map<String, Value> = doc["parameters"]
         .as_object()

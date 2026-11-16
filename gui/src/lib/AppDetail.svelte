@@ -8,7 +8,6 @@
   import ActionButton from './ActionButton.svelte';
   import { highlightYaml } from './highlight';
   import Plan from './Plan.svelte';
-  import { describeCondition } from './conditions';
   import { t, formatDate } from './i18n.svelte';
   import Declared from './Declared.svelte';
 
@@ -140,19 +139,14 @@
     <DependencyList {app} bind:chosen />
   {/if}
 
-  <h2>{t('app.setsUp')}</h2>
-  <ul class="resources">
-    {#each app.resources as resource}
-      <li>
-        <span class="name">{resource.name}</span>
-        <span class="mono type">{resource.type}</span>
-        {#if resource.condition}
-          <span class="condition">{describeCondition(resource.condition) ?? t('app.onlyIf')}</span>
-          <span class="mono condition">{resource.condition}</span>
-        {/if}
-      </li>
-    {/each}
-  </ul>
+  {#if app.resources.length}
+    <h2>{t('app.setsUp')}</h2>
+    <ul class="resources">
+      {#each app.resources as resource}
+        <li>{resource.name}</li>
+      {/each}
+    </ul>
+  {/if}
 
   <!-- Expert details: collapsed by default, one click to reveal. -->
   <details class="expert" bind:open={planOpen}>
@@ -303,22 +297,9 @@
     border-top: 1px solid var(--line);
   }
   .resources li {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem 1rem;
+    font-weight: 600;
     padding: 0.7rem 0;
     border-bottom: 1px solid var(--line);
-  }
-  .name {
-    font-weight: 600;
-  }
-  .type,
-  .condition {
-    color: var(--muted);
-    font-size: 0.8rem;
-  }
-  .mono {
-    font-family: var(--font-mono);
   }
   .expert {
     margin-top: 1rem;

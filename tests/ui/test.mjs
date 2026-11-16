@@ -138,6 +138,11 @@ const steps = [
     await click(`${panel}/summary`);
     await waitFor('configuration shown', async () => (await isOpen(panel)) && (await text(`${panel}//pre`)).includes('Furnish/Package'));
   }],
+  ['"What this sets up" lists only what applies here, by name', async () => {
+    const list = "//h2[normalize-space()='What this sets up']/following-sibling::ul[1]";
+    const items = await findAll(`${list}/li`);
+    if (items.length !== 1 || (await text(`${list}/li`)).trim() !== 'hyperfine') throw new Error(`expected only the Linux resource: ${await text(list)}`);
+  }],
   ['preview lists the concrete steps and changes nothing', async () => {
     const panel = "//details[summary[contains(., 'Steps')]]";
     if (await isOpen(panel)) throw new Error('preview open before click');
@@ -170,7 +175,7 @@ const steps = [
     await waitFor('run finished', async () => /Installed hyperfine in/.test(await text(`${panel}//p[contains(@class,'summary')]`)), 30000);
     const done = await text(`${panel}//li[contains(@class,'done')]`);
     if (!/Installed/.test(done) || !/\d+(\.\d)? (ms|s)/.test(done)) throw new Error(`done step lacks result/duration: ${done}`);
-    if (!(await findAll(`${panel}//li[contains(@class,'skipped')]`)).length) throw new Error('skipped step missing');
+    if (!(await findAll(`${panel}//li[contains(@class,'skipped') and contains(., 'hyperfine (winget)')]`)).length) throw new Error('skipped Windows step missing');
   }],
   ['refusing the password dialog cancels quietly instead of failing', async () => {
     await click(button('Discover'));

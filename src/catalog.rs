@@ -1166,6 +1166,14 @@ impl App {
         crate::options::apply(&self.doc, values)
     }
 
+    /// The resources that apply on this computer with the current option values, as the engine
+    /// filters them (see `engine::applies_here`).
+    pub fn resources_here(&self) -> Vec<Value> {
+        let doc = self.doc_for(&self.current_values());
+        let resources = doc["resources"].as_array().cloned().unwrap_or_default();
+        resources.into_iter().filter(|r| crate::engine::applies_here(r, &doc)).collect()
+    }
+
     /// Dependencies whose `condition` holds for these option values.
     pub fn dependencies_for(&self, values: &serde_json::Map<String, Value>) -> Vec<Item> {
         self.dependencies
@@ -1881,6 +1889,22 @@ mod tests {
         let k = c.load_kit(&dir.join("kits/k.yaml"), &["a".to_string()]).unwrap();
         assert_eq!((k.icon, k.icon_dark), (file("c.svg"), file("k-dark.svg")));
         assert_eq!((c.icon(), c.icon_dark()), (file("c.svg"), file("c-dark.svg")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resources_here_leave_out_those_skipped_here() {
+        let other = if cfg!(windows) { "Linux" } else { "Windows" };
+        let app = format!(
+            "parameters:\n  vpn:\n    type: bool\n    defaultValue: false\nresources:\n\
+             - {{name: elsewhere, type: T/X, condition: \"[equals(context().os.family, '{other}')]\"}}\n\
+             - {{name: profile, type: T/X, condition: \"[parameters('vpn')]\"}}\n\
+             - {{name: here, type: T/X}}\n"
+        );
+        let (c, dir) = collection_with(&[("apps/a.dsc.yaml", &app)]);
+        let a = c.load_app(&dir.join("apps/a.dsc.yaml")).unwrap();
+        let names: Vec<Value> = a.resources_here().iter().map(|r| r["name"].clone()).collect();
+        assert_eq!(names, vec![Value::from("here")]);
         fs::remove_dir_all(dir).unwrap();
     }
 }

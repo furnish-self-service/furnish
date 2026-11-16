@@ -58,9 +58,6 @@ struct AppInfo {
 #[derive(Serialize)]
 struct ResourceInfo {
     name: String,
-    #[serde(rename = "type")]
-    kind: String,
-    condition: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -185,18 +182,12 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> anyhow::Result<T> + 
 }
 
 fn app_info(app: &App) -> AppInfo {
-    let resources = app.doc["resources"]
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .map(|r| ResourceInfo {
-                    name: r["name"].as_str().unwrap_or_default().to_string(),
-                    kind: r["type"].as_str().unwrap_or_default().to_string(),
-                    condition: r["condition"].as_str().map(String::from),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    // Only what applies here: experts find the skipped ones in the steps preview.
+    let resources = app
+        .resources_here()
+        .iter()
+        .map(|r| ResourceInfo { name: r["name"].as_str().unwrap_or_default().to_string() })
+        .collect();
     AppInfo {
         key: format!("{}/{}", app.collection, app.id),
         id: app.id.clone(),

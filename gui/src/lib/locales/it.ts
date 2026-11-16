@@ -147,7 +147,6 @@ export const it: Record<keyof typeof en, Entry> = {
   'app.dependenciesLead': 'Installate insieme a {app}.',
   'app.dependenciesLeadOptional': 'Installate insieme a {app}. Deseleziona quelle facoltative che non ti servono.',
   'app.setsUp': 'Cosa configura',
-  'app.onlyIf': 'Solo se',
   'app.steps': 'Passaggi',
   'app.stepsHint': 'anteprima e avanzamento in tempo reale',
   'app.log': 'Registro attività',

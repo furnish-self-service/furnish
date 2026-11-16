@@ -144,7 +144,6 @@ export const en = {
   'app.dependenciesLead': 'Installed along with {app}.',
   'app.dependenciesLeadOptional': 'Installed along with {app}. Deselect optional ones you don’t want.',
   'app.setsUp': 'What this sets up',
-  'app.onlyIf': 'Only if',
   'app.steps': 'Steps',
   'app.stepsHint': 'preview and live progress',
   'app.log': 'Activity log',

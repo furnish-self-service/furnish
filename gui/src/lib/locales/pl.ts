@@ -147,7 +147,6 @@ export const pl: Record<keyof typeof en, Entry> = {
   'app.dependenciesLead': 'Instalowane razem z aplikacją {app}.',
   'app.dependenciesLeadOptional': 'Instalowane razem z aplikacją {app}. Odznacz opcjonalne, których nie potrzebujesz.',
   'app.setsUp': 'Co konfiguruje ta aplikacja',
-  'app.onlyIf': 'Tylko jeśli',
   'app.steps': 'Kroki',
   'app.stepsHint': 'podgląd i postęp na żywo',
   'app.log': 'Dziennik aktywności',

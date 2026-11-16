@@ -147,7 +147,6 @@ export const nl: Record<keyof typeof en, Entry> = {
   'app.dependenciesLead': 'Worden samen met {app} geïnstalleerd.',
   'app.dependenciesLeadOptional': 'Worden samen met {app} geïnstalleerd. Schakel optionele uit die u niet nodig hebt.',
   'app.setsUp': 'Wat deze app instelt',
-  'app.onlyIf': 'Alleen als',
   'app.steps': 'Stappen',
   'app.stepsHint': 'voorbeeld en voortgang',
   'app.log': 'Activiteitenlogboek',

@@ -20,7 +20,7 @@ If your organization has a furnish address, furnish signs you in with your organ
 
 ## An app's page
 
-Click an app for its description, its source and what it installs. Three closed sections show details:
+Click an app for its description, its source and what it sets up on this computer. Three closed sections show details:
 
 - Steps lists what installing or uninstalling would do: each step, the exact command, and whether it needs administrator rights. Nothing changes until you click Install.
 - Activity log shows what the package manager printed during the last install.

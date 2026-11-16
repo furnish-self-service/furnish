@@ -4,10 +4,9 @@ import { listen } from '@tauri-apps/api/event';
 
 export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable' | 'blocked';
 
+/** A resource that applies on this computer with the current options. */
 export interface Resource {
   name: string;
-  type: string;
-  condition: string | null;
 }
 
 export interface AppInfo {

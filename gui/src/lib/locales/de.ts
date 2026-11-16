@@ -145,7 +145,6 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'app.dependenciesLead': 'Werden zusammen mit {app} installiert.',
   'app.dependenciesLeadOptional': 'Werden zusammen mit {app} installiert. Wählen Sie optionale ab, die Sie nicht brauchen.',
   'app.setsUp': 'Was diese App einrichtet',
-  'app.onlyIf': 'Nur wenn',
   'app.steps': 'Schritte',
   'app.stepsHint': 'Vorschau und Fortschritt',
   'app.log': 'Aktivitätsprotokoll',
