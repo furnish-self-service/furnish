@@ -48,6 +48,11 @@ const nav = (label) => `//nav//button[starts-with(normalize-space(), '${label}')
 /** Save the window as <name>.png once the page settled (fonts, images, no running animation). */
 async function shot(name) {
   await js('return document.fonts.ready.then(() => true)');
+  // The pointer off the content (on the sidebar's Categories heading), so no card shows its hover look.
+  if (!(await findAll('//dialog[@open]')).length) {
+    const heading = (await findAll('//nav/h2'))[0];
+    if (heading) await wd('POST', s(`/element/${heading}/click`), {}).catch((e) => console.error(`  pointer: ${e.message}`));
+  }
   await sleep(700);
   writeFileSync(`${out}/${name}.png`, Buffer.from(await wd('GET', s('/screenshot')), 'base64'));
   console.log(`  ${name}`);
@@ -84,8 +89,17 @@ async function noToasts() {
   await waitFor('toasts gone', async () => !(await findAll("//button[@aria-label='Dismiss']")).length, 15000);
 }
 
-/** Wait until every app's status is known (no "Checking…" left). */
-const settled = () => waitFor('statuses', async () => !(await findAll("//*[normalize-space()='Checking…']")).length, 90000);
+/** Wait until every app's status is known: cards shown, no "Checking…" left for a second (the
+ *  checks start a moment after the cards appear). */
+async function settled() {
+  let quietSince = 0;
+  await waitFor('statuses', async () => {
+    const quiet = (await findAll('//article')).length && !(await findAll("//*[normalize-space()='Checking…' or normalize-space()='Wird geprüft…']")).length;
+    if (!quiet) quietSince = 0;
+    else quietSince ||= Date.now();
+    return quiet && Date.now() - quietSince >= 1000;
+  }, 90000);
+}
 
 const scenes = {
   async main() {
@@ -95,7 +109,7 @@ const scenes = {
     await crop('questions', '//dialog[@open]');
     await click("//dialog[@open]//select[@data-question='role']/option[normalize-space()='Office work']");
     await click("//dialog[@open]//button[normalize-space()='Save answers']");
-    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='thunderbird']"));
+    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='Thunderbird']"));
     await settled();
     await js('window.scrollTo(0, 0)');
     await shot('discover');
@@ -103,13 +117,13 @@ const scenes = {
     await js('window.scrollTo(0, 0)');
 
     // A kit, before Thunderbird is installed.
-    await click("//button[@aria-label='Open kit office']");
+    await click("//button[@aria-label='Open kit Office']");
     await shot('kit');
     await crop('kit', "//ul[contains(@class,'items')]");
     await click(nav('Discover'));
 
     // An app's page with the preview of its steps.
-    await click(`${card('thunderbird')}//button[@aria-label='Open thunderbird']`);
+    await click(`${card('Thunderbird')}//button[@aria-label='Open Thunderbird']`);
     await click("//details[summary[contains(., 'Steps')]]/summary");
     await waitFor('preview', async () => (await findAll("//details[@open]//li")).length > 0);
     await shot('app-detail');
@@ -120,23 +134,25 @@ const scenes = {
     await sleep(1500);
     await shot('install-progress');
     await crop('install-progress', "//details[@open][summary[contains(., 'Steps')]]");
-    await waitFor('installed', () => find("//*[contains(normalize-space(), 'Installed thunderbird in')]"), 60000);
+    await waitFor('installed', () => find("//*[contains(normalize-space(), 'Installed Thunderbird in')]"), 60000);
+    await noToasts();
     await click(nav('Discover'));
 
 
     // Several installs at once: the queue on the Activity page.
-    for (const app of ['gimp', 'inkscape', 'vlc']) await click(`${card(app)}//button[normalize-space()='Install']`);
+    for (const app of ['GIMP', 'Inkscape', 'VLC']) await click(`${card(app)}//button[normalize-space()='Install']`);
     await click(nav('Activity'));
     await waitFor('queue', async () => (await findAll("//ol[contains(@class,'queue')]/li")).length >= 1);
     await shot('activity');
     await crop('activity', '//main/section');
     await click(nav('Discover'));
-    for (const app of ['gimp', 'inkscape', 'vlc']) {
+    for (const app of ['GIMP', 'Inkscape', 'VLC']) {
       await waitFor(`${app} installed`, () => find(`${card(app)}//*[normalize-space()='Installed']`), 90000);
     }
 
     await click(nav('Updates'));
-    await waitFor('update listed', () => find(card('libreoffice')));
+    await waitFor('update listed', () => find(card('LibreOffice')));
+    await noToasts();
     await shot('updates');
     await crop('updates', "//div[contains(@class,'grid')]");
 
@@ -180,7 +196,7 @@ const scenes = {
     await click(nav('Collections'));
     await click("//select[@id='language']/option[@value='de']");
     await click(nav('Entdecken'));
-    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='thunderbird']"));
+    await waitFor('recommendations', () => find("//div[contains(@class,'recommended')]//h3[normalize-space()='Thunderbird']"));
     await settled();
     await js('window.scrollTo(0, 0)');
     await shot('discover-de');
@@ -199,7 +215,7 @@ const scenes = {
 
     // Installing 7zip fails (the collection's latest change); its earlier version is offered.
     await click(nav('Discover'));
-    await click(`${card('7zip')}//button[@aria-label='Open 7zip']`);
+    await click(`${card('7-Zip')}//button[@aria-label='Open 7-Zip']`);
     await click("//button[contains(@class,'action') and normalize-space()='Install']");
     const header = "//section[contains(@class,'detail')]/header";
     const offer = "//div[contains(@class,'differ')][.//button[starts-with(normalize-space(), 'Install the version from')]]";
@@ -223,7 +239,7 @@ const scenes = {
     await shot('discover-dark');
     await crop('discover-dark', "//div[contains(@class,'recommended')]");
     await js('window.scrollTo(0, 0)');
-    await click(`${card('firefox')}//button[@aria-label='Open firefox']`);
+    await click(`${card('Firefox')}//button[@aria-label='Open Firefox']`);
     await shot('app-detail-dark');
     await crop('app-detail-dark', "//section[contains(@class,'detail')]/header");
   },

@@ -50,6 +50,8 @@ GIT_AUTHOR_DATE=$then GIT_COMMITTER_DATE=$then git -C "$work/example-src" -c use
 sed -i 's/^      name: 7zip$/      name: 7zip-git/' "$work/example-src/apps/7zip.dsc.yaml"
 git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qam '7zip from git'
 mkdir -p "$work/data/collections"
+# LibreOffice's update stays for the Updates page instead of installing itself.
+echo '{"noAutoUpdate": ["example/libreoffice"]}' > "$work/data/settings.json"
 git clone -q "$work/example-src" "$work/data/collections/example"
 # Only the policy can make the collection managed; a plain policy keeps furnish's own look.
 echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]}}' > "$work/policy.json"
