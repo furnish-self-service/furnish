@@ -451,7 +451,13 @@ jobs:
             macOS)   test -x target/release/bundle/macos/furnish.app/Contents/MacOS/furnish
                      test -x target/release/bundle/macos/furnish.app/Contents/Resources/dsc/dsc
                      test -x target/release/bundle/macos/furnish.app/Contents/Resources/dsc/filecontent
-                     test -f target/release/bundle/macos/furnish.app/Contents/Resources/dsc/NOTICE.txt ;;
+                     test -f target/release/bundle/macos/furnish.app/Contents/Resources/dsc/NOTICE.txt
+                     # Signed as a whole (ad hoc, tauri.bundle.conf.json): a downloaded app without a
+                     # sealed bundle is "damaged" to Gatekeeper, with no Open Anyway.
+                     codesign --verify --deep --strict --verbose=2 target/release/bundle/macos/furnish.app
+                     hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" target/release/bundle/dmg/*.dmg
+                     codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/furnish.app"
+                     hdiutil detach "$RUNNER_TEMP/dmg" ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
       # Windows has no git: furnish uses the MinGit the installer ships, with git-lfs.

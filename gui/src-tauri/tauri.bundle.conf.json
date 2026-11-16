@@ -1,5 +1,8 @@
 {
   "bundle": {
-    "externalBin": ["binaries/furnish"]
+    "externalBin": ["binaries/furnish"],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }
