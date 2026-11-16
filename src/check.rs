@@ -52,6 +52,11 @@ fn warning(message: impl Into<String>) -> Finding {
     Finding { severity: Severity::Warning, message: message.into() }
 }
 
+/// An `icon` or `iconDark` that names a file the collection doesn't have.
+fn missing_icon(key: &str, path: &str) -> Finding {
+    error(format!("{key} '{path}' is not in the collection"))
+}
+
 /// Check the collection in `dir` (a checkout of its repository).
 pub fn collection(dir: &Path) -> Result<Vec<Item>> {
     let dir = dir.canonicalize()?;
@@ -68,10 +73,12 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
         }
     };
     // Collection::icon is None for a file outside the collection (also through a symlink).
-    if let Some(icon) = yaml_string(&dir.join("collection.yaml"), "icon")
-        && !collection.icon().is_some_and(|p| p.is_file())
-    {
-        options.findings.push(error(format!("icon '{icon}' is not in the collection")));
+    for (key, found) in [("icon", collection.icon()), ("iconDark", collection.icon_dark())] {
+        if let Some(icon) = yaml_string(&dir.join("collection.yaml"), key)
+            && !found.is_some_and(|p| p.is_file())
+        {
+            options.findings.push(missing_icon(key, &icon));
+        }
     }
     if let Some(language) = yaml_string(&dir.join("collection.yaml"), "language")
         && !crate::locale::valid_tag(&language)
@@ -114,8 +121,10 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
             Err(err) => item.findings.push(error(format!("{err:#}"))),
             // load_kit drops an icon it can't find.
             Ok(kit) => {
-                if let Some(icon) = yaml_string(&path, "icon").filter(|_| kit.icon.is_none()) {
-                    item.findings.push(error(format!("icon '{icon}' is not in the collection")));
+                for (key, found) in [("icon", &kit.icon), ("iconDark", &kit.icon_dark)] {
+                    if let Some(icon) = yaml_string(&path, key).filter(|_| found.is_none()) {
+                        item.findings.push(missing_icon(key, &icon));
+                    }
                 }
                 kits.push(kit);
             }
@@ -206,10 +215,12 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     if app.categories.is_empty() {
         findings.push(warning("no categories (metadata.furnish.categories)"));
     }
-    if let Some(icon) = meta["icon"].as_str()
-        && app.icon.is_none()
-    {
-        findings.push(error(format!("icon '{icon}' is not in the collection")));
+    for (key, found) in [("icon", &app.icon), ("iconDark", &app.icon_dark)] {
+        if let Some(icon) = meta[key].as_str()
+            && found.is_none()
+        {
+            findings.push(missing_icon(key, icon));
+        }
     }
 
     let mut values = collection_values.clone();
@@ -445,6 +456,7 @@ mod tests {
             description: String::new(),
             categories: vec![],
             icon: None,
+            icon_dark: None,
             path: PathBuf::new(),
             dependencies,
             collection_dir: PathBuf::new(),

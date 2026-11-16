@@ -19,6 +19,8 @@ export interface AppInfo {
   description: string;
   categories: string[];
   icon: string | null;
+  /** Shown instead of `icon` in dark mode (`metadata.furnish.iconDark`). */
+  iconDark: string | null;
   resources: Resource[];
   /** The app's DSC configuration document, as written in the collection. */
   source: string;
@@ -139,6 +141,8 @@ export interface KitInfo {
   description: string;
   categories: string[];
   icon: string | null;
+  /** Shown instead of `icon` in dark mode (`iconDark`). */
+  iconDark: string | null;
   items: Item[];
 }
 
@@ -153,6 +157,8 @@ export interface CollectionInfo {
   options: Option[];
   /** Data URL of the collection's avatar. */
   icon: string | null;
+  /** Data URL of the avatar for dark mode (`iconDark`). */
+  iconDark: string | null;
   /** History kept, downloads and falling back, and which of them the organization sets. */
   settings: { settings: CollectionSettings; locked: (keyof CollectionSettings)[] };
   /** The language of the collection's own texts. */

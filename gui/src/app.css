@@ -71,6 +71,12 @@ body {
   outline-offset: 2px;
 }
 
+/* An icon with a dark-mode variant (`iconDark`): the picture only picks the image, the img inside
+   lays out as if it stood alone. */
+picture {
+  display: contents;
+}
+
 input {
   padding: 0.55rem 0.8rem;
   border: 1px solid var(--line-strong);

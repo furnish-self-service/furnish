@@ -148,6 +148,15 @@ If a resource needs a tool that is missing, such as Homebrew on a Mac, the app s
 
 Apps set `metadata.furnish.icon`, kits and `collection.yaml` set `icon`: the path of an SVG, PNG, JPEG or WebP file in the repository. The collection's icon appears next to its name on the Collections page, on app cards and on app pages.
 
+The app shows icons on its light or dark background as they are. For a logo that is hard to see in dark mode, such as dark lines without a background of their own, `iconDark` (`metadata.furnish.iconDark` for apps) names the image to show instead in dark mode. Many projects publish a version of their logo for dark backgrounds that fits:
+
+```yaml
+metadata:
+  furnish:
+    icon: icons/helm.svg
+    iconDark: icons/helm-white.svg
+```
+
 ## Kits
 
 A kit installs several apps of the collection together:

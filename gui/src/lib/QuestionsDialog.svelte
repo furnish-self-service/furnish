@@ -46,7 +46,12 @@
 
 <dialog bind:this={dialog} onclose={() => store.asking && postponeQuestions()} aria-labelledby="questions-title">
   <h2 id="questions-title">
-    {#if collections.length === 1 && collections[0].icon}<img src={collections[0].icon} alt="" width="32" height="32" />{/if}
+    {#if collections.length === 1 && collections[0].icon}
+      <picture>
+        {#if collections[0].iconDark}<source media="(prefers-color-scheme: dark)" srcset={collections[0].iconDark} />{/if}
+        <img src={collections[0].icon} alt="" width="32" height="32" />
+      </picture>
+    {/if}
     {collections.length === 1 ? t('questions.asks', { collection: collections[0].name }) : t('questions.title')}
   </h2>
   <p>{t('questions.text')}</p>
@@ -54,7 +59,12 @@
     <section>
       {#if collections.length > 1}
         <h3>
-          {#if c.icon}<img src={c.icon} alt="" width="22" height="22" />{/if}
+          {#if c.icon}
+            <picture>
+              {#if c.iconDark}<source media="(prefers-color-scheme: dark)" srcset={c.iconDark} />{/if}
+              <img src={c.icon} alt="" width="22" height="22" />
+            </picture>
+          {/if}
           {c.name}
         </h3>
       {/if}

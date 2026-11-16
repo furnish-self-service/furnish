@@ -29,6 +29,8 @@ pub struct Kit {
     pub description: String,
     pub categories: Vec<String>,
     pub icon: Option<PathBuf>,
+    /// Shown instead of `icon` in dark mode (`iconDark`).
+    pub icon_dark: Option<PathBuf>,
     pub items: Vec<Item>,
 }
 
@@ -85,6 +87,8 @@ struct KitFile {
     #[serde(default)]
     categories: Vec<String>,
     icon: Option<String>,
+    #[serde(rename = "iconDark")]
+    icon_dark: Option<String>,
     items: Vec<Item>,
 }
 
@@ -99,6 +103,8 @@ pub struct App {
     pub categories: Vec<String>,
     /// Optional icon image (`metadata.furnish.icon`, relative to the collection root).
     pub icon: Option<PathBuf>,
+    /// Shown instead of `icon` in dark mode (`metadata.furnish.iconDark`).
+    pub icon_dark: Option<PathBuf>,
     /// The app's DSC configuration file.
     pub path: PathBuf,
     /// Apps of the same collection installed first (`metadata.furnish.dependencies`), e.g. Homebrew.
@@ -486,7 +492,12 @@ impl Collection {
 
     /// The collection's avatar (`icon` in `collection.yaml`).
     pub fn icon(&self) -> Option<PathBuf> {
-        self.file_in_repo(&crate::options::collection_icon(&self.dir)?)
+        self.file_in_repo(&crate::options::collection_icons(&self.dir).icon?)
+    }
+
+    /// The avatar for dark mode (`iconDark` in `collection.yaml`).
+    pub fn icon_dark(&self) -> Option<PathBuf> {
+        self.file_in_repo(&crate::options::collection_icons(&self.dir).icon_dark?)
     }
 
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
@@ -806,6 +817,7 @@ impl Collection {
             description: file.description.trim().to_string(),
             categories: file.categories,
             icon: file.icon.as_deref().and_then(|p| self.file_in_repo(p)),
+            icon_dark: file.icon_dark.as_deref().and_then(|p| self.file_in_repo(p)),
             items: file.items,
         })
     }
@@ -863,6 +875,7 @@ impl Collection {
                 .map(|c| c.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             icon: meta["icon"].as_str().and_then(|p| self.file_in_repo(p)),
+            icon_dark: meta["iconDark"].as_str().and_then(|p| self.file_in_repo(p)),
             path: path.to_path_buf(),
             collection_dir: self.dir.clone(),
             managed: self.managed,
@@ -1611,6 +1624,7 @@ mod tests {
             description: String::new(),
             categories: vec![],
             icon: None,
+            icon_dark: None,
             items: items.iter().map(|(app, required)| Item { app: (*app).into(), required: *required, selected: true, condition: None }).collect(),
         }
     }
@@ -1629,7 +1643,7 @@ mod tests {
     #[test]
     fn kit_file_defaults() {
         let file: KitFile = serde_yaml::from_str("items:\n  - app: a\n    required: true\n  - app: b\n  - app: c\n    selected: false\n").unwrap();
-        let k = Kit { id: "k".into(), collection: "c".into(), name: None, description: file.description, categories: file.categories, icon: None, items: file.items };
+        let k = Kit { id: "k".into(), collection: "c".into(), name: None, description: file.description, categories: file.categories, icon: None, icon_dark: None, items: file.items };
         assert_eq!(default_selection(&k.items), ["a", "b"]);
         let with = ["c".to_string()];
         let without = ["b".to_string()];
@@ -1759,6 +1773,30 @@ mod tests {
         fs::remove_file(dir.join("i/x.deb")).unwrap();
         std::os::unix::fs::symlink("/nonexistent/x.deb", dir.join("i/x.deb")).unwrap();
         assert!(c.load_app(&dir.join("apps/a.dsc.yaml")).is_err(), "dangling symlink accepted");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn dark_icons_load_beside_the_icons() {
+        let (c, dir) = collection_with(&[
+            ("collection.yaml", "icon: icons/c.svg\niconDark: icons/c-dark.svg\n"),
+            ("apps/a.dsc.yaml", "metadata:\n  furnish:\n    icon: icons/a.svg\n    iconDark: icons/a-dark.svg\nresources: []\n"),
+            ("apps/b.dsc.yaml", "metadata:\n  furnish:\n    icon: icons/a.svg\n    iconDark: icons/missing.svg\nresources: []\n"),
+            ("kits/k.yaml", "icon: icons/c.svg\niconDark: icons/k-dark.svg\nitems:\n  - app: a\n"),
+            ("icons/a.svg", "<svg/>"),
+            ("icons/a-dark.svg", "<svg/>"),
+            ("icons/c.svg", "<svg/>"),
+            ("icons/c-dark.svg", "<svg/>"),
+            ("icons/k-dark.svg", "<svg/>"),
+        ]);
+        let file = |name: &str| Some(dir.join("icons").join(name).canonicalize().unwrap());
+        let a = c.load_app(&dir.join("apps/a.dsc.yaml")).unwrap();
+        assert_eq!((a.icon, a.icon_dark), (file("a.svg"), file("a-dark.svg")));
+        // A missing dark icon is dropped like a missing icon (furnish check names it).
+        assert_eq!(c.load_app(&dir.join("apps/b.dsc.yaml")).unwrap().icon_dark, None);
+        let k = c.load_kit(&dir.join("kits/k.yaml"), &["a".to_string()]).unwrap();
+        assert_eq!((k.icon, k.icon_dark), (file("c.svg"), file("k-dark.svg")));
+        assert_eq!((c.icon(), c.icon_dark()), (file("c.svg"), file("c-dark.svg")));
         fs::remove_dir_all(dir).unwrap();
     }
 }

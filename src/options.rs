@@ -67,6 +67,9 @@ struct CollectionFile {
     parameters: BTreeMap<String, Declaration>,
     /// Image file in the collection (SVG, PNG, JPEG or WebP).
     icon: Option<String>,
+    /// The image shown instead of `icon` in dark mode.
+    #[serde(rename = "iconDark")]
+    icon_dark: Option<String>,
     /// The language of the collection's own texts (a BCP 47 tag; default `en`), see `locale`.
     language: Option<String>,
 }
@@ -84,9 +87,16 @@ pub fn collection_declarations(dir: &Path) -> Result<BTreeMap<String, Declaratio
     Ok(collection_file(dir)?.parameters)
 }
 
-/// The collection's avatar (`icon` in `collection.yaml`), relative to the collection.
-pub fn collection_icon(dir: &Path) -> Option<String> {
-    collection_file(dir).ok()?.icon
+/// The collection's avatar and the one for dark mode (`icon`, `iconDark` in `collection.yaml`),
+/// relative to the collection.
+#[derive(Default)]
+pub struct CollectionIcons {
+    pub icon: Option<String>,
+    pub icon_dark: Option<String>,
+}
+
+pub fn collection_icons(dir: &Path) -> CollectionIcons {
+    collection_file(dir).map(|f| CollectionIcons { icon: f.icon, icon_dark: f.icon_dark }).unwrap_or_default()
 }
 
 /// The language of the collection's own texts (`language` in `collection.yaml`, default `en`).
