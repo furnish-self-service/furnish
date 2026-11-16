@@ -93,3 +93,4 @@ The installers include DSC's own resources (`packaging/dsc.json`). `node scripts
 ## License
 
 MIT. The installers contain open-source components under their own licenses, listed in [THIRD-PARTY-LICENSES.html](THIRD-PARTY-LICENSES.html) (`node scripts/licenses.mjs` regenerates it).
+
