@@ -10,6 +10,11 @@
 #   installed_version   function printing the installed version, "?" if unknown, or nothing
 #   newer_version       optional function printing the version an update would bring, or nothing
 #   do_upgrade, upgrade_desc    optional: how to update (default: install again)
+#   prepare             optional function run once before anything else (e.g. a slow lookup
+#                       whose results the other functions read)
+#   extra_state         optional function printing more state members (",\"x\":..."); $1 is the
+#                       installed version as for `state`
+#   cant_remove         optional: why removing isn't possible here; set then refuses with exit 14
 #
 # and then calls `furnish_main "$@"`:
 #
@@ -20,7 +25,8 @@
 #                       --what-if only describe the steps (in _metadata.whatIf)
 #
 # Exit codes: 10 invalid input, 11 a needed tool is missing (see `missing`), 12 administrator rights
-# not granted, 13 stopped by the user. Tool failures keep their own code so DSC shows their stderr.
+# not granted, 13 stopped by the user, 14 removing isn't possible here (see `cant_remove`). Tool
+# failures keep their own code so DSC shows their stderr.
 
 # JSON string: escapes backslashes and quotes. Pure sh: some systems (nixos/nix) have no sed.
 json() {
@@ -91,13 +97,18 @@ state() {
     '?') printf '{%s,"_exist":true' "$identity" ;;
     *) printf '{%s,"_exist":true,"version":%s' "$identity" "$(json "$1")" ;;
     esac
+    extra_state "$1"
 }
 
+prepare() { :; }
+extra_state() { :; }
+cant_remove=
 newer_version() { :; }
 upgrade_desc=
 do_upgrade() { do_install; }
 
 furnish_main() {
+    prepare
     case "${1:-}" in
     get)
         state "$(installed_version || true)"
@@ -125,6 +136,10 @@ furnish_main() {
             action=install step="Install $subject with $via" desc=$install_desc after='?'
         elif [ -n "$newer" ]; then
             action=upgrade step="Update $subject from $version to $newer with $via" desc=${upgrade_desc:-$install_desc} after=$newer
+        elif [ "${_exist:-true}" != true ] && [ -n "$version" ] && [ -n "$cant_remove" ]; then
+            # Plain text and an unmapped exit code, so DSC keeps the line in its error.
+            [ "${2:-}" = --what-if ] || { echo "furnish: $cant_remove" >&2; exit 14; }
+            step=$cant_remove after=$version
         elif [ "${_exist:-true}" != true ] && [ -n "$version" ]; then
             action=remove step="Remove $shown with $via" desc=$remove_desc after=
         elif [ -n "$version" ]; then

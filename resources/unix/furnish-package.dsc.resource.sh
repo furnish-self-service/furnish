@@ -119,7 +119,10 @@ use_brew() {
 use_nix() {
     # Nix profiles, no root needed: the user's own profile. As root (the furnish service), the
     # shared profile /nix/var/nix/profiles/furnish, which the NixOS module puts on everyone's PATH.
+    # A package declared in the NixOS or Home Manager configuration counts as installed; furnish
+    # neither installs it again nor removes or updates it (see furnish-nix.sh).
     have nix || return 1
+    . "$(dirname "$0")/furnish-nix.sh"
     via=nix admin=false
     # Add to the user's settings rather than replacing them.
     export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
@@ -127,6 +130,20 @@ use_nix() {
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
     if [ "$(id -u)" = 0 ]; then profile="--profile $shared"; else profile=""; fi
+    # The declarative roots don't change while furnish runs: look once (needs the final $name).
+    prepare() {
+        nix_lookup "$name"
+        case $declared_by in
+        nixos) cant_remove="$subject is in your NixOS configuration: remove it there" ;;
+        home-manager) cant_remove="$subject is in your Home Manager configuration: remove it there" ;;
+        esac
+    }
+    # Where it comes from: nixos, home-manager or profile (nix profile, the user's or the shared one).
+    extra_state() {
+        if [ -n "$declared_by" ]; then printf ',"managedBy":"%s"' "$declared_by"
+        elif [ -n "$1" ]; then printf ',"managedBy":"profile"'
+        fi
+    }
     # A profile names an entry after the package's last attribute: kdePackages.kdenlive → kdenlive.
     entry=${name##*.}
     # The version in a profile ("" if it doesn't hold the package).
@@ -135,8 +152,9 @@ use_nix() {
         path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$entry-[^\"]*" | head -n1)
         echo "${path##*-"$entry"-}"
     }
-    # Installed for this user or for everyone.
+    # Declared, or installed for this user or for everyone.
     installed_version() {
+        [ -n "$declared_by" ] && { echo "$declared_version"; return; }
         v=$(version_in "")
         [ -n "$v" ] || { [ -e "$shared" ] && v=$(version_in "--profile $shared"); }
         echo "$v"
@@ -147,8 +165,10 @@ use_nix() {
     do_upgrade() { do_remove && do_install; }
     install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $entry"
     upgrade_desc="nix profile remove $profile $entry && nix profile install $profile $ref#$name"
-    # The version in the referenced nixpkgs, if it differs from the installed one.
+    # The version in the referenced nixpkgs, if it differs from the installed one. None for a
+    # declared package: it moves with the configuration's inputs.
     newer_version() {
+        [ -z "$declared_by" ] || return 0
         # Offline, say, the check fails: the app counts as up to date, and the activity log says why.
         # Errors go to a private file (mktemp: random name, only ours), warnings on success are dropped.
         err=$(mktemp) || return 0

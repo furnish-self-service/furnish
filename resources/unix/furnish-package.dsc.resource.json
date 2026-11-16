@@ -57,6 +57,16 @@
           "readOnly": true,
           "description": "Installed version"
         },
+        "managedBy": {
+          "type": "string",
+          "readOnly": true,
+          "enum": [
+            "nixos",
+            "home-manager",
+            "profile"
+          ],
+          "description": "Nix only: where the installed package comes from: the NixOS configuration, the Home Manager configuration, or a nix profile (the user's or the shared one)"
+        },
         "_exist": {
           "type": "boolean",
           "description": "Whether the package should be installed"

@@ -141,7 +141,11 @@
       {/if}
     </p>
   {:else if mode === 'uninstall' && unremovable}
-    <p class="muted">{t('app.cantUninstall', { collection: app.collection })}</p>
+    <p class="muted">
+      {store.declared[app.key]
+        ? t(store.declared[app.key].by === 'nixos' ? 'app.declaredNixos' : 'app.declaredHomeManager')
+        : t('app.cantUninstall', { collection: app.collection })}
+    </p>
   {:else if error}
     <p class="error">{t('plan.previewError', { error })}</p>
   {:else if !preview}

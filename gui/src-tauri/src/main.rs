@@ -646,6 +646,12 @@ fn data_dir() -> String {
     catalog::data_dir().display().to_string()
 }
 
+/// How this NixOS computer is set up; `None` on other systems.
+#[tauri::command]
+fn nixos_setup() -> Option<furnish::nixos::Setup> {
+    furnish::nixos::setup()
+}
+
 /// Where reports go (the organization's furnish addresses that take them).
 #[tauri::command]
 fn report_destinations() -> Vec<String> {
@@ -767,6 +773,7 @@ fn main() {
             version,
             open_licenses,
             report_destinations,
+            nixos_setup,
             report_inventory,
             uninstall,
             reinstall,

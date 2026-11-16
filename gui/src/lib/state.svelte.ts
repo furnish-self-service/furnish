@@ -62,6 +62,8 @@ export const store = $state({
   reasons: {} as Record<string, string>,
   /** Apps furnish can't uninstall: a resource can't remove what it set up and the app has no removal steps. */
   unremovable: {} as Record<string, true>,
+  /** Apps the NixOS or Home Manager configuration installs: shown as installed, left to it. */
+  declared: {} as Record<string, api.Declared>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
@@ -189,6 +191,8 @@ export async function checkStatus(key: string) {
     else delete store.reasons[key];
     if (check.removable) delete store.unremovable[key];
     else store.unremovable[key] = true;
+    if (check.declared) store.declared[key] = check.declared;
+    else delete store.declared[key];
   } catch {
     store.status[key] = 'error';
   }

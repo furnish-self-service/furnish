@@ -132,7 +132,9 @@
               <AppIcon {app} size={36} />
               <span class="text">
                 <span class="name">{appName(app)}</span>
-                {#if store.unremovable[item.key]}
+                {#if store.declared[item.key]}
+                  <span class="desc">{t(store.declared[item.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager')}</span>
+                {:else if store.unremovable[item.key]}
                   <span class="desc">{t('kit.cantUninstall')}</span>
                 {:else if others.length}
                   <span class="desc">{t('kit.alsoIn', { kits: others.map(kitName).join(', ') })}</span>

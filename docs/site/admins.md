@@ -255,6 +255,10 @@ The flake provides the packages and a NixOS module:
 
 On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
 
+Packages from the NixOS configuration (`environment.systemPackages`, `users.users.<name>.packages`) and from Home Manager show as installed, with where they come from. furnish finds them in the symlink farms NixOS and Home Manager build, such as `/run/current-system/sw`, and matches them by the package's name in nixpkgs. It doesn't install such a package a second time, doesn't update it, and refuses to uninstall it: you change it in the configuration. The app's page shows the package to remove there, for example `pkgs.jq`.
+
+The Settings page has a NixOS section. It says whether the configuration is a flake or uses channels, and whether Home Manager is set up. Without a configuration in `/etc/nixos`, it explains that the computer is probably managed centrally and that apps for every computer belong in that configuration.
+
 Builds of the `main` branch are in the binary cache `furnish.cachix.org`, which the flake offers. Nix asks once whether to trust the flake's settings. Or add the cache to your configuration:
 
 ```nix
@@ -263,3 +267,4 @@ nix.settings.extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPA
 ```
 
 Without the cache, and for revisions other than `main`, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so furnish's dependencies are compiled once.
+

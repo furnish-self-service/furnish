@@ -186,7 +186,14 @@ export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
 /** `removable`: furnish can uninstall it here (no resource that can't remove, or removal steps). */
-export const appStatus = (key: string) => invoke<{ status: Status; reason: string | null; removable: boolean }>('app_status', { key });
+/** `declared`: the system's configuration installs it (NixOS, Home Manager); furnish leaves it alone. */
+export const appStatus = (key: string) =>
+  invoke<{ status: Status; reason: string | null; removable: boolean; declared: Declared | null }>('app_status', { key });
+/** A package the NixOS or Home Manager configuration installs; `package` is its nixpkgs attribute. */
+export type Declared = { by: 'nixos' | 'home-manager'; package: string };
+/** How this NixOS computer is set up; null on other systems. `config`: its path here, if any. */
+export type NixosSetup = { config: string | null; flake: boolean; homeManager: boolean };
+export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
 export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });
 export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('reinstall', { key, trigger: trigger ?? null });

@@ -23,7 +23,7 @@
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
     {#if status === 'installed'}
-      <span class="state installed">{t('common.installed')}</span>
+      <span class="state installed">{store.declared[app.key] ? t(store.declared[app.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager') : t('common.installed')}</span>
     {:else if status === 'needsUpdate'}
       <span class="state update">{t('common.updateAvailable')}</span>
     {:else}

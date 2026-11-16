@@ -472,6 +472,7 @@ fn list() -> Result<()> {
         if name != app.id {
             description = if description.is_empty() { name } else { format!("{name}: {description}") };
         }
+        let declared = check.as_ref().ok().and_then(|c| c.declared.clone());
         let symbol = match check {
             Ok(c) => match c.status {
                 Status::Installed => "✓",
@@ -500,6 +501,9 @@ fn list() -> Result<()> {
         }
         if app.options_differ() {
             description = format!("{description} (installed with other options: furnish reinstall {})", app.id);
+        }
+        if let Some(d) = &declared {
+            description = format!("{description} (in {})", d.place());
         }
         if app.recommended() {
             description = format!("★ {description}");
@@ -944,7 +948,10 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
     };
     match check.status {
         Status::Installed => {
-            println!("✓ {} is already installed and up to date", app.id);
+            match &check.declared {
+                Some(d) => println!("✓ {} is already installed: it is in {}", app.id, d.place()),
+                None => println!("✓ {} is already installed and up to date", app.id),
+            }
             return Ok(());
         }
         Status::Unavailable => anyhow::bail!("{} is not available on this operating system", app.id),
@@ -988,9 +995,13 @@ fn install_previous(app: &catalog::App, version: &catalog::Version) -> Result<()
 }
 
 fn uninstall_app(app: &catalog::App) -> Result<()> {
-    if matches!(app.status()?, Status::NotInstalled | Status::Unavailable) {
+    let check = app.check()?;
+    if matches!(check.status, Status::NotInstalled | Status::Unavailable) {
         println!("✓ {} is not installed", app.id);
         return Ok(());
+    }
+    if let Some(d) = &check.declared {
+        anyhow::bail!("{} is in {}: remove {} there", app.id, d.place(), d.package);
     }
     println!("⟳ Uninstalling {}…", app.id);
     app.uninstall(print_progress())?;
@@ -1057,6 +1068,12 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
             && let Some(what) = app.unremovable()?
         {
             println!("– {} (furnish can't uninstall it: {what} can't remove what it set up)", app.id);
+            continue;
+        }
+        if only.is_empty()
+            && let Some(d) = app.check()?.declared
+        {
+            println!("– {} (it is in {})", app.id, d.place());
             continue;
         }
         if dry_run { print_plan(app, true)?; } else { uninstall_app(app)?; }

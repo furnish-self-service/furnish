@@ -38,6 +38,8 @@ If a step needs administrator rights, your system asks for your password. Cancel
 
 Some apps can't be uninstalled with furnish, for example a setting the collection doesn't say how to remove. Their page shows a note instead of the Uninstall button.
 
+On NixOS, apps from your NixOS or Home Manager configuration show as installed via that configuration. furnish doesn't install, update or uninstall them. To remove one, delete its package from your configuration; the app's page shows which one.
+
 Installs run one at a time. Clicking Install on more apps adds them to a queue, which the Activity page shows; ✕ removes an app from it.
 
 ![The Activity page: one install running, two waiting.](images/activity.webp)

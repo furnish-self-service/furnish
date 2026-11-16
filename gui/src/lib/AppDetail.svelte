@@ -10,6 +10,7 @@
   import Plan from './Plan.svelte';
   import { describeCondition } from './conditions';
   import { t, formatDate } from './i18n.svelte';
+  import Declared from './Declared.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
@@ -35,7 +36,9 @@
   const statusText = $derived.by(() => {
     const what = store.reasons[app.key] ?? t('common.missingTool');
     switch (status) {
-      case 'installed': return t('app.status.installed');
+      case 'installed':
+        if (store.declared[app.key]) return t(store.declared[app.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager');
+        return t('app.status.installed');
       case 'needsUpdate': return t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
       case 'unavailable': return t('app.status.unavailable');
@@ -64,7 +67,10 @@
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
-        {#if store.unremovable[app.key]}
+        {#if store.declared[app.key]}
+          <!-- The system's configuration installs it: removing it is done there. -->
+          <Declared declared={store.declared[app.key]} />
+        {:else if store.unremovable[app.key]}
           <!-- A resource can't remove what it set up, and the collection gives no removal steps. -->
           <p class="unremovable">{t('app.cantUninstall', { collection: app.collection })}</p>
         {:else}
@@ -73,7 +79,7 @@
       {:else}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
-      {#if installed}
+      {#if installed && !store.declared[app.key]}
         <label class="auto">
           <input
             type="checkbox"

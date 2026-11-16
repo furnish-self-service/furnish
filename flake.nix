@@ -205,6 +205,8 @@
           doCheck = true;
           cargoTestExtraArgs = "-p furnish --lib";
         });
+        # NixOS VM: packages from the system's configuration show as installed.
+        nixos-declared = import ./tests/nixos-declared.nix { inherit pkgs; module = self.nixosModules.default; };
       });
     };
 }

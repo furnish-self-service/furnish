@@ -89,6 +89,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+  nix-declared:
+    name: Nix (packages from the NixOS configuration)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/nix-declared.sh bin/furnish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  nixos-vm:
+    name: NixOS VM (packages from the NixOS configuration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Let the runner use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      # Reads furnish's dependencies from the cache (see the flake job); pushes nothing.
+      - uses: cachix/cachix-action@v17
+        with:
+          name: furnish
+          skipPush: true
+      - run: nix build -L .#checks.x86_64-linux.nixos-declared
+
   flake:
     name: Nix flake (CLI and desktop app)
     runs-on: ubuntu-latest
@@ -300,7 +333,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui]
     runs-on: ubuntu-latest
     permissions:
       pages: write

@@ -29,6 +29,9 @@
   // The organization's furnish addresses that take reports; the section shows only with one.
   let destinations = $state<string[]>([]);
   api.reportDestinations().then((d) => (destinations = d));
+  // On NixOS: where its configuration lives, for the NixOS section.
+  let nixos = $state<api.NixosSetup | null>(null);
+  api.nixosSetup().then((s) => (nixos = s)).catch(() => {});
 
   const brand = $derived(store.brand.name);
 </script>
@@ -261,6 +264,31 @@
         </p>
       </section>
     {/if}
+  {/if}
+
+  {#if nixos}
+    <section aria-labelledby="nixos-title">
+      <h2 id="nixos-title">NixOS</h2>
+      <p class="intro">{t('nixos.declared')}</p>
+      <ul class="rows">
+        <li class="row">
+          <span class="text">
+            <span class="label">{t('nixos.config')}</span>
+            {#if !nixos.config}<span class="desc">{t('nixos.noConfig')}</span>{/if}
+          </span>
+          {#if nixos.config}
+            <span class="control value"><code class="path">{nixos.config}</code> · {t(nixos.flake ? 'nixos.flake' : 'nixos.channels')}</span>
+          {/if}
+        </li>
+        <li class="row">
+          <span class="text"><span class="label">{t('nixos.homeManager')}</span></span>
+          <span class="control value">{t(nixos.homeManager ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
+        </li>
+      </ul>
+      <p class="note">
+        {#each parts(t('nixos.installs')) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}
+      </p>
+    </section>
   {/if}
 
   <section aria-labelledby="about-title">

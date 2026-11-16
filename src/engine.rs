@@ -30,6 +30,7 @@ use serde_json::Value;
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ("furnish-common.sh", include_str!("../resources/unix/furnish-common.sh")),
     ("furnish-homebrew.sh", include_str!("../resources/unix/furnish-homebrew.sh")),
+    ("furnish-nix.sh", include_str!("../resources/unix/furnish-nix.sh")),
     ("furnish-package.dsc.resource.json", include_str!("../resources/unix/furnish-package.dsc.resource.json")),
     ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
     ("furnish-installer.dsc.resource.json", include_str!("../resources/unix/furnish-installer.dsc.resource.json")),
@@ -194,8 +195,41 @@ pub struct Check {
     pub status: Status,
     /// For `Blocked`: what is missing, e.g. "Homebrew (brew)".
     pub reason: Option<String>,
-    /// furnish can uninstall it here (see [`unremovable`]).
+    /// furnish can uninstall it here (see [`unremovable`]); not if it is [`Check::declared`].
     pub removable: bool,
+    /// Installed by the system's configuration, not by furnish (see [`Declared`]).
+    pub declared: Option<Declared>,
+}
+
+/// A package the system's own configuration installs: NixOS (`environment.systemPackages`,
+/// `users.users.<name>.packages`) or Home Manager. furnish shows it as installed and leaves it to
+/// that configuration: it doesn't install it again, remove it or update it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Declared {
+    /// `nixos` or `home-manager` (the resource's `managedBy`).
+    pub by: String,
+    /// The nixpkgs attribute, e.g. `jq` or `kdePackages.kdenlive`.
+    pub package: String,
+}
+
+impl Declared {
+    /// Where it is declared, for messages: "your NixOS configuration".
+    pub fn place(&self) -> &'static str {
+        if self.by == "home-manager" { "your Home Manager configuration" } else { "your NixOS configuration" }
+    }
+}
+
+/// The first resource whose package the system's configuration installs.
+fn declared(states: &[Tested]) -> Option<Declared> {
+    states.iter().find_map(|t| {
+        let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager"))?;
+        // DSC's desired state holds the resource's properties.
+        let package = [&t.desired["nixName"], &t.desired["name"], &t.actual["name"]]
+            .into_iter()
+            .find_map(|v| v.as_str().filter(|s| !s.is_empty()))?;
+        Some(Declared { by: by.to_string(), package: package.to_string() })
+    })
 }
 
 /// Resources report a missing tool as a plain stderr line "furnish: needs <what>" (exit 11).
@@ -236,6 +270,8 @@ pub fn init(dir: &Path) -> Result<()> {
         env::set_var("DSC_RESOURCE_PATH", env::join_paths(resources)?);
         env::set_var("PATH", env::join_paths(programs)?);
         env::set_var("FURNISH_STOP_FILE", stop_file);
+        // Resources keep what is slow to find out here, e.g. the names nixpkgs gives packages.
+        env::set_var("FURNISH_CACHE_DIR", dir.parent().unwrap_or(dir).join("cache"));
     }
     Ok(())
 }
@@ -435,17 +471,18 @@ pub fn check(doc: &Value) -> Result<Check> {
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { status: Status::Unavailable, reason: None, removable });
+        return Ok(Check { status: Status::Unavailable, reason: None, removable, declared: None });
     };
-    let states = match test(&doc) {
+    let tested = match test(&doc) {
         Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable });
+            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, declared: None });
         }
     };
-    let states: Vec<(bool, Value)> = states.into_iter().map(|t| (t.ok, t.actual)).collect();
-    Ok(Check { status: classify(&states), reason: None, removable })
+    let declared = declared(&tested);
+    let states: Vec<(bool, Value)> = tested.into_iter().map(|t| (t.ok, t.actual)).collect();
+    Ok(Check { status: classify(&states), reason: None, removable: removable && declared.is_none(), declared })
 }
 
 /// The resources (those that apply here) that aren't in their desired state, e.g. "'profile'
@@ -948,6 +985,7 @@ struct Tested {
     /// In the desired state.
     ok: bool,
     actual: Value,
+    desired: Value,
 }
 
 /// Collect the test result of every resource, descending into groups.
@@ -959,6 +997,7 @@ fn flatten(results: &[ResourceTestResult], out: &mut Vec<Tested>) {
                 kind: result.resource_type.to_string(),
                 ok: r.in_desired_state,
                 actual: r.actual_state.clone(),
+                desired: r.desired_state.clone(),
             }),
             TestResult::Group(group) => flatten(group, out),
         }
@@ -1254,5 +1293,35 @@ mod tests {
         assert!(lines.contains(&"script: a ⏎ b".to_string()), "{lines:?}");
         assert!(lines.iter().all(|l| !l.starts_with("_exist")));
         assert!(property_lines(&json!({"long": "x".repeat(500)}))[0].chars().count() <= 201);
+    }
+
+    /// furnish-nix.sh's matching of store names ("<pname>-<version>[-<output>]") to packages.
+    #[cfg(unix)]
+    #[test]
+    fn nix_store_names_match_packages() {
+        let script = r#"
+            check() { got=$(printf '%s\n' "$1" | nix_find $2) || got=none; [ "$got" = "$3" ] || echo "'$1' / $2: got '$got', want '$3'"; }
+            check 'nixos jq-1.7.1-bin' jq 'nixos 1.7.1'
+            check 'nixos jq-1.7.1-man' jq 'nixos 1.7.1'
+            check 'nixos jq-1.7.1' jq 'nixos 1.7.1'
+            check 'nixos git-lfs-3.6.1' git none
+            check 'nixos git-2.47.2' git 'nixos 2.47.2'
+            check 'nixos jquery' jq none
+            check 'nixos hello' hello 'nixos ?'
+            check 'home-manager kdenlive-25.08.1' "$(nix_guess kdePackages.kdenlive)" 'home-manager 25.08.1'
+            check 'nixos python3.12-requests-2.32.3' "$(nix_guess python3Packages.requests)" 'nixos 2.32.3'
+            check 'nixos python3.13-requests-toolbelt-1.0' "$(nix_guess python3Packages.requests)" none
+            check 'nixos python3.12-requests-2.32.3' python3.12-requests 'nixos 2.32.3'
+            check 'nixos neovim-unwrapped-0.11' neovim none
+            check 'nixos vscode-1.99.0' vscode 'nixos 1.99.0'
+            printf 'nixos fd-10\nhome-manager jq-1.8\n' | nix_find jq
+        "#;
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{}\n{script}", include_str!("../resources/unix/furnish-nix.sh")))
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "home-manager 1.8\n");
+        assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
     }
 }
