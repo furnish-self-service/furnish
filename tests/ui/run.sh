@@ -107,13 +107,22 @@ cat > "$work/policy.json" <<JSON
  "parameters": {"fixture": {"role": {"value": "developer"}}}}
 JSON
 
+# A feed with a newer furnish (src/selfupdate.rs), served on the host: the app (built from source,
+# so not installed in a way it updates itself) only shows that the version is out.
+mkdir -p "$work/feed"
+echo '{"version": "99.0.0", "notes": "https://example.org/notes", "platforms": {}}' > "$work/feed/latest.json"
+FEED_PORT=$((DRIVER_PORT + 2))
+python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 --directory "$work/feed" >/dev/null 2>&1 &
+feed_server=$!
+trap 'kill $feed_server 2>/dev/null || true; cleanup' EXIT
+
 # DSC's resources, if the build has them beside it (Tauri copies them there), where an installed app has them.
 dsc_dir="$(dirname "$binary")/dsc"
 dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 [ -d "$dsc_dir" ] || dsc_mount=$work:/nonexistent:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
 

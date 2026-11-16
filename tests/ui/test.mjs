@@ -411,6 +411,24 @@ const steps = [
     await click(button('Open-source licenses'));
     await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
   }],
+  ['a newer furnish shows as a dot on Settings and in About, with how it arrives', async () => {
+    await waitFor('dot on Settings', () => find("//nav//button[starts-with(normalize-space(), 'Settings')]//*[@aria-label='A new version of Acme Apps is available']"), 30000);
+    await click(nav('Settings'));
+    const row = "//*[@id='self-update']";
+    await waitFor('the new version in About', async () => (await text(row)).includes('Version 99.0.0 is available.'));
+    if (!(await text(row)).includes('Install it the way you installed Acme Apps.')) throw new Error(`how it arrives: ${await text(row)}`);
+    // Built from source: furnish doesn't install it, and doesn't offer to.
+    if ((await findAll(`${row}//button`)).length) throw new Error('offers to install a version it cannot install here');
+    const options = await wd('POST', s('/execute/sync'), {
+      script: "return [...document.querySelectorAll('#self-update-mode option')].map((o) => o.value)", args: [],
+    });
+    if (JSON.stringify(options) !== '["notify","off"]') throw new Error(`choices: ${JSON.stringify(options)}`);
+    await click("//select[@id='self-update-mode']/option[@value='off']");
+    await waitFor('off saved', () => log('data/settings.json').includes('"selfUpdate": "off"'));
+    await waitFor('dot gone', async () => !(await findAll("//nav//*[@aria-label='A new version of Acme Apps is available']")).length);
+    await click("//select[@id='self-update-mode']/option[@value='notify']");
+    await waitFor('notify saved', () => log('data/settings.json').includes('"selfUpdate": "notify"'));
+  }],
   ['the language setting switches to German and back, without a restart', async () => {
     await click(nav('Settings'));
     const englishWidth = await wd('POST', s('/execute/sync'), {
