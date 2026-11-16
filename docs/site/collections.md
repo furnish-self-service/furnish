@@ -121,7 +121,7 @@ On NixOS, furnish passes where the configuration is, whether a setting or a sear
 |---|---|
 | `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION` | the configuration's folder |
 | `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_KIND` | `flake` or `channels` |
-| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_SOURCE` | `setting`, `policy`, `etc-nixos`, `nh` or `nix-path` |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_SOURCE` | `module` (furnish's NixOS module), `policy`, `setting`, `etc-nixos`, `nh` or `nix-path` |
 | `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_OWNER` | the folder's owner, as `<uid>:<user>` |
 | `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_OTHERS_CAN_WRITE` | `true` if its group or everyone can write to it |
 | `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__FLAKE_ATTRIBUTE` | the name in `nixosConfigurations`, by default the host name |

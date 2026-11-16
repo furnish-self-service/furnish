@@ -283,28 +283,27 @@ Packages from the NixOS configuration (`environment.systemPackages`, `users.user
 
 ### Where the configuration is
 
-furnish looks for the NixOS configuration in this order and takes the first one that passes a quick check:
-
-1. the setting `osSpecific.nixos.configuration`, from the person or from the policy;
-2. `/etc/nixos/flake.nix`, following a symbolic link, as `nixos-rebuild` does;
-3. the variables of nh: `NH_OS_FLAKE`, `NH_FLAKE`, `FLAKE`, also as NixOS sets them for sessions;
-4. `nixos-config=` in `NIX_PATH`, else `/etc/nixos/configuration.nix` (channels).
-
-The check reads the file and evaluates nothing. A `flake.nix` must mention `nixosConfigurations` and the flake attribute. The attribute is `osSpecific.nixos.flakeAttribute`, or the host name without it. A path someone set only has to contain a `flake.nix` or `configuration.nix`. If the system reports `system.configurationRevision`, furnish compares it with the folder's git commit and says when they differ. Folders such as `~/nixos-config` or `~/dotfiles` are only offered as suggestions in the app.
-
-The Home Manager configuration comes from `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
-
-Set the location in the policy, or through the module:
+Tell furnish where the configuration is through the module:
 
 ```nix
 services.furnish.nix = {
-  configuration = "/etc/fleet-config";
-  flakeAttribute = "alex-laptop";
-  lock = true;  # without it, both are defaults people can change
+  configuration = "/home/alex/cfg";  # a string, so it stays the real folder and not a copy in the Nix store
+  flakeAttribute = "alex-laptop";    # default: networking.hostName
+  lock = true;                       # without it, both are defaults people can change
 };
 ```
 
-The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`, and restarts the furnish service when the policy changes. People see the result on the Settings page and with `furnish settings`.
+The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`. It also writes `/etc/furnish/nixos.json` with what it knows when the system is built: the host name, `system.configurationRevision` if set, whether Home Manager's NixOS module is in use, and its own version. It restarts the furnish service when the policy changes. A flake can't name its own folder, because Nix evaluates a copy in the store, so the folder only comes from this option. People see the result on the Settings page and with `furnish settings`.
+
+Without the option, people can set the folder in the app. Without either, furnish searches, in this order, and takes the first configuration that passes a quick check:
+
+1. `/etc/nixos/flake.nix`, following a symbolic link, as `nixos-rebuild` does;
+2. the variables of nh: `NH_OS_FLAKE`, `NH_FLAKE`, `FLAKE`, also as NixOS sets them for sessions;
+3. `nixos-config=` in `NIX_PATH`, else `/etc/nixos/configuration.nix` (channels).
+
+The check reads the file and evaluates nothing. A `flake.nix` must mention `nixosConfigurations` and the flake attribute. A folder someone set only has to contain a `flake.nix` or `configuration.nix`. If the system reports `system.configurationRevision`, furnish compares it with the folder's git commit and says when they differ. When furnish found the folder by searching, the Settings page offers the line to add to the configuration. Folders such as `~/nixos-config` or `~/dotfiles` are only offered as suggestions.
+
+The Home Manager configuration comes from `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
 
 The furnish service ignores people's own settings for this. It takes the location from the policy or from places only root can change, such as `/etc/nixos`. The folder there can still belong to a person, for example when `/etc/nixos/flake.nix` links into a home folder. furnish passes the folder's owner to its resources (see [Settings available to resources](collections.md#settings-available-to-resources)), so a later rebuild as root can refuse a configuration that isn't root's.
 

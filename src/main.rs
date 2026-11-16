@@ -183,6 +183,7 @@ fn print_nixos(s: &furnish::nixos::Setup) {
     use furnish::nixos::{Revision, Source};
     let how = |f: &furnish::nixos::Found| match f.source {
         Source::Setting => "set by you".to_string(),
+        Source::Module => "set in the NixOS configuration, services.furnish.nix".to_string(),
         Source::Policy => "set by your organization".to_string(),
         Source::EtcNixos => "from /etc/nixos".to_string(),
         Source::Nh => format!("from nh, {}", f.via.as_deref().unwrap_or("NH_FLAKE")),
@@ -198,12 +199,16 @@ fn print_nixos(s: &furnish::nixos::Setup) {
                 line.push_str(", doesn't match the running system");
             }
             println!("{line}");
+            if s.module.as_ref().is_none_or(|m| m.nix.configuration.is_none()) && !matches!(f.source, Source::Module | Source::Policy) {
+                println!("                     to keep it: services.furnish.nix.configuration = \"{}\";", f.path.display());
+            }
             if let Some(p) = f.problem {
                 println!("                     note: {}", p.text(&s.flake_attribute.value));
             }
             if f.kind == furnish::nixos::Kind::Flake {
                 let from = match s.flake_attribute.source {
                     Source::Setting => "set by you",
+                    Source::Module => "set in the NixOS configuration",
                     Source::Policy => "set by your organization",
                     _ => "this computer's name",
                 };

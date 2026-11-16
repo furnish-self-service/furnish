@@ -160,7 +160,7 @@
       # NixOS: services.furnish.enable = true installs the app and the CLI; `policy` writes
       # /etc/furnish/policy.json; `service.enable` runs the furnish service (users without
       # administrator rights). `furnish service install` doesn't work on NixOS: use this instead.
-      nixosModules.default = { config, lib, pkgs, ... }:
+      nixosModules.default = { config, options, lib, pkgs, ... }:
         let
           cfg = config.services.furnish;
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
@@ -171,6 +171,15 @@
           };
           policy = lib.recursiveUpdate (if cfg.policy == null then { } else cfg.policy)
             (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
+          # What the module knows when the system is built, for furnish (src/nixos.rs). The
+          # configuration's folder only comes from the option: in a flake, `self` is a store copy.
+          facts = {
+            hostName = config.networking.hostName;
+            configurationRevision = config.system.configurationRevision;
+            homeManagerModule = options ? home-manager;
+            moduleVersion = packages.furnish.version;
+            nix = { inherit (cfg.nix) configuration flakeAttribute; };
+          };
         in {
           options.services.furnish = {
             enable = lib.mkEnableOption "furnish, the self-service app catalog";
@@ -181,19 +190,21 @@
               example = { collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }]; service.allowedGroup = "users"; };
             };
             service.enable = lib.mkEnableOption "the furnish service, which installs your organization's apps for users without administrator rights";
-            # Where this computer's NixOS configuration is, when furnish can't find it on its own
-            # (see docs/site/admins.md). Written to the policy as osSpecific.nixos.*.
+            # Where this computer's NixOS configuration is (see docs/site/admins.md). Written to
+            # the policy as osSpecific.nixos.*; furnish searches only without it.
             nix = {
               configuration = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
+                # A string, not a path: a path literal would become a copy in the Nix store.
+                type = lib.types.nullOr (lib.types.strMatching "/.*");
                 default = null;
-                description = "Folder of the NixOS configuration (with flake.nix or configuration.nix).";
-                example = "/etc/fleet-config";
+                description = "Folder of the NixOS configuration (with flake.nix or configuration.nix), as a string.";
+                example = "/home/alex/cfg";
               };
               flakeAttribute = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
-                default = null;
-                description = "Name in the flake's nixosConfigurations; furnish uses the host name without it.";
+                default = config.networking.hostName;
+                defaultText = lib.literalExpression "config.networking.hostName";
+                description = "Name in the flake's nixosConfigurations.";
                 example = "alex-laptop";
               };
               lock = lib.mkOption {
@@ -208,6 +219,7 @@
             # Nix packages the furnish service installs for everyone (Furnish/Package as root).
             environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
             environment.etc."furnish/policy.json" = lib.mkIf (policy != { }) { text = builtins.toJSON policy; };
+            environment.etc."furnish/nixos.json".text = builtins.toJSON facts;
             security.polkit.enable = true;
             systemd.services.furnish = lib.mkIf cfg.service.enable {
               description = "furnish service: installs apps your organization provides";

@@ -4,7 +4,9 @@
 //!
 //! furnish looks in this order and takes the first configuration that passes `check`:
 //!
-//! 1. the setting `osSpecific.nixos.configuration` (the user's, or the admin policy's);
+//! 1. the setting `osSpecific.nixos.configuration`: from furnish's NixOS module
+//!    (`services.furnish.nix.configuration`, which writes it into the policy, together with
+//!    `ModuleFacts` in /etc/furnish/nixos.json), another policy, or the user;
 //! 2. `/etc/nixos/flake.nix`, following a symlink, as nixos-rebuild does;
 //! 3. nh's variables NH_OS_FLAKE, NH_FLAKE and FLAKE, in the environment or `/etc/set-environment`;
 //! 4. `nixos-config=` in NIX_PATH, else `/etc/nixos/configuration.nix` (channels).
@@ -28,6 +30,8 @@ use crate::settings::{Leaf, SetBy};
 pub enum Source {
     /// The user set it.
     Setting,
+    /// furnish's NixOS module sets it (`services.furnish.nix`).
+    Module,
     /// The admin policy sets it.
     Policy,
     /// `/etc/nixos`.
@@ -48,6 +52,7 @@ impl Source {
     pub fn name(self) -> &'static str {
         match self {
             Source::Setting => "setting",
+            Source::Module => "module",
             Source::Policy => "policy",
             Source::EtcNixos => "etc-nixos",
             Source::Nh => "nh",
@@ -153,6 +158,27 @@ pub struct Chosen {
     pub home_manager_configuration: Option<Leaf>,
 }
 
+/// What furnish's NixOS module wrote when the system was built (/etc/furnish/nixos.json).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModuleFacts {
+    pub host_name: Option<String>,
+    /// `system.configurationRevision`, if the configuration sets it.
+    pub configuration_revision: Option<String>,
+    /// Home Manager's NixOS module is part of the configuration.
+    pub home_manager_module: bool,
+    pub module_version: Option<String>,
+    /// The module's `services.furnish.nix` options.
+    pub nix: ModuleNix,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModuleNix {
+    pub configuration: Option<String>,
+    pub flake_attribute: Option<String>,
+}
+
 /// How this NixOS computer is set up.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,6 +193,8 @@ pub struct Setup {
     /// A configuration set that doesn't exist: the user's or the policy's path, and why.
     pub rejected: Option<(PathBuf, Problem)>,
     pub chosen: Chosen,
+    /// Set up with furnish's NixOS module: what it knows.
+    pub module: Option<ModuleFacts>,
 }
 
 /// What `detect` looks at; the real computer, or fakes in tests.
@@ -256,7 +284,8 @@ pub fn setup() -> Option<Setup> {
     let ctx = Context::here();
     let mut setup = detect(&ctx)?;
     if let Some(found) = &mut setup.configuration {
-        found.revision = revision(&ctx, &found.path, running_revision().as_deref());
+        let running = setup.module.as_ref().and_then(|m| m.configuration_revision.clone()).or_else(running_revision);
+        found.revision = revision(&ctx, &found.path, running.as_deref());
     }
     Some(setup)
 }
@@ -266,8 +295,17 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
     if !ctx.fs(Path::new("/etc/NIXOS")).exists() {
         return None;
     }
+    let module: Option<ModuleFacts> =
+        std::fs::read_to_string(ctx.fs(Path::new("/etc/furnish/nixos.json"))).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let from_module = |l: &Leaf, set: Option<&String>| match source_of(l) {
+        Source::Policy if set.is_some_and(|v| l.value.as_str() == Some(v.as_str())) => Source::Module,
+        s => s,
+    };
     let flake_attribute = match &ctx.chosen.flake_attribute {
-        Some(l) => Attribute { value: l.value.as_str().unwrap_or_default().to_string(), source: source_of(l) },
+        Some(l) => Attribute {
+            value: l.value.as_str().unwrap_or_default().to_string(),
+            source: from_module(l, module.as_ref().and_then(|m| m.nix.flake_attribute.as_ref())),
+        },
         None => Attribute { value: ctx.hostname(), source: Source::Hostname },
     };
     let attr = flake_attribute.value.as_str();
@@ -279,7 +317,7 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
         match check(ctx, &path, attr, false) {
             Ok(mut f) => {
                 f.problem = check(ctx, &path, attr, true).err();
-                configuration = Some(Found { source: source_of(l), ..f });
+                configuration = Some(Found { source: from_module(l, module.as_ref().and_then(|m| m.nix.configuration.as_ref())), ..f });
             }
             Err(p) => rejected = Some((path, p)),
         }
@@ -321,11 +359,12 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
     Some(Setup {
         configuration,
         home_manager_configuration: home_manager(ctx),
-        home_manager: has_home_manager(ctx),
+        home_manager: has_home_manager(ctx) || module.as_ref().is_some_and(|m| m.home_manager_module),
         flake_attribute,
         suggestions,
         rejected,
         chosen: ctx.chosen.clone(),
+        module,
     })
 }
 
@@ -601,6 +640,29 @@ mod tests {
         let s = detect(&ctx).unwrap();
         assert_eq!(s.rejected, Some(("/home/alice/gone".into(), Problem::NotFound)));
         assert_eq!(s.configuration.unwrap().source, Source::EtcNixos);
+    }
+
+    #[test]
+    fn the_modules_values_say_so() {
+        let f = Fake::new("module");
+        f.flake("/home/alice/cfg", LAPTOP);
+        fs::create_dir_all(f.root.join("etc/furnish")).unwrap();
+        fs::write(
+            f.root.join("etc/furnish/nixos.json"),
+            r#"{"hostName":"laptop","configurationRevision":"abc1234","homeManagerModule":true,"moduleVersion":"0.1.0",
+                "nix":{"configuration":"/home/alice/cfg","flakeAttribute":"laptop"}}"#,
+        )
+        .unwrap();
+        let mut ctx = f.ctx();
+        ctx.chosen.configuration = leaf("/home/alice/cfg", SetBy::Organization, false);
+        ctx.chosen.flake_attribute = leaf("laptop", SetBy::Organization, false);
+        let s = detect(&ctx).unwrap();
+        assert_eq!((s.configuration.unwrap().source, s.flake_attribute.source), (Source::Module, Source::Module));
+        assert!(s.home_manager);
+        assert_eq!(s.module.unwrap().configuration_revision.as_deref(), Some("abc1234"));
+        // Another policy value is the organization's, not the module's.
+        ctx.chosen.flake_attribute = leaf("desk", SetBy::Organization, false);
+        assert_eq!(detect(&ctx).unwrap().flake_attribute.source, Source::Policy);
     }
 
     #[test]

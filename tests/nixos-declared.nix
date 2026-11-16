@@ -53,11 +53,13 @@ pkgs.testers.runNixOSTest {
     machine.succeed("mkdir -p /etc/fleet", f"echo '{flake % 'fleet'}' > /etc/fleet/flake.nix")
     out = machine.succeed("furnish settings")
     print(out)
-    assert "NixOS configuration: /etc/fleet (flake, set by your organization)" in out, out
-    assert "NixOS flake name:    fleet (set by your organization)" in out, out
+    assert "NixOS configuration: /etc/fleet (flake, set in the NixOS configuration, services.furnish.nix)" in out, out
+    assert "NixOS flake name:    fleet (set in the NixOS configuration)" in out, out
     out = machine.fail("furnish settings --nixos-configuration /home/alice/cfg 2>&1")
     assert "set by your organization" in out, out
     policy = machine.succeed("cat /etc/furnish/policy.json")
     assert '"locked":true' in policy and '"/etc/fleet"' in policy, policy
+    facts = machine.succeed("cat /etc/furnish/nixos.json")
+    assert '"hostName":"machine"' in facts and '"configuration":"/etc/fleet"' in facts, facts
   '';
 }

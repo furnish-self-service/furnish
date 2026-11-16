@@ -43,6 +43,13 @@
       })
       .catch(() => {});
   loadNixos();
+  // The line to add to the NixOS configuration, copied.
+  let copied = $state(false);
+  async function copySnippet(text: string) {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+    setTimeout(() => (copied = false), 1500);
+  }
   // Set (or with null, forget) a NixOS setting, then show what furnish finds with it.
   async function saveNixos(name: 'configuration' | 'flakeAttribute', value: string | null) {
     try {
@@ -332,7 +339,7 @@
             <span class="label">{t('nixos.config')}</span>
             {#if config}
               <span class="desc">
-                {#if config.source !== 'policy'}{t(`nixos.from.${config.source}`, { variable: config.via ?? '' })}{/if}
+                {#if config.source !== 'policy' && !(config.source === 'module' && chosen.configuration?.locked)}{t(`nixos.from.${config.source}`, { variable: config.via ?? '' })}{/if}
                 {#if config.revision === 'differs'}<span class="warn">{t('nixos.differs')}</span>{/if}
                 {#if config.problem}<span class="warn">{t(`nixos.problem.${config.problem}`, { path: config.path, name: nixos.flakeAttribute.value })}</span>{/if}
               </span>
@@ -345,11 +352,27 @@
           </span>
           {#if config}
             <span class="control value">
-              {#if config.source === 'policy'}<span class="org">{t('common.setByOrg')}</span>{/if}
+              {#if config.source === 'policy' || (config.source === 'module' && chosen.configuration?.locked)}<span class="org">{t('common.setByOrg')}</span>{/if}
               <code class="path">{config.path}</code> · {t(config.kind === 'flake' ? 'nixos.flake' : 'nixos.channels')}
             </span>
           {/if}
         </li>
+        {#if config && !nixos.module?.nix.configuration && !['module', 'policy'].includes(config.source)}
+          {@const snippet = `services.furnish.nix.configuration = "${config.path}";`}
+          <li class="row">
+            <span class="text">
+              <span class="label">{t('nixos.keep')}</span>
+              <span class="desc">{t('nixos.keepText')}</span>
+            </span>
+            <span class="control">
+              <code class="path">{snippet}</code>
+              <button class="secondary" onclick={() => copySnippet(snippet)}>{copied ? t('common.copied') : t('common.copy')}</button>
+              {#if config.source !== 'setting'}
+                <button class="secondary" onclick={() => saveNixos('configuration', config.path)}>{t('nixos.useThis')}</button>
+              {/if}
+            </span>
+          </li>
+        {/if}
         {#if !config && nixos.suggestions.length}
           <li class="row">
             <span class="text">

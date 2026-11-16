@@ -191,7 +191,7 @@ export const appStatus = (key: string) =>
 /** A package the NixOS or Home Manager configuration installs; `package` is its nixpkgs attribute. */
 export type Declared = { by: 'nixos' | 'home-manager'; package: string; configuration: string | null };
 /** How furnish found a NixOS or Home Manager configuration, or the flake attribute. */
-export type NixosSource = 'setting' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';
+export type NixosSource = 'setting' | 'module' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';
 export type NixosProblem = 'notFound' | 'noNixosConfigurations' | 'noAttribute';
 export type NixosFound = {
   path: string;
@@ -216,6 +216,8 @@ export type NixosSetup = {
   /** A configuration path set that has no configuration, and why. */
   rejected: [string, NixosProblem] | null;
   chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf };
+  /** Set up with furnish's NixOS module: its `services.furnish.nix` values. */
+  module: { nix: { configuration: string | null; flakeAttribute: string | null } } | null;
 };
 export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 /** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */
