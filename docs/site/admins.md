@@ -35,6 +35,7 @@ An admin policy decides which collections people get and what they can change. f
 - `parameters`: values for options and answers to questions, per collection or per app (`acme-it/gimp`), as defaults or `locked`. A question answered here isn't asked.
 - `collectionSettings`: values for one collection of the settings in [Disk use and earlier versions](#disk-use-and-earlier-versions), as defaults or `locked`.
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
+- `osSpecific`: settings for one operating system, grouped by system. Each value is a plain default or `{ "value": …, "locked": true }`, and furnish checks each one on its own. NixOS has `configuration`, `flakeAttribute` and `homeManagerConfiguration`; see [NixOS](#nixos).
 - `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own `Furnish/Package` and `Furnish/Installer`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
 ## Starting at sign-in
@@ -280,7 +281,32 @@ On NixOS, furnish installs Nix packages into the user's profile. Through the ser
 
 Packages from the NixOS configuration (`environment.systemPackages`, `users.users.<name>.packages`) and from Home Manager show as installed, with where they come from. furnish finds them in the symlink farms NixOS and Home Manager build, such as `/run/current-system/sw`, and matches them by the package's name in nixpkgs. It doesn't install such a package a second time, doesn't update it, and refuses to uninstall it: you change it in the configuration. The app's page shows the package to remove there, for example `pkgs.jq`.
 
-The Settings page has a NixOS section. It says whether the configuration is a flake or uses channels, and whether Home Manager is set up. Without a configuration in `/etc/nixos`, it explains that the computer is probably managed centrally and that apps for every computer belong in that configuration.
+### Where the configuration is
+
+furnish looks for the NixOS configuration in this order and takes the first one that passes a quick check:
+
+1. the setting `osSpecific.nixos.configuration`, from the person or from the policy;
+2. `/etc/nixos/flake.nix`, following a symbolic link, as `nixos-rebuild` does;
+3. the variables of nh: `NH_OS_FLAKE`, `NH_FLAKE`, `FLAKE`, also as NixOS sets them for sessions;
+4. `nixos-config=` in `NIX_PATH`, else `/etc/nixos/configuration.nix` (channels).
+
+The check reads the file and evaluates nothing. A `flake.nix` must mention `nixosConfigurations` and the flake attribute. The attribute is `osSpecific.nixos.flakeAttribute`, or the host name without it. A path someone set only has to contain a `flake.nix` or `configuration.nix`. If the system reports `system.configurationRevision`, furnish compares it with the folder's git commit and says when they differ. Folders such as `~/nixos-config` or `~/dotfiles` are only offered as suggestions in the app.
+
+The Home Manager configuration comes from `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
+
+Set the location in the policy, or through the module:
+
+```nix
+services.furnish.nix = {
+  configuration = "/etc/fleet-config";
+  flakeAttribute = "alex-laptop";
+  lock = true;  # without it, both are defaults people can change
+};
+```
+
+The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`, and restarts the furnish service when the policy changes. People see the result on the Settings page and with `furnish settings`.
+
+The furnish service ignores people's own settings for this. It takes the location from the policy or from places only root can change, such as `/etc/nixos`. The folder there can still belong to a person, for example when `/etc/nixos/flake.nix` links into a home folder. furnish passes the folder's owner to its resources (see [Settings available to resources](collections.md#settings-available-to-resources)), so a later rebuild as root can refuse a configuration that isn't root's.
 
 Builds of the `main` branch are in the binary cache `furnish.cachix.org`, which the flake offers. Nix asks once whether to trust the flake's settings. Or add the cache to your configuration:
 

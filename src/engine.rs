@@ -211,12 +211,18 @@ pub struct Declared {
     pub by: String,
     /// The nixpkgs attribute, e.g. `jq` or `kdePackages.kdenlive`.
     pub package: String,
+    /// The configuration's folder, if known (the resource's `declaredIn`).
+    pub configuration: Option<String>,
 }
 
 impl Declared {
-    /// Where it is declared, for messages: "your NixOS configuration".
-    pub fn place(&self) -> &'static str {
-        if self.by == "home-manager" { "your Home Manager configuration" } else { "your NixOS configuration" }
+    /// Where it is declared, for messages: "your NixOS configuration (/home/alex/cfg)".
+    pub fn place(&self) -> String {
+        let what = if self.by == "home-manager" { "your Home Manager configuration" } else { "your NixOS configuration" };
+        match &self.configuration {
+            Some(c) => format!("{what} ({c})"),
+            None => what.to_string(),
+        }
     }
 }
 
@@ -228,7 +234,8 @@ fn declared(states: &[Tested]) -> Option<Declared> {
         let package = [&t.desired["nixName"], &t.desired["name"], &t.actual["name"]]
             .into_iter()
             .find_map(|v| v.as_str().filter(|s| !s.is_empty()))?;
-        Some(Declared { by: by.to_string(), package: package.to_string() })
+        let configuration = t.actual["declaredIn"].as_str().map(String::from);
+        Some(Declared { by: by.to_string(), package: package.to_string(), configuration })
     })
 }
 
@@ -272,6 +279,8 @@ pub fn init(dir: &Path) -> Result<()> {
         env::set_var("FURNISH_STOP_FILE", stop_file);
         // Resources keep what is slow to find out here, e.g. the names nixpkgs gives packages.
         env::set_var("FURNISH_CACHE_DIR", dir.parent().unwrap_or(dir).join("cache"));
+        // The settings in effect and what furnish detected (FURNISH_CONFIG__*, FURNISH_DETECTED__*).
+        crate::resource_env::init();
     }
     Ok(())
 }
@@ -967,6 +976,8 @@ pub fn validate(doc: &Value) -> Result<()> {
 
 fn configurator(doc: &Value) -> Result<Configurator> {
     ensure_own_resources()?;
+    // A setting changed in the app applies to the next step.
+    crate::resource_env::refresh();
     let mut doc = doc.clone();
     // DSC would discover resources again while running, after `ensure_own_resources` checked
     // them; furnish skips resources by their condition itself (see `applicable`).

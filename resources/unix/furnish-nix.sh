@@ -40,6 +40,16 @@ nix_declared() {
     done
 }
 
+# The folder of the configuration that declares packages for source $1 (nixos, home-manager), as
+# furnish found it: it passes the settings in effect and what it detected as FURNISH_CONFIG__* and
+# FURNISH_DETECTED__* (see src/resource_env.rs). Nothing when unknown.
+nix_configuration() {
+    case $1 in
+    nixos) printf '%s' "${FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION:-}" ;;
+    home-manager) printf '%s' "${FURNISH_DETECTED__OS_SPECIFIC__NIXOS__HOME_MANAGER_CONFIGURATION:-}" ;;
+    esac
+}
+
 # Prints the version if store name $1 is package $2: "<stem>-<version>" (the version starts with a
 # digit) or "<stem>", each with an optional "-<output>". "?" without a version.
 nix_name_version() {

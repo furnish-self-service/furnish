@@ -78,4 +78,40 @@ case $out in *"in your NixOS configuration: remove jq there"*) ;; *) fail "unins
 
 echo "== without the roots (FURNISH_NIX_ROOTS, for tests only), nothing is declared"
 FURNISH_NIX_ROOTS= furnish list | grep -q "·  jq " || fail "jq still installed without the roots"
+echo "== the resource takes the configuration's folder from furnish (FURNISH_DETECTED__*)"
+out=$(FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION=/srv/cfg name=jq packageManager=nix sh "$resource" get)
+case $out in *'"managedBy":"nixos","declaredIn":"/srv/cfg"'*) ;; *) fail "get with the detected configuration: $out" ;; esac
+rc=0; out=$(FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION=/srv/cfg _exist=false name=jq packageManager=nix sh "$resource" set 2>&1) || rc=$?
+case $out in *"jq is in your NixOS configuration (/srv/cfg): remove it there"*) ;; *) fail "remove with the detected configuration: $out" ;; esac
+
+echo "== furnish finds /etc/nixos/flake.nix through its link and passes it to the resources"
+host=$(cat /proc/sys/kernel/hostname)
+mkdir -p /home/alice/cfg /tmp/other /etc/nixos
+printf '{ outputs = _: { nixosConfigurations.%s = { }; }; }\n' "$host" >/home/alice/cfg/flake.nix
+printf '{ outputs = _: { nixosConfigurations.other = { }; }; }\n' >/tmp/other/flake.nix
+ln -sfn /home/alice/cfg/flake.nix /etc/nixos/flake.nix
+touch /etc/NIXOS
+out=$(furnish settings)
+echo "$out" | grep -qF "NixOS configuration: /home/alice/cfg (flake, from /etc/nixos)" || { echo "$out"; fail "configuration from /etc/nixos not shown"; }
+echo "$out" | grep -qF "NixOS flake name:    $host (this computer's name)" || { echo "$out"; fail "flake name not the host name"; }
+list=$(furnish list)
+echo "$list" | grep "✓  jq " | grep -qF "in your NixOS configuration (/home/alice/cfg)" || { echo "$list"; fail "the resource didn't get the configuration's folder"; }
+
+echo "== set by the user, back to automatic"
+out=$(furnish settings --nixos-configuration /tmp/other --nixos-flake-attribute other)
+echo "$out" | grep -qF "NixOS configuration: /tmp/other (flake, set by you)" || { echo "$out"; fail "the user's configuration not used"; }
+echo "$out" | grep -qF "NixOS flake name:    other (set by you)" || { echo "$out"; fail "the user's flake name not used"; }
+furnish list | grep "✓  jq " | grep -qF "(/tmp/other)" || fail "the resource didn't get the user's configuration"
+rc=0; furnish settings --nixos-flake-attribute "not valid" >/dev/null 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "an invalid flake name was accepted"
+furnish settings --nixos-reset | grep -qF "NixOS configuration: /home/alice/cfg (flake, from /etc/nixos)" || fail "reset didn't go back to /etc/nixos"
+
+echo "== with the policy (locked), the user can't change it"
+mkdir -p /etc/furnish
+printf '{"osSpecific": {"nixos": {"configuration": {"value": "/tmp/other", "locked": true}, "flakeAttribute": "other"}}}\n' >/etc/furnish/policy.json
+out=$(furnish settings)
+echo "$out" | grep -qF "NixOS configuration: /tmp/other (flake, set by your organization)" || { echo "$out"; fail "the policy's configuration not used"; }
+rc=0; out=$(furnish settings --nixos-configuration /home/alice/cfg 2>&1) || rc=$?
+case "$rc $out" in 0*) fail "changed a locked setting" ;; *"set by your organization"*) ;; *) fail "locked: $out" ;; esac
+rm -rf /etc/furnish /etc/NIXOS /etc/nixos
 echo "nix-declared OK"

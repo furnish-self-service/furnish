@@ -102,6 +102,41 @@ No other resource may declare `Furnish/Package` or `Furnish/Installer`. furnish 
 
 Your organization can limit which resource types apps may use (see [For admins](admins.md#the-policy)).
 
+### Settings available to resources
+
+furnish passes its settings to every resource it runs as environment variables, so your own resources and commands can use them. `FURNISH_CONFIG__` variables hold every setting with the value in effect, as `furnish settings` shows it. `FURNISH_DETECTED__` variables hold what furnish found out, such as where the NixOS configuration is.
+
+The name is the setting's path in `settings.json`. Levels are separated by `__`, and the words of a name by `_`, in capitals:
+
+| Setting | Variable |
+|---|---|
+| `updateOnLaunch` | `FURNISH_CONFIG__UPDATE_ON_LAUNCH` |
+| `osSpecific.nixos.flakeAttribute` | `FURNISH_CONFIG__OS_SPECIFIC__NIXOS__FLAKE_ATTRIBUTE` |
+
+Texts are passed as they are, `true` and `false` as words, numbers as digits, and lists and maps as JSON. A value nobody set and furnish doesn't know is empty. Option values aren't passed: an app gets its own as parameters (see [Questions and options](#questions-and-options)).
+
+On NixOS, furnish passes where the configuration is, whether a setting or a search found it:
+
+| Variable | Value |
+|---|---|
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION` | the configuration's folder |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_KIND` | `flake` or `channels` |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_SOURCE` | `setting`, `policy`, `etc-nixos`, `nh` or `nix-path` |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_OWNER` | the folder's owner, as `<uid>:<user>` |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION_OTHERS_CAN_WRITE` | `true` if its group or everyone can write to it |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__FLAKE_ATTRIBUTE` | the name in `nixosConfigurations`, by default the host name |
+| `FURNISH_DETECTED__OS_SPECIFIC__NIXOS__HOME_MANAGER_CONFIGURATION` | the Home Manager configuration's folder |
+
+```yaml
+- name: Show the configuration
+  type: Microsoft.DSC.Transitional/RunCommandOnSet
+  properties:
+    executable: sh
+    arguments: ["-c", "echo \"$FURNISH_DETECTED__OS_SPECIFIC__NIXOS__CONFIGURATION\""]
+```
+
+In the furnish service, resources run as root, and the settings come from the admin policy and furnish's defaults only, never from a person's own settings.
+
 ### Removal steps
 
 Many resources can't remove what they set up. `File/Content` writes a file but doesn't delete it. `RunCommandOnSet` and the PowerShell script resources run their command or script every time. For such an app, list the steps that remove it under `metadata.furnish.uninstall`. They are DSC resources in the same format as `resources`, with conditions and `dependsOn`:

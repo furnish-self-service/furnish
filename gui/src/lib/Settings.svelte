@@ -31,7 +31,28 @@
   api.reportDestinations().then((d) => (destinations = d));
   // On NixOS: where its configuration lives, for the NixOS section.
   let nixos = $state<api.NixosSetup | null>(null);
-  api.nixosSetup().then((s) => (nixos = s)).catch(() => {});
+  // What the user types: the configuration's folder and the flake attribute. Empty: as found.
+  let nixosPath = $state('');
+  let nixosAttribute = $state('');
+  const loadNixos = () =>
+    api
+      .nixosSetup()
+      .then((s) => {
+        nixos = s;
+        nixosAttribute = s?.chosen.flakeAttribute?.setBy === 'user' ? s.chosen.flakeAttribute.value : '';
+      })
+      .catch(() => {});
+  loadNixos();
+  // Set (or with null, forget) a NixOS setting, then show what furnish finds with it.
+  async function saveNixos(name: 'configuration' | 'flakeAttribute', value: string | null) {
+    try {
+      await api.setNixosSetting(name, value);
+      if (name === 'configuration') nixosPath = '';
+      await loadNixos();
+    } catch (e) {
+      toast('error', t('nixos.saveFailed'), String(e));
+    }
+  }
 
   const brand = $derived(store.brand.name);
 
@@ -300,6 +321,8 @@
   {/if}
 
   {#if nixos}
+    {@const config = nixos.configuration}
+    {@const chosen = nixos.chosen}
     <section aria-labelledby="nixos-title">
       <h2 id="nixos-title">NixOS</h2>
       <p class="intro">{t('nixos.declared')}</p>
@@ -307,15 +330,83 @@
         <li class="row">
           <span class="text">
             <span class="label">{t('nixos.config')}</span>
-            {#if !nixos.config}<span class="desc">{t('nixos.noConfig')}</span>{/if}
+            {#if config}
+              <span class="desc">
+                {#if config.source !== 'policy'}{t(`nixos.from.${config.source}`, { variable: config.via ?? '' })}{/if}
+                {#if config.revision === 'differs'}<span class="warn">{t('nixos.differs')}</span>{/if}
+                {#if config.problem}<span class="warn">{t(`nixos.problem.${config.problem}`, { path: config.path, name: nixos.flakeAttribute.value })}</span>{/if}
+              </span>
+            {:else}
+              <span class="desc">{t('nixos.noConfig')}</span>
+            {/if}
+            {#if nixos.rejected}
+              <span class="desc warn">{t(`nixos.problem.${nixos.rejected[1]}`, { path: nixos.rejected[0], name: nixos.flakeAttribute.value })}</span>
+            {/if}
           </span>
-          {#if nixos.config}
-            <span class="control value"><code class="path">{nixos.config}</code> · {t(nixos.flake ? 'nixos.flake' : 'nixos.channels')}</span>
+          {#if config}
+            <span class="control value">
+              {#if config.source === 'policy'}<span class="org">{t('common.setByOrg')}</span>{/if}
+              <code class="path">{config.path}</code> · {t(config.kind === 'flake' ? 'nixos.flake' : 'nixos.channels')}
+            </span>
           {/if}
         </li>
+        {#if !config && nixos.suggestions.length}
+          <li class="row">
+            <span class="text">
+              <span class="label">{t('nixos.suggestions')}</span>
+              <span class="desc">{t('nixos.suggestionsText')}</span>
+            </span>
+            <span class="control stack">
+              {#each nixos.suggestions as s}
+                <span class="inline">
+                  <code class="path">{s.path}</code>
+                  <button class="secondary" onclick={() => saveNixos('configuration', s.path)}>{t('nixos.useThis')}</button>
+                </span>
+              {/each}
+            </span>
+          </li>
+        {/if}
+        {#if !chosen.configuration?.locked}
+          <li class="row">
+            <label class="text" for="nixos-path">
+              <span class="label">{t('nixos.setPath')}</span>
+              <span class="desc">{t('nixos.setPathText')}</span>
+            </label>
+            <span class="control">
+              <input id="nixos-path" type="text" spellcheck="false" placeholder={t('nixos.pathPlaceholder')} bind:value={nixosPath} />
+              <button class="secondary" disabled={!nixosPath.trim()} onclick={() => saveNixos('configuration', nixosPath.trim())}>{t('nixos.save')}</button>
+              {#if chosen.configuration?.setBy === 'user'}
+                <button class="link" onclick={() => saveNixos('configuration', null)}>{t('nixos.automatic')}</button>
+              {/if}
+            </span>
+          </li>
+        {/if}
+        {#if !config || config.kind === 'flake'}
+          <li class="row">
+            <label class="text" for="nixos-attribute">
+              <span class="label">{t('nixos.flakeAttribute')}</span>
+              <span class="desc">{t('nixos.flakeAttributeText')}</span>
+            </label>
+            <span class="control">
+              {#if chosen.flakeAttribute?.locked}
+                <span class="org">{t('common.setByOrg')}</span>
+                <code class="path">{nixos.flakeAttribute.value}</code>
+              {:else}
+                <input id="nixos-attribute" type="text" spellcheck="false" placeholder={nixos.flakeAttribute.value} bind:value={nixosAttribute} />
+                <button class="secondary" disabled={!nixosAttribute.trim()} onclick={() => saveNixos('flakeAttribute', nixosAttribute.trim())}>{t('nixos.save')}</button>
+                {#if chosen.flakeAttribute?.setBy === 'user'}
+                  <button class="link" onclick={() => saveNixos('flakeAttribute', null)}>{t('nixos.automatic')}</button>
+                {/if}
+              {/if}
+            </span>
+          </li>
+        {/if}
         <li class="row">
-          <span class="text"><span class="label">{t('nixos.homeManager')}</span></span>
-          <span class="control value">{t(nixos.homeManager ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
+          <span class="text">
+            <span class="label">{t('nixos.homeManager')}</span>
+            {#if nixos.homeManagerConfiguration}<span class="desc"><code class="path">{nixos.homeManagerConfiguration.path}</code></span>{/if}
+          </span>
+          <span class="control value">{t(nixos.homeManager || nixos.homeManagerConfiguration ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
         </li>
       </ul>
       <p class="note">
@@ -546,6 +637,21 @@
   }
   .error {
     white-space: pre-line;
+  }
+  input[type='text'] {
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--ink);
+    font: 0.85rem var(--font-mono);
+    width: 16rem;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .warn {
+    display: block;
+    color: var(--highlight-ink);
   }
   .postponed {
     font-weight: 650;

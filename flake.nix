@@ -164,6 +164,13 @@
         let
           cfg = config.services.furnish;
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          entry = value: { inherit value; locked = cfg.nix.lock; };
+          nixos = lib.filterAttrs (_: v: v.value != null) {
+            configuration = entry cfg.nix.configuration;
+            flakeAttribute = entry cfg.nix.flakeAttribute;
+          };
+          policy = lib.recursiveUpdate (if cfg.policy == null then { } else cfg.policy)
+            (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
         in {
           options.services.furnish = {
             enable = lib.mkEnableOption "furnish, the self-service app catalog";
@@ -174,12 +181,33 @@
               example = { collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }]; service.allowedGroup = "users"; };
             };
             service.enable = lib.mkEnableOption "the furnish service, which installs your organization's apps for users without administrator rights";
+            # Where this computer's NixOS configuration is, when furnish can't find it on its own
+            # (see docs/site/admins.md). Written to the policy as osSpecific.nixos.*.
+            nix = {
+              configuration = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Folder of the NixOS configuration (with flake.nix or configuration.nix).";
+                example = "/etc/fleet-config";
+              };
+              flakeAttribute = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Name in the flake's nixosConfigurations; furnish uses the host name without it.";
+                example = "alex-laptop";
+              };
+              lock = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Users can't change the two values above (otherwise they are only defaults).";
+              };
+            };
           };
           config = lib.mkIf cfg.enable {
             environment.systemPackages = [ packages.furnish packages.furnish-gui ];
             # Nix packages the furnish service installs for everyone (Furnish/Package as root).
             environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
-            environment.etc."furnish/policy.json" = lib.mkIf (cfg.policy != null) { text = builtins.toJSON cfg.policy; };
+            environment.etc."furnish/policy.json" = lib.mkIf (policy != { }) { text = builtins.toJSON policy; };
             security.polkit.enable = true;
             systemd.services.furnish = lib.mkIf cfg.service.enable {
               description = "furnish service: installs apps your organization provides";
@@ -187,6 +215,8 @@
               wants = [ "network-online.target" ];
               after = [ "network-online.target" ];
               path = with pkgs; [ bash coreutils git git-lfs nix ];
+              # It reads the policy once for its resources (FURNISH_CONFIG__*): restart on changes.
+              restartTriggers = [ (builtins.toJSON policy) ];
               serviceConfig = {
                 ExecStart = "${packages.furnish}/bin/furnish service";
                 Restart = "on-failure";

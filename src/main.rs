@@ -111,6 +111,8 @@ enum Command {
         /// or don't check (off)
         #[arg(long, value_parser = ["auto", "notify", "off"])]
         self_update: Option<String>,
+        #[command(flatten)]
+        nixos: NixosArgs,
     },
     /// Install furnish's newest version, where nothing else updates furnish (installed from the
     /// Windows .msi or the macOS .dmg). Elsewhere: say whether there is one and how it arrives.
@@ -129,6 +131,98 @@ enum Command {
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
     },
+}
+
+/// Where the NixOS configuration is (`furnish settings`, NixOS only).
+#[derive(clap::Args)]
+struct NixosArgs {
+    /// NixOS: the folder of your configuration (with flake.nix or configuration.nix)
+    #[arg(long, value_name = "PATH")]
+    nixos_configuration: Option<std::path::PathBuf>,
+    /// NixOS: the name in the flake's nixosConfigurations (default: this computer's name)
+    #[arg(long, value_name = "NAME")]
+    nixos_flake_attribute: Option<String>,
+    /// NixOS: the folder of your Home Manager configuration
+    #[arg(long, value_name = "PATH")]
+    home_manager_configuration: Option<std::path::PathBuf>,
+    /// NixOS: find the configuration on its own again (forgets the three settings above)
+    #[arg(long, conflicts_with_all = ["nixos_configuration", "nixos_flake_attribute", "home_manager_configuration"])]
+    nixos_reset: bool,
+}
+
+impl NixosArgs {
+    fn apply(&self) -> Result<()> {
+        use furnish::settings::set;
+        let absolute = |p: &std::path::Path| -> Result<serde_json::Value> {
+            let p = std::path::absolute(p)?;
+            Ok(p.display().to_string().into())
+        };
+        if self.nixos_reset {
+            for key in ["configuration", "flakeAttribute", "homeManagerConfiguration"] {
+                let key = format!("osSpecific.nixos.{key}");
+                if !furnish::settings::effective().locked.contains(&key) {
+                    set(&key, serde_json::Value::Null)?;
+                }
+            }
+        }
+        if let Some(p) = &self.nixos_configuration {
+            set("osSpecific.nixos.configuration", absolute(p)?)?;
+        }
+        if let Some(a) = &self.nixos_flake_attribute {
+            set("osSpecific.nixos.flakeAttribute", a.clone().into())?;
+        }
+        if let Some(p) = &self.home_manager_configuration {
+            set("osSpecific.nixos.homeManagerConfiguration", absolute(p)?)?;
+        }
+        Ok(())
+    }
+}
+
+/// The NixOS lines of `furnish settings`: the configuration and how furnish found it.
+fn print_nixos(s: &furnish::nixos::Setup) {
+    use furnish::nixos::{Revision, Source};
+    let how = |f: &furnish::nixos::Found| match f.source {
+        Source::Setting => "set by you".to_string(),
+        Source::Policy => "set by your organization".to_string(),
+        Source::EtcNixos => "from /etc/nixos".to_string(),
+        Source::Nh => format!("from nh, {}", f.via.as_deref().unwrap_or("NH_FLAKE")),
+        Source::NixPath => "from NIX_PATH".to_string(),
+        Source::Env => "from HOME_MANAGER_CONFIG".to_string(),
+        Source::UsualPlace | Source::Hostname => "the usual place".to_string(),
+    };
+    match &s.configuration {
+        Some(f) => {
+            let kind = if f.kind == furnish::nixos::Kind::Flake { "flake" } else { "channels" };
+            let mut line = format!("NixOS configuration: {} ({kind}, {})", f.path.display(), how(f));
+            if f.revision == Revision::Differs {
+                line.push_str(", doesn't match the running system");
+            }
+            println!("{line}");
+            if let Some(p) = f.problem {
+                println!("                     note: {}", p.text(&s.flake_attribute.value));
+            }
+            if f.kind == furnish::nixos::Kind::Flake {
+                let from = match s.flake_attribute.source {
+                    Source::Setting => "set by you",
+                    Source::Policy => "set by your organization",
+                    _ => "this computer's name",
+                };
+                println!("NixOS flake name:    {} ({from})", s.flake_attribute.value);
+            }
+        }
+        None => {
+            println!("NixOS configuration: not found (furnish settings --nixos-configuration <folder>)");
+            for sug in &s.suggestions {
+                println!("                     maybe {}", sug.path.display());
+            }
+        }
+    }
+    if let Some((path, problem)) = &s.rejected {
+        println!("                     ignoring {}: {}", path.display(), problem.text(&s.flake_attribute.value));
+    }
+    if let Some(f) = &s.home_manager_configuration {
+        println!("Home Manager:        {} ({})", f.path.display(), how(f));
+    }
 }
 
 /// Settings that can differ per collection (`furnish collection settings`).
@@ -379,7 +473,8 @@ fn run(command: Command) -> Result<()> {
         Command::Reports => reports(),
         Command::SelfUpdate { check } => self_update(check),
         Command::Check { dir } => check(&dir),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language, self_update } => {
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language, self_update, nixos } => {
+            nixos.apply()?;
             if let Some(v) = self_update {
                 furnish::settings::set("selfUpdate", v.into())?;
             }
@@ -457,6 +552,9 @@ fn run(command: Command) -> Result<()> {
             if !s.collections.is_empty() {
                 let names: Vec<_> = s.collections.keys().map(String::as_str).collect();
                 println!("Collections with their own settings (furnish collection settings <name>): {}", names.join(", "));
+            }
+            if let Some(setup) = furnish::nixos::setup() {
+                print_nixos(&setup);
             }
             Ok(())
         }

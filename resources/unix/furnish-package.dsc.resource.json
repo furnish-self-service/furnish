@@ -67,6 +67,11 @@
           ],
           "description": "Nix only: where the installed package comes from: the NixOS configuration, the Home Manager configuration, or a nix profile (the user's or the shared one)"
         },
+        "declaredIn": {
+          "type": "string",
+          "readOnly": true,
+          "description": "Nix only: the folder of the NixOS or Home Manager configuration that declares the package, if furnish knows it"
+        },
         "_exist": {
           "type": "boolean",
           "description": "Whether the package should be installed"

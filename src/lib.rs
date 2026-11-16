@@ -11,6 +11,7 @@ pub mod options;
 pub mod policy;
 pub mod reports;
 pub mod selfupdate;
+pub mod resource_env;
 pub mod service;
 pub mod settings;
 pub mod versions;

@@ -14,6 +14,7 @@
 //! { "settings": { "updateIntervalMinutes": { "value": 60, "locked": true } },
 //!   "collections": { "preset": [{ "name": "acme-it", "url": "git@…" }], "usersCanAdd": false },
 //!   "service": { "allowedGroup": "staff" },
+//!   "osSpecific": { "nixos": { "configuration": { "value": "/etc/fleet", "locked": true } } },
 //!   "allowedResourceTypes": ["Microsoft.Windows/Registry"] }
 //! ```
 //!
@@ -38,6 +39,9 @@ pub struct Policy {
     pub parameters: BTreeMap<String, BTreeMap<String, Entry>>,
     /// Per collection: values for the settings in `settings::PER_COLLECTION`, defaults or locked.
     pub collection_settings: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// Settings for one operating system (`settings::OS_SPECIFIC`), by system and name: each a
+    /// plain value (a default) or `{ "value": …, "locked": true }`, checked one by one.
+    pub os_specific: BTreeMap<String, BTreeMap<String, Value>>,
     /// Present: the furnish service installs the preset collections' apps (see `service`).
     pub service: Option<Service>,
     /// The desktop app under the organization's name, logo and colors.

@@ -49,6 +49,49 @@ pub struct Settings {
     /// furnish's own updates (see `selfupdate`): install new versions where furnish can, only
     /// say that one is out, or don't check. Only the admin policy can lock it.
     pub self_update: SelfUpdate,
+    /// Settings for one operating system, by system (see `OS_SPECIFIC`). Each value counts on
+    /// its own: the policy can set or lock one and leave the others to the user.
+    pub os_specific: OsSpecific,
+}
+
+/// The OS-specific settings: (system, name) as in `osSpecific.<system>.<name>`.
+pub const OS_SPECIFIC: [(&str, &str); 3] = [("nixos", "configuration"), ("nixos", "flakeAttribute"), ("nixos", "homeManagerConfiguration")];
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OsSpecific {
+    pub nixos: NixosSettings,
+}
+
+/// Where the NixOS configuration lives; unset: furnish looks for it (see `nixos`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NixosSettings {
+    /// The folder with the configuration's `flake.nix` or `configuration.nix`.
+    pub configuration: Option<String>,
+    /// The name in the flake's `nixosConfigurations`; unset: the computer's name.
+    pub flake_attribute: Option<String>,
+    /// The folder with the Home Manager configuration (`flake.nix` or `home.nix`).
+    pub home_manager_configuration: Option<String>,
+}
+
+/// Who set an OS-specific value that is in effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SetBy {
+    /// The user, in settings.json (or the app, or `furnish settings`).
+    User,
+    /// The admin policy, as a default or locked.
+    Organization,
+}
+
+/// An OS-specific value in effect.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Leaf {
+    pub value: Value,
+    pub set_by: SetBy,
+    pub locked: bool,
 }
 
 /// The languages of the desktop app (`Language` without `System`).
@@ -135,6 +178,7 @@ impl Default for Settings {
             language: Language::System,
             fallback_language: "en".into(),
             self_update: SelfUpdate::Auto,
+            os_specific: OsSpecific::default(),
         }
     }
 }
@@ -164,6 +208,12 @@ pub fn effective() -> Effective {
 /// Change one setting for this user. Fails if the policy locks it, or the name or value is wrong.
 pub fn set(key: &str, value: Value) -> Result<()> {
     let policy = crate::policy::load();
+    if let Some((os, name)) = os_specific_key(key) {
+        return set_os_specific(&policy, os, name, value);
+    }
+    if key == "osSpecific" {
+        bail!("set one value at a time, e.g. 'osSpecific.nixos.configuration'");
+    }
     if !serde_json::to_value(Settings::default())?.as_object().is_some_and(|s| s.contains_key(key)) {
         bail!("unknown setting '{key}'");
     }
@@ -174,6 +224,90 @@ pub fn set(key: &str, value: Value) -> Result<()> {
     let mut choices = user_choices();
     choices.insert(key.to_string(), value);
     write_choices(&choices)
+}
+
+/// `osSpecific.<system>.<name>` as (system, name), if it is one of `OS_SPECIFIC`.
+pub fn os_specific_key(key: &str) -> Option<(&'static str, &'static str)> {
+    let rest = key.strip_prefix("osSpecific.")?;
+    OS_SPECIFIC.into_iter().find(|(os, name)| rest.split_once('.') == Some((os, name)))
+}
+
+/// Change one OS-specific value; `null` removes the user's value (back to the policy's or none).
+fn set_os_specific(policy: &Policy, os: &str, name: &str, value: Value) -> Result<()> {
+    let key = format!("osSpecific.{os}.{name}");
+    if policy_leaf(policy, os, name).is_some_and(|e| e.locked) {
+        bail!("'{key}' is set by your organization");
+    }
+    let mut choices = user_choices();
+    let mut all = choices.get("osSpecific").and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut system = all.get(os).and_then(Value::as_object).cloned().unwrap_or_default();
+    if value.is_null() {
+        system.remove(name);
+    } else {
+        check_os_value(os, name, &value).with_context(|| format!("invalid value for '{key}'"))?;
+        system.insert(name.to_string(), value);
+    }
+    all.insert(os.to_string(), system.into());
+    choices.insert("osSpecific".into(), all.into());
+    write_choices(&choices)
+}
+
+/// The policy's entry for an OS-specific value: given plainly (a default) or as `{value, locked}`.
+fn policy_leaf(policy: &Policy, os: &str, name: &str) -> Option<crate::policy::Entry> {
+    let v = policy.os_specific.get(os)?.get(name)?;
+    Some(match v.as_object() {
+        Some(o) if o.contains_key("value") && o.keys().all(|k| k == "value" || k == "locked") => {
+            crate::policy::Entry { value: o["value"].clone(), locked: o.get("locked").and_then(Value::as_bool).unwrap_or(false) }
+        }
+        _ => crate::policy::Entry { value: v.clone(), locked: false },
+    })
+}
+
+/// An OS-specific value in effect: the policy's if locked, else the user's, else the policy's
+/// default. An invalid value counts as not set and adds a warning.
+pub fn os_specific_leaf(policy: &Policy, choices: &Map<String, Value>, os: &str, name: &str, warnings: &mut Vec<String>) -> Option<Leaf> {
+    let key = format!("osSpecific.{os}.{name}");
+    let theirs = policy_leaf(policy, os, name).filter(|e| match check_os_value(os, name, &e.value) {
+        Ok(()) => true,
+        Err(err) => {
+            warnings.push(format!("ignoring the admin policy's value for '{key}': {err:#}"));
+            false
+        }
+    });
+    if let Some(e) = &theirs
+        && e.locked
+    {
+        return Some(Leaf { value: e.value.clone(), set_by: SetBy::Organization, locked: true });
+    }
+    let mine = choices.get("osSpecific").and_then(|o| o.get(os)).and_then(|o| o.get(name)).filter(|v| !v.is_null());
+    if let Some(v) = mine {
+        match check_os_value(os, name, v) {
+            Ok(()) => return Some(Leaf { value: v.clone(), set_by: SetBy::User, locked: false }),
+            Err(err) => warnings.push(format!("ignoring your value for '{key}' in settings.json: {err:#}")),
+        }
+    }
+    theirs.map(|e| Leaf { value: e.value, set_by: SetBy::Organization, locked: false })
+}
+
+/// Whether a value is valid for an OS-specific setting.
+pub fn check_os_value(os: &str, name: &str, value: &Value) -> Result<()> {
+    let Some(s) = value.as_str() else { bail!("expected a string") };
+    match (os, name) {
+        ("nixos", "configuration" | "homeManagerConfiguration") => {
+            if !s.starts_with('/') || s.contains(['\n', '\0']) {
+                bail!("'{s}' isn't an absolute path (such as /home/alex/nixos-config)");
+            }
+        }
+        ("nixos", "flakeAttribute") => {
+            let ok = s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || "_-'".contains(c));
+            if !ok {
+                bail!("'{s}' isn't a name in nixosConfigurations (letters, digits, _, - and ')");
+            }
+        }
+        _ => bail!("unknown setting 'osSpecific.{os}.{name}'"),
+    }
+    Ok(())
 }
 
 fn write_choices(choices: &Map<String, Value>) -> Result<()> {
@@ -244,7 +378,7 @@ pub fn set_for_collection(name: &str, key: &str, value: Value) -> Result<()> {
 }
 
 /// The user's own choices (only the settings they changed).
-fn user_choices() -> Map<String, Value> {
+pub fn user_choices() -> Map<String, Value> {
     let path = data_dir().join("settings.json");
     let Ok(text) = fs::read_to_string(&path) else {
         return Map::new();
@@ -273,7 +407,8 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
     }
     for (key, value) in choices {
         let locked = policy.settings.get(key).is_some_and(|e| e.locked);
-        if !merged.contains_key(key) || locked {
+        // Each OS-specific value counts on its own; see below.
+        if !merged.contains_key(key) || locked || key == "osSpecific" {
             continue;
         }
         match check_value(key, value) {
@@ -283,13 +418,30 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
             Err(err) => warnings.push(format!("ignoring your value for '{key}' in settings.json: {err:#}")),
         }
     }
+    let mut locked: Vec<String> = policy.settings.iter().filter(|(_, e)| e.locked).map(|(k, _)| k.clone()).collect();
+    let mut os_specific = Map::new();
+    for (os, names) in &policy.os_specific {
+        for name in names.keys().filter(|n| !OS_SPECIFIC.contains(&(os.as_str(), n.as_str()))) {
+            warnings.push(format!("the admin policy names an unknown setting 'osSpecific.{os}.{name}'"));
+        }
+    }
+    for (os, name) in OS_SPECIFIC {
+        if let Some(leaf) = os_specific_leaf(policy, choices, os, name, &mut warnings) {
+            if leaf.locked {
+                locked.push(format!("osSpecific.{os}.{name}"));
+            }
+            let system = os_specific.entry(os).or_insert_with(|| Value::Object(Map::new()));
+            system[name] = leaf.value;
+        }
+    }
+    merged.insert("osSpecific".into(), os_specific.into());
     let settings = serde_json::from_value(Value::Object(merged)).unwrap_or_else(|err| {
         warnings.push(format!("ignoring invalid settings: {err}"));
         Settings::default()
     });
     Effective {
         settings,
-        locked: policy.settings.iter().filter(|(_, e)| e.locked).map(|(k, _)| k.clone()).collect(),
+        locked,
         users_can_add_collections: policy.collections.users_can_add,
         warnings,
     }
@@ -297,6 +449,12 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
 
 /// Whether a value is valid for a setting, on its own (the other settings at their defaults).
 pub fn check_value(key: &str, value: &Value) -> Result<()> {
+    if let Some((os, name)) = os_specific_key(key) {
+        return check_os_value(os, name, value);
+    }
+    if key == "osSpecific" {
+        bail!("set one value at a time, e.g. 'osSpecific.nixos.configuration'");
+    }
     let Value::Object(mut all) = serde_json::to_value(Settings::default())? else {
         unreachable!("Settings serializes to an object")
     };
@@ -457,5 +615,42 @@ mod tests {
         assert_eq!(e.settings.fallback_language, "de");
         assert_eq!(e.locked, ["fallbackLanguage"]);
         assert!(check_value("fallbackLanguage", &json!("not a tag")).is_err());
+    }
+
+    #[test]
+    fn os_specific_values_count_one_by_one_with_locks_and_checks() {
+        let p = policy(json!({"osSpecific": {"nixos": {
+            "configuration": "/etc/fleet",
+            "flakeAttribute": {"value": "desk", "locked": true},
+            "homeManagerConfiguration": {"value": "relative/path"},
+            "nonsense": 1
+        }, "macos": {"x": 1}}}));
+        let choices = json!({"osSpecific": {"nixos": {"configuration": "/home/alice/cfg", "flakeAttribute": "mine"}}});
+        let e = merge(&p, choices.as_object().unwrap());
+        let n = &e.settings.os_specific.nixos;
+        // The user's value wins over a plain policy value (a default), not over a locked one.
+        assert_eq!(n.configuration.as_deref(), Some("/home/alice/cfg"));
+        assert_eq!(n.flake_attribute.as_deref(), Some("desk"));
+        assert_eq!(n.home_manager_configuration, None);
+        assert_eq!(e.locked, ["osSpecific.nixos.flakeAttribute"]);
+        assert_eq!(e.warnings.len(), 3, "{:?}", e.warnings);
+        assert!(e.warnings.iter().any(|w| w.contains("'osSpecific.nixos.homeManagerConfiguration'") && w.contains("absolute")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().any(|w| w.contains("unknown setting 'osSpecific.macos.x'")), "{:?}", e.warnings);
+        // Without the user's value, the policy's default; an invalid value of the user's counts as unset.
+        let e = merge(&p, json!({"osSpecific": {"nixos": {"configuration": 5}}}).as_object().unwrap());
+        assert_eq!(e.settings.os_specific.nixos.configuration.as_deref(), Some("/etc/fleet"));
+        assert!(e.warnings.iter().any(|w| w.contains("your value for 'osSpecific.nixos.configuration'")), "{:?}", e.warnings);
+        let mut w = Vec::new();
+        let leaf = os_specific_leaf(&p, &Map::new(), "nixos", "configuration", &mut w).unwrap();
+        assert_eq!((leaf.set_by, leaf.locked), (SetBy::Organization, false));
+        // Checks.
+        assert!(check_value("osSpecific.nixos.configuration", &json!("/home/a b/cfg")).is_ok());
+        assert!(check_value("osSpecific.nixos.configuration", &json!("cfg")).is_err());
+        assert!(check_value("osSpecific.nixos.flakeAttribute", &json!("alex-laptop")).is_ok());
+        assert!(check_value("osSpecific.nixos.flakeAttribute", &json!("a b")).is_err());
+        assert!(check_value("osSpecific.nixos.flakeAttribute", &json!("")).is_err());
+        assert!(check_value("osSpecific", &json!({})).is_err());
+        assert!(check_value("osSpecific.nixos.other", &json!("x")).is_err());
+        assert_eq!(os_specific_key("osSpecific.nixos.flakeAttribute"), Some(("nixos", "flakeAttribute")));
     }
 }

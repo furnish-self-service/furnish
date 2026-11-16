@@ -123,7 +123,7 @@ use_nix() {
     # neither installs it again nor removes or updates it (see furnish-nix.sh).
     have nix || return 1
     . "$(dirname "$0")/furnish-nix.sh"
-    via=nix admin=false
+    via=nix admin=false declared_in=
     # Add to the user's settings rather than replacing them.
     export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
 }extra-experimental-features = nix-command flakes"
@@ -133,14 +133,18 @@ use_nix() {
     # The declarative roots don't change while furnish runs: look once (needs the final $name).
     prepare() {
         nix_lookup "$name"
+        # The configuration's folder, as furnish found it (FURNISH_DETECTED__*, see furnish-nix.sh).
+        declared_in=$(nix_configuration "$declared_by")
         case $declared_by in
-        nixos) cant_remove="$subject is in your NixOS configuration: remove it there" ;;
-        home-manager) cant_remove="$subject is in your Home Manager configuration: remove it there" ;;
+        nixos) cant_remove="$subject is in your NixOS configuration${declared_in:+ ($declared_in)}: remove it there" ;;
+        home-manager) cant_remove="$subject is in your Home Manager configuration${declared_in:+ ($declared_in)}: remove it there" ;;
         esac
     }
     # Where it comes from: nixos, home-manager or profile (nix profile, the user's or the shared one).
     extra_state() {
-        if [ -n "$declared_by" ]; then printf ',"managedBy":"%s"' "$declared_by"
+        if [ -n "$declared_by" ]; then
+            printf ',"managedBy":"%s"' "$declared_by"
+            [ -z "$declared_in" ] || printf ',%s' "$(json_member declaredIn "$declared_in")"
         elif [ -n "$1" ]; then printf ',"managedBy":"profile"'
         fi
     }

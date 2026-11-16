@@ -189,10 +189,38 @@ export const listKits = () => invoke<KitInfo[]>('list_kits');
 export const appStatus = (key: string) =>
   invoke<{ status: Status; reason: string | null; removable: boolean; declared: Declared | null }>('app_status', { key });
 /** A package the NixOS or Home Manager configuration installs; `package` is its nixpkgs attribute. */
-export type Declared = { by: 'nixos' | 'home-manager'; package: string };
-/** How this NixOS computer is set up; null on other systems. `config`: its path here, if any. */
-export type NixosSetup = { config: string | null; flake: boolean; homeManager: boolean };
+export type Declared = { by: 'nixos' | 'home-manager'; package: string; configuration: string | null };
+/** How furnish found a NixOS or Home Manager configuration, or the flake attribute. */
+export type NixosSource = 'setting' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';
+export type NixosProblem = 'notFound' | 'noNixosConfigurations' | 'noAttribute';
+export type NixosFound = {
+  path: string;
+  kind: 'flake' | 'channels';
+  source: NixosSource;
+  via: string | null;
+  /** 'differs': not the commit the running system was built from (still used). */
+  revision: 'unknown' | 'matches' | 'differs';
+  /** For a path someone set: what the check objects to. */
+  problem: NixosProblem | null;
+};
+/** A value of `osSpecific.nixos` set by the user or the organization. */
+export type NixosLeaf = { value: string; setBy: 'user' | 'organization'; locked: boolean } | null;
+/** How this NixOS computer is set up; null on other systems. */
+export type NixosSetup = {
+  configuration: NixosFound | null;
+  flakeAttribute: { value: string; source: NixosSource };
+  homeManagerConfiguration: NixosFound | null;
+  homeManager: boolean;
+  /** Folders with a flake.nix, only when nothing was found. */
+  suggestions: { path: string; problem: NixosProblem | null }[];
+  /** A configuration path set that has no configuration, and why. */
+  rejected: [string, NixosProblem] | null;
+  chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf };
+};
 export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
+/** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */
+export const setNixosSetting = (name: 'configuration' | 'flakeAttribute' | 'homeManagerConfiguration', value: string | null) =>
+  invoke<void>('set_setting', { key: `osSpecific.nixos.${name}`, value });
 export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
 export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });
 export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('reinstall', { key, trigger: trigger ?? null });
