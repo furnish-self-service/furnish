@@ -47,20 +47,25 @@ echo 24.8.0 > "$work/pkgs/libreoffice-fresh.new"
 
 # The collection as its own clone (uncommitted changes included), two weeks old. Its latest
 # commit moves 7zip to a package the fake pacman can't install: the fallback scene.
-cp -r "$collection" "$work/example-src" && rm -rf "$work/example-src/.git"
-git -C "$work/example-src" init -q && git -C "$work/example-src" add -A
+# In the app's home (mounted at /home/alex, see start), so its URL reads like a person's clone.
+src="$work/home/git/acme-apps"
+url=/home/alex/git/acme-apps
+mkdir -p "$work/home/git"
+cp -r "$collection" "$src" && rm -rf "$src/.git"
+git -C "$src" init -q && git -C "$src" add -A
 then=$(date -R -d '13 days ago')
-GIT_AUTHOR_DATE=$then GIT_COMMITTER_DATE=$then git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qm example
-sed -i 's/^      name: 7zip$/      name: 7zip-git/' "$work/example-src/apps/7zip.dsc.yaml"
-git -C "$work/example-src" -c user.name=t -c user.email=t@t commit -qam '7zip from git'
+GIT_AUTHOR_DATE=$then GIT_COMMITTER_DATE=$then git -C "$src" -c user.name=t -c user.email=t@t commit -qm example
+sed -i 's/^      name: 7zip$/      name: 7zip-git/' "$src/apps/7zip.dsc.yaml"
+git -C "$src" -c user.name=t -c user.email=t@t commit -qam '7zip from git'
 mkdir -p "$work/data/collections"
 mkdir -p "$work/home/.local/share/furnish"  # where the data folder is mounted (see start)
 # LibreOffice's update stays for the Updates page instead of installing itself.
 echo '{"noAutoUpdate": ["example/libreoffice"]}' > "$work/data/settings.json"
-git clone -q "$work/example-src" "$work/data/collections/example"
+git clone -q "$src" "$work/data/collections/example"
+git -C "$work/data/collections/example" remote set-url origin "$url"
 # Only the policy can make the collection managed; a plain policy keeps furnish's own look.
-echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]}}' > "$work/policy.json"
-echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]},
+echo '{"collections": {"preset": [{"name": "example", "url": "'"$url"'"}]}}' > "$work/policy.json"
+echo '{"collections": {"preset": [{"name": "example", "url": "'"$url"'"}]},
   "branding": {"name": "Acme Apps", "logo": "example/icons/collection.svg", "accent": "#c2410c"}}' > "$work/policy-branded.json"
 
 # DSC's resources, if the build has them beside it (Tauri copies them there), where an installed app has them.
@@ -91,7 +96,7 @@ start "$work/policy.json" && shoot endpoint
 echo '{"origin": "https://furnish.acme.example", "description": {"name": "Acme", "issuer": "https://sso.acme.example",
   "clientId": "furnish", "collections": [{"name": "acme", "url": "https://furnish.acme.example/git/acme.git"}],
   "events": "https://furnish.acme.example/events"}}' > "$work/data/endpoints/https_furnish.acme.example.json"
-echo '{"collections": {"preset": [{"name": "example", "url": "'"$work/example-src"'"}]},
+echo '{"collections": {"preset": [{"name": "example", "url": "'"$url"'"}]},
   "settings": {"reporting": {"value": "errors"}}}' > "$work/policy-reports.json"
 start "$work/policy-reports.json" && shoot reports
 # Last, as it installs 7zip: German, collection settings, falling back to an earlier version.
