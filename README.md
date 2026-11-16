@@ -27,7 +27,7 @@ An organization keeps its apps in a git repository, called a collection. Each ap
 
 ## Start here
 
-Download furnish for [Windows](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) or [macOS](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) (Apple silicon). Both builds aren't signed yet; the [docs](https://furnish-self-service.github.io/docs/) say how to open them. On Linux, furnish comes from a signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`); the docs have the commands for each distribution and for building from source.
+Download furnish for [Windows](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi). On macOS (Apple silicon), install it with Homebrew, `brew install --cask furnish-self-service/tap/furnish`, or [download](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) it. Both builds aren't signed yet; the [docs](https://furnish-self-service.github.io/docs/) say how to open them. On Linux, furnish comes from a signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`); the docs have the commands for each distribution and for building from source.
 
 Then add the example collection and list its apps:
 

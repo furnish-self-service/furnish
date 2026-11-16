@@ -12,16 +12,24 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-furnish is in alpha. Each change to the main branch is built and published; there are no releases yet.
+furnish is in alpha. Each change to the main branch is built and published as a [pre-release](https://github.com/furnish-self-service/furnish/releases); there are no stable releases yet.
 
 | System | How |
 |---|---|
 | Windows, 64-bit | [download](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) |
-| macOS with Apple silicon | [download](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) |
+| macOS with Apple silicon | Homebrew, below, or [download](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) |
 | Linux | the signed package repository, below |
 | Intel Macs, other systems | build from source, below |
 
-The Windows and macOS builds aren't signed yet. On Windows, choose More info → Run anyway when SmartScreen warns. On macOS, open furnish once, then allow it under System Settings → Privacy & Security → Open Anyway. Download a new alpha to update; furnish doesn't update itself on these systems yet.
+On macOS, Homebrew installs the desktop app and the `furnish` command, and `brew upgrade` brings new alphas:
+
+```sh
+brew install --cask furnish-self-service/tap/furnish
+```
+
+The Windows and macOS builds aren't signed yet. On Windows, choose More info → Run anyway when SmartScreen warns. On macOS, open furnish from Applications once, then allow it under System Settings → Privacy & Security → Open Anyway. Do this before you use the `furnish` command. macOS asks again after each upgrade until the app is signed. Without Homebrew, download a new alpha to update; furnish doesn't update itself on Windows and macOS yet.
+
+`brew uninstall --cask furnish` keeps your settings and collections. Add `--zap` to remove them too.
 
 furnish uses git. The Windows installer includes it ([MinGit](https://github.com/git-for-windows/git/wiki/MinGit) with Git LFS); furnish uses a git you installed yourself first. On macOS, git comes with Apple's Command Line Tools: if they are missing, macOS offers to install them the first time furnish adds a collection, or run `xcode-select --install`.
 
