@@ -4,3 +4,4 @@
 exporters:
   file/stdout:
     path: /out/reports.ndjson
+    flush_interval: 100ms

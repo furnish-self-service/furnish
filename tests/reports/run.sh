@@ -129,7 +129,8 @@ while read -r q; do
         && ok "panel $title: $(printf '%s\n' "$result" | jq .rows) rows in the time range" || bad "panel $title: $result"
     case $title in
     "furnish versions in use (A)")
-        got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.service_version)=\(.data.values[1][0])"] | sort | join(" ")')
+        # The last point: with a step boundary between the two batches, the first sees only batch1.
+        got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | "\(.schema.fields[1].labels.service_version)=\(.data.values[1][-1])"] | sort | join(" ")')
         [ "$got" = "0.10.0=3 0.9.0=2" ] && ok "panel $title: one series per version: $got" || bad "panel $title: expected 0.10.0=3 0.9.0=2, got $got" ;;
     esac
 done <<EOF

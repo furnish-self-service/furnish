@@ -83,6 +83,8 @@ unset_fwd=$(echo "$log" | grep -vE ' xff="[0-9.]+" xri="[0-9.]+" xfh="furnish\.t
 # one JSON object per log record with the attributes of its resource and its own. The Collector
 # prints OTLP requests, Vector one event per record.
 received() { if [ -n "$test_file" ]; then cat "$OUT_DIR/reports.ndjson"; else dc logs --no-color --no-log-prefix receiver | grep '^{'; fi; }
+# furnish sent its report just before; the Collector batches and writes it within a second or two.
+i=0; while [ -n "${FURNISH_BIN:-}" ] && ! received 2>/dev/null | grep -q collectionUpdate && [ $i -lt 15 ]; do i=$((i + 1)); sleep 1; done
 reports=$(received | jq -c '
     def flat: map({(.key): (.value.stringValue // .value)}) | add // {};
     if .resourceLogs then .resourceLogs[] | (.resource.attributes // [] | flat) as $r
