@@ -254,3 +254,12 @@ The flake provides the packages and a NixOS module:
 ```
 
 On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
+
+Builds of the `main` branch are in the binary cache `furnish.cachix.org`, which the flake offers. Nix asks once whether to trust the flake's settings. Or add the cache to your configuration:
+
+```nix
+nix.settings.extra-substituters = [ "https://furnish.cachix.org" ];
+nix.settings.extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
+```
+
+Without the cache, and for revisions other than `main`, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so furnish's dependencies are compiled once.

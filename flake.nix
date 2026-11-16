@@ -4,8 +4,17 @@
   # Stable NixOS; furnish keeps to its Rust (rust-version in Cargo.toml). Admins can build it
   # against their own nixpkgs with `inputs.furnish.inputs.nixpkgs.follows = "nixpkgs"`.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+  # Builds the Rust dependencies once for both packages (cargoArtifacts below).
+  inputs.crane.url = "github:ipetkov/crane/v0.23.4";
 
-  outputs = { self, nixpkgs }:
+  # Builds of main, so admins download furnish instead of compiling it. Nix asks once whether to
+  # trust these settings; alternatively add both to nix.settings (docs/site/admins.md).
+  nixConfig = {
+    extra-substituters = [ "https://furnish.cachix.org" ];
+    extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
+  };
+
+  outputs = { self, nixpkgs, crane }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -46,20 +55,58 @@
           rm -f ${pkgs.lib.concatMapStringsSep " " (f: "$out/${f}") dsc.exclude}
           cp ${filecontent}/bin/filecontent ${filecontent.src}/resources/filecontent/filecontent.dsc.resource.json $out/
         '';
-      cargoLock = {
-        lockFile = ./Cargo.lock;
-        outputHashes."dsc-lib-3.2.0" = "sha256-BPAiKwKmE8WcLczAoXq6xjFWEpoWMqegz/9T9yYRBV8=";
+      # Shared by the dependency build and both packages: features, environment and build inputs
+      # must be identical, or cargo rebuilds dependencies instead of reusing cargoArtifacts.
+      rust = pkgs: rec {
+        craneLib = crane.mkLib pkgs;
+        commonArgs = {
+          pname = "furnish-workspace";
+          inherit version src;
+          strictDeps = true;
+          # One download of all crates (as buildRustPackage's cargoHash), in crane's layout.
+          cargoVendorDir = let vendor = pkgs.rustPlatform.fetchCargoVendor {
+            inherit src;
+            hash = "sha256-M4ek8APyeUnlFjePWYAd3/xNHmBlOTG/vI0qkxYMVC4=";
+          }; in pkgs.runCommand "furnish-vendor" { } ''
+            mkdir $out
+            sed "s|@vendor@|${vendor}|" ${vendor}/.cargo/config.toml > $out/config.toml
+          '';
+          # wrapGAppsHook3 changes PKG_CONFIG_PATH, which the GTK crates' build scripts track, so
+          # every derivation has it; only furnish-gui wraps its program.
+          nativeBuildInputs = with pkgs; [ pkg-config wrapGAppsHook3 ];
+          dontWrapGApps = true;
+          buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg libayatana-appindicator ];
+          # Let stdenv strip, as rustPlatform does.
+          CARGO_PROFILE_RELEASE_STRIP = "false";
+          doCheck = false; # tests: `nix flake check` (checks.tests) and CI
+          doNotPostBuildInstallCargoBinaries = true; # installPhaseCommand below
+        };
+        cargoBuildCli = "cargo build --release --locked -p furnish";
+        # tauri/custom-protocol: the app serves the built frontend (gui/dist), not Vite's dev server.
+        cargoBuildGui = "cargo build --release --locked -p furnish-gui --features tauri/custom-protocol";
+        # The dependency tree of both packages, compiled once; furnish and furnish-gui then only
+        # compile their own crates. Both cargo commands run here because they resolve features
+        # differently, which gives some dependencies two builds.
+        cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+          # crane stubs the workspace's own crates; the vendored grammar is a dependency of dsc-lib.
+          dummySrc = craneLib.mkDummySrc {
+            inherit src;
+            extraDummyScript = "rm -rf $out/vendor && cp -r ${./vendor} $out/vendor";
+          };
+          buildPhaseCargoCommand = "${cargoBuildCli}\n${cargoBuildGui}";
+        });
       };
     in {
-      packages = forAll (pkgs: rec {
+      packages = forAll (pkgs: let r = rust pkgs; in rec {
         dsc-resources = dscResources pkgs;
 
         # The CLI (and the furnish service).
-        furnish = pkgs.rustPlatform.buildRustPackage {
+        furnish = r.craneLib.buildPackage (r.commonArgs // {
           pname = "furnish";
-          inherit version src cargoLock;
-          cargoBuildFlags = [ "-p" "furnish" ];
-          cargoTestFlags = [ "-p" "furnish" "--lib" ];
+          inherit (r) cargoArtifacts;
+          buildPhaseCargoCommand = r.cargoBuildCli;
+          doInstallCargoArtifacts = false;
+          installPhaseCommand = "install -Dm755 target/release/furnish -t $out/bin";
           # furnish finds DSC's resources in ../lib/furnish/dsc (engine.rs).
           postInstall = ''
             install -Dm644 packaging/linux/io.github.furnish.policy -t $out/share/polkit-1/actions
@@ -71,26 +118,38 @@
             license = pkgs.lib.licenses.mit;
             mainProgram = "furnish";
           };
-        };
+        });
 
-        # The desktop app.
-        furnish-gui = pkgs.rustPlatform.buildRustPackage (finalAttrs: {
+        # The desktop app: the frontend (npm), the binary (cargo), then Tauri's Debian bundle
+        # layout (binary, desktop file, icons) into $out, as nixpkgs' cargo-tauri.hook does.
+        furnish-gui = r.craneLib.buildPackage (r.commonArgs // {
           pname = "furnish-gui";
-          inherit version src cargoLock;
+          inherit (r) cargoArtifacts;
           npmDeps = pkgs.fetchNpmDeps {
             name = "furnish-gui-npm-deps-${version}";
-            src = "${finalAttrs.src}/gui";
+            src = "${src}/gui";
             hash = "sha256-OK0Pw41CdZTXH7csc323xVgP3FqvmY7sO3vqJqdmX6I=";
           };
           npmRoot = "gui";
-          buildAndTestSubdir = "gui";
-          nativeBuildInputs = with pkgs; [ cargo-tauri.hook nodejs npmHooks.npmConfigHook pkg-config wrapGAppsHook3 ];
-          buildInputs = with pkgs; [ glib-networking openssl webkitgtk_4_1 librsvg libayatana-appindicator ];
-          doCheck = false; # the library's tests run in `furnish`
+          nativeBuildInputs = r.commonArgs.nativeBuildInputs
+            ++ (with pkgs; [ cargo-tauri nodejs npmHooks.npmConfigHook ]);
+          dontWrapGApps = false;
+          preBuild = "(cd gui && npm run build)";
+          buildPhaseCargoCommand = r.cargoBuildGui;
+          doInstallCargoArtifacts = false;
+          installPhaseCommand = ''
+            (cd gui && cargo tauri bundle --bundles deb)
+            mkdir -p $out
+            mv target/release/bundle/deb/*/data/usr/* $out/
+          '';
           postInstall = "mkdir -p $out/lib/furnish && ln -s ${dsc-resources} $out/lib/furnish/dsc";
-          # The tray icon loads libayatana-appindicator at runtime.
+          # The tray icon loads libayatana-appindicator at runtime. GStreamer: as cargo-tauri.hook.
           preFixup = ''
-            gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.libayatana-appindicator ]})
+            gappsWrapperArgs+=(
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.libayatana-appindicator ]}
+              --prefix WEBKIT_GST_ALLOWED_URI_PROTOCOLS : "asset"
+              --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "${pkgs.cargo-tauri.gst-plugin}/lib/gstreamer-1.0/"
+            )
           '';
           meta = furnish.meta // { mainProgram = "furnish-gui"; };
         });
@@ -138,8 +197,14 @@
           };
         };
 
-      checks = forAll (pkgs: {
+      # `nix flake check`: the packages and furnish's library tests (`nix build` runs no tests).
+      checks = forAll (pkgs: let r = rust pkgs; in {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) furnish furnish-gui;
+        tests = r.craneLib.cargoTest (r.commonArgs // {
+          inherit (r) cargoArtifacts;
+          doCheck = true;
+          cargoTestExtraArgs = "-p furnish --lib";
+        });
       });
     };
 }
