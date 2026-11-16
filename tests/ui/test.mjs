@@ -1,10 +1,11 @@
-// UI tests for the real furnish GUI, driven over WebDriver (tauri-driver on localhost:4444).
+// UI tests for the real furnish GUI, driven over WebDriver (tauri-driver on localhost, port DRIVER_PORT).
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
 import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-const DRIVER = 'http://127.0.0.1:4444';
+// run.sh picks the port, so runs side by side (host network) don't meet each other's driver.
+const DRIVER = `http://127.0.0.1:${process.env.DRIVER_PORT || 4444}`;
 const [workDir, screenshot, container] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let session;
@@ -100,8 +101,8 @@ const steps = [
     // Avatars come with the collection list, which loads separately (and again after the update on launch).
     await waitFor('collection avatar on cards', async () => (await findAll("//article//span[contains(@class,'collection')]//img")).length > 0);
     // The fixture's iconDark: offered to dark mode beside the avatar, as an image of its own.
-    const dark = await findAll("//article//span[contains(@class,'collection')]//picture/source[@media='(prefers-color-scheme: dark)'][starts-with(@srcset,'data:image/svg+xml;base64,')]");
-    if (dark.length === 0) throw new Error('no dark-mode avatar on the cards');
+    const dark = "//article//span[contains(@class,'collection')]//picture/source[@media='(prefers-color-scheme: dark)'][starts-with(@srcset,'data:image/svg+xml;base64,')]";
+    await waitFor('dark-mode avatar on the cards', async () => (await findAll(dark)).length > 0);
   }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));

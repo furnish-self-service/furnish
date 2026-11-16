@@ -4,7 +4,8 @@
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const DRIVER = 'http://127.0.0.1:4444';
+// run.sh picks the port, so runs side by side (host network) don't meet each other's driver.
+const DRIVER = `http://127.0.0.1:${process.env.DRIVER_PORT || 4444}`;
 const [scene, , out] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
@@ -191,6 +192,7 @@ const scenes = {
     await click(nav('Settings'));
     const section = "//section[@aria-labelledby='reports-title']";
     await waitFor('reports section', () => find(section));
+    await waitFor('Settings page', async () => (await js("return document.querySelector('main h1')?.textContent")) === 'Settings');
     await js(`document.evaluate("${section}", document, null, 9, null).singleNodeValue.scrollIntoView({block: "center"})`);
     await shot('reports-setting');
     await crop('reports-setting', section);

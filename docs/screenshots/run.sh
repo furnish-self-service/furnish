@@ -6,6 +6,10 @@
 #   e.g. docs/screenshots/run.sh ../self-service-example docs/site/images
 #   SCENES="fallback" docs/screenshots/run.sh ...   # only these scenes (shoot.mjs), for a quick try
 set -eu
+# tauri-driver's port (and the next one for WebKitWebDriver): a random one unless given, so
+# several runs on one machine don't share a driver or X display (the containers use the host network).
+DRIVER_PORT=${DRIVER_PORT:-$(shuf -i 20000-39999 -n 1)}
+export DRIVER_PORT
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 collection=$(realpath "${1:?usage: $0 <collection repo> <output dir>}")
 out=$(realpath -m "${2:?usage: $0 <collection repo> <output dir>}")
@@ -68,7 +72,7 @@ start() {  # start the app in a fresh container: $1 policy file, $2 extra env (e
         -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$1" -e GDK_SCALE=2 -e "${2:-NO_EXTRA=1}" \
         -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
         -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" furnish-screenshots \
-        sh -c 'Xvfb :99 -screen 0 2400x1600x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
+        sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 2400x1600x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
 }
 shoot() { case " ${SCENES:-$1} " in *" $1 "*) node "$repo/docs/screenshots/shoot.mjs" "$1" "$work" "$out" ;; esac; }
 start "$work/policy.json" && shoot main

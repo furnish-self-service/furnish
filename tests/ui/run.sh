@@ -6,6 +6,10 @@
 # The container gets a TTY on purpose: the GUI must still elevate via pkexec, not sudo in a terminal.
 # A fake pacman/sudo/pkexec on PATH records what happened, so no real packages are touched.
 set -eu
+# tauri-driver's port (and the next one for WebKitWebDriver): a random one unless given, so
+# several runs on one machine don't share a driver or X display (the containers use the host network).
+DRIVER_PORT=${DRIVER_PORT:-$(shuf -i 20000-39999 -n 1)}
+export DRIVER_PORT
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 shot="$repo/target/ui-test.png"
 work=$(mktemp -d)
@@ -111,7 +115,7 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
-    sh -c 'Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:99; exec tauri-driver --port 4444' >/dev/null
+    sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
 if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container"; then
