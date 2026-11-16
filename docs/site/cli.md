@@ -19,7 +19,8 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
 | `furnish option set`, `reset` | Change an option, or go back to the collection's value |
 | `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
-| `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`) |
+| `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`). Also shows furnish's version, how it was installed and whether a new version is out; `--self-update auto\|notify\|off` sets what furnish does with new versions of itself |
+| `furnish self-update` | Install the newest version of furnish, if you installed it from the Windows or macOS download. Elsewhere it says how the new version arrives. `--check` only says whether there is one |
 | `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
 
 `-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.

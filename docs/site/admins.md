@@ -47,6 +47,28 @@ furnish installs updates only while it runs. With `startAtSignIn` on, which is t
 
 On Linux, the tray icon needs libayatana-appindicator, which the furnish packages and the Nix package bring along. GNOME shows tray icons only with the AppIndicator extension. Without a tray, closing the window quits furnish.
 
+## Updates of furnish
+
+furnish looks for new versions of itself when it starts and every `updateIntervalMinutes` (with `0`, only when it starts). It reads one small file per channel: `https://furnish-self-service.github.io/furnish/alpha/latest.json` for alpha builds. Offline, it shows nothing. `selfUpdate` decides what furnish does with a new version:
+
+| `selfUpdate` | Installed from the Windows or macOS download | Installed with Homebrew, a Linux package or Nix |
+|---|---|---|
+| `auto` (default) | furnish installs it | furnish shows that it is out and how it arrives |
+| `notify` | furnish shows that it is out; people can install it with Update now | the same as `auto` |
+| `off` | furnish doesn't look | furnish doesn't look |
+
+To keep the version under your control, for example when Intune or an MDM deploys furnish, lock it. With `notify` locked, people see the new version, and neither the app nor `furnish self-update` installs it:
+
+```json
+{ "settings": { "selfUpdate": { "value": "off", "locked": true } } }
+```
+
+Only the policy sets `selfUpdate`; a furnish address can't. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store.
+
+Each download is signed with furnish's update key (minisign, the format of Tauri's updater). The app contains the public key. It installs nothing whose signature doesn't match, or whose signature names another version than the file says. A copy of an older version can't pass as a newer one.
+
+On Windows, the update is the .msi, which installs for all users. Windows asks for administrator rights unless the person is an administrator. The installer stops the furnish service, if it is installed, and starts it again afterwards. On macOS, furnish replaces `furnish.app` where it is. If the person can't change that folder, macOS asks for an administrator's password. The app isn't signed with a publisher certificate, so after an update macOS may ask again before furnish reads its sign-ins from the keychain.
+
 ## Languages
 
 `language` sets the app's language: `"system"` (the default) or one of `en`, `de`, `fr`, `es`, `it`, `pl`, `pt`, `nl`. `fallbackLanguage` is the language for collection texts that have no translation into the app's language. It is a language tag such as `en` (the default), `de` or `pt-BR`, and may be a language the app itself doesn't come in, as long as your collections translate into it. See [Translations](collections.md#translations).
@@ -97,7 +119,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored, and so does the app at the top of its Settings page. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys, such as `selfUpdate`. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored, and so does the app at the top of its Settings page. |
 | `branding` | the app's name and colors, and a logo and tray icon from its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.

@@ -72,6 +72,16 @@ On GNOME, tray icons only show with the AppIndicator extension. Without a tray, 
 
 ![The Updates page with an update waiting.](images/updates.webp)
 
+## New versions of furnish
+
+When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one when it starts and as often as it looks for app updates. Offline, it shows nothing.
+
+If you installed furnish from the Windows or macOS download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
+
+If you installed furnish with Homebrew, the Linux package repository or Nix, About says how the new version arrives: with `brew upgrade`, with your system updates, or with `nix flake update`.
+
+New versions of furnish, also in About, sets what furnish does: install them, only tell you, or not check. With Only tell me, Update now in About installs the version. Your organization may set this. On the command line, `furnish self-update` installs the new version and `furnish settings` shows how furnish was installed.
+
 ## Options
 
 Some apps can be installed in more than one way, for example for all users or only for you. An app's page shows its options; the Collections page shows the options that apply to all apps of a collection. Your organization may set some of them. If you change an option of an installed app, its page offers Reinstall with these options.

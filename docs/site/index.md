@@ -27,7 +27,19 @@ On macOS, Homebrew installs the desktop app and the `furnish` command, and `brew
 brew install --cask furnish-self-service/tap/furnish
 ```
 
-The Windows and macOS builds aren't signed yet. On Windows, choose More info → Run anyway when SmartScreen warns. On macOS, open furnish from Applications once, then allow it under System Settings → Privacy & Security → Open Anyway. Do this before you use the `furnish` command. macOS asks again after each upgrade until the app is signed. Without Homebrew, download a new alpha to update; furnish doesn't update itself on Windows and macOS yet.
+The Windows and macOS builds aren't signed with a publisher certificate. On Windows, choose More info → Run anyway when SmartScreen warns. On macOS, open furnish from Applications once, then allow it under System Settings → Privacy & Security → Open Anyway. Do this before you use the `furnish` command. macOS may ask again after an update.
+
+How new versions of furnish arrive depends on how you installed it:
+
+| Installed with | New versions |
+|---|---|
+| the Windows download | furnish installs them itself |
+| the macOS download | furnish installs them itself |
+| Homebrew | `brew upgrade` |
+| the Linux package repository | your system updates |
+| Nix | `nix flake update` |
+
+When furnish installs a version itself, it checks the download's signature first. It restarts into the new version once nothing is installing and its window is closed. Settings → About shows how furnish was installed and whether a new version is out. See [New versions of furnish](using.md#new-versions-of-furnish).
 
 `brew uninstall --cask furnish` keeps your settings and collections. Add `--zap` to remove them too.
 
