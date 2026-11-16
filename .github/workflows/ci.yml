@@ -6,11 +6,73 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run per branch or pull request: a new push cancels the one before it. Each run of main has
+# a group of its own, so none is ever cancelled or held back (they publish).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   CARGO_TERM_COLOR: always
   HOMEBREW_NO_AUTO_UPDATE: 1
 
 jobs:
+  # GitHub has few macOS runners. On branches and pull requests, the macOS jobs run only when
+  # something they build or test changed (since the merge base with main); main runs everything.
+  changes:
+    name: Which macOS jobs run
+    runs-on: ubuntu-latest
+    outputs:
+      macos: ${{ steps.areas.outputs.macos }}
+      macos-gui: ${{ steps.areas.outputs.macos-gui }}
+      native-os: ${{ steps.areas.outputs.native-os }}
+      vpn-os: ${{ steps.areas.outputs.vpn-os }}
+      gui-os: ${{ steps.areas.outputs.gui-os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: areas
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          # What the macOS CLI jobs build (src/ embeds packaging/ and resources/ files) and run.
+          macos='^(src/|Cargo\.(toml|lock)$|\.cargo/|vendor/|resources/|scripts/|packaging/(dsc\.json$|macos/|linux/furnish\.service$|linux/io\.github\.furnish\.policy$)|tests/(e2e\.sh|vpn\.sh|service-macos\.sh|fixtures/)|\.github/workflows/ci\.yml$)'
+          # The desktop app and its installers on top (GUI macos-latest, Homebrew cask).
+          gui='^(gui/|THIRD-PARTY-LICENSES\.html$)'
+          if [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_REF" = refs/heads/main ]; then
+            reason="a run of main: everything runs"; files=""; m=true; g=true
+          elif base=$(git merge-base HEAD "origin/$BASE_REF"); then
+            files=$(git diff --name-only "$base" HEAD)
+            reason="changed since the merge base with $BASE_REF ($(git rev-parse --short "$base")): $(grep -c . <<<"$files" || true) file(s)"
+            m=false; g=false
+            grep -qE "$macos" <<<"$files" && m=true
+            [ "$m" = true ] && g=true
+            grep -qE "$gui" <<<"$files" && g=true
+          else
+            reason="no merge base with $BASE_REF: everything runs"; files=""; m=true; g=true
+          fi
+          {
+            echo "macos=$m"; echo "macos-gui=$g"
+            echo "native-os=$([ "$m" = true ] && echo '["macos-latest","windows-latest"]' || echo '["windows-latest"]')"
+            echo "vpn-os=$([ "$m" = true ] && echo '["windows-latest","macos-latest","ubuntu-latest"]' || echo '["windows-latest","ubuntu-latest"]')"
+            echo "gui-os=$([ "$g" = true ] && echo '["ubuntu-24.04","macos-latest","windows-latest"]' || echo '["ubuntu-24.04","windows-latest"]')"
+          } | tee -a "$GITHUB_OUTPUT"
+          run() { [ "$1" = true ] && echo runs || echo "skipped (nothing it tests changed)"; }
+          {
+            echo "### macOS jobs"
+            echo "$reason"
+            echo
+            echo "| Area | Changed | Jobs |"
+            echo "|---|---|---|"
+            echo "| macOS CLI | $m | e2e macos-latest, example VPN app macos-latest, service macos-latest: $(run $m) |"
+            echo "| macOS desktop app | $g | GUI macos-latest, Homebrew cask: $(run $g) |"
+            if [ -n "$files" ]; then
+              echo; echo "<details><summary>Changed files</summary>"; echo; echo '```'
+              head -n 200 <<<"$files"; echo '```'; echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   check:
     name: Unit tests and fake e2e
     runs-on: ubuntu-latest
@@ -174,11 +236,12 @@ jobs:
 
   native:
     name: e2e ${{ matrix.os }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.native-os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -201,11 +264,12 @@ jobs:
   # The example collection's VPN apps (configuration files, removal steps) on each OS.
   vpn:
     name: example VPN app ${{ matrix.os }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: ${{ fromJSON(needs.changes.outputs.vpn-os) }}
     env:
       # The commit of github.com/furnish-self-service/self-service-example to test. To bump it,
       # set the commit you want (git ls-remote <url> main) and check that this job passes.
@@ -230,6 +294,8 @@ jobs:
 
   service-macos:
     name: service macos-latest
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -413,11 +479,12 @@ jobs:
 
   gui:
     name: GUI ${{ matrix.os }}
+    needs: changes
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.gui-os) }}
     steps:
       - uses: actions/checkout@v4
       - if: runner.os == 'Linux'
@@ -511,7 +578,8 @@ jobs:
   # and uninstalled. On main, release-alpha then publishes the .dmg and pushes this cask change.
   homebrew:
     name: Homebrew cask
-    needs: gui
+    needs: [changes, gui]
+    if: needs.changes.outputs.macos-gui == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
