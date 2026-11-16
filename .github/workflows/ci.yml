@@ -399,7 +399,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -423,6 +423,11 @@ jobs:
         with:
           name: furnish-linux-x86_64
           path: new/cli
+      # The updater's signatures of the .msi and .app.tar.gz (update-feed job): publish.sh writes the feed.
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-update-signatures
+          path: new/desktop
       - run: sudo apt-get install -y -qq apt-utils createrepo-c
       - run: echo "$REPO_SIGNING_KEY" | gpg --batch --import
         env:
@@ -437,6 +442,16 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+      # What furnish's updater reads now: every download matches its signature under the app's key.
+      - name: The published update feed verifies
+        run: |
+          for i in $(seq 30); do
+            curl -fsS "$BASE_URL/alpha/latest.json" | jq -e --arg v "$(jq -r .version site/alpha/latest.json)" '.version == $v' > /dev/null && break
+            sleep 10
+          done
+          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "$BASE_URL/alpha/latest.json"
+        env:
+          BASE_URL: https://furnish-self-service.github.io/furnish
 
   # Each alpha as a GitHub pre-release with a fixed download URL, and the Homebrew cask
   # (furnish-self-service/homebrew-tap) pointed at it. The `homebrew` job tested that cask.
@@ -591,7 +606,9 @@ jobs:
         run: |
           mkdir -p desktop
           case "$RUNNER_OS" in
-            macOS)   cp target/release/bundle/dmg/*.dmg "desktop/furnish_${FURNISH_VERSION}_$(uname -m).dmg" ;;
+            # The .app.tar.gz is what furnish's updater installs (signed in the update-feed job).
+            macOS)   cp target/release/bundle/dmg/*.dmg "desktop/furnish_${FURNISH_VERSION}_$(uname -m).dmg"
+                     COPYFILE_DISABLE=1 tar -czf "desktop/furnish_${FURNISH_VERSION}_$(uname -m).app.tar.gz" -C target/release/bundle/macos furnish.app ;;
             Windows) cp target/release/bundle/msi/*.msi "desktop/furnish_${FURNISH_VERSION}_x64.msi" ;;
           esac
       - if: runner.os != 'Linux'
@@ -606,6 +623,110 @@ jobs:
           path: |
             target/release/bundle/
             target/ui-test.png
+      # The same app as a higher version (patch + 1), for the self-update job to update to. Last:
+      # it replaces target/release/bundle/.
+      - name: Build the next version for the self-update test
+        if: runner.os != 'Linux'
+        shell: bash
+        working-directory: gui
+        run: |
+          base=${FURNISH_VERSION%%+*}; rest=${FURNISH_VERSION#"$base"}
+          IFS=. read -r major minor patch <<< "$base"
+          next="$major.$minor.$((patch + 1))$rest"
+          FURNISH_VERSION=$next npm run bundle
+          mkdir -p ../next
+          case "$RUNNER_OS" in
+            macOS)   COPYFILE_DISABLE=1 tar -czf "../next/furnish_${next}_$(uname -m).app.tar.gz" -C ../target/release/bundle/macos furnish.app ;;
+            Windows) cp ../target/release/bundle/msi/*.msi "../next/furnish_${next}_x64.msi" ;;
+          esac
+      - if: runner.os != 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: furnish-next-${{ runner.os }}
+          path: next/
+
+  # furnish's own updates (src/selfupdate.rs): this build's .msi and .app.tar.gz signed with the
+  # updater key, and a feed for them that verifies against the public key the app embeds. Also the
+  # next version (gui job), signed, with a feed on 127.0.0.1 for the self-update job.
+  update-feed:
+    name: update feed (signed, verified against the app's key)
+    needs: gui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: furnish-desktop-*
+          path: desktop
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: furnish-next-*
+          path: next
+          merge-multiple: true
+      - run: npm ci
+        working-directory: gui
+      - name: Sign the downloads
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY isn't available (a pull request from a fork?)"; exit 1; }
+          # Each signature names its version, as SemVer (0.1.0+alpha.42 signs as 0.1.0-alpha.42).
+          for f in desktop/*.msi desktop/*.app.tar.gz next/*.msi next/*.app.tar.gz; do
+            v=$(basename "$f" | sed -E 's/^furnish_(.*)_(x64|arm64)\..*$/\1/; s/\+alpha\./-alpha./')
+            (cd gui && npx tauri signer sign --app-version "$v" "../$f" > /dev/null)
+            echo "signed $f for $v"
+          done
+      - name: The feed for this build verifies against the app's public key
+        run: |
+          mkdir -p feed/windows feed/macos roundtrip/windows roundtrip/macos
+          cp desktop/*.msi desktop/*.msi.sig feed/windows/ && cp desktop/*.app.tar.gz desktop/*.app.tar.gz.sig feed/macos/
+          packaging/repo/update-feed.sh feed https://furnish-self-service.github.io/furnish/alpha
+          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs feed/latest.json feed
+          cp next/*.msi next/*.msi.sig roundtrip/windows/ && cp next/*.app.tar.gz next/*.app.tar.gz.sig roundtrip/macos/
+          packaging/repo/update-feed.sh roundtrip http://127.0.0.1:8765
+          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs roundtrip/latest.json roundtrip
+          cat feed/latest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-update-signatures
+          path: desktop/*.sig
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-selfupdate-feed
+          path: roundtrip/
+
+  # The installed app updates itself to the next version from a feed on the runner: the desktop
+  # app on its own, then `furnish self-update` (on Windows with the furnish service running).
+  self-update:
+    name: self-update ${{ matrix.os }}
+    needs: update-feed
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-desktop-${{ runner.os }}
+          path: desktop
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-selfupdate-feed
+          path: feed
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: tests/self-update.ps1 -Msi (Get-Item desktop/*.msi).FullName -Feed feed
+      - if: runner.os == 'macOS'
+        run: tests/self-update-macos.sh desktop/*.dmg feed
 
   # The Homebrew cask (furnish-self-service/homebrew-tap) with this build's .dmg: audited, installed
   # and uninstalled. On main, release-alpha then publishes the .dmg and pushes this cask change.

@@ -203,6 +203,33 @@ export const installCurrent = (key: string, trigger?: Trigger) => invoke<FellBac
 /** The version furnish would fall back to; rejects with the reason if there is none. */
 export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
 export const version = () => invoke<string>('version');
+
+/** How furnish was installed: furnish installs its own updates only for `msi` and `app`. */
+export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'nix' | 'other';
+/** furnish's own updates (src-tauri/src/selfupdate.rs). */
+export interface SelfUpdateStatus {
+  method: InstallMethod;
+  /** The setting as it applies here: `auto` only where furnish installs its updates. */
+  mode: 'auto' | 'notify' | 'off';
+  locked: boolean;
+  current: string;
+  /** A newer version the last check found. */
+  available: string | null;
+  notes: string | null;
+  /** `ready`: downloaded and checked, installs and restarts when nothing is installing. */
+  state: 'idle' | 'checking' | 'downloading' | 'ready';
+  error: string | null;
+}
+export const selfUpdateStatus = () => invoke<SelfUpdateStatus>('self_update_status');
+/** Ask for a newer version; `download`: fetch it now even if only notifying (Update now). */
+export const checkSelfUpdate = (download = false) => invoke<SelfUpdateStatus>('check_self_update', { download });
+/** Install the downloaded version and restart, unless something installs (or, with
+ *  `onlyHidden`, the window is open). Resolves to whether it did. */
+export const applySelfUpdate = (onlyHidden: boolean) => invoke<boolean>('apply_self_update', { onlyHidden });
+export const onSelfUpdate = (handler: (s: SelfUpdateStatus) => void) =>
+  listen<SelfUpdateStatus>('furnish://self-update', (e) => handler(e.payload));
+/** Restart to update, chosen in the tray menu. */
+export const onRestartToUpdate = (handler: () => void) => listen('furnish://restart-to-update', () => handler());
 /** Open the list of open-source components and their licenses in the browser. */
 export const openLicenses = () => invoke<void>('open_licenses');
 /** Change a setting for one collection; null returns it to the general setting. */
@@ -284,6 +311,8 @@ export interface Settings {
   language: 'system' | import('./i18n.ts').Lang;
   /** Collection texts not translated into the app's language show in this one (a language tag). */
   fallbackLanguage: string;
+  /** New versions of furnish: install them where furnish can, only say so, or don't check. */
+  selfUpdate: 'auto' | 'notify' | 'off';
 }
 
 export interface Load {
@@ -305,6 +334,8 @@ export interface TrayTexts {
   check: string;
   settings: string;
   quit: string;
+  /** Shown while a new version of furnish waits to be installed. */
+  restart: string;
   status: string;
   tooltip: string;
 }

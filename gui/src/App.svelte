@@ -113,7 +113,12 @@
         <span class="count pending" role="img" aria-label={t('nav.collectionUpdates', { n: collectionUpdates() })}>{collectionUpdates()}</span>
       {/if}
     </button>
-    <button class:active={isActive('settings')} onclick={() => go({ page: 'settings' })}>{t('nav.settings')}</button>
+    <button class:active={isActive('settings')} onclick={() => go({ page: 'settings' })}>
+      {t('nav.settings')}
+      {#if store.selfUpdate?.available && store.selfUpdate.mode !== 'off'}
+        <span class="dot" role="img" aria-label={t('nav.selfUpdate', { brand: store.brand.name })} title={t('nav.selfUpdate', { brand: store.brand.name })}></span>
+      {/if}
+    </button>
   </nav>
 
   <main>
@@ -312,6 +317,13 @@
     background: var(--accent);
     color: var(--on-accent);
     font-weight: 700;
+  }
+  /* A new version of furnish: a quiet mark, not a count. */
+  .dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--accent);
   }
   .spacer {
     flex: 1;

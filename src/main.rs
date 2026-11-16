@@ -107,6 +107,17 @@ enum Command {
         /// language (a language tag such as en, de or pt-BR)
         #[arg(long, value_name = "LANGUAGE")]
         fallback_language: Option<String>,
+        /// New versions of furnish: install them where furnish can (auto), only say so (notify),
+        /// or don't check (off)
+        #[arg(long, value_parser = ["auto", "notify", "off"])]
+        self_update: Option<String>,
+    },
+    /// Install furnish's newest version, where nothing else updates furnish (installed from the
+    /// Windows .msi or the macOS .dmg). Elsewhere: say whether there is one and how it arrives.
+    SelfUpdate {
+        /// Only say whether there is a newer version
+        #[arg(long)]
+        check: bool,
     },
     /// Show the reports waiting to be sent to your organization, and where they go
     Reports,
@@ -271,7 +282,7 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::Reports | Command::Check { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
+    if !matches!(command, Command::Settings { .. } | Command::SelfUpdate { .. } | Command::Reports | Command::Check { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
@@ -366,8 +377,12 @@ fn run(command: Command) -> Result<()> {
         }
         Command::Option(cmd) => option(cmd),
         Command::Reports => reports(),
+        Command::SelfUpdate { check } => self_update(check),
         Command::Check { dir } => check(&dir),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language } => {
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language, self_update } => {
+            if let Some(v) = self_update {
+                furnish::settings::set("selfUpdate", v.into())?;
+            }
             if let Some(v) = fallback_language {
                 furnish::settings::set("fallbackLanguage", v.into())?;
             }
@@ -436,6 +451,7 @@ fn run(command: Command) -> Result<()> {
             };
             println!("reports:           {level}{}{}", if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
             println!("fallback language: {} (for collection texts not in the app's language){}", s.fallback_language, org("fallbackLanguage"));
+            print_self_update(s.self_update, org("selfUpdate"));
             let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
             print_collection_settings(&general, &effective.locked);
             if !s.collections.is_empty() {
@@ -445,6 +461,76 @@ fn run(command: Command) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// How a new version of furnish arrives, after "furnish 1.2.3 is available.".
+fn arrives(method: furnish::selfupdate::Method) -> &'static str {
+    use furnish::selfupdate::Method;
+    match method {
+        Method::Msi | Method::App => "`furnish self-update` installs it.",
+        Method::Homebrew => "It arrives with `brew upgrade`.",
+        Method::Deb | Method::Rpm => "It arrives with your system updates.",
+        Method::Nix => "It arrives with `nix flake update`.",
+        Method::Other => "Install it the way you installed furnish.",
+    }
+}
+
+/// furnish's version, how it was installed, whether a newer one is out (unless that is off).
+fn print_self_update(mode: furnish::settings::SelfUpdate, org: &str) {
+    use furnish::{selfupdate, settings::SelfUpdate};
+    let method = selfupdate::detect();
+    let current = selfupdate::current();
+    let mode_text = match selfupdate::effective(mode, method) {
+        SelfUpdate::Auto => "install automatically",
+        SelfUpdate::Notify => "only tell",
+        SelfUpdate::Off => "don't check",
+    };
+    let installed = if method == selfupdate::Method::Other { String::new() } else { format!(", installed with {}", method.name()) };
+    println!("furnish:           {current}{installed}");
+    println!("new versions:      {mode_text}{org}");
+    if mode == SelfUpdate::Off {
+        return;
+    }
+    match selfupdate::check(current) {
+        Ok(Some(available)) => println!("                   furnish {} is available. {}", available.version, arrives(method)),
+        Ok(None) => println!("                   this is the newest version"),
+        Err(err) => println!("                   couldn't check for a newer version: {err:#}"),
+    }
+}
+
+/// `furnish self-update`: install the newest version where furnish does that itself.
+fn self_update(check_only: bool) -> Result<()> {
+    use furnish::{selfupdate, settings::SelfUpdate};
+    let effective = furnish::settings::effective();
+    let locked = effective.locked.iter().any(|k| k == "selfUpdate");
+    let mode = effective.settings.self_update;
+    if locked && mode == SelfUpdate::Off {
+        anyhow::bail!("your organization turned off updates of furnish");
+    }
+    let method = selfupdate::detect();
+    let current = selfupdate::current();
+    let manifest = selfupdate::fetch(&selfupdate::feed_url(current))?;
+    let Some(available) = manifest.newer_than(current) else {
+        println!("✓ furnish {current} is the newest version");
+        return Ok(());
+    };
+    println!("furnish {} is available (this is {current}). {}", available.version, arrives(method));
+    if check_only || !method.updates_itself() {
+        return Ok(());
+    }
+    if locked && mode == SelfUpdate::Notify {
+        anyhow::bail!("your organization installs new versions of furnish");
+    }
+    println!("⟳ Downloading furnish {}…", available.version);
+    match selfupdate::install(&manifest, method)? {
+        selfupdate::Installed::InstallerStarted => {
+            println!("✓ The Windows installer installs furnish {} now; it may ask for administrator rights.", available.version)
+        }
+        selfupdate::Installed::Replaced(app) => {
+            println!("✓ Installed furnish {} in {}. The desktop app uses it from its next start.", available.version, app.display())
+        }
+    }
+    Ok(())
 }
 
 fn list() -> Result<()> {

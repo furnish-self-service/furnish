@@ -16,6 +16,8 @@ anyhow = "1"
 base64 = "0.22"
 serde_json = "1"
 tauri-plugin-deep-link = "2"
+# furnish's own updates where nothing else installs them (Windows MSI, macOS app; see selfupdate.rs).
+tauri-plugin-updater = "=2.14.1"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # Starting at sign-in (Windows Run key, macOS LaunchAgent, Linux XDG autostart). Used directly
 # rather than through tauri-plugin-autostart, which always registers the running binary: on Nix

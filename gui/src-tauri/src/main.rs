@@ -4,6 +4,7 @@
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
 mod autostart;
+mod selfupdate;
 mod tray;
 mod tray_icon;
 
@@ -382,7 +383,27 @@ async fn reinstall(app: tauri::AppHandle, key: String, trigger: Option<String>) 
 /// furnish's version (builds of main: 0.1.0+alpha.<build>).
 #[tauri::command]
 fn version() -> &'static str {
-    option_env!("FURNISH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+    furnish::selfupdate::current()
+}
+
+/// How furnish was installed and whether a newer version of it is out or ready to install.
+#[tauri::command]
+fn self_update_status() -> selfupdate::Status {
+    selfupdate::status()
+}
+
+/// Ask the feed for a newer version of furnish; `download`: fetch it even if `selfUpdate` is
+/// `notify` (someone chose Update now).
+#[tauri::command]
+async fn check_self_update(app: tauri::AppHandle, download: bool) -> selfupdate::Status {
+    selfupdate::check(app, download).await
+}
+
+/// Install the downloaded version and restart into it, unless something is installing (or, with
+/// `onlyHidden`, the window is open). Returns whether it did; on success furnish restarts.
+#[tauri::command]
+fn apply_self_update(app: tauri::AppHandle, only_hidden: bool) -> CmdResult<bool> {
+    selfupdate::apply(&app, only_hidden)
 }
 
 /// Show the open-source components and their licenses: the installer's copy, else the website's.
@@ -701,6 +722,7 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
             // Started at sign-in: only the tray icon, the window stays hidden until opened.
@@ -762,6 +784,9 @@ fn main() {
             previous_version,
             set_collection_setting,
             version,
+            self_update_status,
+            check_self_update,
+            apply_self_update,
             open_licenses,
             report_destinations,
             nixos_setup,

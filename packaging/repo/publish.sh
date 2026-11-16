@@ -15,13 +15,18 @@ apt="$site/$channel/apt"; rpm="$site/$channel/rpm"; mac="$site/$channel/macos"; 
 mkdir -p "$apt/pool/main" "$apt/dists/furnish/main/binary-amd64" "$rpm/x86_64" "$mac" "$win"
 find "$packages" -name '*.deb' -exec cp {} "$apt/pool/main/" \;
 find "$packages" -name '*.rpm' -exec cp {} "$rpm/x86_64/" \;
-# The desktop app for macOS and Windows: downloads, no package manager (unsigned for now).
-find "$packages" -name '*.dmg' -exec cp {} "$mac/" \;
-find "$packages" -name '*.msi' -exec cp {} "$win/" \;
+# The desktop app for macOS and Windows: downloads, no package manager (unsigned for now). For
+# its built-in updater also the macOS app as .app.tar.gz, and the signatures (.sig) of both.
+find "$packages" \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) -exec cp {} "$mac/" \;
+find "$packages" \( -name '*.msi' -o -name '*.msi.sig' \) -exec cp {} "$win/" \;
 
-# Keep the newest versions only (GitHub Pages sites are limited to 1 GB).
-prune() { ls "$1" | sort -V | head -n "-${KEEP:-5}" | while read -r f; do rm -f "$1/$f"; done; }
-prune "$apt/pool/main"; prune "$rpm/x86_64"; prune "$mac"; prune "$win"
+# Keep the newest versions only (GitHub Pages sites are limited to 1 GB), per kind of file.
+prune() { ls "$1" | grep -E "${2:-.}" | sort -V | head -n "-${KEEP:-5}" | while read -r f; do rm -f "$1/$f"; done; }
+prune "$apt/pool/main"; prune "$rpm/x86_64"
+prune "$mac" '\.dmg$'; prune "$mac" '\.app\.tar\.gz$'; prune "$mac" '\.app\.tar\.gz\.sig$'
+prune "$win" '\.msi$'; prune "$win" '\.msi\.sig$'
+# The feed furnish's updater reads, for the newest signed version.
+if ls "$win" "$mac" | grep -q '\.sig$'; then "$here/update-feed.sh" "$site/$channel" "$BASE_URL/$channel"; fi
 # Stable links to the newest download, for the website.
 latest() { ls "$1" | grep -E "$2\$" | sort -V | tail -n 1; }
 if [ -n "$(latest "$mac" .dmg)" ]; then cp "$mac/$(latest "$mac" .dmg)" "$site/$channel/furnish-macos.dmg"; fi
@@ -58,5 +63,5 @@ REPO
 echo "deb [signed-by=/etc/apt/keyrings/furnish.asc] $BASE_URL/$channel/apt furnish main" > "$site/$channel/furnish.list"
 
 # What fetch.sh restores next time: the packages of every channel.
-(cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -path '*/macos/*.dmg' -o -path '*/windows/*.msi' \) | sed 's|^\./||' | sort) > "$site/packages.txt"
-echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$mac" | wc -l) .dmg and $(ls "$win" | wc -l) .msi in $channel"
+(cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -path '*/macos/*' -o -path '*/windows/*' \) -type f | sed 's|^\./||' | sort) > "$site/packages.txt"
+echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$mac" | grep -c '\.dmg$') .dmg and $(ls "$win" | grep -c '\.msi$') .msi in $channel"

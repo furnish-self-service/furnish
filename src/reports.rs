@@ -101,7 +101,7 @@ pub fn with_trigger<T>(trigger: &'static str, f: impl FnOnce() -> T) -> T {
 }
 
 pub fn version() -> &'static str {
-    option_env!("FURNISH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+    crate::selfupdate::current()
 }
 
 fn dir() -> PathBuf {

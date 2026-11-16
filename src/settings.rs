@@ -46,6 +46,9 @@ pub struct Settings {
     /// The language for a collection's texts when they aren't translated into the app's language
     /// (a BCP 47 tag such as `en` or `pt-BR`; see `locale`).
     pub fallback_language: String,
+    /// furnish's own updates (see `selfupdate`): install new versions where furnish can, only
+    /// say that one is out, or don't check. Only the admin policy can lock it.
+    pub self_update: SelfUpdate,
 }
 
 /// The languages of the desktop app (`Language` without `System`).
@@ -65,6 +68,19 @@ pub enum Language {
     Pl,
     Pt,
     Nl,
+}
+
+/// furnish's own updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SelfUpdate {
+    /// Install new versions where nothing else does (the Windows MSI, the macOS app from the
+    /// .dmg); elsewhere like `Notify`.
+    Auto,
+    /// Only say that a new version is out, and how it arrives.
+    Notify,
+    /// Don't look for new versions.
+    Off,
 }
 
 /// What furnish does when installing or updating an app fails.
@@ -118,6 +134,7 @@ impl Default for Settings {
             collections: Default::default(),
             language: Language::System,
             fallback_language: "en".into(),
+            self_update: SelfUpdate::Auto,
         }
     }
 }
@@ -397,6 +414,23 @@ mod tests {
         let e = merge(&p, off.as_object().unwrap());
         assert!(e.settings.start_at_sign_in);
         assert_eq!(e.locked, ["startAtSignIn"]);
+    }
+
+    #[test]
+    fn self_update_is_auto_by_default_lockable_and_not_an_endpoints_to_set() {
+        assert_eq!(Settings::default().self_update, SelfUpdate::Auto);
+        let e = merge(&Policy::default(), json!({"selfUpdate": "notify"}).as_object().unwrap());
+        assert_eq!(e.settings.self_update, SelfUpdate::Notify);
+        // A policy default yields to the user; a locked value doesn't.
+        let p = policy(json!({"settings": {"selfUpdate": {"value": "off"}}}));
+        assert_eq!(merge(&p, &Map::new()).settings.self_update, SelfUpdate::Off);
+        assert_eq!(merge(&p, json!({"selfUpdate": "auto"}).as_object().unwrap()).settings.self_update, SelfUpdate::Auto);
+        let p = policy(json!({"settings": {"selfUpdate": {"value": "off", "locked": true}}}));
+        let e = merge(&p, json!({"selfUpdate": "auto"}).as_object().unwrap());
+        assert_eq!(e.settings.self_update, SelfUpdate::Off);
+        assert_eq!(e.locked, ["selfUpdate"]);
+        assert!(check_value("selfUpdate", &json!("sometimes")).is_err());
+        assert!(!crate::policy::ENDPOINT_SETTINGS.contains(&"selfUpdate"));
     }
 
     #[test]

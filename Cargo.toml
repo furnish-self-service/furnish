@@ -18,7 +18,10 @@ dirs = "7.0.0"
 dsc-lib = { git = "https://github.com/PowerShell/DSC", tag = "v3.3.0" }
 getrandom = "0.4.3"
 keyring = "4.2.0"
+# Checks furnish's own updates against their signatures, like Tauri's updater (see selfupdate.rs).
+minisign-verify = "0.3"
 plist = "1.10.3"
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = "0.9.34"
@@ -51,3 +54,6 @@ libc = "0.2"
 windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 winreg = "0.56.0"
+
+[dev-dependencies]
+tempfile = "3"

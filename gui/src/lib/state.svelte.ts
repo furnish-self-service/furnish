@@ -106,6 +106,10 @@ export const store = $state({
     /** Why automatic app updates are waiting (computer busy), if they are. */
     postponed: null as string | null,
   },
+  /** furnish's own updates: how it was installed, a newer version, its download. */
+  selfUpdate: null as api.SelfUpdateStatus | null,
+  /** Restart to update was chosen: it happens once nothing is installing. */
+  restartWanted: false,
 });
 
 api.onProgress((p) => {
@@ -334,6 +338,7 @@ export async function checkForUpdates() {
     store.autoUpdate.running = false;
     store.autoUpdate.lastAt = Date.now();
   }
+  checkSelfUpdate();
   for (const app of store.apps) {
     const s = store.status[app.key];
     if ((s === 'installed' || s === 'needsUpdate') && !isPending(app.key)) await checkStatus(app.key);
@@ -346,6 +351,48 @@ export function setAutoUpdate(key: string, on: boolean) {
   const off = (store.settings?.noAutoUpdate ?? []).filter((k) => k !== key);
   changeSettings({ noAutoUpdate: on ? off : [...off, key] });
 }
+
+// --- furnish's own updates
+
+let selfCheckedAt = 0;
+/** Ask for a newer furnish (one small request; offline it says nothing). On launch, with the
+ *  update interval and from Check now; at most once a minute. */
+export async function checkSelfUpdate(download = false) {
+  if (!download && Date.now() - selfCheckedAt < 60_000) return;
+  selfCheckedAt = Date.now();
+  store.selfUpdate = await api.checkSelfUpdate(download).catch(() => store.selfUpdate);
+  maybeApplySelfUpdate();
+}
+
+const idle = () => !Object.keys(store.busy).length && !store.queue.length;
+
+/** Install a downloaded furnish once nothing is installing: when Restart to update was chosen,
+ *  or (automatic updates) while the window is closed to the tray. */
+export async function maybeApplySelfUpdate() {
+  const s = store.selfUpdate;
+  if (s?.state !== 'ready' || !idle()) return;
+  if (!store.restartWanted && s.mode !== 'auto') return;
+  try {
+    await api.applySelfUpdate(!store.restartWanted); // on success furnish restarts
+  } catch (e) {
+    store.restartWanted = false;
+    toast('error', t('settings.selfUpdateFailed', { brand: store.brand.name }), message(e));
+  }
+}
+
+export function restartToUpdate() {
+  store.restartWanted = true;
+  maybeApplySelfUpdate();
+}
+
+api.onSelfUpdate((s) => {
+  store.selfUpdate = s;
+  maybeApplySelfUpdate();
+});
+api.onRestartToUpdate(restartToUpdate);
+api.onToTray(() => maybeApplySelfUpdate());
+// While the window stays closed, try again from time to time (an install may have ended).
+setInterval(maybeApplySelfUpdate, 60_000);
 
 let timer: ReturnType<typeof setInterval> | undefined;
 let lookTimer: ReturnType<typeof setInterval> | undefined;
@@ -399,6 +446,8 @@ async function reloadSettings() {
 /** App start: load settings and the catalog, then update collections if enabled. */
 export async function start() {
   await reloadSettings();
+  api.selfUpdateStatus().then((s) => (store.selfUpdate ??= s)).catch(() => {});
+  checkSelfUpdate();
   // furnish:// links: the one furnish started with, and those arriving while it runs.
   api.onLink(openLink);
   api.pendingLink().then((url) => url && openLink(url)).catch(() => {});
@@ -437,6 +486,7 @@ export function trayTexts(): api.TrayTexts {
     check: t('tray.check'),
     settings: t('tray.settings'),
     quit: t('tray.quit', { brand }),
+    restart: t('tray.restartToUpdate'),
     status,
     tooltip: status ? t('tray.tooltip', { brand, status }) : brand,
   };
@@ -540,6 +590,10 @@ export async function changeSettings(change: Partial<Settings>) {
     if (change.language) setLanguage(change.language);
     schedule();
     if ('loadAwareUpdates' in change) await updateApps(); // postponed updates may go ahead now
+    if ('selfUpdate' in change) {
+      store.selfUpdate = await api.selfUpdateStatus();
+      if (change.selfUpdate !== 'off') checkSelfUpdate(change.selfUpdate === 'auto');
+    }
   } catch (e) {
     toast('error', t('toast.saveSettings'), message(e));
   }
@@ -660,7 +714,10 @@ export function clearQueue() {
 async function pump() {
   if (Object.keys(store.busy).length) return;
   const next = store.queue.shift();
-  if (!next) return;
+  if (!next) {
+    maybeApplySelfUpdate();
+    return;
+  }
   const app = store.apps.find((a) => a.key === next.key);
   if (app) {
     const ok = await runOperation(app, next.action, next.auto);

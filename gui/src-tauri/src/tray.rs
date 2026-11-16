@@ -29,6 +29,9 @@ pub struct Texts {
     pub check: String,
     pub settings: String,
     pub quit: String,
+    /// Shown while a new version of furnish waits to be installed (see `selfupdate`).
+    #[serde(default)]
+    pub restart: String,
     /// Updates waiting or what furnish is installing; empty: nothing.
     pub status: String,
     pub tooltip: String,
@@ -42,6 +45,7 @@ impl Texts {
             check: "Check for updates".into(),
             settings: "Settings…".into(),
             quit: format!("Quit {brand}"),
+            restart: "Restart to update".into(),
             status: String::new(),
             tooltip: brand.into(),
         }
@@ -52,6 +56,25 @@ impl Texts {
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
 /// Quit was asked for while one ran: quit when it ends, start nothing new.
 static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// Installs, updates and uninstalls running now.
+pub fn running() -> usize {
+    RUNNING.load(Ordering::SeqCst)
+}
+
+/// A new version of furnish is downloaded: the menu offers Restart to update.
+static UPDATE_READY: AtomicBool = AtomicBool::new(false);
+/// The menu's texts as last sent, to show it again when that changes.
+static TEXTS: Mutex<Option<Texts>> = Mutex::new(None);
+
+pub fn set_update_ready(app: &AppHandle, ready: bool) {
+    if UPDATE_READY.swap(ready, Ordering::SeqCst) != ready {
+        let texts = TEXTS.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(texts) = texts {
+            let _ = update(app, &texts);
+        }
+    }
+}
 
 /// Held while an install, update or uninstall runs. `None` once furnish is quitting.
 pub struct Running(AppHandle);
@@ -104,6 +127,10 @@ fn menu(app: &AppHandle, texts: &Texts) -> tauri::Result<Menu<tauri::Wry>> {
             false,
             None::<&str>,
         )?)?;
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+    if UPDATE_READY.load(Ordering::SeqCst) && !texts.restart.is_empty() {
+        menu.append(&MenuItem::with_id(app, "restart", &texts.restart, true, None::<&str>)?)?;
         menu.append(&PredefinedMenuItem::separator(app)?)?;
     }
     menu.append(&MenuItem::with_id(
@@ -165,6 +192,10 @@ pub fn create(app: &AppHandle, texts: &Texts) -> tauri::Result<()> {
                 let _ = app.emit("furnish://open-settings", ());
             }
             "quit" => quit(app),
+            // The window installs it once nothing is installing (see `selfupdate`).
+            "restart" => {
+                let _ = app.emit("furnish://restart-to-update", ());
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -348,6 +379,7 @@ mod windows_theme {
 
 /// New texts: the language, the brand or the status changed.
 pub fn update(app: &AppHandle, texts: &Texts) -> tauri::Result<()> {
+    *TEXTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(texts.clone());
     if let Some(tray) = app.tray_by_id(ID) {
         tray.set_menu(Some(menu(app, texts)?))?;
         tray.set_tooltip(Some(&texts.tooltip))?;

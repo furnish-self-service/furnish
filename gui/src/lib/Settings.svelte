@@ -3,7 +3,7 @@
   // and what it is. One section per topic, one idea per row: what it does on the left, the
   // control on the right. Settings the admin policy locks stay visible, not editable.
   import * as api from './api';
-  import { store, changeSettings, checkForUpdates, toast, isLocked } from './state.svelte';
+  import { store, changeSettings, checkForUpdates, checkSelfUpdate, restartToUpdate, toast, isLocked } from './state.svelte';
   import { t, parts, formatTime } from './i18n.svelte';
   import { languages, type Lang } from './i18n.ts';
 
@@ -34,6 +34,39 @@
   api.nixosSetup().then((s) => (nixos = s)).catch(() => {});
 
   const brand = $derived(store.brand.name);
+
+  // furnish's own updates: it installs them itself only when installed from the .msi or .dmg.
+  const self = $derived(store.selfUpdate);
+  const updatesItself = $derived(self?.method === 'msi' || self?.method === 'app');
+  const methods: Record<api.InstallMethod, string> = $derived({
+    msi: t('settings.methodMsi'),
+    app: t('settings.methodApp'),
+    homebrew: t('settings.methodHomebrew'),
+    deb: t('settings.methodDeb'),
+    rpm: t('settings.methodRpm'),
+    nix: t('settings.methodNix'),
+    other: '',
+  });
+  const how = $derived.by(() => {
+    switch (self?.method) {
+      case 'homebrew':
+        return t('settings.selfUpdateHowHomebrew');
+      case 'deb':
+      case 'rpm':
+        return t('settings.selfUpdateHowSystem');
+      case 'nix':
+        return t('settings.selfUpdateHowNix');
+      case 'other':
+        return t('settings.selfUpdateHowOther', { brand });
+      default:
+        return self?.locked && self.mode === 'notify' ? t('settings.selfUpdateByOrg') : '';
+    }
+  });
+  const busy = $derived(Object.keys(store.busy).length > 0 || store.queue.length > 0);
+  function updateNow() {
+    store.restartWanted = true;
+    checkSelfUpdate(true);
+  }
 </script>
 
 {#snippet locked(key: keyof api.Settings)}
@@ -298,6 +331,65 @@
         <span class="text"><span class="label">{t('settings.version')}</span></span>
         <span class="control value" id="version">furnish {version}</span>
       </li>
+      {#if self && methods[self.method]}
+        <li class="row">
+          <span class="text"><span class="label">{t('settings.installedWith')}</span></span>
+          <span class="control value" id="install-method">{methods[self.method]}</span>
+        </li>
+      {/if}
+      {#if self && self.mode !== 'off' && (self.available || self.error)}
+        <li class="status" id="self-update">
+          <span class="text" aria-live="polite">
+            {#if self.state === 'downloading'}
+              <span class="label">{t('settings.selfUpdateDownloading', { version: self.available ?? '' })}</span>
+            {:else if self.state === 'ready'}
+              <span class="label new">{t('settings.selfUpdateReady', { version: self.available ?? '' })}</span>
+              {#if store.restartWanted && busy}
+                <span class="desc">{t('settings.selfUpdateWaiting', { brand })}</span>
+              {:else if self.mode === 'auto'}
+                <span class="desc">{t('settings.selfUpdateReadyText', { brand })}</span>
+              {/if}
+            {:else if self.available}
+              <span class="label new">{t('settings.selfUpdateAvailable', { version: self.available })}</span>
+              {#if how}
+                <span class="desc">{#each parts(how) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}</span>
+              {/if}
+            {/if}
+            {#if self.error}
+              <span class="desc error">{t('settings.selfUpdateFailed', { brand })}: {self.error}</span>
+            {/if}
+          </span>
+          {#if updatesItself && self.available}
+            <span class="control">
+              {#if self.state === 'ready'}
+                <button class="secondary" disabled={store.restartWanted} onclick={restartToUpdate}>{t('settings.restartToUpdate')}</button>
+              {:else if self.state === 'idle' && !(self.locked && self.mode === 'notify')}
+                <button class="secondary" onclick={updateNow}>{t('settings.selfUpdateNow')}</button>
+              {/if}
+            </span>
+          {/if}
+        </li>
+      {/if}
+      {#if store.settings}
+        <li class="row">
+          <label class="text" for="self-update-mode">
+            <span class="label">{t('settings.selfUpdate', { brand })}</span>
+          </label>
+          <span class="control">
+            {@render locked('selfUpdate')}
+            <select
+              id="self-update-mode"
+              value={updatesItself || store.settings.selfUpdate === 'off' ? store.settings.selfUpdate : 'notify'}
+              disabled={isLocked('selfUpdate')}
+              onchange={(e) => changeSettings({ selfUpdate: e.currentTarget.value as 'auto' | 'notify' | 'off' })}
+            >
+              {#if updatesItself}<option value="auto">{t('settings.selfUpdateAuto')}</option>{/if}
+              <option value="notify">{t('settings.selfUpdateNotify')}</option>
+              <option value="off">{t('settings.selfUpdateOff')}</option>
+            </select>
+          </span>
+        </li>
+      {/if}
       {#if dataDir}
         <li class="row">
           <span class="text"><span class="label">{t('settings.dataFolder')}</span></span>
@@ -391,6 +483,10 @@
   .status .label {
     font-weight: 400;
     color: var(--ink-soft);
+  }
+  .status .label.new {
+    font-weight: 600;
+    color: var(--ink);
   }
   .status .label.failed {
     font-weight: 600;

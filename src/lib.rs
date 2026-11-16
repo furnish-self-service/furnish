@@ -10,6 +10,7 @@ pub mod nixos;
 pub mod options;
 pub mod policy;
 pub mod reports;
+pub mod selfupdate;
 pub mod service;
 pub mod settings;
 pub mod versions;
