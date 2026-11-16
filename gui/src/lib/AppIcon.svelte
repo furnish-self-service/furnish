@@ -2,14 +2,17 @@
   import type { AppInfo } from './api';
 
   // Apps and kits: anything with an id and an optional icon.
-  let { app, size = 56 }: { app: Pick<AppInfo, 'id' | 'icon'>; size?: number } = $props();
+  let { app, size = 56 }: { app: Pick<AppInfo, 'id' | 'icon' | 'iconDark'>; size?: number } = $props();
 
   // Stable hue per app, so its fallback tile is recognizable across views.
   const hue = $derived([...app.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7));
 </script>
 
 {#if app.icon}
-  <img class="icon" src={app.icon} alt="" width={size} height={size} style:--size="{size}px" />
+  <picture>
+    {#if app.iconDark}<source media="(prefers-color-scheme: dark)" srcset={app.iconDark} />{/if}
+    <img class="icon" src={app.icon} alt="" width={size} height={size} style:--size="{size}px" />
+  </picture>
 {:else}
   <div class="icon letter" aria-hidden="true" style:--size="{size}px" style:--hue={hue}>
     {app.id.charAt(0).toUpperCase()}

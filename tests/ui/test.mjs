@@ -97,6 +97,9 @@ const steps = [
     if (await inRow('toolbox')) throw new Error('toolbox recommended');
     // Avatars come with the collection list, which loads separately (and again after the update on launch).
     await waitFor('collection avatar on cards', async () => (await findAll("//article//span[contains(@class,'collection')]//img")).length > 0);
+    // The fixture's iconDark: offered to dark mode beside the avatar, as an image of its own.
+    const dark = await findAll("//article//span[contains(@class,'collection')]//picture/source[@media='(prefers-color-scheme: dark)'][starts-with(@srcset,'data:image/svg+xml;base64,')]");
+    if (dark.length === 0) throw new Error('no dark-mode avatar on the cards');
   }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));

@@ -2,6 +2,7 @@
 # in its DSC `parameters` section, or in `recommended`; users and admins set it per collection
 # or per app.
 icon: icon.svg
+iconDark: icon-dark.svg     # shown instead in dark mode
 parameters:
   role:
     type: string

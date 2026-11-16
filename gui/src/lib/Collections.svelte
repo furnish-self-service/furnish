@@ -283,7 +283,12 @@
     <ul>
       {#each store.collections as c (c.name)}
         <li>
-          {#if c.icon}<img class="avatar" src={c.icon} alt="" width="36" height="36" />{/if}
+          {#if c.icon}
+            <picture>
+              {#if c.iconDark}<source media="(prefers-color-scheme: dark)" srcset={c.iconDark} />{/if}
+              <img class="avatar" src={c.icon} alt="" width="36" height="36" />
+            </picture>
+          {/if}
           <div class="info">
             <span class="cname">{c.name}</span>
             <span class="mono">{c.url}</span>

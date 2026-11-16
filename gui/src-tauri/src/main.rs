@@ -36,6 +36,8 @@ struct AppInfo {
     categories: Vec<String>,
     /// Data URL of the app's icon, if the collection provides one.
     icon: Option<String>,
+    /// Data URL of the icon for dark mode (`metadata.furnish.iconDark`).
+    icon_dark: Option<String>,
     resources: Vec<ResourceInfo>,
     /// The DSC configuration document as written in the collection, for experts to inspect.
     source: String,
@@ -72,6 +74,7 @@ struct KitInfo {
     description: String,
     categories: Vec<String>,
     icon: Option<String>,
+    icon_dark: Option<String>,
     items: Vec<ItemInfo>,
 }
 
@@ -97,6 +100,9 @@ struct CollectionInfo {
     options: Vec<options::Resolved>,
     /// Data URL of the collection's avatar (`icon` in collection.yaml).
     icon: Option<String>,
+    /// Data URL of the avatar for dark mode (`iconDark`).
+    #[serde(rename = "iconDark")]
+    icon_dark: Option<String>,
     /// History kept, downloads and falling back, and which of them the organization sets.
     settings: furnish::settings::CollectionEffective,
     /// The language of the collection's own texts, and its translations (`locales/`).
@@ -196,6 +202,7 @@ fn app_info(app: &App) -> AppInfo {
         description: app.description.clone(),
         categories: app.categories.clone(),
         icon: app.icon.as_deref().and_then(icon_data_url),
+        icon_dark: app.icon_dark.as_deref().and_then(icon_data_url),
         resources,
         source: fs::read_to_string(&app.path).unwrap_or_default(),
         dependencies: items(&app.collection, &app.dependencies_for(&app.current_values())),
@@ -248,6 +255,7 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         apps: c.apps().len(),
         options: c.options()?,
         icon: c.icon().as_deref().and_then(icon_data_url),
+        icon_dark: c.icon_dark().as_deref().and_then(icon_data_url),
         settings: furnish::settings::for_collection(&c.name),
         language: locales.language,
         locales: locales.files,
@@ -268,6 +276,7 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
                 key: format!("{}/{}", k.collection, k.id),
                 items: items(&k.collection, &k.items),
                 icon: k.icon.as_deref().and_then(icon_data_url),
+                icon_dark: k.icon_dark.as_deref().and_then(icon_data_url),
                 id: k.id,
                 collection: k.collection,
                 name: k.name,
