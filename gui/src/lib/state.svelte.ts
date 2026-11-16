@@ -259,7 +259,9 @@ export function visibleApps(view: View, query: string): AppInfo[] {
  */
 export async function updateCollections(): Promise<string[]> {
   const changed: string[] = [];
-  const errors: string[] = [];
+  // The organizations' descriptions first: their settings, branding and collections may have changed.
+  const errors = await api.refreshEndpoints().catch((e) => [message(e)]);
+  await reloadSettings();
   for (const c of store.collections) {
     try {
       const r = await api.updateCollection(c.name);
@@ -343,8 +345,8 @@ function schedule() {
   if (minutes > 0) timer = setInterval(checkForUpdates, minutes * 60_000);
 }
 
-/** App start: load settings and the catalog, then update collections if enabled. */
-export async function start() {
+/** Load branding and settings (at start, and after the organizations' descriptions changed). */
+async function reloadSettings() {
   try {
     store.brand = await api.getBranding();
     applyBranding(store.brand);
@@ -361,6 +363,11 @@ export async function start() {
     toast('error', t('toast.settings'), message(e));
   }
   schedule();
+}
+
+/** App start: load settings and the catalog, then update collections if enabled. */
+export async function start() {
+  await reloadSettings();
   // furnish:// links: the one furnish started with, and those arriving while it runs.
   api.onLink(openLink);
   api.pendingLink().then((url) => url && openLink(url)).catch(() => {});

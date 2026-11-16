@@ -485,6 +485,13 @@ async fn ensure_presets() -> CmdResult<Vec<String>> {
     blocking(|| Ok(catalog::ensure_presets())).await
 }
 
+/// Fetch the organizations' descriptions again; returns those that fail the checks (the saved
+/// ones stay). Endpoints that don't answer keep theirs without a problem.
+#[tauri::command]
+async fn refresh_endpoints() -> CmdResult<Vec<String>> {
+    blocking(|| Ok(furnish::endpoint::refresh())).await
+}
+
 #[tauri::command]
 async fn list_collections() -> CmdResult<Vec<CollectionInfo>> {
     blocking(|| catalog::collections()?.iter().map(collection_info).collect()).await
@@ -740,6 +747,7 @@ fn main() {
             set_setting,
             set_tray,
             ensure_presets,
+            refresh_endpoints,
             list_collections,
             add_collection,
             link_preview,

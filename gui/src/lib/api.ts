@@ -298,3 +298,5 @@ export const onToTray = (handler: () => void) => listen('furnish://to-tray', () 
 export const onShown = (handler: () => void) => listen('furnish://shown', () => handler());
 /** Clone the admin's preset collections; returns problems (e.g. offline). */
 export const ensurePresets = () => invoke<string[]>('ensure_presets');
+/** Fetch the organizations' descriptions again; returns those that fail the checks (old ones stay). */
+export const refreshEndpoints = () => invoke<string[]>('refresh_endpoints');

@@ -87,6 +87,8 @@ The address serves a description at `https://furnish.myorg.tld/.well-known/furni
 
 furnish signs people in with OpenID Connect (authorization code with PKCE; the client is public, furnish holds no secret), keeps the sign-in in the system's credential store, and renews it. It sends the token only to the address. The address must use https, and so must the identity provider; its `/.well-known/openid-configuration` must name exactly the `issuer` of `furnish.json`. A sign-in belongs to the issuer and client ID it came from: if `furnish.json` names another one later, people sign in again.
 
+furnish fetches `furnish.json` again each time it updates all collections: when the app starts (if it updates on launch), at the update interval, and with "Update all" or `furnish collection update`. Changes to the description reach people who added the address themselves without them adding it again. If the address doesn't answer, furnish keeps the description it has. If the new description fails the checks above, furnish also keeps the old one and shows why when people update their collections.
+
 To make the address's collections presets, list it in the policy: `"endpoints": ["furnish.myorg.tld"]`. With `"usersCanAdd": false` in `collections`, people can only add the addresses the policy lists, and furnish ignores others they added before.
 
 What an address sets works like the policy's settings, as defaults that never lock anything; the policy wins where both set something. An address only sets things for its own collections, the ones its `furnish.json` lists:
@@ -95,7 +97,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored. |
 | `branding` | the app's name and colors, and a logo and tray icon from its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.

@@ -48,6 +48,9 @@ pub struct Policy {
     pub auto_install: Vec<String>,
     /// Set: apps may use only these DSC resource types (ignoring case), besides furnish's own.
     pub allowed_resource_types: Option<Vec<String>>,
+    /// Not part of the policy: endpoint settings `with_endpoints` left out, and why.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]
@@ -228,7 +231,13 @@ pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint
             }
         }
         for (key, value) in &d.settings {
+            let value = endpoint_setting(value);
             let default = || Entry { value: value.clone(), locked: false };
+            let applies = ENDPOINT_SETTINGS.contains(&key.as_str()) || crate::settings::PER_COLLECTION.contains(&key.as_str());
+            if applies && let Err(err) = crate::settings::check_value(key, value) {
+                policy.warnings.push(format!("{}: ignoring setting '{key}': {err:#}", crate::endpoint::url_host(origin)));
+                continue;
+            }
             if ENDPOINT_SETTINGS.contains(&key.as_str()) {
                 policy.settings.entry(key.clone()).or_insert_with(default);
             } else if crate::settings::PER_COLLECTION.contains(&key.as_str()) {
@@ -248,6 +257,15 @@ pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint
                 policy.auto_install.push(app.clone());
             }
         }
+    }
+}
+
+/// An endpoint setting's value: given plainly (`"reporting": "errors"`) or, like in the admin
+/// policy, as `{"value": "errors"}`. An endpoint never locks anything, so `locked` is ignored.
+fn endpoint_setting(value: &Value) -> &Value {
+    match value.as_object() {
+        Some(o) if o.contains_key("value") && o.keys().all(|k| k == "value" || k == "locked") => &o["value"],
+        _ => value,
     }
 }
 
@@ -383,6 +401,28 @@ mod tests {
         // A per-collection setting only for its own collection.
         assert_eq!(p.collection_settings.keys().collect::<Vec<_>>(), ["acme"]);
         assert_eq!(p.collection_settings["acme"]["fallback"], Entry { value: "off".into(), locked: false });
+    }
+
+    #[test]
+    fn an_invalid_endpoint_setting_is_left_out_and_the_others_apply() {
+        let acme = description(serde_json::json!({
+            "collections": [{"name": "acme", "url": "https://furnish.acme.tld/git/acme.git"}],
+            "settings": {"reporting": {"value": {"value": "off"}}, "updateIntervalMinutes": "often", "fallback": "sometimes",
+                         "loadAwareUpdates": false, "language": {"value": "de", "locked": true}, "blobsOnDemand": {"value": false}}
+        }));
+        let mut p = Policy::default();
+        with_endpoints(&mut p, &[("https://furnish.acme.tld".into(), acme)]);
+        assert_eq!(p.settings.keys().collect::<Vec<_>>(), ["language", "loadAwareUpdates"]);
+        // The form of the admin policy works too, but an endpoint never locks a setting.
+        assert_eq!(p.settings["language"], Entry { value: "de".into(), locked: false });
+        assert_eq!(p.collection_settings["acme"].keys().collect::<Vec<_>>(), ["blobsOnDemand"]);
+        assert_eq!(p.warnings.len(), 3, "{:?}", p.warnings);
+        assert!(p.warnings.iter().any(|w| w.starts_with("furnish.acme.tld: ignoring setting 'reporting'")), "{:?}", p.warnings);
+        // What the endpoint sets validly still counts, and saving other settings isn't affected.
+        let e = crate::settings::merge(&p, &serde_json::Map::new());
+        assert!(!e.settings.load_aware_updates);
+        assert_eq!(e.settings.language, crate::settings::Language::De);
+        assert_eq!(e.warnings, p.warnings);
     }
 
     #[test]

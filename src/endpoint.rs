@@ -91,6 +91,16 @@ impl std::fmt::Display for LoginRequired {
 }
 impl std::error::Error for LoginRequired {}
 
+/// The endpoint didn't answer with its description (offline, its server down, an HTTP error).
+#[derive(Debug)]
+pub struct Unreachable(String);
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 // --- Addresses
 
 /// The endpoint an input means, as an origin (`https://furnish.myorg.tld`), or `None` if it is a
@@ -234,10 +244,9 @@ pub fn fetch(origin: &str) -> Result<Description> {
         bail!("'{origin}' isn't a furnish address (https://furnish.myorg.tld)");
     }
     let url = format!("{origin}/.well-known/furnish.json");
-    let description: Description = http().get(&url)
-        .call()
-        .and_then(|mut r| r.body_mut().read_json())
-        .with_context(|| format!("{} isn't a furnish address (no {url})", host(origin)))?;
+    let not_furnish = || format!("{} isn't a furnish address (no {url})", host(origin));
+    let mut response = http().get(&url).call().map_err(|e| anyhow::Error::new(e).context(Unreachable(not_furnish())))?;
+    let description: Description = response.body_mut().read_json().with_context(not_furnish)?;
     for c in &description.collections {
         if !c.url.starts_with(&format!("{origin}/")) {
             bail!("{}: collection {} isn't served by the endpoint itself ({})", host(origin), c.name, c.url);
@@ -266,10 +275,38 @@ pub fn discover(origin: &str) -> Result<Description> {
     Ok(description)
 }
 
+/// Fetch the descriptions of the known endpoints again, the way `discover` does when adding one,
+/// so what an organization changes reaches everyone who added its address. Without `usersCanAdd`,
+/// only the endpoints the admin policy names. An endpoint that doesn't answer keeps its saved
+/// description quietly (a log line); one that answers with a description that fails the checks
+/// keeps it too, and is returned as a problem.
+pub fn refresh() -> Vec<String> {
+    let mut problems = Vec::new();
+    for (origin, _) in known() {
+        if allowed(&origin).is_err() {
+            continue;
+        }
+        match discover(&origin) {
+            Ok(_) => {}
+            Err(err) if err.is::<Unreachable>() => eprintln!("note: keeping the saved description of {}: {}", host(&origin), err.root_cause()),
+            Err(err) => problems.push(format!("{err:#}; keeping the saved description")),
+        }
+    }
+    for warning in crate::policy::load().warnings {
+        eprintln!("warning: {warning}");
+    }
+    problems
+}
+
 fn remember(origin: &str, description: &Description) -> Result<()> {
     private_dir(&dir())?;
     let path = file(origin, "json");
-    let added = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Cached>(&t).ok()).map_or_else(now, |c| c.added);
+    let old = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Cached>(&t).ok());
+    // Another identity provider or client: the sign-in from the old one goes (see `Tokens`).
+    if old.as_ref().is_some_and(|c| c.description.issuer != description.issuer || c.description.client_id != description.client_id) {
+        logout(origin);
+    }
+    let added = old.map_or_else(now, |c| c.added);
     let cached = Cached { origin: origin.to_string(), description: description.clone(), added };
     crate::auth::write_private(&path, (serde_json::to_string_pretty(&cached)? + "\n").as_bytes())?;
     Ok(())

@@ -54,6 +54,8 @@ Edit `furnish.json`: your organization's name, the issuer, the client ID, one en
 
 @include packaging/endpoint/furnish.json
 
+The fields and what furnish accepts in them are in [Sign-in without a VPN](admins.md#sign-in-without-a-vpn). furnish fetches `furnish.json` again whenever it updates all collections, so a change reaches everyone who added the address.
+
 `docker-compose.yml` holds what every proxy uses: oauth2-proxy, which checks tokens for the proxies that ask it, and Vector, which receives the reports. Each proxy has its own folder with its configuration and a second compose file.
 
 @include packaging/endpoint/docker-compose.yml

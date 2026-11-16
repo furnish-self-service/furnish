@@ -131,6 +131,9 @@ pub struct Effective {
     pub locked: Vec<String>,
     /// From the policy: whether users may add collections.
     pub users_can_add_collections: bool,
+    /// Values that were ignored because they aren't valid for their setting, and why: from the
+    /// admin policy, an endpoint's description or the user's own file.
+    pub warnings: Vec<String>,
 }
 
 pub fn load() -> Settings {
@@ -150,9 +153,9 @@ pub fn set(key: &str, value: Value) -> Result<()> {
     if policy.settings.get(key).is_some_and(|e| e.locked) {
         bail!("'{key}' is set by your organization");
     }
+    check_value(key, &value).with_context(|| format!("invalid value for '{key}'"))?;
     let mut choices = user_choices();
     choices.insert(key.to_string(), value);
-    strict_merge(&policy, &choices).with_context(|| format!("invalid value for '{key}'"))?;
     write_choices(&choices)
 }
 
@@ -180,11 +183,14 @@ pub fn collection_merge(policy: &Policy, choices: &Map<String, Value>, name: &st
     let mut locked = Vec::new();
     for key in PER_COLLECTION {
         let policy_value = theirs.and_then(|t| t.get(key));
+        // An invalid value counts as not set, so it doesn't spoil the collection's other settings.
+        let valid = |v: &&Value| check_value(key, v).is_ok();
         let value = match policy_value {
             Some(e) if e.locked => Some(&e.value),
             None if general.locked.iter().any(|k| k == key) => None,
-            _ => mine.and_then(|m| m.get(key)).or(policy_value.map(|e| &e.value)),
-        };
+            _ => mine.and_then(|m| m.get(key)).filter(valid).or(policy_value.map(|e| &e.value)),
+        }
+        .filter(valid);
         if policy_value.is_some_and(|e| e.locked) || (policy_value.is_none() && general.locked.iter().any(|k| k == key)) {
             locked.push(key.to_string());
         }
@@ -212,10 +218,8 @@ pub fn set_for_collection(name: &str, key: &str, value: Value) -> Result<()> {
     if value.is_null() {
         own.remove(key);
     } else {
-        own.insert(key.to_string(), value.clone());
-        let mut check = serde_json::to_value(merge(&policy, &choices).settings)?;
-        check[key] = value;
-        serde_json::from_value::<Settings>(check).with_context(|| format!("invalid value for '{key}'"))?;
+        check_value(key, &value).with_context(|| format!("invalid value for '{key}'"))?;
+        own.insert(key.to_string(), value);
     }
     collections.insert(name.to_string(), own.into());
     choices.insert("collections".into(), collections.into());
@@ -234,41 +238,60 @@ fn user_choices() -> Map<String, Value> {
     })
 }
 
-/// Defaults ← policy values ← user choices (unless locked). Invalid values fall back to defaults.
+/// Defaults ← policy values ← user choices (unless locked). Each value counts on its own: one
+/// that isn't valid for its setting is left out (see `Effective::warnings`), the others apply.
 pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
-    let settings = strict_merge(policy, choices).unwrap_or_else(|err| {
-        eprintln!("warning: ignoring invalid settings: {err:#}");
+    let Value::Object(mut merged) = serde_json::to_value(Settings::default()).expect("Settings serializes") else {
+        unreachable!("Settings serializes to an object")
+    };
+    let mut warnings = policy.warnings.clone();
+    for (key, entry) in &policy.settings {
+        if !merged.contains_key(key) {
+            warnings.push(format!("the admin policy names an unknown setting '{key}'"));
+        } else if let Err(err) = check_value(key, &entry.value) {
+            warnings.push(format!("ignoring the admin policy's value for '{key}': {err:#}"));
+        } else {
+            merged.insert(key.clone(), entry.value.clone());
+        }
+    }
+    for (key, value) in choices {
+        let locked = policy.settings.get(key).is_some_and(|e| e.locked);
+        if !merged.contains_key(key) || locked {
+            continue;
+        }
+        match check_value(key, value) {
+            Ok(()) => {
+                merged.insert(key.clone(), value.clone());
+            }
+            Err(err) => warnings.push(format!("ignoring your value for '{key}' in settings.json: {err:#}")),
+        }
+    }
+    let settings = serde_json::from_value(Value::Object(merged)).unwrap_or_else(|err| {
+        warnings.push(format!("ignoring invalid settings: {err}"));
         Settings::default()
     });
     Effective {
         settings,
         locked: policy.settings.iter().filter(|(_, e)| e.locked).map(|(k, _)| k.clone()).collect(),
         users_can_add_collections: policy.collections.users_can_add,
+        warnings,
     }
 }
 
-fn strict_merge(policy: &Policy, choices: &Map<String, Value>) -> Result<Settings> {
-    let Value::Object(mut merged) = serde_json::to_value(Settings::default())? else {
+/// Whether a value is valid for a setting, on its own (the other settings at their defaults).
+pub fn check_value(key: &str, value: &Value) -> Result<()> {
+    let Value::Object(mut all) = serde_json::to_value(Settings::default())? else {
         unreachable!("Settings serializes to an object")
     };
-    for (key, entry) in &policy.settings {
-        if merged.contains_key(key) {
-            merged.insert(key.clone(), entry.value.clone());
-        } else {
-            eprintln!("warning: the admin policy names an unknown setting '{key}'");
-        }
+    if !all.contains_key(key) {
+        bail!("unknown setting '{key}'");
     }
-    for (key, value) in choices {
-        let locked = policy.settings.get(key).is_some_and(|e| e.locked);
-        if merged.contains_key(key) && !locked {
-            merged.insert(key.clone(), value.clone());
-        }
-    }
-    let settings: Settings = serde_json::from_value(Value::Object(merged))?;
+    all.insert(key.to_string(), value.clone());
+    let settings: Settings = serde_json::from_value(Value::Object(all))?;
     if !crate::locale::valid_tag(&settings.fallback_language) {
         bail!("'{}' isn't a language tag such as en or pt-BR (fallbackLanguage)", settings.fallback_language);
     }
-    Ok(settings)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -334,6 +357,34 @@ mod tests {
     }
 
     #[test]
+    fn one_invalid_value_doesnt_spoil_the_others() {
+        // As an endpoint once served it (issue #1): the policy's wrapped form inside a value.
+        let p = policy(json!({"settings": {
+            "reporting": {"value": {"value": "off"}},
+            "updateIntervalMinutes": {"value": 60},
+            "nonsense": {"value": 1}
+        }}));
+        let choices = json!({"parameters": {"tools": {"role": "dev"}}, "fallback": "sometimes", "checkoutDepth": 5});
+        let e = merge(&p, choices.as_object().unwrap());
+        assert_eq!(e.settings.update_interval_minutes, 60);
+        assert_eq!(e.settings.reporting, crate::reports::Level::Off);
+        assert_eq!(e.settings.parameters["tools"]["role"], "dev");
+        assert_eq!(e.settings.checkout_depth, 5);
+        assert_eq!(e.settings.fallback, Fallback::Ask);
+        assert_eq!(e.warnings.len(), 3, "{:?}", e.warnings);
+        assert!(e.warnings.iter().any(|w| w.contains("'reporting'") && w.contains("unknown variant")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().any(|w| w.contains("'fallback' in settings.json")), "{:?}", e.warnings);
+        // Saving a value checks that value only.
+        assert!(check_value("parameters", &json!({"tools": {"role": "admin"}})).is_ok());
+        assert!(check_value("reporting", &json!({"value": "off"})).is_err());
+        assert!(check_value("nonsense", &json!(1)).is_err());
+        // Per collection, an invalid value counts as not set.
+        let p = policy(json!({"collectionSettings": {"tools": {"fallback": {"value": "sometimes"}, "checkoutDepth": {"value": 3}}}}));
+        let tools = collection_merge(&p, json!({"collections": {"tools": {"blobsOnDemand": "no"}}}).as_object().unwrap(), "tools").settings;
+        assert_eq!((tools.fallback, tools.checkout_depth, tools.blobs_on_demand), (Fallback::Ask, 3, true));
+    }
+
+    #[test]
     fn start_at_sign_in_is_on_by_default_and_follows_the_policy() {
         assert!(Settings::default().start_at_sign_in);
         let off = json!({"startAtSignIn": false});
@@ -359,7 +410,7 @@ mod tests {
         assert_eq!(e.settings.language, Language::En);
         assert_eq!(e.locked, ["language"]);
         // Unknown languages are rejected.
-        assert!(strict_merge(&Policy::default(), json!({"language": "xx"}).as_object().unwrap()).is_err());
+        assert!(check_value("language", &json!("xx")).is_err());
     }
 
     #[test]
@@ -371,6 +422,6 @@ mod tests {
         let e = merge(&p, json!({"fallbackLanguage": "fr"}).as_object().unwrap());
         assert_eq!(e.settings.fallback_language, "de");
         assert_eq!(e.locked, ["fallbackLanguage"]);
-        assert!(strict_merge(&Policy::default(), json!({"fallbackLanguage": "not a tag"}).as_object().unwrap()).is_err());
+        assert!(check_value("fallbackLanguage", &json!("not a tag")).is_err());
     }
 }

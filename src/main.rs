@@ -406,6 +406,9 @@ fn run(command: Command) -> Result<()> {
                 set("noAutoUpdate", off.into())?;
             }
             let effective = furnish::settings::effective();
+            for warning in &effective.warnings {
+                eprintln!("warning: {warning}");
+            }
             let s = effective.settings;
             let org = |key: &str| if effective.locked.iter().any(|k| k == key) { "  (set by your organization)" } else { "" };
             println!("update on launch:  {}{}", if s.update_on_launch { "yes" } else { "no" }, org("updateOnLaunch"));
@@ -596,7 +599,13 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         CollectionCommand::Update { name } => {
             let collections = match name {
                 Some(name) => vec![catalog::get(&name)?],
-                None => catalog::collections()?,
+                None => {
+                    // All of them: the organizations' descriptions too, which may have changed.
+                    for problem in furnish::endpoint::refresh() {
+                        eprintln!("warning: {problem}");
+                    }
+                    catalog::collections()?
+                }
             };
             for c in collections {
                 match c.update()? {
