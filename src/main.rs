@@ -103,6 +103,10 @@ enum Command {
         /// Include this computer's name in reports
         #[arg(long, value_name = "BOOL")]
         report_hostname: Option<bool>,
+        /// Show collection texts in this language when they aren't translated into the app's
+        /// language (a language tag such as en, de or pt-BR)
+        #[arg(long, value_name = "LANGUAGE")]
+        fallback_language: Option<String>,
     },
     /// Show the reports waiting to be sent to your organization, and where they go
     Reports,
@@ -363,7 +367,10 @@ fn run(command: Command) -> Result<()> {
         Command::Option(cmd) => option(cmd),
         Command::Reports => reports(),
         Command::Check { dir } => check(&dir),
-        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname } => {
+        Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language } => {
+            if let Some(v) = fallback_language {
+                furnish::settings::set("fallbackLanguage", v.into())?;
+            }
             if let Some(v) = reporting {
                 furnish::settings::set("reporting", v.into())?;
             }
@@ -425,6 +432,7 @@ fn run(command: Command) -> Result<()> {
                 furnish::reports::Level::All => "everything, and the installed apps once a day",
             };
             println!("reports:           {level}{}{}", if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
+            println!("fallback language: {} (for collection texts not in the app's language){}", s.fallback_language, org("fallbackLanguage"));
             let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
             print_collection_settings(&general, &effective.locked);
             if !s.collections.is_empty() {
@@ -443,6 +451,9 @@ fn list() -> Result<()> {
         return Ok(());
     }
     let mut rows = vec![row(["", "App", "Collection", "Categories", "Description"])];
+    let (wanted, locales) = (furnish::locale::wanted(), collection_locales());
+    let none = furnish::locale::Locales::default();
+    let texts = |collection: &str| locales.get(collection).unwrap_or(&none);
     let mut installed = std::collections::HashSet::new();
     let mut inventory = Vec::new();
     for app in &apps {
@@ -452,7 +463,12 @@ fn list() -> Result<()> {
             let status = if *s == Status::Installed { "installed" } else { "needsUpdate" };
             inventory.push(furnish::reports::Installed { app: app.key(), status });
         }
-        let mut description = app.description.clone();
+        let l = texts(&app.collection);
+        let mut description = l.app_description(&wanted, &app.id, &app.description).to_string();
+        let name = l.app_name(&wanted, &app.id, app.name.as_deref());
+        if name != app.id {
+            description = if description.is_empty() { name } else { format!("{name}: {description}") };
+        }
         let symbol = match check {
             Ok(c) => match c.status {
                 Status::Installed => "✓",
@@ -485,7 +501,8 @@ fn list() -> Result<()> {
         if app.recommended() {
             description = format!("★ {description}");
         }
-        rows.push(row([symbol, &app.id, &app.collection, &app.categories.join(", "), &description]));
+        let categories: Vec<&str> = app.categories.iter().map(|c| l.category(&wanted, c)).collect();
+        rows.push(row([symbol, &app.id, &app.collection, &categories.join(", "), &description]));
     }
     print_table(&rows);
     if furnish::reports::inventory_due() {
@@ -501,11 +518,22 @@ fn list() -> Result<()> {
             let have = kit.items.iter().filter(|i| installed.contains(&(kit.collection.clone(), i.app.clone()))).count();
             let symbol = if have == kit.items.len() { "✓" } else if have > 0 { "◐" } else { "·" };
             let items = format!("{have} of {} installed", kit.items.len());
-            rows.push(row([symbol, &kit.id, &kit.collection, &items, &kit.description]));
+            let l = texts(&kit.collection);
+            let mut description = l.kit_description(&wanted, &kit.id, &kit.description).to_string();
+            let name = l.kit_name(&wanted, &kit.id, kit.name.as_deref());
+            if name != kit.id {
+                description = if description.is_empty() { name } else { format!("{name}: {description}") };
+            }
+            rows.push(row([symbol, &kit.id, &kit.collection, &items, &description]));
         }
         print_table(&rows);
     }
     Ok(())
+}
+
+/// Each collection's translations (see `locale`).
+fn collection_locales() -> std::collections::HashMap<String, furnish::locale::Locales> {
+    catalog::collections().unwrap_or_default().iter().map(|c| (c.name.clone(), c.locales())).collect()
 }
 
 fn collection(cmd: CollectionCommand) -> Result<()> {
@@ -683,9 +711,13 @@ fn endpoint_origin(input: &str) -> Result<String> {
 /// to set them instead; the collection's apps can't be installed until then.
 fn ask_unanswered(collection: &catalog::Collection) -> Result<()> {
     use std::io::{BufRead, IsTerminal, Write};
-    let unanswered = collection.unanswered();
+    let mut unanswered = collection.unanswered();
     if unanswered.is_empty() {
         return Ok(());
+    }
+    let (wanted, locales) = (furnish::locale::wanted(), collection.locales());
+    for r in &mut unanswered {
+        locales.translate_option(&wanted, r);
     }
     if !std::io::stdin().is_terminal() {
         for r in &unanswered {
@@ -742,7 +774,11 @@ fn option(cmd: OptionCommand) -> Result<()> {
                 println!("{key} has no options.");
             }
             let mut rows = vec![row(["Option", "Value", "From", "Description"])];
+            let locales = catalog::get(key.split('/').next().unwrap_or_default()).map(|c| c.locales()).unwrap_or_default();
+            let wanted = furnish::locale::wanted();
             for r in &resolved {
+                let mut r = r.clone();
+                locales.translate_option(&wanted, &mut r);
                 let value = r.value.as_ref().map_or("-".to_string(), |v| v.to_string());
                 let from = match (r.source, r.locked) {
                     (Source::Policy, true) => "your organization (locked)",
@@ -815,6 +851,13 @@ fn check(dir: &std::path::Path) -> Result<()> {
         for finding in &item.findings {
             let label = if finding.severity == Severity::Error { "error" } else { "warning" };
             println!("    {label}: {}", finding.message);
+        }
+    }
+    let translations: Vec<_> = items.iter().filter_map(|i| Some((i.name.trim_start_matches("locales/").trim_end_matches(".yaml"), i.coverage.as_ref()?))).collect();
+    if !translations.is_empty() {
+        println!("\nTranslations (texts without one show in the fallback language or the collection's own):");
+        for (lang, coverage) in translations {
+            println!("  {lang}: {coverage}");
         }
     }
     let count = |s| items.iter().flat_map(|i| &i.findings).filter(|f| f.severity == s).count();

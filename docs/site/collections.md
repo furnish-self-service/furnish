@@ -10,6 +10,7 @@ A collection is a git repository with this layout:
 collection.yaml          # the collection's icon and the questions it asks
 apps/<app>.dsc.yaml      # one file per app
 kits/<kit>.yaml          # apps that are installed together
+locales/<lang>.yaml      # translations, one file per language
 icons/                   # images the files above refer to
 ```
 
@@ -17,11 +18,12 @@ furnish clones the repository for each user and pulls changes at start and every
 
 ## Apps
 
-An app is a [DSC v3](https://learn.microsoft.com/powershell/dsc/overview) configuration document. Its file name without `.dsc.yaml` is the app's name. furnish shows what `metadata.furnish` says in the catalog and runs `resources` to install the app:
+An app is a [DSC v3](https://learn.microsoft.com/powershell/dsc/overview) configuration document. Its file name without `.dsc.yaml` is the app's ID, which commands, the policy and dependencies use. furnish shows what `metadata.furnish` says in the catalog and runs `resources` to install the app:
 
 ```yaml
 metadata:
   furnish:
+    name: GIMP                # shown instead of the ID; optional
     description: Image editor for photo retouching, image composition and painting.
     categories: [Graphics, Photo]
     icon: icons/gimp.svg
@@ -152,6 +154,7 @@ A kit installs several apps of the collection together:
 
 ```yaml
 # kits/office.yaml
+name: Office              # shown instead of the ID; optional
 description: Office suite, email and a password manager
 categories: [Office]
 icon: icons/office.svg
@@ -196,9 +199,44 @@ metadata:
 
 Recommended apps appear first on Discover. The expression can use the collection's options and the app's own.
 
+## Translations
+
+A collection can translate its texts into any language. Each language has one file, `locales/<lang>.yaml`, named with a language tag such as `de`, `fr` or `pt-BR`:
+
+```yaml
+# locales/de.yaml
+categories:                # a category as the apps write it, and its name
+  Office: Büro
+apps:
+  thunderbird:             # the app's ID
+    name: Thunderbird
+    description: E-Mail, Kalender und Kontakte.
+kits:
+  office:
+    name: Büro
+    description: Office-Paket, E-Mail und Passwortmanager
+parameters:                # options and questions of collection.yaml and of the apps
+  role:
+    label: Woran arbeitest du?
+    description: Empfiehlt die Apps für deine Rolle.
+    allowedValues: { developer: Softwareentwicklung, design: Design und Medien, office: Büroarbeit }
+```
+
+Every entry is optional. The texts in the app files, kit files and `collection.yaml` are in English unless `collection.yaml` names another language, for example `language: de`.
+
+For each text, furnish shows the first of these that exists:
+
+1. the translation into the app's language, the one set under Language or the system's,
+2. the translation into the fallback language, English unless people or the policy choose another,
+3. the text as written in the collection.
+
+A translation file for `pt` also serves people who use `pt-BR`, and the other way round. If the app's language or the fallback language is the collection's own `language`, furnish shows the collection's texts. A collection written in German with `language: de` shows its texts to German speakers, and to everyone else when it has no translation for them.
+
+The sidebar lists each category once, even if several collections use it. If they translate it differently, the sidebar uses the translation of the first collection in alphabetical order. Search looks at the texts in the app's language, in the fallback language and as written in the collection, so an English word finds an app on a German screen. Reports and logs use IDs, and so do commands such as `furnish install`. `furnish list` shows the IDs with the translated texts.
+
 ## Check a collection
 
-`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. A resource type that DSC doesn't find on the computer running the check is a warning, since it may be installed where the app runs. An app without removal steps whose resources can't remove what they set up is a warning too. Only types DSC finds on the computer running the check are judged. For each app it shows which resources run on Windows, macOS and Linux. It exits with 1 when there are errors.
+`furnish check` reads every file of a collection the way furnish does and installs nothing. It reports what would break for the people installing from it: files that don't load, including translations, installers and icons that aren't in the repository, dependencies and kit items that don't exist, conditions and `recommended` expressions that don't evaluate, and apps that have a resource for no system. A resource type that DSC doesn't find on the computer running the check is a warning, since it may be installed where the app runs. An app without removal steps whose resources can't remove what they set up is a warning too. Only types DSC finds on the computer running the check are judged. For each app it shows which resources run on Windows, macOS and Linux. For each translation it warns about apps, kits, categories and options the collection doesn't have, and counts what is translated. Missing translations are not errors. It exits with 1 when there are errors.
 
 ```
 $ furnish check
@@ -209,6 +247,10 @@ $ furnish check
 ! slack            app  Windows: slack (winget) · macOS: slack (Homebrew) · Linux: –
     warning: no categories (metadata.furnish.categories)
 ✓ office           kit
+✓ locales/de.yaml  translation
+
+Translations (texts without one show in the fallback language or the collection's own):
+  de: 3 of 3 apps, 1 of 1 kit, 2 of 3 categories, 1 of 1 option
 
 3 apps, 1 kit: 1 error, 1 warning
 ```

@@ -4,7 +4,7 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { store, requestInstall, uninstall, stop, dequeue, askQuestions } from './state.svelte';
+  import { store, requestInstall, uninstall, stop, dequeue, askQuestions, appName } from './state.svelte';
   import { t } from './i18n.svelte';
 
   // `oninstall` replaces the default (asking about optional dependencies, then installing).
@@ -61,11 +61,11 @@
   </span>
 {:else if queued}
   <!-- Waiting: same slot, removable from the queue. -->
-  <div class="action queued" class:large role="group" aria-label={t('action.queuedPosition', { app: app.id, n: position })}>
+  <div class="action queued" class:large role="group" aria-label={t('action.queuedPosition', { app: appName(app), n: position })}>
     <span class="label">{t('common.queued')}{store.queue.length > 1 ? ` · ${position}` : ''}</span>
     <button
       class="halt"
-      aria-label={t('action.removeFromQueue', { app: app.id })}
+      aria-label={t('action.removeFromQueue', { app: appName(app) })}
       title={t('action.removeFromQueueTitle')}
       onclick={(e) => { e.stopPropagation(); dequeue(app.key); }}
     >
@@ -74,7 +74,7 @@
   </div>
 {:else if busy}
   <!-- Running: same slot, now progress + stop. -->
-  <div class="action busy" class:large role="group" aria-label={t('action.busyLabel', { label, app: app.id })} aria-busy="true">
+  <div class="action busy" class:large role="group" aria-label={t('action.busyLabel', { label, app: appName(app) })} aria-busy="true">
     <span class="fill" aria-hidden="true"></span>
     <span class="label">{label}</span>
     <button

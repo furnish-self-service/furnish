@@ -6,7 +6,7 @@ order: 2
 
 ## Find an app
 
-Discover lists what your collections offer, starting with the apps they recommend for you. Installed and Updates narrow the list to installed apps and to apps with an update. The categories in the sidebar filter by topic, and the search box matches names and descriptions.
+Discover lists what your collections offer, starting with the apps they recommend for you. Installed and Updates narrow the list to installed apps and to apps with an update. The categories in the sidebar filter by topic. The search box matches names, descriptions and categories. It ignores accents and case, so "buro" finds "Büro", and it also finds texts in the fallback language.
 
 A collection can ask a question when you add it, for example what you work on. furnish asks again at each start until you answer. Later closes the dialog; until you answer, the collection's apps show Answer first instead of Install.
 
@@ -75,5 +75,7 @@ Some apps can be installed in more than one way, for example for all users or on
 ## Language
 
 furnish is available in English, German, French, Spanish, Italian, Polish, Portuguese and Dutch. It follows the system language; Language on the Collections page sets one of them instead. For any other system language it uses English.
+
+Collections can translate their app names, descriptions, categories and questions. furnish shows them in its own language if the collection has that translation. Otherwise it uses the fallback language, which you choose under Fallback language on the Collections page. It is English unless your organization sets another. Texts that exist in neither language appear as the collection wrote them.
 
 ![The Discover page in German.](images/discover-de.webp)

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store } from './state.svelte';
+  import { store, appName, appDescription, categoryName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
@@ -11,16 +11,16 @@
 </script>
 
 <article class="card">
-  <button class="open" onclick={onopen} aria-label={t('common.open', { name: app.id })}></button>
+  <button class="open" onclick={onopen} aria-label={t('common.open', { name: appName(app) })}></button>
   <header>
     <AppIcon {app} />
     <div class="title">
-      <h3>{app.id}</h3>
+      <h3>{appName(app)}</h3>
       {#if app.recommended}<span class="recommended">{t('card.recommended')}</span>{/if}
-      <p class="meta">{app.categories.join(' · ') || app.collection}</p>
+      <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ') || app.collection}</p>
     </div>
   </header>
-  <p class="description">{app.description || t('common.noDescription')}</p>
+  <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
     {#if status === 'installed'}
       <span class="state installed">{t('common.installed')}</span>

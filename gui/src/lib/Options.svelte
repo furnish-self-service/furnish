@@ -2,7 +2,7 @@
   // Options (DSC parameters) of an app or a collection. Each one either follows the level above
   // (app → collection → default) or has the user's own value; the admin policy can lock it.
   import type { Option } from './api';
-  import { setOption } from './state.svelte';
+  import { setOption, optionLabel, optionDescription, choiceLabel } from './state.svelte';
   import { t } from './i18n.svelte';
 
   let { target, options, scope }: { target: string; options: Option[]; scope: 'app' | 'collection' } = $props();
@@ -10,8 +10,11 @@
   const show = (v: unknown) =>
     v === true ? t('common.yes') : v === false ? t('common.no') : v == null ? t('options.notSet') : String(v);
   // A dropdown: the declared values with their labels, or yes/no.
+  const collection = $derived(target.split('/')[0]);
   const choices = (o: Option) =>
-    o.choices.length ? o.choices : o.type === 'bool' ? [{ value: true, label: t('common.yes') }, { value: false, label: t('common.no') }] : [];
+    o.choices.length
+      ? o.choices.map((c) => ({ value: c.value, label: choiceLabel(collection, o, c.value, c.label) }))
+      : o.type === 'bool' ? [{ value: true, label: t('common.yes') }, { value: false, label: t('common.no') }] : [];
   /** A value as the user knows it: its label if it has one. */
   const shown = (o: Option, v: unknown) => choices(o).find((c) => c.value === v)?.label ?? show(v);
 
@@ -35,8 +38,8 @@
   {#each options as o (o.name)}
     <li>
       <label for="opt-{target}-{o.name}">
-        <span class="label">{o.label ?? o.name}</span>
-        {#if o.description}<span class="desc">{o.description}</span>{/if}
+        <span class="label">{optionLabel(collection, o)}</span>
+        {#if optionDescription(collection, o)}<span class="desc">{optionDescription(collection, o)}</span>{/if}
       </label>
       {#if o.locked}
         <span class="value">{shown(o, o.value)} <span class="org">{t('common.setByOrg')}</span></span>

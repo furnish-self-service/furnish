@@ -390,6 +390,24 @@ const steps = [
     await waitFor('German Discover page', async () => (await text('//h1')) === 'Entdecken');
     await find("//input[@placeholder='Apps durchsuchen']");
     await find(`${card('fresh')}${button('Installieren')}`);
+    // The collection's German texts (tests/fixtures/collection/locales/de.yaml), without a restart.
+    await waitFor('German app name and description', () => find(`${card('Werkzeugkiste')}//p[normalize-space()='Zwei Kommandozeilenwerkzeuge']`));
+    await click("//nav//button[normalize-space()='Büro']");
+    await waitFor('German category page', async () => (await text('//h1')) === 'Büro');
+    await find(card('Werkzeugkiste'));
+    await click(button('Entdecken'));
+    // Search ignores accents, and also finds the collection's English texts (the fallback language).
+    const search = (value) => wd('POST', s('/execute/sync'), {
+      script: "const i = document.querySelector('input.search'); i.value = arguments[0]; i.dispatchEvent(new Event('input', { bubbles: true }));",
+      args: [value],
+    });
+    const shown = async (app) => (await findAll(card(app))).length > 0;
+    await search('buro');
+    await waitFor('"buro" finds Büro', async () => (await shown('Werkzeugkiste')) && !(await shown('hyperfine')));
+    await search('two command');
+    await waitFor('English text found', async () => (await shown('Werkzeugkiste')) && !(await shown('hyperfine')));
+    await search('');
+    await waitFor('all apps again', () => shown('hyperfine'));
     // The install button widens to fit the longest German label ("Erst beantworten").
     const width = () => wd('POST', s('/execute/sync'), {
       script: "return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--action-width'))", args: [],

@@ -1,6 +1,6 @@
 <script lang="ts">
   // What is running now and what is queued after it.
-  import { store, dequeue, clearQueue } from './state.svelte';
+  import { store, dequeue, clearQueue, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import { t } from './i18n.svelte';
@@ -25,10 +25,10 @@
   <h2>{t('activity.now')}</h2>
   {#if running}
     <div class="row now">
-      <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: running.id })}>
+      <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: appName(running) })}>
         <AppIcon app={running} size={44} />
         <span class="text">
-          <span class="name">{running.id}</span>
+          <span class="name">{appName(running)}</span>
           <span class="meta">
             {run ? t(kindLabel[run.kind]) : t('run.starting')}
             {#if run?.steps.length} · {t('run.stepOf', { n: Math.min(done + 1, run.steps.length), total: run.steps.length })}{/if}
@@ -52,14 +52,14 @@
       {#each queued as q, i (q.key)}
         <li class="row">
           <span class="position">{i + 1}</span>
-          <button class="open" onclick={() => onopen(q.key)} aria-label={t('common.open', { name: q.app!.id })}>
+          <button class="open" onclick={() => onopen(q.key)} aria-label={t('common.open', { name: appName(q.app!) })}>
             <AppIcon app={q.app!} size={36} />
             <span class="text">
-              <span class="name">{q.app!.id}</span>
+              <span class="name">{appName(q.app!)}</span>
               <span class="meta">{actionLabel(q.key, q.action)} · {q.app!.collection}</span>
             </span>
           </button>
-          <button class="secondary" aria-label={t('action.removeFromQueue', { app: q.app!.id })} onclick={() => dequeue(q.key)}>{t('common.remove')}</button>
+          <button class="secondary" aria-label={t('action.removeFromQueue', { app: appName(q.app!) })} onclick={() => dequeue(q.key)}>{t('common.remove')}</button>
         </li>
       {/each}
     </ol>

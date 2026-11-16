@@ -2,7 +2,7 @@
 metadata:
   furnish:
     description: Two command-line tools
-    categories: [Test]
+    categories: [Test, Office]
 resources:
   - name: toolbox-a
     type: Furnish/Package

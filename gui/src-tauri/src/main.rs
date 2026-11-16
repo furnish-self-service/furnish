@@ -29,6 +29,8 @@ struct AppInfo {
     key: String,
     id: String,
     collection: String,
+    /// The name to show (`metadata.furnish.name`), if other than the id.
+    name: Option<String>,
     description: String,
     categories: Vec<String>,
     /// Data URL of the app's icon, if the collection provides one.
@@ -65,6 +67,7 @@ struct KitInfo {
     key: String,
     id: String,
     collection: String,
+    name: Option<String>,
     description: String,
     categories: Vec<String>,
     icon: Option<String>,
@@ -95,6 +98,9 @@ struct CollectionInfo {
     icon: Option<String>,
     /// History kept, downloads and falling back, and which of them the organization sets.
     settings: furnish::settings::CollectionEffective,
+    /// The language of the collection's own texts, and its translations (`locales/`).
+    language: String,
+    locales: std::collections::BTreeMap<String, furnish::locale::LocaleFile>,
 }
 
 /// The organization's branding (policy `branding`), checked: colors are `#rgb`/`#rrggbb`, theme
@@ -185,6 +191,7 @@ fn app_info(app: &App) -> AppInfo {
         key: format!("{}/{}", app.collection, app.id),
         id: app.id.clone(),
         collection: app.collection.clone(),
+        name: app.name.clone(),
         description: app.description.clone(),
         categories: app.categories.clone(),
         icon: app.icon.as_deref().and_then(icon_data_url),
@@ -231,6 +238,7 @@ fn icon_data_url(path: &Path) -> Option<String> {
 /// so one broken repository doesn't hide the others.
 fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
     let unknown = |_| "unknown".to_string();
+    let locales = c.locales();
     Ok(CollectionInfo {
         name: c.name.clone(),
         managed: c.managed,
@@ -240,6 +248,8 @@ fn collection_info(c: &catalog::Collection) -> anyhow::Result<CollectionInfo> {
         options: c.options()?,
         icon: c.icon().as_deref().and_then(icon_data_url),
         settings: furnish::settings::for_collection(&c.name),
+        language: locales.language,
+        locales: locales.files,
     })
 }
 
@@ -259,6 +269,7 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
                 icon: k.icon.as_deref().and_then(icon_data_url),
                 id: k.id,
                 collection: k.collection,
+                name: k.name,
                 description: k.description,
                 categories: k.categories,
             })

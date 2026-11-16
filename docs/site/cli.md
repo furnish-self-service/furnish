@@ -8,7 +8,7 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 
 | Command | What it does |
 |---|---|
-| `furnish list` | The catalog and each app's state: ✓ installed, ↑ update available, · not installed, ★ recommended |
+| `furnish list` | The catalog, with texts in your language (see [Translations](collections.md#translations)), and each app's state: ✓ installed, ↑ update available, · not installed, ★ recommended |
 | `furnish install <app>` | Install or update an app or a kit; `--dry-run` shows the steps, `--with`/`--without` choose optional dependencies or kit items, `--previous` installs the app's previous version, `--current` the collection's version of an app held at an earlier one |
 | `furnish uninstall <app>` | Uninstall; for a kit, `--only` picks the apps |
 | `furnish reinstall <app>` | Apply changed options |
@@ -19,7 +19,7 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
 | `furnish option set`, `reset` | Change an option, or go back to the collection's value |
 | `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
-| `furnish settings` | Show or change automatic updates, and the general download and fallback settings |
+| `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`) |
 | `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
 
 `-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.

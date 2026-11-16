@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { KitInfo } from './api';
-  import { appByKey, isInstalled } from './state.svelte';
+  import { appByKey, isInstalled, kitName, kitDescription, categoryName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
 
@@ -11,15 +11,15 @@
 </script>
 
 <article class="card kit">
-  <button class="open" onclick={onopen} aria-label={t('kit.openKit', { name: kit.id })}></button>
+  <button class="open" onclick={onopen} aria-label={t('kit.openKit', { name: kitName(kit) })}></button>
   <header>
     <AppIcon app={kit} />
     <div class="title">
       <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
-      <h3>{kit.id}</h3>
+      <h3>{kitName(kit)}</h3>
     </div>
   </header>
-  <p class="description">{kit.description || kit.categories.join(' · ')}</p>
+  <p class="description">{kitDescription(kit) || kit.categories.map((c) => categoryName(c, kit.collection)).join(' · ')}</p>
   <div class="stack" aria-hidden="true">
     {#each apps.slice(0, 5) as app (app.key)}<span class="mini"><AppIcon {app} size={26} /></span>{/each}
     {#if apps.length > 5}<span class="more">+{apps.length - 5}</span>{/if}

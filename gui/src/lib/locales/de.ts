@@ -283,6 +283,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'collections.language': 'Sprache',
   'collections.languageLabel': 'Sprache von {brand}',
   'collections.languageSystem': 'Wie das System',
+  'collections.fallbackLanguage': 'Ersatzsprache',
+  'collections.fallbackLanguageText': 'Sammlungen können ihre Texte übersetzen. Ein Text ohne Übersetzung in die Sprache oben erscheint in dieser Sprache, wenn die Sammlung sie hat, sonst so, wie die Sammlung ihn geschrieben hat.',
   'collections.count': { one: '{n} Sammlung', other: '{n} Sammlungen' },
   'collections.updating': 'Wird aktualisiert…',
   'collections.updateAll': 'Alle aktualisieren',

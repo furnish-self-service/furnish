@@ -14,6 +14,8 @@ export interface AppInfo {
   key: string;
   id: string;
   collection: string;
+  /** The name to show (`metadata.furnish.name`); null: the id. See `appName` for translations. */
+  name: string | null;
   description: string;
   categories: string[];
   icon: string | null;
@@ -133,6 +135,7 @@ export interface KitInfo {
   key: string;
   id: string;
   collection: string;
+  name: string | null;
   description: string;
   categories: string[];
   icon: string | null;
@@ -152,6 +155,10 @@ export interface CollectionInfo {
   icon: string | null;
   /** History kept, downloads and falling back, and which of them the organization sets. */
   settings: { settings: CollectionSettings; locked: (keyof CollectionSettings)[] };
+  /** The language of the collection's own texts. */
+  language: string;
+  /** Its translations (`locales/<lang>.yaml`) by language tag. */
+  locales: Record<string, import('./content.ts').LocaleFile>;
 }
 
 export interface CollectionSettings {
@@ -257,6 +264,8 @@ export interface Settings {
   reportHostname: boolean;
   /** The app's language; `system` follows the system language. */
   language: 'system' | import('./i18n.ts').Lang;
+  /** Collection texts not translated into the app's language show in this one (a language tag). */
+  fallbackLanguage: string;
 }
 
 export interface Load {

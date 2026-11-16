@@ -1,0 +1,23 @@
+# German texts. Anything left out shows in the fallback language or as written in the app files.
+categories:
+  Office: Büro
+apps:
+  toolbox:
+    name: Werkzeugkiste
+    description: Zwei Kommandozeilenwerkzeuge
+  hyperfine:
+    description: Benchmarks auf der Kommandozeile
+kits:
+  starter:
+    name: Starterpaket
+    description: Das Nötigste, um furnish auszuprobieren
+parameters:
+  role:
+    label: Woran arbeitest du?
+    description: Empfiehlt die Apps für deine Rolle.
+    allowedValues:
+      developer: Softwareentwicklung
+      design: Design
+  userInstall:
+    label: Nur für mich installieren
+    description: Installiert in dein Benutzerkonto, ohne Administratorrechte.

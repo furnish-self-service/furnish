@@ -285,6 +285,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'collections.language': 'Idioma',
   'collections.languageLabel': 'Idioma de {brand}',
   'collections.languageSystem': 'Igual que el sistema',
+  'collections.fallbackLanguage': 'Idioma alternativo',
+  'collections.fallbackLanguageText': 'Las colecciones pueden traducir sus textos. Un texto sin traducción al idioma de arriba se muestra en este idioma si la colección lo tiene; si no, tal como lo escribió la colección.',
   'collections.count': { one: '{n} colección', other: '{n} colecciones' },
   'collections.updating': 'Actualizando…',
   'collections.updateAll': 'Actualizar todas',

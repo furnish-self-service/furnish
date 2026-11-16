@@ -67,6 +67,8 @@ struct CollectionFile {
     parameters: BTreeMap<String, Declaration>,
     /// Image file in the collection (SVG, PNG, JPEG or WebP).
     icon: Option<String>,
+    /// The language of the collection's own texts (a BCP 47 tag; default `en`), see `locale`.
+    language: Option<String>,
 }
 
 fn collection_file(dir: &Path) -> Result<CollectionFile> {
@@ -85,6 +87,11 @@ pub fn collection_declarations(dir: &Path) -> Result<BTreeMap<String, Declaratio
 /// The collection's avatar (`icon` in `collection.yaml`), relative to the collection.
 pub fn collection_icon(dir: &Path) -> Option<String> {
     collection_file(dir).ok()?.icon
+}
+
+/// The language of the collection's own texts (`language` in `collection.yaml`, default `en`).
+pub fn collection_language(dir: &Path) -> String {
+    collection_file(dir).ok().and_then(|f| f.language).unwrap_or_else(|| "en".into())
 }
 
 /// Options an app's DSC document declares (`parameters` section).

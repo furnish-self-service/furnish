@@ -2,7 +2,8 @@
 import * as api from './api';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 import { applyBranding, type Branding } from './brand';
-import { setLanguage, t, formatDate } from './i18n.svelte';
+import { setLanguage, t, formatDate, lang } from './i18n.svelte';
+import { contentLanguage, lookup, matches, searchTexts, valueKey } from './content';
 
 export type View =
   | { page: 'discover' }
@@ -205,14 +206,14 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
     const fellBack = await api[action](app.key, trigger);
     ok = true;
     if (fellBack)
-      toast('info', t('toast.fellBack', { app: app.id, date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
-    else toast('success', t(`run.done.${kind}`, { app: app.id }));
+      toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
+    else toast('success', t(`run.done.${kind}`, { app: appName(app) }));
     if (autoInstalling.delete(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     cancelled = message(e) === api.CANCELLED;
-    if (cancelled) toast('info', t(`run.cancelled.${kind}`, { app: app.id }));
+    if (cancelled) toast('info', t(`run.cancelled.${kind}`, { app: appName(app) }));
     else {
-      toast('error', t(`run.failed.${kind}`, { app: app.id }), message(e));
+      toast('error', t(`run.failed.${kind}`, { app: appName(app) }), message(e));
       // An earlier version may work (fallback "ask"); none is offered for one furnish fell back to.
       const offer = action === 'install' && !app.held;
       store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };
@@ -240,15 +241,15 @@ export async function collectionAction(work: () => Promise<string>, failure: str
 }
 
 export function visibleApps(view: View, query: string): AppInfo[] {
-  const q = query.trim().toLowerCase();
+  const languages = wanted();
   return store.apps.filter((app) => {
     const status = store.status[app.key];
     if (status === 'unavailable') return false;
     if (view.page === 'installed' && status !== 'installed' && status !== 'needsUpdate') return false;
     if (view.page === 'updates' && status !== 'needsUpdate') return false;
     if (view.page === 'category' && !app.categories.includes(view.name)) return false;
-    if (!q) return true;
-    return [app.id, app.description, app.collection, ...app.categories].some((s) => s.toLowerCase().includes(q));
+    if (!query.trim()) return true;
+    return matches(query, searchTexts('apps', app, textsOf(app.collection), languages));
   });
 }
 
@@ -303,7 +304,7 @@ async function updateApps() {
   store.autoUpdate.postponed = null;
   const apps = due();
   for (const app of apps) enqueue(app.key, 'install', true);
-  if (apps.length) toast('info', t('toast.autoUpdating', { apps: apps.map((a) => a.id).join(', '), n: apps.length }));
+  if (apps.length) toast('info', t('toast.autoUpdating', { apps: apps.map(appName).join(', '), n: apps.length }));
 }
 
 /** Pull collections, look for app updates (package managers learn about them on their own),
@@ -381,7 +382,8 @@ export function trayTexts(): api.TrayTexts {
   const brand = store.brand.name;
   const busy = Object.keys(store.busy)[0];
   const updates = store.apps.filter((a) => store.status[a.key] === 'needsUpdate').length;
-  const app = busy && (appByKey(busy)?.id ?? busy);
+  const busyApp = busy ? appByKey(busy) : undefined;
+  const app = busy && (busyApp ? appName(busyApp) : busy);
   const status = app
     ? t(store.busy[busy] === 'uninstall' ? 'tray.uninstalling' : 'tray.installing', { app })
     : store.autoUpdate.running
@@ -633,6 +635,40 @@ export const isInstalled = (key: string) => store.status[key] === 'installed' ||
 export const isPending = (key: string) => !!store.busy[key] || store.queue.some((q) => q.key === key);
 export const appByKey = (key: string) => store.apps.find((a) => a.key === key);
 
+// Collection texts in the user's languages (see content.ts). They read the language and the
+// settings, so changing either re-renders them.
+
+/** The languages for collection texts, in order: the app's, then the fallback language. */
+export const wanted = () => [
+  contentLanguage(store.settings?.language, lang(), navigator.language),
+  store.settings?.fallbackLanguage ?? 'en',
+];
+const textsOf = (collection: string) => store.collections.find((c) => c.name === collection);
+const translated = (collection: string, get: Parameters<typeof lookup>[2]) => lookup(textsOf(collection), wanted(), get);
+
+export const appName = (app: Pick<AppInfo, 'id' | 'name' | 'collection'>) =>
+  translated(app.collection, (f) => f.apps?.[app.id]?.name) ?? app.name ?? app.id;
+export const appDescription = (app: AppInfo) => translated(app.collection, (f) => f.apps?.[app.id]?.description) ?? app.description;
+export const kitName = (kit: KitInfo) => translated(kit.collection, (f) => f.kits?.[kit.id]?.name) ?? kit.name ?? kit.id;
+export const kitDescription = (kit: KitInfo) => translated(kit.collection, (f) => f.kits?.[kit.id]?.description) ?? kit.description;
+/** A category's name: as its collection translates it; without a collection (the navigation,
+ *  which groups by key), as the first collection that translates it does. */
+export function categoryName(key: string, collection?: string): string {
+  const get = (f: import('./content').LocaleFile) => f.categories?.[key];
+  if (collection) return translated(collection, get) ?? key;
+  for (const c of store.collections) {
+    const name = lookup(c, wanted(), get);
+    if (name) return name;
+  }
+  return key;
+}
+export const optionLabel = (collection: string, o: api.Option) =>
+  translated(collection, (f) => f.parameters?.[o.name]?.label) ?? o.label ?? o.name;
+export const optionDescription = (collection: string, o: api.Option) =>
+  translated(collection, (f) => f.parameters?.[o.name]?.description) ?? o.description;
+export const choiceLabel = (collection: string, o: api.Option, value: unknown, own: string | null | undefined) =>
+  translated(collection, (f) => f.parameters?.[o.name]?.allowedValues?.[valueKey(value)]) ?? own;
+
 /** A kit counts as installed when all its required items are. */
 function kitInstalled(kit: KitInfo) {
   return kit.items.some((i) => isInstalled(i.key)) && kit.items.filter((i) => i.required).every((i) => isInstalled(i.key));
@@ -667,12 +703,12 @@ export function uninstallKit(kit: KitInfo, keys: string[]) {
 
 export function visibleKits(view: View, query: string): KitInfo[] {
   if (view.page !== 'discover' && view.page !== 'category') return [];
-  const q = query.trim().toLowerCase();
+  const languages = wanted();
   return store.kits.filter((kit) => {
     if (kit.items.every((i) => store.status[i.key] === 'unavailable')) return false;
     if (view.page === 'category' && !kit.categories.includes(view.name)) return false;
-    if (!q) return true;
-    return [kit.id, kit.description, kit.collection, ...kit.categories].some((s) => s.toLowerCase().includes(q));
+    if (!query.trim()) return true;
+    return matches(query, searchTexts('kits', kit, textsOf(kit.collection), languages));
   });
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { store, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent } from './state.svelte';
+  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent } from './state.svelte';
   import Options from './Options.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
@@ -39,7 +39,7 @@
       case 'needsUpdate': return t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
       case 'unavailable': return t('app.status.unavailable');
-      case 'blocked': return app.dependencies.length ? t('app.status.blockedDeps', { what, app: app.id }) : t('app.status.blocked', { what });
+      case 'blocked': return app.dependencies.length ? t('app.status.blockedDeps', { what, app: appName(app) }) : t('app.status.blocked', { what });
       case 'error': return t('app.status.error');
       default: return t('app.status.checking');
     }
@@ -52,13 +52,13 @@
   <header>
     <AppIcon {app} size={96} />
     <div class="heading">
-      <h1>{app.id}</h1>
-      <p class="meta">{app.categories.join(' · ')}{app.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
+      <h1>{appName(app)}</h1>
+      <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ')}{app.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
       <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate' || status === 'blocked'}>{statusText}</p>
     </div>
     <div class="cta">
       {#if status === 'installed' && confirming}
-        <p class="confirm">{t('app.confirmUninstall', { app: app.id })}</p>
+        <p class="confirm">{t('app.confirmUninstall', { app: appName(app) })}</p>
         <div class="row">
           <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>{t('common.uninstall')}</button>
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
@@ -87,11 +87,11 @@
     </div>
   </header>
 
-  <p class="description">{app.description || t('common.noDescription')}</p>
+  <p class="description">{appDescription(app) || t('common.noDescription')}</p>
 
   {#if app.held}
     <div class="differ" role="status">
-      <span>{t('app.held', { app: app.id, date: formatDate(app.held.date) })}</span>
+      <span>{t('app.held', { app: appName(app), date: formatDate(app.held.date) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => installCurrent(app)}>
         {isPending(app.key) ? t('common.installing') : t('app.tryCurrent')}
       </button>
@@ -99,7 +99,7 @@
   {:else if store.failed[app.key]?.previous}
     {@const previous = store.failed[app.key].previous!}
     <div class="differ" role="status">
-      <span>{t('app.previousWorks', { app: app.id, date: formatDate(previous.date) })}</span>
+      <span>{t('app.previousWorks', { app: appName(app), date: formatDate(previous.date) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => installPrevious(app)}>
         {isPending(app.key) ? t('common.installing') : t('app.installPrevious', { date: formatDate(previous.date) })}
       </button>
@@ -108,7 +108,7 @@
 
   {#if installed && app.optionsDiffer}
     <div class="differ" role="status">
-      <span>{t('app.optionsDiffer', { app: app.id })}</span>
+      <span>{t('app.optionsDiffer', { app: appName(app) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => reinstall(app)}>
         {isPending(app.key) ? t('app.reinstalling') : t('app.reinstall')}
       </button>
@@ -118,7 +118,7 @@
   {#if app.options.length}
     <h2>{t('app.options')}</h2>
     <p class="lead">
-      {installed ? t('app.optionsOnReinstall') : t('app.optionsOnInstall', { app: app.id })}
+      {installed ? t('app.optionsOnReinstall') : t('app.optionsOnInstall', { app: appName(app) })}
       {t('app.optionsFollow', { collection: app.collection })}
     </p>
     <Options target={app.key} options={app.options} scope="app" />
@@ -128,8 +128,8 @@
     <h2>{t('app.dependencies')}</h2>
     <p class="lead">
       {app.dependencies.some((d) => !d.required)
-        ? t('app.dependenciesLeadOptional', { app: app.id })
-        : t('app.dependenciesLead', { app: app.id })}
+        ? t('app.dependenciesLeadOptional', { app: appName(app) })
+        : t('app.dependenciesLead', { app: appName(app) })}
     </p>
     <DependencyList {app} bind:chosen />
   {/if}

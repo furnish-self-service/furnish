@@ -43,7 +43,13 @@ pub struct Settings {
     pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
     /// The desktop app's language: the system's, or one the app has.
     pub language: Language,
+    /// The language for a collection's texts when they aren't translated into the app's language
+    /// (a BCP 47 tag such as `en` or `pt-BR`; see `locale`).
+    pub fallback_language: String,
 }
+
+/// The languages of the desktop app (`Language` without `System`).
+pub const UI_LANGUAGES: [&str; 8] = ["en", "de", "fr", "es", "it", "pl", "pt", "nl"];
 
 /// The desktop app's language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +117,7 @@ impl Default for Settings {
             report_hostname: false,
             collections: Default::default(),
             language: Language::System,
+            fallback_language: "en".into(),
         }
     }
 }
@@ -257,7 +264,11 @@ fn strict_merge(policy: &Policy, choices: &Map<String, Value>) -> Result<Setting
             merged.insert(key.clone(), value.clone());
         }
     }
-    Ok(serde_json::from_value(Value::Object(merged))?)
+    let settings: Settings = serde_json::from_value(Value::Object(merged))?;
+    if !crate::locale::valid_tag(&settings.fallback_language) {
+        bail!("'{}' isn't a language tag such as en or pt-BR (fallbackLanguage)", settings.fallback_language);
+    }
+    Ok(settings)
 }
 
 #[cfg(test)]
@@ -349,5 +360,17 @@ mod tests {
         assert_eq!(e.locked, ["language"]);
         // Unknown languages are rejected.
         assert!(strict_merge(&Policy::default(), json!({"language": "xx"}).as_object().unwrap()).is_err());
+    }
+
+    #[test]
+    fn fallback_language_defaults_to_english_takes_any_tag_and_can_be_locked() {
+        assert_eq!(Settings::default().fallback_language, "en");
+        let e = merge(&Policy::default(), json!({"fallbackLanguage": "sv"}).as_object().unwrap());
+        assert_eq!(e.settings.fallback_language, "sv");
+        let p = policy(json!({"settings": {"fallbackLanguage": {"value": "de", "locked": true}}}));
+        let e = merge(&p, json!({"fallbackLanguage": "fr"}).as_object().unwrap());
+        assert_eq!(e.settings.fallback_language, "de");
+        assert_eq!(e.locked, ["fallbackLanguage"]);
+        assert!(strict_merge(&Policy::default(), json!({"fallbackLanguage": "not a tag"}).as_object().unwrap()).is_err());
     }
 }

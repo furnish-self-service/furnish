@@ -3,7 +3,7 @@
   // nothing) or, during and after a run, live progress of those same steps.
   import * as api from './api';
   import type { AppInfo, Step } from './api';
-  import { store, type RunStep } from './state.svelte';
+  import { store, appName, type RunStep } from './state.svelte';
   import { describeCondition } from './conditions';
   import { t, parts, formatTime, formatDuration } from './i18n.svelte';
 
@@ -120,7 +120,7 @@
         <span class="pulse" aria-hidden="true"></span>
         {@render marked(
           t('plan.runningSummary', {
-            what: t(`plan.running.${run.kind}`, { app: app.id }),
+            what: t(`plan.running.${run.kind}`, { app: appName(app) }),
             step: t('run.stepOf', { n: Math.min(finished + 1, rows.length || 1), total: rows.length || '…' }),
           }),
         )}
@@ -128,15 +128,15 @@
         {#if run.stopping === 'abort'}<span class="stopping">{t('plan.stoppingAfter')}</span>
         {:else if run.stopping === 'force'}<span class="stopping">{t('plan.interrupting')}</span>{/if}
       {:else if run.cancelled}
-        {@render marked(t('plan.cancelledAfter', { what: t(`run.cancelled.${run.kind}`, { app: app.id }), time: seconds(total) }))}
+        {@render marked(t('plan.cancelledAfter', { what: t(`run.cancelled.${run.kind}`, { app: appName(app) }), time: seconds(total) }))}
         <span class="muted">{t('plan.doneStepsStay')}</span>
       {:else if failedRow}
         {@render marked(
-          t('plan.failedAt', { what: t(`plan.failed.${run.kind}`, { app: app.id }), step: failedRow.step.name, time: seconds(total) }),
+          t('plan.failedAt', { what: t(`plan.failed.${run.kind}`, { app: appName(app) }), step: failedRow.step.name, time: seconds(total) }),
           'failed-text',
         )}
       {:else}
-        {@render marked(t('plan.doneIn', { what: t(`run.done.${run.kind}`, { app: app.id }), time: seconds(total) }))}
+        {@render marked(t('plan.doneIn', { what: t(`run.done.${run.kind}`, { app: appName(app) }), time: seconds(total) }))}
         <span class="muted">· {t('plan.started', { time: clock(run.startedAt) })}</span>
       {/if}
     </p>
@@ -150,8 +150,8 @@
     <p class="summary" class:stale={loading}>
       {@render marked(
         changing === 0
-          ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: app.id }) })
-          : t('plan.changes', { subject: t(`plan.subject.${previewKind}`, { app: app.id }), n: changing }),
+          ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: appName(app) }) })
+          : t('plan.changes', { subject: t(`plan.subject.${previewKind}`, { app: appName(app) }), n: changing }),
       )}
       {#if skippedCount}<span class="muted">{t('plan.skipped', { n: skippedCount })}</span>{/if}
     </p>

@@ -24,6 +24,8 @@ pub struct Collection {
 pub struct Kit {
     pub id: String,
     pub collection: String,
+    /// The name to show (`name`), if other than the id.
+    pub name: Option<String>,
     pub description: String,
     pub categories: Vec<String>,
     pub icon: Option<PathBuf>,
@@ -77,6 +79,7 @@ fn yes() -> bool {
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KitFile {
+    name: Option<String>,
     #[serde(default)]
     description: String,
     #[serde(default)]
@@ -89,6 +92,9 @@ struct KitFile {
 pub struct App {
     pub id: String,
     pub collection: String,
+    /// The name to show (`metadata.furnish.name`, e.g. "Google Chrome"); the id stays the file
+    /// name, which commands, policies and dependencies use.
+    pub name: Option<String>,
     pub description: String,
     pub categories: Vec<String>,
     /// Optional icon image (`metadata.furnish.icon`, relative to the collection root).
@@ -465,6 +471,11 @@ impl Collection {
         self.options().unwrap_or_default().into_iter().filter(|r| r.missing).collect()
     }
 
+    /// The collection's translations (`locales/`), see `locale`.
+    pub fn locales(&self) -> crate::locale::Locales {
+        crate::locale::load_reporting(&self.dir)
+    }
+
     /// The collection's avatar (`icon` in `collection.yaml`).
     pub fn icon(&self) -> Option<PathBuf> {
         self.file_in_repo(&crate::options::collection_icon(&self.dir)?)
@@ -783,6 +794,7 @@ impl Collection {
         Ok(Kit {
             id,
             collection: self.name.clone(),
+            name: file.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()),
             description: file.description.trim().to_string(),
             categories: file.categories,
             icon: file.icon.as_deref().and_then(|p| self.file_in_repo(p)),
@@ -836,6 +848,7 @@ impl Collection {
         Ok(App {
             id: file_name.trim_end_matches(".dsc.yaml").to_string(),
             collection: self.name.clone(),
+            name: meta["name"].as_str().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()),
             description: meta["description"].as_str().unwrap_or_default().trim().to_string(),
             categories: meta["categories"]
                 .as_array()
@@ -1586,6 +1599,7 @@ mod tests {
         Kit {
             id: id.into(),
             collection: collection.into(),
+            name: None,
             description: String::new(),
             categories: vec![],
             icon: None,
@@ -1607,7 +1621,7 @@ mod tests {
     #[test]
     fn kit_file_defaults() {
         let file: KitFile = serde_yaml::from_str("items:\n  - app: a\n    required: true\n  - app: b\n  - app: c\n    selected: false\n").unwrap();
-        let k = Kit { id: "k".into(), collection: "c".into(), description: file.description, categories: file.categories, icon: None, items: file.items };
+        let k = Kit { id: "k".into(), collection: "c".into(), name: None, description: file.description, categories: file.categories, icon: None, items: file.items };
         assert_eq!(default_selection(&k.items), ["a", "b"]);
         let with = ["c".to_string()];
         let without = ["b".to_string()];

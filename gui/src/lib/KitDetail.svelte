@@ -12,6 +12,11 @@
     uninstallKit,
     defaultUninstall,
     otherKitsWith,
+    appName,
+    appDescription,
+    kitName,
+    kitDescription,
+    categoryName,
   } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
@@ -68,11 +73,11 @@
     <AppIcon app={kit} size={96} />
     <div class="heading">
       <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
-      <h1>{kit.id}</h1>
-      <p class="meta">{kit.categories.join(' · ')}{kit.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
+      <h1>{kitName(kit)}</h1>
+      <p class="meta">{kit.categories.map((c) => categoryName(c, kit.collection)).join(' · ')}{kit.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
     </div>
   </header>
-  {#if kit.description}<p class="description">{kit.description}</p>{/if}
+  {#if kitDescription(kit)}<p class="description">{kitDescription(kit)}</p>{/if}
 
   {#if !removing}
     <h2>{t('kit.chooseInstall')}</h2>
@@ -90,12 +95,12 @@
               />
               <AppIcon {app} size={36} />
               <span class="text">
-                <span class="name">{app.id}</span>
-                <span class="desc">{app.description}</span>
+                <span class="name">{appName(app)}</span>
+                <span class="desc">{appDescription(app)}</span>
               </span>
             </label>
             {#if badge(item)}<span class="badge" class:required={badge(item) === t('common.required')}>{badge(item)}</span>{/if}
-            <button class="link" onclick={() => onopen(item.key)} aria-label={t('kit.detailsOf', { app: app.id })}>{t('kit.details')}</button>
+            <button class="link" onclick={() => onopen(item.key)} aria-label={t('kit.detailsOf', { app: appName(app) })}>{t('kit.details')}</button>
           </li>
         {/if}
       {/each}
@@ -126,13 +131,13 @@
               />
               <AppIcon {app} size={36} />
               <span class="text">
-                <span class="name">{app.id}</span>
+                <span class="name">{appName(app)}</span>
                 {#if store.unremovable[item.key]}
                   <span class="desc">{t('kit.cantUninstall')}</span>
                 {:else if others.length}
-                  <span class="desc">{t('kit.alsoIn', { kits: others.map((k) => k.id).join(', ') })}</span>
+                  <span class="desc">{t('kit.alsoIn', { kits: others.map(kitName).join(', ') })}</span>
                 {:else}
-                  <span class="desc">{app.description}</span>
+                  <span class="desc">{appDescription(app)}</span>
                 {/if}
               </span>
             </label>

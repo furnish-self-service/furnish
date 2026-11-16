@@ -2,7 +2,7 @@
   // An app's dependencies: required ones are locked; optional ones not yet installed can be
   // deselected. `chosen` holds the keys to install along with the app.
   import type { AppInfo } from './api';
-  import { store, appByKey, isInstalled, isPending } from './state.svelte';
+  import { store, appByKey, isInstalled, isPending, appName, appDescription } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
 
@@ -37,8 +37,8 @@
         />
         {#if depApp}<AppIcon app={depApp} size={32} />{/if}
         <span class="text">
-          <span class="name">{depApp?.id ?? dep.key.split('/')[1]}</span>
-          <span class="desc">{depApp?.description ?? t('deps.notFound')}</span>
+          <span class="name">{depApp ? appName(depApp) : dep.key.split('/')[1]}</span>
+          <span class="desc">{depApp ? appDescription(depApp) : t('deps.notFound')}</span>
         </span>
       </label>
       <span class="badge" class:required={dep.required && !isInstalled(dep.key)}>{badge(dep)}</span>

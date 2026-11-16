@@ -1,6 +1,6 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, categoryName, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -12,20 +12,24 @@
   import KitCard from './lib/KitCard.svelte';
   import KitDetail from './lib/KitDetail.svelte';
   import Toasts from './lib/Toasts.svelte';
-  import { t, formatTime } from './lib/i18n.svelte';
+  import { t, formatTime, lang } from './lib/i18n.svelte';
 
   start();
   // The tray menu follows the language, the branding and what furnish is doing.
   $effect(() => syncTray(trayTexts()));
 
   const view = $derived(store.view);
+  // By key, so collections using the same category share one entry; named as the first
+  // collection that translates it names it, and sorted by that name.
   const categories = $derived(
     [
       ...new Set([
         ...store.apps.filter((a) => store.status[a.key] !== 'unavailable').flatMap((a) => a.categories),
         ...store.kits.flatMap((k) => k.categories),
       ]),
-    ].sort(),
+    ]
+      .map((key) => ({ key, name: categoryName(key) }))
+      .sort((a, b) => a.name.localeCompare(b.name, lang())),
   );
   const count = (page: 'installed' | 'updates') => visibleApps({ page }, '').length;
   const activity = $derived(Object.keys(store.busy).length + store.queue.length);
@@ -42,7 +46,7 @@
 
   const titles = { discover: 'nav.discover', installed: 'nav.installed', updates: 'nav.updates' } as const;
   const title = $derived(
-    view.page === 'category' ? view.name : view.page in titles ? t(titles[view.page as keyof typeof titles]) : '',
+    view.page === 'category' ? categoryName(view.name) : view.page in titles ? t(titles[view.page as keyof typeof titles]) : '',
   );
 
   function go(next: View) {
@@ -96,8 +100,8 @@
 
     {#if categories.length}
       <h2>{t('nav.categories')}</h2>
-      {#each categories as name}
-        <button class:active={isActive('category', name)} onclick={() => go({ page: 'category', name })}>{name}</button>
+      {#each categories as { key, name } (key)}
+        <button class:active={isActive('category', key)} onclick={() => go({ page: 'category', name: key })}>{name}</button>
       {/each}
     {/if}
 

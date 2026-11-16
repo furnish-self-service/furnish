@@ -183,9 +183,10 @@ fn local_remote(name: &str) -> Option<String> {
 }
 
 /// Settings an endpoint may set for everything, as a default: when and how furnish updates,
-/// reports, and the language. Settings in `settings::PER_COLLECTION` apply to its own
+/// reports, and the languages. Settings in `settings::PER_COLLECTION` apply to its own
 /// collections only; others (such as `parameters` or `noAutoUpdate`) aren't an endpoint's to set.
-pub const ENDPOINT_SETTINGS: [&str; 7] = ["startAtSignIn", "updateOnLaunch", "updateIntervalMinutes", "loadAwareUpdates", "reporting", "reportHostname", "language"];
+pub const ENDPOINT_SETTINGS: [&str; 8] =
+    ["startAtSignIn", "updateOnLaunch", "updateIntervalMinutes", "loadAwareUpdates", "reporting", "reportHostname", "language", "fallbackLanguage"];
 
 /// Add what the organization's endpoints say (as from `speaking_for_own`, the first added first):
 /// the collections of endpoints the policy names become presets. Each endpoint's option values,

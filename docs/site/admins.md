@@ -47,6 +47,14 @@ furnish installs updates only while it runs. With `startAtSignIn` on, which is t
 
 On Linux, the tray icon needs libayatana-appindicator, which the furnish packages and the Nix package bring along. GNOME shows tray icons only with the AppIndicator extension. Without a tray, closing the window quits furnish.
 
+## Languages
+
+`language` sets the app's language: `"system"` (the default) or one of `en`, `de`, `fr`, `es`, `it`, `pl`, `pt`, `nl`. `fallbackLanguage` is the language for collection texts that have no translation into the app's language. It is a language tag such as `en` (the default), `de` or `pt-BR`, and may be a language the app itself doesn't come in, as long as your collections translate into it. See [Translations](collections.md#translations).
+
+```json
+{ "settings": { "fallbackLanguage": { "value": "de", "locked": true } } }
+```
+
 ## Disk use and earlier versions
 
 Each person's computer keeps a git copy of every collection. Four settings decide how much of it, and what happens when an install fails. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.
@@ -87,7 +95,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname` and `language` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys. |
 | `branding` | the app's name and colors, and a logo from one of its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.

@@ -5,6 +5,7 @@ pub mod check;
 pub mod endpoint;
 pub mod engine;
 pub mod load;
+pub mod locale;
 pub mod options;
 pub mod policy;
 pub mod reports;

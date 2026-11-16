@@ -1,6 +1,6 @@
 <script lang="ts">
   // Opens when installing an app with optional dependencies from a card: choose which to include.
-  import { store, appByKey, install, defaultDependencies } from './state.svelte';
+  import { store, appByKey, install, defaultDependencies, appName } from './state.svelte';
   import DependencyList from './DependencyList.svelte';
   import { t } from './i18n.svelte';
 
@@ -27,8 +27,8 @@
 
 <dialog bind:this={dialog} onclose={() => (store.choosing = null)} aria-labelledby="deps-title">
   {#if app}
-    <h2 id="deps-title">{t('deps.title', { app: app.id })}</h2>
-    <p>{t('deps.text', { app: app.id })}</p>
+    <h2 id="deps-title">{t('deps.title', { app: appName(app) })}</h2>
+    <p>{t('deps.text', { app: appName(app) })}</p>
     <DependencyList {app} bind:chosen />
     <div class="actions">
       <button class="secondary" onclick={close}>{t('common.cancel')}</button>

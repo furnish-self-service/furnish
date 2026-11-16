@@ -36,6 +36,8 @@ pub struct Item {
     pub findings: Vec<Finding>,
     /// For apps: the resources that run per system, e.g. ("Windows", ["GIMP (winget)"]).
     pub systems: Vec<(&'static str, Vec<String>)>,
+    /// For translations: how much they cover, e.g. "17 of 19 apps, 3 of 3 kits".
+    pub coverage: Option<String>,
 }
 
 /// The systems an app can be for, as `context().os.family` names them.
@@ -57,7 +59,7 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
     let collection = Collection { name: name.clone(), dir: dir.clone(), managed: false };
     let mut items = Vec::new();
 
-    let mut options = Item { name: "collection.yaml".into(), kind: "options", findings: vec![], systems: vec![] };
+    let mut options = Item { name: "collection.yaml".into(), kind: "options", findings: vec![], systems: vec![], coverage: None };
     let shared = match crate::options::collection_declarations(&dir) {
         Ok(shared) => shared,
         Err(err) => {
@@ -70,6 +72,11 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
         && !collection.icon().is_some_and(|p| p.is_file())
     {
         options.findings.push(error(format!("icon '{icon}' is not in the collection")));
+    }
+    if let Some(language) = yaml_string(&dir.join("collection.yaml"), "language")
+        && !crate::locale::valid_tag(&language)
+    {
+        options.findings.push(error(format!("language '{language}' is not a language tag such as en or pt-BR")));
     }
     if dir.join("collection.yaml").exists() {
         items.push(options);
@@ -84,15 +91,16 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
     }
 
     let mut apps = Vec::new();
+    let mut kits = Vec::new();
     for path in files(&dir.join("apps"), ".dsc.yaml") {
         let id = file_stem(&path, ".dsc.yaml");
         match collection.load_app(&path) {
             Ok(app) => apps.push(app),
-            Err(err) => items.push(Item { name: id, kind: "app", findings: vec![error(format!("{err:#}"))], systems: vec![] }),
+            Err(err) => items.push(Item { name: id, kind: "app", findings: vec![error(format!("{err:#}"))], systems: vec![], coverage: None }),
         }
     }
     if apps.is_empty() && items.iter().all(|i| i.kind != "app") {
-        items.push(Item { name: name.clone(), kind: "collection", findings: vec![error("no apps (apps/<name>.dsc.yaml)")], systems: vec![] });
+        items.push(Item { name: name.clone(), kind: "collection", findings: vec![error("no apps (apps/<name>.dsc.yaml)")], systems: vec![], coverage: None });
     }
     let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
     for app in &apps {
@@ -101,7 +109,7 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
 
     for path in files(&dir.join("kits"), ".yaml") {
         let id = file_stem(&path, ".yaml");
-        let mut item = Item { name: id, kind: "kit", findings: vec![], systems: vec![] };
+        let mut item = Item { name: id, kind: "kit", findings: vec![], systems: vec![], coverage: None };
         match collection.load_kit(&path, &ids) {
             Err(err) => item.findings.push(error(format!("{err:#}"))),
             // load_kit drops an icon it can't find.
@@ -109,11 +117,84 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
                 if let Some(icon) = yaml_string(&path, "icon").filter(|_| kit.icon.is_none()) {
                     item.findings.push(error(format!("icon '{icon}' is not in the collection")));
                 }
+                kits.push(kit);
             }
         }
         items.push(item);
     }
+    items.extend(check_locales(&dir, &apps, &kits, &shared));
     Ok(items)
+}
+
+/// The translations (`locales/<lang>.yaml`): files that load, with texts for apps, kits, options
+/// and categories the collection has. Missing translations are fine (see `locale`).
+fn check_locales(dir: &Path, apps: &[App], kits: &[crate::catalog::Kit], shared: &BTreeMap<String, crate::options::Declaration>) -> Vec<Item> {
+    let language = crate::options::collection_language(dir);
+    let mut categories: Vec<&str> = apps.iter().flat_map(|a| &a.categories).chain(kits.iter().flat_map(|k| &k.categories)).map(String::as_str).collect();
+    categories.sort();
+    categories.dedup();
+    // Options and their allowed values (as `allowedValues` keys write them).
+    let mut parameters: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let declarations = shared.iter().map(|(n, d)| (n.clone(), d.clone())).chain(apps.iter().flat_map(|a| crate::options::app_declarations(&a.doc)));
+    for (name, decl) in declarations {
+        let values = parameters.entry(name).or_default();
+        values.extend(decl.choices().iter().map(|c| crate::locale::value_key(&c.value)));
+    }
+    let mut items = Vec::new();
+    for (tag, path) in crate::locale::locale_paths(dir) {
+        let mut item = Item { name: format!("locales/{tag}.yaml"), kind: "translation", findings: vec![], systems: vec![], coverage: None };
+        if !crate::locale::valid_tag(&tag) {
+            item.findings.push(error(format!("'{tag}' is not a language tag such as de or pt-BR; name the file after the language")));
+        }
+        if tag.eq_ignore_ascii_case(&language) {
+            item.findings.push(warning(format!(
+                "{tag} is the language of the collection's own texts (language in collection.yaml): furnish shows those, not this file"
+            )));
+        }
+        let file = match crate::locale::load_file(&path) {
+            Ok(file) => file,
+            Err(err) => {
+                item.findings.push(error(format!("{err:#}")));
+                items.push(item);
+                continue;
+            }
+        };
+        let mut unknown = |what: &str, name: &str, known: bool| {
+            if !known {
+                item.findings.push(warning(format!("{what} '{name}' is not in the collection")));
+            }
+        };
+        for id in file.apps.keys() {
+            unknown("app", id, apps.iter().any(|a| &a.id == id));
+        }
+        for id in file.kits.keys() {
+            unknown("kit", id, kits.iter().any(|k| &k.id == id));
+        }
+        for key in file.categories.keys() {
+            unknown("category", key, categories.contains(&key.as_str()));
+        }
+        for (name, texts) in &file.parameters {
+            match parameters.get(name) {
+                None => unknown("option", name, false),
+                Some(values) => {
+                    for value in texts.allowed_values.keys() {
+                        unknown(&format!("option {name}: allowed value"), value, values.contains(value));
+                    }
+                }
+            }
+        }
+        let n = |count: usize, of: usize, words: (&str, &str)| format!("{count} of {of} {}", if of == 1 { words.0 } else { words.1 });
+        let texts = |t: Option<&crate::locale::Texts>| t.is_some_and(|t| t.name.is_some() || t.description.is_some());
+        let parts = [
+            n(apps.iter().filter(|a| texts(file.apps.get(&a.id))).count(), apps.len(), ("app", "apps")),
+            n(kits.iter().filter(|k| texts(file.kits.get(&k.id))).count(), kits.len(), ("kit", "kits")),
+            n(categories.iter().filter(|c| file.categories.contains_key(**c)).count(), categories.len(), ("category", "categories")),
+            n(parameters.keys().filter(|p| file.parameters.get(*p).is_some_and(|t| t.label.is_some() || t.description.is_some())).count(), parameters.len(), ("option", "options")),
+        ];
+        item.coverage = Some(parts.join(", "));
+        items.push(item);
+    }
+    items
 }
 
 fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps: &[App]) -> Item {
@@ -226,7 +307,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         findings.push(error(format!("dependencies form a cycle: {}", cycle.join(" → "))));
     }
 
-    Item { name: app.id.clone(), kind: "app", findings, systems }
+    Item { name: app.id.clone(), kind: "app", findings, systems, coverage: None }
 }
 
 /// What loading doesn't check about each resource: that DSC finds its type here, and what
@@ -360,6 +441,7 @@ mod tests {
         App {
             id: id.into(),
             collection: "c".into(),
+            name: None,
             description: String::new(),
             categories: vec![],
             icon: None,
@@ -370,6 +452,44 @@ mod tests {
             doc: Value::Null,
             held: None,
         }
+    }
+
+    #[test]
+    fn translations_warn_about_unknown_names_fail_on_wrong_types_and_report_coverage() {
+        let dir = std::env::temp_dir().join(format!("furnish-check-locales-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("locales")).unwrap();
+        fs::write(dir.join("collection.yaml"), "language: en\n").unwrap();
+        fs::write(
+            dir.join("locales/de.yaml"),
+            "categories: { Office: Büro, Ghost: Geist }\napps: { mail: { description: E-Mail }, nope: { name: Nein } }\n\
+             parameters: { role: { label: Rolle, allowedValues: { developer: Entwicklung, chef: Koch } } }\n",
+        )
+        .unwrap();
+        fs::write(dir.join("locales/fr.yaml"), "apps: { mail: { description: [not, text] } }\n").unwrap();
+        fs::write(dir.join("locales/en.yaml"), "").unwrap();
+        fs::write(dir.join("locales/de_DE.yaml"), "").unwrap();
+        let mut mail = app("mail", &[]);
+        mail.categories = vec!["Office".into()];
+        let mut chat = app("chat", &[]);
+        chat.categories = vec!["Office".into()];
+        let shared = serde_yaml::from_str("{ role: { type: string, allowedValues: [developer, design] } }").unwrap();
+        let items = check_locales(&dir, &[mail, chat], &[], &shared);
+        let _ = fs::remove_dir_all(&dir);
+        let item = |name: &str| items.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("no {name}"));
+        let messages = |name: &str| item(name).findings.iter().map(|f| (f.severity, f.message.clone())).collect::<Vec<_>>();
+
+        let de = messages("locales/de.yaml");
+        assert!(de.iter().all(|(s, _)| *s == Severity::Warning), "{de:?}");
+        for unknown in ["app 'nope'", "category 'Ghost'", "allowed value 'chef'"] {
+            assert!(de.iter().any(|(_, m)| m.contains(unknown)), "{unknown} in {de:?}");
+        }
+        assert_eq!(de.len(), 3, "{de:?}");
+        assert_eq!(item("locales/de.yaml").coverage.as_deref(), Some("1 of 2 apps, 0 of 0 kits, 1 of 1 category, 1 of 1 option"));
+        assert!(messages("locales/fr.yaml").iter().any(|(s, _)| *s == Severity::Error));
+        assert!(item("locales/fr.yaml").coverage.is_none());
+        assert!(messages("locales/en.yaml").iter().any(|(s, m)| *s == Severity::Warning && m.contains("own texts")));
+        assert!(messages("locales/de_DE.yaml").iter().any(|(s, m)| *s == Severity::Error && m.contains("language tag")));
     }
 
     #[test]

@@ -253,6 +253,23 @@
         </select>
         {#if isLocked('language')}<span class="org">{t('common.setByOrg')}</span>{/if}
       </label>
+      <label class="interval">
+        <span>{t('collections.fallbackLanguage')}</span>
+        <select
+          id="fallback-language"
+          value={store.settings.fallbackLanguage}
+          disabled={isLocked('fallbackLanguage')}
+          onchange={(e) => changeSettings({ fallbackLanguage: e.currentTarget.value })}
+        >
+          {#each Object.entries(languages) as [code, name]}<option value={code} lang={code}>{name}</option>{/each}
+          <!-- The organization may choose a language furnish itself doesn't come in. -->
+          {#if !(store.settings.fallbackLanguage in languages)}
+            <option value={store.settings.fallbackLanguage}>{store.settings.fallbackLanguage}</option>
+          {/if}
+        </select>
+        {#if isLocked('fallbackLanguage')}<span class="org">{t('common.setByOrg')}</span>{/if}
+      </label>
+      <p class="explain">{t('collections.fallbackLanguageText')}</p>
     </section>
   {/if}
 

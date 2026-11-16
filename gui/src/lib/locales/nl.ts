@@ -285,6 +285,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'collections.language': 'Taal',
   'collections.languageLabel': 'Taal van {brand}',
   'collections.languageSystem': 'Zoals het systeem',
+  'collections.fallbackLanguage': 'Reservetaal',
+  'collections.fallbackLanguageText': 'Collecties kunnen hun teksten vertalen. Een tekst zonder vertaling in de taal hierboven verschijnt in deze taal als de collectie die heeft, anders zoals de collectie hem schreef.',
   'collections.count': { one: '{n} collectie', other: '{n} collecties' },
   'collections.updating': 'Bijwerken…',
   'collections.updateAll': 'Alles bijwerken',

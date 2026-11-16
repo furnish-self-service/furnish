@@ -282,6 +282,8 @@ export const en = {
   'collections.language': 'Language',
   'collections.languageLabel': 'Language of {brand}',
   'collections.languageSystem': 'Same as the system',
+  'collections.fallbackLanguage': 'Fallback language',
+  'collections.fallbackLanguageText': 'Collections can translate their texts. A text without a translation into the language above shows in this language if the collection has it, otherwise as the collection wrote it.',
   'collections.count': { one: '{n} collection', other: '{n} collections' },
   'collections.updating': 'Updating…',
   'collections.updateAll': 'Update all',
