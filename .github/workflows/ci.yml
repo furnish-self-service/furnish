@@ -339,6 +339,66 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
+  # Each alpha as a GitHub pre-release with a fixed download URL, and the Homebrew cask
+  # (furnish-self-service/homebrew-tap) pointed at it. The `homebrew` job tested that cask.
+  release-alpha:
+    name: release alpha and update the Homebrew tap
+    if: github.ref == 'refs/heads/main'
+    needs: [publish-alpha, homebrew]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency: homebrew-tap
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: furnish-desktop-*
+          path: desktop
+          merge-multiple: true
+      - name: Create the pre-release
+        run: |
+          # Asset names with "-" for "+": 0.1.0+alpha.42 is v0.1.0-alpha.42 (see packaging/macos/cask.sh).
+          for f in desktop/*; do n=$(echo "$f" | tr + -); [ "$f" = "$n" ] || mv "$f" "$n"; done
+          version=$(jq -r .version gui/src-tauri/tauri.conf.json)-alpha.$GITHUB_RUN_NUMBER
+          gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" desktop/* --prerelease --target "$GITHUB_SHA" --title "furnish $version" \
+            --notes "Alpha build of $GITHUB_SHA. Install with Homebrew (\`brew install --cask furnish-self-service/tap/furnish\`) or see the [docs](https://furnish-self-service.github.io/docs/#install-furnish)."
+          # Keep the newest 10 alpha releases and their tags.
+          gh release list --limit 200 --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("^v[0-9.]+-alpha\\.[0-9]+$")))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
+            while read -r tag; do gh release delete "$tag" --yes --cleanup-tag; done
+      - name: Update the cask in the tap
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$DEPLOY_KEY" ]; then
+            mkdir -p ~/.ssh && printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+            echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > ~/.ssh/known_hosts
+            export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap -o IdentitiesOnly=yes"
+            remote=git@github.com:furnish-self-service/homebrew-tap.git
+          elif [ -n "$TAP_TOKEN" ]; then
+            remote=https://x-access-token:$TAP_TOKEN@github.com/furnish-self-service/homebrew-tap.git
+          else
+            echo "::error::Neither HOMEBREW_TAP_DEPLOY_KEY nor HOMEBREW_TAP_TOKEN is set: the tap can't be updated."
+            exit 1
+          fi
+          git clone -q --depth 1 "$remote" tap
+          current=$(sed -nE 's/^  version "(.*)"$/\1/p' tap/Casks/furnish.rb)
+          version=$(packaging/macos/cask.sh tap/Casks/furnish.rb desktop/*.dmg)
+          # A slower, older run must not replace a newer version.
+          if [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ] || [ "$current" = "$version" ]; then
+            echo "The tap has $current already, not changing it to $version."; exit 0
+          fi
+          git -C tap -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit -qam "furnish $version" -m "From $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git -C tap push -q origin HEAD
+          url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/v$version/furnish_${version}_arm64.dmg
+          curl -fsSL "$url" | sha256sum | grep -q "$(sed -nE 's/^  sha256 "(.*)"$/\1/p' tap/Casks/furnish.rb)"
+          echo "The tap installs $version now."
+
   repository:
     name: install from the repository on ${{ matrix.image }}
     needs: publish-alpha
@@ -440,3 +500,43 @@ jobs:
           path: |
             target/release/bundle/
             target/ui-test.png
+
+  # The Homebrew cask (furnish-self-service/homebrew-tap) with this build's .dmg: audited, installed
+  # and uninstalled. On main, release-alpha then publishes the .dmg and pushes this cask change.
+  homebrew:
+    name: Homebrew cask
+    needs: gui
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: furnish-self-service/homebrew-tap
+          path: tap
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-desktop-macOS
+          path: desktop
+      - name: The cask with this build (what release-alpha would push)
+        run: |
+          packaging/macos/cask.sh tap/Casks/furnish.rb desktop/*.dmg
+          git -C tap diff
+          tap="$(brew --repository)/Library/Taps/furnish-self-service/homebrew-tap"
+          rm -rf "$tap" && mkdir -p "$(dirname "$tap")" && mv tap "$tap"
+          brew trust furnish-self-service/tap
+      - run: brew style furnish-self-service/tap
+      - run: brew audit --cask --strict furnish-self-service/tap/furnish
+      # The release doesn't exist yet: Homebrew takes the .dmg from its download cache instead.
+      - name: Install, check and uninstall
+        run: |
+          cp desktop/*.dmg "$(brew --cache --cask furnish-self-service/tap/furnish)"
+          brew install --cask furnish-self-service/tap/furnish
+          app=/Applications/furnish.app/Contents
+          test -x "$app/MacOS/$(plutil -extract CFBundleExecutable raw "$app/Info.plist")"
+          ls -l "$(brew --prefix)/bin/furnish"
+          xattr -l /Applications/furnish.app/Contents/MacOS/furnish
+          spctl --status || true
+          furnish --version
+          brew uninstall --cask furnish
+          test ! -e /Applications/furnish.app
+          test ! -e "$(brew --prefix)/bin/furnish"
