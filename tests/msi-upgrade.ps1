@@ -1,10 +1,9 @@
-# Upgrading from an MSI built before furnish updated itself (no ServiceControl for the furnish
-# service in it) to this build, with the service installed and running: the way an admin deploys
+# Upgrading an earlier release's MSI to this build, with the furnish service installed and running: the way an admin deploys
 # a new version (msiexec /i /qn /norestart). The service must run the new furnish.exe afterwards,
 # and the upgrade must not need a reboot. Run as administrator on a throwaway machine (CI); it
 # leaves furnish uninstalled.
 #
-#   tests/msi-upgrade.ps1 -From furnish_0.1.0-alpha.167_x64.msi -To furnish_0.1.0_x64.msi
+#   tests/msi-upgrade.ps1 -From furnish_0.1.0-alpha.177_x64.msi -To furnish_0.1.0_x64.msi
 param([Parameter(Mandatory)][string]$From, [Parameter(Mandatory)][string]$To)
 $ErrorActionPreference = 'Stop'
 $app = "$env:ProgramFiles\furnish"

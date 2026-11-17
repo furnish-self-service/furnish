@@ -15,9 +15,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   HOMEBREW_NO_AUTO_UPDATE: 1
-  # The last alpha release from before furnish updated itself: the self-update job upgrades its
-  # .msi (no ServiceControl for the service) to the current one. release-alpha keeps it.
-  PRE_SELFUPDATE_RELEASE: v0.1.0-alpha.167
+  # The release whose .msi the self-update job upgrades to the current one, with the service
+  # running. release-alpha never deletes it. (The releases from before self-update are gone.)
+  UPGRADE_FROM_RELEASE: v0.1.0-alpha.177
 
 jobs:
   # GitHub has few macOS runners. On branches and pull requests, the macOS jobs run only when
@@ -525,9 +525,10 @@ jobs:
           version=$(jq -r .version gui/src-tauri/tauri.conf.json)-alpha.$GITHUB_RUN_NUMBER
           gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" desktop/* --prerelease --target "$GITHUB_SHA" --title "furnish $version" \
             --notes "Alpha build of $GITHUB_SHA. Install with Homebrew (\`brew install --cask furnish-self-service/tap/furnish\`) or see the [docs](https://furnish-self-service.github.io/docs/#install-furnish)."
-          # Keep the newest 10 alpha releases and their tags.
+          # Keep the newest 10 alpha releases and their tags, and the one the upgrade test starts from.
           gh release list --limit 200 --json tagName,isPrerelease,createdAt \
             --jq '[.[] | select(.isPrerelease and (.tagName | test("^v[0-9.]+-alpha\\.[0-9]+$")))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
+            grep -vxF "$UPGRADE_FROM_RELEASE" |
             while read -r tag; do gh release delete "$tag" --yes --cleanup-tag; done
       - name: Update the cask in the tap
         env:
@@ -775,14 +776,14 @@ jobs:
         with:
           name: furnish-selfupdate-feed
           path: feed
-      # An .msi from before self-update, with the service running, upgraded to this build.
-      - name: Upgrade from ${{ env.PRE_SELFUPDATE_RELEASE }} with the service running
+      # An earlier release's .msi, with the service running, upgraded to this build.
+      - name: Upgrade from ${{ env.UPGRADE_FROM_RELEASE }} with the service running
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download $env:PRE_SELFUPDATE_RELEASE -R $env:GITHUB_REPOSITORY -p '*.msi' -D old
+          gh release download $env:UPGRADE_FROM_RELEASE -R $env:GITHUB_REPOSITORY -p '*.msi' -D old
           tests/msi-upgrade.ps1 -From (Get-Item old/*.msi).FullName -To (Get-Item desktop/*.msi).FullName
       - if: runner.os == 'Windows' && (success() || failure())
         shell: pwsh
