@@ -74,6 +74,7 @@
     homebrew: t('settings.methodHomebrew'),
     deb: t('settings.methodDeb'),
     rpm: t('settings.methodRpm'),
+    pacman: t('settings.methodPacman'),
     nix: t('settings.methodNix'),
     other: '',
   });
@@ -83,6 +84,7 @@
         return t('settings.selfUpdateHowHomebrew');
       case 'deb':
       case 'rpm':
+      case 'pacman':
         return t('settings.selfUpdateHowSystem');
       case 'nix':
         return t('settings.selfUpdateHowNix');

@@ -379,6 +379,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'settings.methodHomebrew': 'Homebrew',
   'settings.methodDeb': 'Repository di pacchetti (APT)',
   'settings.methodRpm': 'Repository di pacchetti (DNF o Zypper)',
+  'settings.methodPacman': 'Repository di pacchetti (pacman)',
   'settings.methodNix': 'Nix',
   'settings.selfUpdate': 'Nuove versioni di {brand}',
   'settings.selfUpdateAuto': 'Installa automaticamente',

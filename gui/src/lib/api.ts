@@ -237,7 +237,7 @@ export const previousVersion = (key: string) => invoke<Version>('previous_versio
 export const version = () => invoke<string>('version');
 
 /** How furnish was installed: furnish installs its own updates only for `msi` and `app`. */
-export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'nix' | 'other';
+export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'pacman' | 'nix' | 'other';
 /** furnish's own updates (src-tauri/src/selfupdate.rs). */
 export interface SelfUpdateStatus {
   method: InstallMethod;

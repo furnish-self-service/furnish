@@ -589,7 +589,7 @@ fn arrives(method: furnish::selfupdate::Method) -> &'static str {
     match method {
         Method::Msi | Method::App => "`furnish self-update` installs it.",
         Method::Homebrew => "It arrives with `brew upgrade`.",
-        Method::Deb | Method::Rpm => "It arrives with your system updates.",
+        Method::Deb | Method::Rpm | Method::Pacman => "It arrives with your system updates.",
         Method::Nix => "It arrives with `nix flake update`.",
         Method::Other => "Install it the way you installed furnish.",
     }

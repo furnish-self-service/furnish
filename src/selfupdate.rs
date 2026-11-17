@@ -124,6 +124,8 @@ pub enum Method {
     Deb,
     /// The .rpm package (DNF, Zypper).
     Rpm,
+    /// The Arch Linux package (pacman).
+    Pacman,
     Nix,
     /// Built from source, an AppImage, or anything else: furnish only says a new version is out.
     Other,
@@ -143,6 +145,7 @@ impl Method {
             Method::Homebrew => "Homebrew",
             Method::Deb => "the APT package",
             Method::Rpm => "the RPM package",
+            Method::Pacman => "the pacman package",
             Method::Nix => "Nix",
             Method::Other => "an unknown method",
         }
@@ -153,7 +156,7 @@ impl Method {
         match self {
             Method::Msi | Method::App => "furnish self-update",
             Method::Homebrew => "brew upgrade",
-            Method::Deb | Method::Rpm => "with your system updates",
+            Method::Deb | Method::Rpm | Method::Pacman => "with your system updates",
             Method::Nix => "nix flake update",
             Method::Other => "install it the way you installed furnish",
         }
@@ -185,6 +188,8 @@ impl Probe {
                 let listed = |list: &str| std::fs::read_to_string(at(list)).is_ok_and(|l| l.lines().any(|f| Path::new(f) == exe));
                 let package = if listed("/var/lib/dpkg/info/furnish.list") {
                     Some(Method::Deb)
+                } else if pacman_lists(&at("/var/lib/pacman/local"), exe) {
+                    Some(Method::Pacman)
                 } else if root == Path::new("/") && rpm_owns(exe) {
                     Some(Method::Rpm)
                 } else {
@@ -254,6 +259,18 @@ fn msi_dirs() -> Vec<PathBuf> {
 #[cfg(not(windows))]
 fn msi_dirs() -> Vec<PathBuf> {
     Vec::new()
+}
+
+/// Whether pacman's database lists `exe` in the furnish package (local/furnish-<version>/files,
+/// paths without the leading slash).
+fn pacman_lists(db: &Path, exe: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(db) else { return false };
+    let file = exe.to_string_lossy();
+    let file = file.trim_start_matches('/');
+    entries
+        .flatten()
+        .filter(|e| e.file_name().to_str().and_then(|n| n.strip_prefix("furnish-")).is_some_and(|v| v.starts_with(|c: char| c.is_ascii_digit())))
+        .any(|e| std::fs::read_to_string(e.path().join("files")).is_ok_and(|f| f.lines().any(|l| l == file)))
 }
 
 fn rpm_owns(exe: &Path) -> bool {
@@ -513,7 +530,7 @@ mod tests {
         assert_eq!(classify(p("/usr/bin/furnish"), "linux", &Probe { package: Some(Method::Rpm), ..Probe::default() }), Method::Rpm);
         assert_eq!(classify(p("/usr/bin/furnish"), "linux", &none), Method::Other);
         assert!(Method::Msi.updates_itself() && Method::App.updates_itself());
-        assert!(![Method::Homebrew, Method::Deb, Method::Rpm, Method::Nix, Method::Other].iter().any(|m| m.updates_itself()));
+        assert!(![Method::Homebrew, Method::Deb, Method::Rpm, Method::Pacman, Method::Nix, Method::Other].iter().any(|m| m.updates_itself()));
     }
 
     #[test]
@@ -525,6 +542,15 @@ mod tests {
         std::fs::write(root.path().join("var/lib/dpkg/info/furnish.list"), "/.\n/usr\n/usr/bin\n/usr/bin/furnish\n/usr/bin/furnish-gui\n").unwrap();
         assert_eq!(classify(exe, "linux", &Probe::gather(exe, "linux", root.path())), Method::Deb);
         assert_eq!(classify(Path::new("/usr/local/bin/furnish"), "linux", &Probe::gather(Path::new("/usr/local/bin/furnish"), "linux", root.path())), Method::Other);
+        let arch = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(arch.path().join("var/lib/pacman/local/furnish-0.1.0alpha.42-1")).unwrap();
+        std::fs::create_dir_all(arch.path().join("var/lib/pacman/local/furnish-other-1.0-1")).unwrap();
+        std::fs::write(arch.path().join("var/lib/pacman/local/furnish-other-1.0-1/files"), "%FILES%\nusr/\nusr/local/bin/furnish\n").unwrap();
+        assert_eq!(classify(exe, "linux", &Probe::gather(exe, "linux", arch.path())), Method::Other);
+        std::fs::write(arch.path().join("var/lib/pacman/local/furnish-0.1.0alpha.42-1/files"), "%FILES%\nusr/\nusr/bin/\nusr/bin/furnish\nusr/bin/furnish-gui\n").unwrap();
+        assert_eq!(classify(exe, "linux", &Probe::gather(exe, "linux", arch.path())), Method::Pacman);
+        let other = Path::new("/usr/local/bin/furnish");
+        assert_eq!(classify(other, "linux", &Probe::gather(other, "linux", arch.path())), Method::Other);
 
         let app = Path::new("/Applications/furnish.app/Contents/MacOS/furnish");
         assert_eq!(classify(app, "macos", &Probe::gather(app, "macos", root.path())), Method::App);

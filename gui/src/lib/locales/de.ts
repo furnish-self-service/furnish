@@ -377,6 +377,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'settings.methodHomebrew': 'Homebrew',
   'settings.methodDeb': 'Paketquelle (APT)',
   'settings.methodRpm': 'Paketquelle (DNF oder Zypper)',
+  'settings.methodPacman': 'Paketquelle (pacman)',
   'settings.methodNix': 'Nix',
   'settings.selfUpdate': 'Neue Versionen von {brand}',
   'settings.selfUpdateAuto': 'Automatisch installieren',
