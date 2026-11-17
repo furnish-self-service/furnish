@@ -103,9 +103,12 @@ async function settled() {
 }
 
 /** The steps view of furnish's configuration resources (STEPS_APPS: app name → file prefix), in
- *  English and German. `prefix`: the files' names start with it. */
+ *  English and German. `prefix`: the files' names start with it. STEPS_WIDTH=800: a narrow
+ *  window instead, with `-800` at the end of the names. */
 async function stepsShots(prefix) {
   const apps = { 'Acme VPN': 'file', 'Acme Git over SSH': 'text', 'Acme Kubernetes': 'value', 'Acme Vault': 'command' };
+  const width = Number(process.env.STEPS_WIDTH) || 0;
+  if (width) await wd('POST', s('/window/rect'), { width, height: 760 });
   for (const [lang, discover] of [['en', 'Discover'], ['de', 'Entdecken']]) {
     await click(nav('Settings'));
     await click(`//select[@id='language']/option[@value='${lang}']`);
@@ -119,12 +122,13 @@ async function stepsShots(prefix) {
       await js(`document.evaluate("//details[@open][.//li]", document, null, 9, null).singleNodeValue.scrollIntoView({block: "start"})`);
       // The changed lines, where a step has them.
       for (const id of await findAll("//details[contains(@class,'filediff')]/summary")) await wd('POST', s(`/element/${id}/click`), {});
-      await shot(`steps-${name}-${prefix}-${lang}`);
+      await shot(`steps-${name}-${prefix}-${lang}${width ? `-${width}` : ''}`);
     }
   }
   await click(nav('Einstellungen'));
   await click("//select[@id='language']/option[@value='en']");
   await waitFor('English', () => find(nav('Settings')));
+  if (width) await wd('POST', s('/window/rect'), { width: 1180, height: 760 });
 }
 
 const scenes = {
@@ -152,6 +156,9 @@ const scenes = {
     edit('.kube/config', (t) => t.replace('https://k8s.acme.example', 'https://old.acme.example'));
     edit('.claude/settings.json', (t) => t.replace('true', 'false'));
     edit('.config/vault.ini', (t) => t.replace('https://vault.acme.example', 'https://vault.bitwarden.com'));
+    // A tool's own copy of a file (Furnish/Command's test.file), where the collection has one.
+    const { existsSync } = await import('node:fs');
+    if (existsSync(`${work}/home/.config/vault/trusted.pem`)) edit('.config/vault/trusted.pem', (t) => t.replace(/^MII.*$/m, 'MIIBszCCAVmgAwIBAgIUother'));
   },
   async stepsdrift() {
     await settled();
