@@ -58,6 +58,10 @@ impl Note {
             "test.present" => format!("{} finds the setting: it is there but outdated", s("command")),
             "test.exitCode" => format!("Test: {} exited with code {}, expected {}", s("command"), s("got"), s("expected")),
             "test.json" => format!("Test: {} has {} at {}, expected {}", s("command"), s("got"), s("path"), s("expected")),
+            "test.file" => format!("Test: the output of {} matches {}", s("command"), s("path")),
+            "test.fileDiffers" => format!("Test: the output of {} differs from {}", s("command"), s("path")),
+            "test.noFile" => format!("Test: can't compare the output of {} with {}: there is no such file", s("command"), s("path")),
+            "command.keep" => format!("Keep what {} set up: uninstalling leaves it in place", s("command")),
             // The GUI's existing format for commands.
             "run" => format!("Run: {}", s("command")),
             other => format!("{other} {}", Value::Object(self.params.clone())),

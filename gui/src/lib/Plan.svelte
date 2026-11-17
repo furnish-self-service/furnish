@@ -100,6 +100,9 @@
   /** furnish's configuration resources describe their steps as notes to translate; a note of a
    *  newer furnish that this interface doesn't know shows the English details instead. */
   const known = (n: Note) => `plan.note.${n.code}` in dictionaries.en || n.code === 'run';
+  /** Furnish/Command's notes name a command: it gets its own box, as a command that runs does,
+   *  and the sentence below says what the test found. */
+  const boxed = (n: Note) => typeof n.params.command === 'string' && (n.code.startsWith('test.') || n.code === 'command.keep');
   function noteParts(n: Note) {
     const p = n.params as Record<string, string | number>;
     return tparts(`plan.note.${n.code}` as Key, n.code === 'file.create' ? { ...p, n: p.lines } : p);
@@ -265,6 +268,12 @@
                   <code>{n.params.command}</code>
                 </div>
               {:else}
+                {#if boxed(n)}
+                  <div class="command">
+                    <span class="who">{t(n.code === 'command.keep' ? 'plan.keeps' : 'plan.tests')}</span>
+                    <code>{n.params.command}</code>
+                  </div>
+                {/if}
                 {#if n.params.diff}
                   <details class="filediff">
                     <summary><span class="detail">{@render sentence(n)}</span></summary>
@@ -529,15 +538,19 @@
     text-transform: uppercase;
     color: #f6c453;
   }
+  /* Long commands, paths and URLs wrap at spaces, and inside a word only where nothing else fits. */
   code {
     font: 0.8rem/1.45 var(--font-mono);
     color: #d5e5e3;
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
+  /* A value moves to the next line as a whole rather than breaking at the line's end. */
   .detail code.inline {
+    display: inline-block;
+    max-width: 100%;
     font: 0.82em var(--font-mono);
     color: var(--ink);
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
   /* A file step's diff: collapsed under the step's sentence. */
   /* The browser's own disclosure triangle, at the size of the app's other ones (AppDetail's

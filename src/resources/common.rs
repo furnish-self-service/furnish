@@ -19,10 +19,7 @@ pub fn expand(path: &str) -> Result<PathBuf> {
         path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
     };
     let expanded = match rest {
-        Some(rest) => {
-            let home = dirs::home_dir().context("no home folder to expand ~ in")?;
-            rest.split(['/', '\\']).filter(|p| !p.is_empty()).fold(home, |p, part| p.join(part))
-        }
+        Some(rest) => in_home(rest)?,
         None => PathBuf::from(path),
     };
     if !expanded.is_absolute() {
@@ -32,6 +29,32 @@ pub fn expand(path: &str) -> Result<PathBuf> {
         bail!("path '{path}' must not contain ..");
     }
     Ok(expanded)
+}
+
+/// `rest` (separated by `/` or `\\`) in the home folder, with this system's separators.
+fn in_home(rest: &str) -> Result<PathBuf> {
+    let home = dirs::home_dir().context("no home folder to expand ~ in")?;
+    Ok(rest.split(['/', '\\']).filter(|p| !p.is_empty()).fold(home, |p, part| p.join(part)))
+}
+
+/// A command argument as written in the app: a leading `~/` (or `~\\`), or a bare `~`, becomes the
+/// home folder, as in paths. `~` anywhere else stays. `~~/…` and `~~` are the escape for a
+/// literal `~/…` and `~`.
+pub fn expand_arg(arg: &str) -> Result<String> {
+    if arg == "~~" || arg.starts_with("~~/") || arg.starts_with("~~\\") {
+        return Ok(arg[1..].to_string());
+    }
+    let rest = match arg.strip_prefix("~/").or_else(|| arg.strip_prefix("~\\")) {
+        Some(rest) => rest,
+        None if arg == "~" => "",
+        None => return Ok(arg.to_string()),
+    };
+    let mut path = in_home(rest)?.to_string_lossy().into_owned();
+    // A folder written with a trailing separator keeps it (`~/src/` for rsync and the like).
+    if rest.ends_with(['/', '\\']) {
+        path.push(std::path::MAIN_SEPARATOR);
+    }
+    Ok(path)
 }
 
 /// The file a path names: a symbolic link's target (also through several links), else the path.
@@ -588,6 +611,22 @@ mod tests {
         assert_eq!(expand("~\\.ssh\\config").unwrap(), home.join(".ssh").join("config"));
         assert!(expand("relative/file").is_err());
         assert!(expand("~/../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn command_arguments_expand_a_leading_tilde_only() {
+        let home = dirs::home_dir().unwrap();
+        let shown = |p: PathBuf| p.to_string_lossy().into_owned();
+        assert_eq!(expand_arg("~/.config/acme/acme.ovpn").unwrap(), shown(home.join(".config").join("acme").join("acme.ovpn")));
+        assert_eq!(expand_arg("~\\acme.ovpn").unwrap(), shown(home.join("acme.ovpn")));
+        assert_eq!(expand_arg("~").unwrap(), shown(home.clone()));
+        assert_eq!(expand_arg("~/src/").unwrap(), format!("{}{}", shown(home.join("src")), std::path::MAIN_SEPARATOR));
+        for literal in ["--config=~/x", "a~/b", "~user/x", "~x", "relative/~/x", "", "-"] {
+            assert_eq!(expand_arg(literal).unwrap(), literal);
+        }
+        assert_eq!(expand_arg("~~/x").unwrap(), "~/x");
+        assert_eq!(expand_arg("~~").unwrap(), "~");
+        assert_eq!(expand_arg("~~x").unwrap(), "~~x");
     }
 
     #[test]

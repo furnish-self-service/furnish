@@ -1,8 +1,10 @@
 //! `Furnish/Command`: for tools that must apply a setting themselves. `test` runs a command and
-//! checks its exit code, its output, or a value in its JSON output; `set` runs only when the test
-//! fails, and `remove` (optional) on uninstall. `present` (optional, the same shape as `test`)
-//! tells an outdated setting from a missing one: the step then counts as there, so the app shows
-//! an update instead of "not installed".
+//! checks its exit code, its output (against a text or a file's content), or a value in its JSON
+//! output; `set` runs only when the test fails, and `remove` (optional) on uninstall, or
+//! `remove: keep` to leave the setting in place on uninstall. `present` (optional, the same shape
+//! as `test`) tells an outdated setting from a missing one: the step then counts as there, so the
+//! app shows an update instead of "not installed". A leading `~/` in the commands' arguments is
+//! the home folder, as in the paths of the file resources.
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -10,7 +12,7 @@ use serde_json::Value;
 
 use serde_json::json;
 
-use super::{Plan, common, note::{Note, note}, parse, value};
+use super::{Plan, common, diff, note::{Note, note}, parse, value};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,7 +20,7 @@ struct Props {
     test: Test,
     present: Option<Test>,
     set: Vec<String>,
-    remove: Option<Vec<String>>,
+    remove: Option<Remove>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
 }
@@ -29,16 +31,44 @@ struct Test {
     command: Vec<String>,
     /// Expected exit code (default 0).
     exit_code: Option<i32>,
-    /// Expected output (stdout), ignoring white space at the start and end.
+    /// Expected output (stdout), compared as [`normalized`].
     output: Option<String>,
+    /// A file whose content the output must equal, compared as [`normalized`].
+    file: Option<String>,
+    /// Lines of the output and of `output` or `file` to leave out of the comparison (a regex).
+    ignore_lines: Option<String>,
     /// A place in the JSON output that must exist, and equal `value` if given.
     json_path: Option<String>,
     value: Option<Value>,
 }
 
+/// What uninstalling does: run a command, or `keep` the setting.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Remove {
+    Command(Vec<String>),
+    Word(String),
+}
+
+impl Remove {
+    /// The command, `None` for `keep`.
+    fn command(&self) -> Option<&Vec<String>> {
+        match self {
+            Remove::Command(c) => Some(c),
+            Remove::Word(_) => None,
+        }
+    }
+}
+
 fn props(v: &Value) -> Result<Props> {
     let p: Props = parse(v)?;
-    for (what, command) in [("test.command", Some(&p.test.command)), ("set", Some(&p.set)), ("remove", p.remove.as_ref())] {
+    if let Some(Remove::Word(word)) = &p.remove
+        && word != "keep"
+    {
+        bail!("remove: a command, as a list of the program and its arguments, or 'keep' to leave the setting in place on uninstall");
+    }
+    let remove = p.remove.as_ref().and_then(Remove::command);
+    for (what, command) in [("test.command", Some(&p.test.command)), ("set", Some(&p.set)), ("remove", remove)] {
         if command.is_some_and(Vec::is_empty) {
             bail!("{what}: a command, as a list of the program and its arguments");
         }
@@ -47,6 +77,15 @@ fn props(v: &Value) -> Result<Props> {
         let Some(test) = test else { continue };
         if test.command.is_empty() {
             bail!("{what}.command: a command, as a list of the program and its arguments");
+        }
+        if test.output.is_some() && test.file.is_some() {
+            bail!("{what}.output and {what}.file: use one of them");
+        }
+        if let Some(pattern) = &test.ignore_lines {
+            if test.output.is_none() && test.file.is_none() {
+                bail!("{what}.ignoreLines needs {what}.output or {what}.file");
+            }
+            super::regex(pattern, &format!("{what}.ignoreLines"))?;
         }
         if let Some(path) = &test.json_path {
             value::parse_location(path).with_context(|| format!("{what}.jsonPath"))?;
@@ -61,32 +100,71 @@ pub fn check(v: &Value) -> Result<()> {
     props(v).map(drop)
 }
 
-/// Whether the test passes, and a note with what it expected and got (the check that failed,
-/// else the most telling one).
-fn passes(test: &Test) -> Result<(bool, Note)> {
-    let out = common::run(&test.command)?;
+/// What a test found.
+struct Outcome {
+    ok: bool,
+    /// What it expected and got: the check that failed, else the most telling one.
+    note: Note,
+    /// Why the result is assumed rather than found: the file to compare with can't be read as
+    /// this account (see `super::unreadable`). It counts as passing then.
+    unverified: Option<String>,
+}
+
+/// Run the test.
+fn passes(test: &Test) -> Result<Outcome> {
+    let out = exec(&test.command)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let command = test.command.join(" ");
     let code = out.status.code();
     let expected_code = test.exit_code.unwrap_or(0);
     let code_note = note("test.exitCode", json!({ "command": command, "expected": expected_code, "got": code }));
-    let mut result = (code == Some(expected_code), code_note);
-    if let Some(expected) = &test.output {
-        let ok = stdout.trim() == expected.trim();
-        let n = if stdout.trim().is_empty() {
-            note("test.noOutput", json!({ "command": command, "expected": expected.trim() }))
-        } else {
-            note("test.output", json!({ "command": command, "expected": expected.trim(), "got": short(stdout.trim()) }))
-        };
-        // The output tells more than an exit code nobody asked for.
-        if result.0 || test.exit_code.is_none() {
-            result = (result.0 && ok, n);
+    let mut result = Outcome { ok: code == Some(expected_code), note: code_note, unverified: None };
+    let ignore = test.ignore_lines.as_deref().map(|p| super::regex(p, "ignoreLines")).transpose()?;
+    let compared = match (&test.output, &test.file) {
+        (Some(expected), _) => {
+            let ok = normalized(&stdout, ignore.as_ref()) == normalized(expected, ignore.as_ref());
+            let n = if stdout.trim().is_empty() {
+                note("test.noOutput", json!({ "command": command, "expected": expected.trim() }))
+            } else {
+                note("test.output", json!({ "command": command, "expected": expected.trim(), "got": short(stdout.trim()) }))
+            };
+            Some((ok, n))
+        }
+        (None, Some(path)) => {
+            let file = common::Managed::open(path)?;
+            let params = json!({ "command": command, "path": path });
+            if file.unreadable {
+                let why = format!("can't read {} as this account to compare the output of `{command}` with it", file.name());
+                return Ok(Outcome { ok: true, note: note("file.unreadable", json!({ "path": path })), unverified: Some(why) });
+            }
+            match &file.bytes {
+                None => Some((false, note("test.noFile", params))),
+                Some(_) => {
+                    let (got, want) = (normalized(&stdout, ignore.as_ref()), normalized(&file.text()?.text, ignore.as_ref()));
+                    if got == want {
+                        Some((true, note("test.file", params)))
+                    } else {
+                        // From the output to the file, as Furnish/File shows a change; only the counts
+                        // for a file only its owner may read.
+                        let mut n = note("test.fileDiffers", params);
+                        n.add_diff(Some(diff::lines(&format!("{got}\n"), &format!("{want}\n"))), common::owner_only(&file.real));
+                        Some((false, n))
+                    }
+                }
+            }
+        }
+        (None, None) => None,
+    };
+    if let Some((ok, n)) = compared {
+        // Output that differs tells more than an exit code nobody asked for.
+        if result.ok || (test.exit_code.is_none() && !ok) {
+            result = Outcome { ok: result.ok && ok, note: n, unverified: None };
         }
     }
     if let Some(path) = &test.json_path {
         let doc: Value = match serde_json::from_str(&stdout) {
             Ok(doc) => doc,
-            Err(_) if !result.0 => return Ok(result),
+            Err(_) if !result.ok => return Ok(result),
             Err(_) => bail!("test: `{command}` didn't print JSON"),
         };
         // A filter may select several values (RFC 9535): the test passes if one of them fits.
@@ -102,11 +180,18 @@ fn passes(test: &Test) -> Result<(bool, Note)> {
         };
         let expected = test.value.as_ref().map_or("a value".to_string(), |v| short(&v.to_string()));
         let n = note("test.json", json!({ "command": command, "path": path, "expected": expected, "got": got }));
-        if result.0 {
-            result = (ok, n);
+        if result.ok {
+            result = Outcome { ok, note: n, unverified: None };
         }
     }
     Ok(result)
+}
+
+/// A text as the tests compare it: Windows line ends as `\n`, white space at the end of each
+/// line and blank lines at the start and end left out, and the lines that `ignore` matches.
+fn normalized(text: &str, ignore: Option<&regex::Regex>) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| ignore.is_none_or(|re| !re.is_match(l))).collect();
+    lines.join("\n").trim().to_string()
 }
 
 /// At most one line of 120 characters, for showing output.
@@ -123,12 +208,19 @@ fn short(text: &str) -> String {
 fn passes_check(test: &Test) -> Result<bool> {
     match passes(test) {
         Err(e) if e.chain().any(|e| e.is::<common::Missing>()) => Ok(false),
-        result => Ok(result?.0),
+        result => Ok(result?.ok),
     }
 }
 
+/// Run a command as written in the app, a leading `~/` in its arguments expanded (see
+/// [`common::expand_arg`]). Notes and messages show it as written.
+fn exec(command: &[String]) -> Result<std::process::Output> {
+    let args = command.iter().map(|a| common::expand_arg(a)).collect::<Result<Vec<_>>>()?;
+    common::run(&args)
+}
+
 fn run(command: &[String]) -> Result<()> {
-    let out = common::run(command)?;
+    let out = exec(command)?;
     if !out.status.success() {
         bail!("`{}` exited with code {}{}", command.join(" "), out.status.code().unwrap_or(-1), common::output_text(&out));
     }
@@ -143,8 +235,9 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
         // Nothing to remove where the tool isn't installed.
         Err(e) if !exist && e.chain().any(|e| e.is::<common::Missing>()) => (false, None),
         result => {
-            let (ok, n) = result?;
-            (ok, Some(n))
+            let outcome = result?;
+            plan.unverified = outcome.unverified;
+            (outcome.ok, Some(outcome.note))
         }
     };
     // Outdated: the test fails, but `present` finds the setting.
@@ -167,8 +260,15 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
         // A failing test means absent or outdated (an update waiting), so removal always runs
         // `remove`, which must therefore do nothing where there is nothing to remove. Its test
         // afterwards proves nothing either way. Where the tool isn't installed, there is nothing.
+        // `remove: keep`: uninstalling leaves the setting as it is.
+        (false, there) if p.remove.as_ref().is_some_and(|r| r.command().is_none()) => {
+            plan.observe("_exist", Some(there.into()), Some(there.into()));
+            if test_note.is_some() {
+                plan.steps = vec![note("command.keep", json!({ "command": p.set.join(" ") }))];
+            }
+        }
         (false, _) if p.remove.is_some() && test_note.is_some() => {
-            let remove = p.remove.unwrap_or_default();
+            let remove = p.remove.and_then(|r| r.command().cloned()).unwrap_or_default();
             plan.change(vec![note("run", json!({ "command": remove.join(" ") }))], move || run(&remove));
             plan.recheck = false;
         }
@@ -255,6 +355,117 @@ mod tests {
         assert!(!marker_exists(&marker), "the outdated setting is left behind");
         // Nothing there: remove runs again and must not fail.
         (evaluate(&props).unwrap().apply.unwrap())().unwrap();
+    }
+
+    #[test]
+    fn remove_keep_leaves_the_setting_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marketplace").to_string_lossy().into_owned();
+        std::fs::write(&marker, "acme\n").unwrap();
+        let props = json!({
+            "test": {"command": ["cat", marker], "output": "acme"},
+            "set": ["sh", "-c", format!("echo acme > '{marker}'")],
+            "remove": "keep",
+            "_exist": false,
+        });
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none(), "nothing runs");
+        assert_eq!((&plan.state["_exist"], &plan.after["_exist"]), (&json!(true), &json!(true)));
+        assert_eq!(plan.steps.iter().map(Note::english).collect::<Vec<_>>(), vec![format!("Keep what sh -c echo acme > '{marker}' set up: uninstalling leaves it in place")]);
+        assert!(marker_exists(&marker));
+        // Not there: nothing to keep, and no error.
+        std::fs::remove_file(&marker).unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none());
+        assert_eq!(plan.after["_exist"], false);
+        assert!(check(&props).is_ok());
+        assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": "leave"})).is_err());
+        assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": []})).is_err());
+    }
+
+    #[test]
+    fn a_leading_tilde_in_arguments_is_the_home_folder() {
+        let home = dirs::home_dir().unwrap();
+        let name = format!(".furnish-command-test-{}", std::process::id());
+        let file = home.join(&name);
+        let props = json!({
+            "test": {"command": ["test", "-f", format!("~/{name}")]},
+            "set": ["touch", format!("~/{name}")],
+            "remove": ["rm", "-f", format!("~/{name}"), "~~/not-expanded"],
+        });
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.steps.last().map(Note::english), Some(format!("Run: touch ~/{name}")), "the preview shows ~/");
+        (plan.apply.unwrap())().unwrap();
+        assert!(file.exists());
+        assert!(evaluate(&props).unwrap().apply.is_none());
+        let mut gone = props.clone();
+        gone["_exist"] = false.into();
+        (evaluate(&gone).unwrap().apply.unwrap())().unwrap();
+        assert!(!file.exists());
+        // Only at the start: `a~/b` is passed as it is.
+        let literal = json!({"test": {"command": ["echo", "a~/b", "~"], "output": format!("a~/b {}", home.display())}, "set": ["false"]});
+        assert!(evaluate(&literal).unwrap().apply.is_none());
+    }
+
+    #[test]
+    fn the_output_can_be_compared_with_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("acme.ovpn");
+        let copy = dir.path().join("imported.ovpn");
+        let (profile_s, copy_s) = (profile.to_string_lossy().into_owned(), copy.to_string_lossy().into_owned());
+        // The tool's copy drops the comment lines, adds blank lines, and ends lines with \r\n.
+        std::fs::write(&profile, "# Acme VPN\nclient\nremote vpn.acme.example 1194  \n\n# keys\nproto udp\n").unwrap();
+        let props = json!({
+            "test": {"command": ["cat", copy_s], "file": profile_s, "ignoreLines": "^(#|$)"},
+            "set": ["sh", "-c", format!("printf 'client\\r\\n\\r\\nremote vpn.acme.example 1194\\r\\nproto udp\\r\\n' > '{copy_s}'")],
+            "remove": ["rm", "-f", copy_s],
+        });
+        // No copy yet: cat fails, and the note names the comparison.
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.state["_exist"], false);
+        assert_eq!(plan.steps[0].code, "test.fileDiffers");
+        (plan.apply.unwrap())().unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none(), "{:?}", plan.steps);
+        assert_eq!(plan.steps[0].english(), format!("Test: the output of cat {copy_s} matches {profile_s}"));
+        // The same output from a command that fails: the exit code is what failed.
+        let mut failing = props.clone();
+        failing["test"]["command"] = json!(["sh", "-c", format!("cat '{copy_s}'; exit 3")]);
+        assert_eq!(evaluate(&failing).unwrap().steps[0].code, "test.exitCode");
+        // A changed profile is drift, with the differing lines.
+        std::fs::write(&profile, "client\nremote vpn2.acme.example 1194\nproto udp\n").unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.steps[0].code, "test.fileDiffers");
+        assert_eq!(plan.steps[0].params["diff"]["hunks"][0]["lines"], json!([" client", "-remote vpn.acme.example 1194", "+remote vpn2.acme.example 1194", " proto udp"]));
+        assert_eq!((plan.steps[0].params["added"].as_u64(), plan.steps[0].params["removed"].as_u64()), (Some(1), Some(1)));
+        // A file only its owner may read shows the counts only.
+        common::set_private(&profile, false).unwrap();
+        let hidden = evaluate(&props).unwrap();
+        assert!(hidden.steps[0].params.get("diff").is_none());
+        assert_eq!(hidden.steps[0].params["hidden"], true);
+        // Without ignoreLines, the comment lines count.
+        std::fs::write(&profile, "# Acme VPN\nclient\nremote vpn.acme.example 1194\nproto udp\n").unwrap();
+        let mut strict = props.clone();
+        strict["test"].as_object_mut().unwrap().remove("ignoreLines");
+        assert!(evaluate(&strict).unwrap().apply.is_some());
+        assert!(evaluate(&props).unwrap().apply.is_none());
+        // No file to compare with.
+        std::fs::remove_file(&profile).unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.steps[0].code, "test.noFile");
+        // Mistakes.
+        let test = |t: Value| check(&json!({"test": t, "set": ["x"]}));
+        assert!(test(json!({"command": ["x"], "file": "~/a", "output": "b"})).is_err());
+        assert!(test(json!({"command": ["x"], "ignoreLines": "^#"})).is_err());
+        assert!(test(json!({"command": ["x"], "file": "~/a", "ignoreLines": "("})).is_err());
+        assert!(test(json!({"command": ["x"], "output": "a", "ignoreLines": "^#"})).is_ok());
+    }
+
+    #[test]
+    fn normalizing_ignores_line_ends_trailing_spaces_and_ignored_lines() {
+        let re = regex::Regex::new("^(#|$)").unwrap();
+        assert_eq!(normalized("\r\n a  \r\n\r\n# x\r\nb\r\n\r\n", Some(&re)), "a\nb");
+        assert_eq!(normalized("  a \n\n b\n", None), "a\n\n b");
     }
 
     #[test]

@@ -176,7 +176,12 @@ fn a_user_added_endpoint_is_fetched_again_and_a_bad_setting_spoils_nothing() {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
+    let mut cmd = Command::new("git");
+    // Not a repository that `git rebase -x` or a hook points at (see catalog::GIT_LOCATION_VARS).
+    for var in furnish::catalog::GIT_LOCATION_VARS {
+        cmd.env_remove(var);
+    }
+    let out = cmd.current_dir(dir).args(args).output().unwrap();
     assert!(out.status.success(), "git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr));
 }
 
