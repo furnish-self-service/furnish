@@ -257,7 +257,7 @@ One value in a JSON, JSONC (JSON with comments), YAML or TOML file. The rest of 
 | `value` | The value |
 | `merge` | `replace` (the default), `deep` or `member` |
 
-Missing objects on the way to the location are created. Only the value at the location counts for the app's state. `[?@.name=='acme-prod']` selects the element of a list whose `name` is `acme-prod`: the step replaces that element, or adds it at the end if there is none, and `value` must have that `name`. `merge: deep` sets the keys of `value` and keeps the other keys at the location. `merge: member` treats the location as a list that must contain `value` and keeps its other elements. `_exist: false` removes the value at the location, the keys of a deep merge, or the element, the whole element also with `merge: deep`.
+Missing objects on the way to the location are created. Only the value at the location counts for the app's state. `[?@.name=='acme-prod']` selects the element of a list whose `name` is `acme-prod`: the step replaces that element, or adds it at the end if there is none, and `value` must have that `name`. In an object, as some tools write their entries keyed by an ID, the filter selects the member whose value has that `name`: the step replaces that member under its key, and fails if there is none, since a new member needs a key and a filter doesn't give one. To add a member, name its key in `location`. `merge: deep` sets the keys of `value` and keeps the other keys at the location. `merge: member` treats the location as a list that must contain `value` and keeps its other elements. `_exist: false` removes the value at the location, the keys of a deep merge, or the element, the whole element also with `merge: deep`.
 
 A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves `current-context` and the other entries as they are. `merge: deep` keeps what others add to an entry: kubectl writes defaults into the user when it saves the file, such as `env: null`, and people set a context's `namespace`. With `replace`, either would show as a change, and installing would undo it:
 
@@ -309,6 +309,19 @@ A setting that a tool must apply itself. `test` runs a command and checks its re
       output: https://vault.acme.example
     set: [bw, config, server, https://vault.acme.example]
     remove: [bw, config, server, https://vault.bitwarden.com]
+```
+
+`jsonPath` takes the same paths as the `location` of `Furnish/Value`. A filter can select several values, from the elements of a list or the members of an object, and the test passes if one of them equals `value`. openvpn3 lists its profiles keyed by their D-Bus path, for example, and this test finds the profile named Acme:
+
+```yaml
+- name: VPN profile imported
+  type: Furnish/Command
+  properties:
+    test:
+      command: [openvpn3, configs-list, --json]
+      jsonPath: "$[?@.name=='Acme'].name"
+      value: Acme
+    set: [openvpn3, config-import, --config, /etc/acme/acme.ovpn, --name, Acme, --persistent]
 ```
 
 A failing test can mean that the setting is missing or that it is there but outdated. `present`, with the same properties as `test`, tells the two apart: if `test` fails and `present` passes, the app shows an update instead of "not installed", and it can be uninstalled. Without `present`, a failing test counts as missing.

@@ -1,6 +1,7 @@
 //! `Furnish/Value`: one value in a JSON, JSONC, YAML or TOML file, at a location named by a
 //! singular JSONPath (RFC 9535 normalized path, member shorthand, and a keyed filter
-//! `[?@.name=='x']`) or a JSON Pointer.
+//! `[?@.name=='x']`) or a JSON Pointer. A filter selects from a list's elements and, as in RFC 9535
+//! section 2.3.5.2, from an object's member values.
 //!
 //! The edit is planned on the parsed document as a list of operations at concrete places, then
 //! carried out by a format-preserving editor (comments, key order and layout stay). The edited
@@ -50,7 +51,7 @@ pub enum Merge {
 pub enum Seg {
     Key(String),
     Index(usize),
-    /// The element of a list whose member `.0` equals `.1`.
+    /// The element of a list, or the member value of an object, whose member `.0` equals `.1`.
     Filter(String, Value),
 }
 
@@ -290,14 +291,16 @@ fn locate(doc: &Value, segs: &[Seg]) -> Result<Located> {
                 a.get(i).map(|v| (Step::Index(i), v))
             }
             (Seg::Index(i), Value::Array(a)) => a.get(*i).map(|v| (Step::Index(*i), v)),
-            (Seg::Filter(key, expected), Value::Array(a)) => {
-                let found: Vec<usize> = (0..a.len()).filter(|&i| a[i].get(key) == Some(expected)).collect();
+            (Seg::Filter(key, expected), Value::Array(_) | Value::Object(_)) => {
+                let mut found = filtered(node, key, expected);
                 if found.len() > 1 {
-                    bail!("{} elements have {key} {expected}; the location must name one", found.len());
+                    let what = if node.is_array() { "elements" } else { "members" };
+                    bail!("{} {what} have {key} {expected}; the location must name one", found.len());
                 }
-                found.first().map(|&i| (Step::Index(i), &a[i]))
+                found.pop()
             }
             (Seg::Key(k), other) => bail!("can't look up '{k}' in {}", kind(other)),
+            (Seg::Filter(..), other) => bail!("{} is neither a list nor an object", describe(&path, other)),
             (_, other) => bail!("{} is not a list", describe(&path, other)),
         };
         match next {
@@ -309,6 +312,34 @@ fn locate(doc: &Value, segs: &[Seg]) -> Result<Located> {
         }
     }
     Ok(Ok(path))
+}
+
+/// The elements of a list, or the member values of an object, whose member `key` equals `expected`,
+/// with their places.
+fn filtered<'v>(node: &'v Value, key: &str, expected: &Value) -> Vec<(Step, &'v Value)> {
+    let hit = |v: &Value| v.get(key) == Some(expected);
+    match node {
+        Value::Array(a) => a.iter().enumerate().filter(|(_, v)| hit(v)).map(|(i, v)| (Step::Index(i), v)).collect(),
+        Value::Object(m) => m.iter().filter(|(_, v)| hit(v)).map(|(k, v)| (Step::Key(k.clone()), v)).collect(),
+        _ => vec![],
+    }
+}
+
+/// Every value the segments select (RFC 9535's nodelist), for reading: a filter may select
+/// several, and a place that doesn't exist selects nothing.
+pub fn query<'v>(doc: &'v Value, segs: &[Seg]) -> Vec<&'v Value> {
+    segs.iter().fold(vec![doc], |nodes, seg| {
+        nodes
+            .into_iter()
+            .flat_map(|node| match (seg, node) {
+                (Seg::Key(k), Value::Object(m)) => m.get(k).into_iter().collect(),
+                (Seg::Key(k), Value::Array(a)) => k.parse::<usize>().ok().and_then(|i| a.get(i)).into_iter().collect(),
+                (Seg::Index(i), Value::Array(a)) => a.get(*i).into_iter().collect(),
+                (Seg::Filter(key, expected), node) => filtered(node, key, expected).into_iter().map(|(_, v)| v).collect(),
+                _ => vec![],
+            })
+            .collect()
+    })
 }
 
 fn describe(path: &[Step], v: &Value) -> String {
@@ -362,6 +393,11 @@ fn plan_set(doc: &Value, segs: &[Seg], leaf: Value) -> Result<Op> {
                 path.push(Step::Key(k.clone()));
                 Op::Set(path, build(&segs[n + 1..], leaf)?)
             }
+            // A new member of an object needs a key, which a filter doesn't give.
+            (Seg::Filter(key, expected), Some(object @ Value::Object(_))) => bail!(
+                "no member of {} has {key} {expected}, and a filter can't give the key a new member needs: name the key, like $.a['key']",
+                describe(&found, object)
+            ),
             (Seg::Filter(key, expected), _) => Op::Append(found, element(key, expected, &segs[n + 1..], leaf)?),
             (Seg::Key(k), _) => bail!("there is no element {k} to set"),
             (Seg::Index(i), _) => bail!("there is no element {i} to set"),
@@ -859,6 +895,33 @@ mod tests {
             parse(Format::Yaml, &removed).unwrap(),
             json!({"contexts": [{"context": {"cluster": "mine", "user": "me"}, "name": "mine"}], "users": []})
         );
+    }
+
+    #[test]
+    fn a_filter_selects_the_member_of_an_object() {
+        let profiles = "{\n  \"/cfg/195ee2c8\": {\"name\": \"Acme\", \"valid\": false},\n  \"/cfg/2a7c11d0\": {\"name\": \"Other\", \"valid\": true}\n}\n";
+        let doc = parse(Format::Json, profiles).unwrap();
+        let at = "$[?@.name=='Acme']";
+        assert_eq!(query(&doc, &parse_location("$[?@.valid==true].name").unwrap()), vec![&json!("Other")]);
+        assert_eq!(current(&doc, &parse_location(at).unwrap()).unwrap(), Some(&json!({"name": "Acme", "valid": false})));
+        // Writing replaces the member whose value matches, under its key.
+        let (new, _) = change(Format::Json, profiles, at, json!({"name": "Acme", "valid": true}), Merge::Replace, true);
+        assert_eq!(parse(Format::Json, &new).unwrap()["/cfg/195ee2c8"], json!({"name": "Acme", "valid": true}));
+        let (new, _) = change(Format::Json, profiles, &format!("{at}.valid"), json!(true), Merge::Replace, true);
+        assert_eq!(parse(Format::Json, &new).unwrap()["/cfg/195ee2c8"]["valid"], true);
+        // Removal takes the member.
+        let (removed, _) = change(Format::Json, profiles, at, json!({"name": "Acme"}), Merge::Deep, false);
+        assert_eq!(parse(Format::Json, &removed).unwrap(), json!({"/cfg/2a7c11d0": {"name": "Other", "valid": true}}));
+        assert!(!change(Format::Json, &removed, at, json!({"name": "Acme"}), Merge::Replace, false).1, "nothing to remove");
+        // A new member would need a key that the filter doesn't give.
+        let segs = parse_location("$[?@.name=='New']").unwrap();
+        let err = plan(&doc, &segs, Some(&json!({"name": "New"})), Merge::Replace, true).unwrap_err().to_string();
+        assert!(err.contains("can't give the key"), "{err}");
+        // Two members that match don't name one place.
+        let segs = parse_location("$[?@.valid==true]").unwrap();
+        let both = json!({"a": {"valid": true}, "b": {"valid": true}});
+        assert!(plan(&both, &segs, Some(&json!({"valid": true})), Merge::Replace, true).unwrap_err().to_string().contains("2 members"));
+        assert!(current(&json!({"a": 1}), &parse_location("$.a[?@.x==1]").unwrap()).is_err(), "a number has no members");
     }
 
     #[test]

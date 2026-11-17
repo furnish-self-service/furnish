@@ -89,14 +89,19 @@ fn passes(test: &Test) -> Result<(bool, Note)> {
             Err(_) if !result.0 => return Ok(result),
             Err(_) => bail!("test: `{command}` didn't print JSON"),
         };
-        let found = value::current(&doc, &value::parse_location(path)?).unwrap_or(None);
+        // A filter may select several values (RFC 9535): the test passes if one of them fits.
+        let found = value::query(&doc, &value::parse_location(path)?);
         let ok = match &test.value {
-            Some(v) => found == Some(v),
-            None => found.is_some(),
+            Some(v) => found.contains(&v),
+            None => !found.is_empty(),
         };
-        let show = |v: Option<&Value>| v.map_or("—".to_string(), |v| short(&v.to_string()));
+        let got = match found.as_slice() {
+            [] => "—".to_string(),
+            [one] => short(&one.to_string()),
+            many => short(&Value::Array(many.iter().map(|v| (*v).clone()).collect()).to_string()),
+        };
         let expected = test.value.as_ref().map_or("a value".to_string(), |v| short(&v.to_string()));
-        let n = note("test.json", json!({ "command": command, "path": path, "expected": expected, "got": show(found) }));
+        let n = note("test.json", json!({ "command": command, "path": path, "expected": expected, "got": got }));
         if result.0 {
             result = (ok, n);
         }
@@ -263,5 +268,25 @@ mod tests {
         let err = evaluate(&missing).err().unwrap();
         assert!(err.chain().any(|e| e.is::<common::Missing>()));
         assert!(check(&json!({"test": {"command": []}, "set": ["x"]})).is_err());
+    }
+
+    #[test]
+    fn a_filter_selects_the_members_of_an_object() {
+        // openvpn3 configs-list --json: the profiles keyed by their D-Bus path.
+        let profiles = r#"{
+          "/net/openvpn/v3/configuration/195ee2c8x8df": {"name": "Acme", "imported": "2026-10-28 08:49:40", "valid": true},
+          "/net/openvpn/v3/configuration/2a7c11d0x41f": {"name": "Other", "imported": "2026-11-02 01:23:04", "valid": true}
+        }"#;
+        let props = |path: &str, value: Value| {
+            json!({"test": {"command": ["echo", profiles], "jsonPath": path, "value": value}, "set": ["false"]})
+        };
+        assert!(evaluate(&props("$[?@.name=='Acme'].name", json!("Acme"))).unwrap().apply.is_none());
+        let plan = evaluate(&props("$[?@.name=='Missing'].name", json!("Missing"))).unwrap();
+        assert!(plan.apply.is_some());
+        assert_eq!(plan.steps[0].params["got"], "—");
+        // Several values: the test passes if one of them fits, and the note shows them all.
+        assert!(evaluate(&props("$[?@.valid==true].name", json!("Other"))).unwrap().apply.is_none());
+        let plan = evaluate(&props("$[?@.valid==true].name", json!("Third"))).unwrap();
+        assert_eq!(plan.steps[0].params["got"], r#"["Acme","Other"]"#);
     }
 }
