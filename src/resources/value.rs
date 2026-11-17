@@ -464,6 +464,13 @@ pub fn plan(doc: &Value, segs: &[Seg], value: Option<&Value>, merge: Merge, exis
                 push(&mut work, Op::Remove(path))?;
             }
         }
+        // A filtered element is the app's as a whole, also with a deep merge: removing only the keys of value
+        // would leave an element without the key the filter finds it by.
+        (Merge::Deep, false) if matches!(segs.last(), Some(Seg::Filter(..))) => {
+            if let Ok(path) = locate(doc, segs)? {
+                push(&mut work, Op::Remove(path))?;
+            }
+        }
         (Merge::Deep, false) => {
             for (rest, _) in leaves(need()?) {
                 let full: Vec<Seg> = segs.iter().cloned().chain(rest).collect();
@@ -830,6 +837,28 @@ mod tests {
         assert!(change(Format::Json, &changed_by_hand, "$.enabledPlugins['acme@marketplace']", json!(true), Merge::Replace, true).1);
         let (removed, _) = change(Format::Json, settings, "$.model", json!(null), Merge::Replace, false);
         assert_eq!(parse(Format::Json, &removed).unwrap(), json!({"enabledPlugins": {"other@x": true}}));
+    }
+
+    #[test]
+    fn a_deep_merged_list_element_keeps_extra_keys_and_is_removed_whole() {
+        // kubectl writes defaults into the user (env, provideClusterInfo), and people set a context's namespace.
+        let kube = "contexts:\n- context:\n    cluster: org-prod\n    namespace: team\n    user: org\n  name: org-prod\n\
+                    - context: {cluster: mine, user: me}\n  name: mine\n\
+                    users:\n- name: org\n  user:\n    exec:\n      command: kubelogin\n      env: null\n      provideClusterInfo: false\n";
+        let context = json!({"name": "org-prod", "context": {"cluster": "org-prod", "user": "org"}});
+        let user = json!({"name": "org", "user": {"exec": {"command": "kubelogin"}}});
+        let at_context = "$.contexts[?@.name=='org-prod']";
+        let at_user = "$.users[?@.name=='org']";
+        assert!(!change(Format::Yaml, kube, at_context, context.clone(), Merge::Deep, true).1, "the namespace is the user's");
+        assert!(!change(Format::Yaml, kube, at_user, user.clone(), Merge::Deep, true).1, "kubectl's defaults are no drift");
+        // The filter names the element as the app's: removal takes all of it, not only the keys of value, which
+        // would leave an element without its name that the next install doesn't find and adds again.
+        let (without_context, _) = change(Format::Yaml, kube, at_context, context, Merge::Deep, false);
+        let (removed, _) = change(Format::Yaml, &without_context, at_user, user, Merge::Deep, false);
+        assert_eq!(
+            parse(Format::Yaml, &removed).unwrap(),
+            json!({"contexts": [{"context": {"cluster": "mine", "user": "me"}, "name": "mine"}], "users": []})
+        );
     }
 
     #[test]
