@@ -68,12 +68,14 @@ export const unmet = (r: Required | null | undefined): r is Required =>
  *  automatic-update choices, declined updates, load and the interval, but never queues an app
  *  twice, tries once per round of status checks (`tried`: a failed or refused attempt waits for
  *  the next check), and leaves apps the system's configuration installs alone. A held app (earlier
- *  version after a failed install) goes to the collection's current version. */
+ *  version after a failed install) goes to the collection's current version. One held at a version
+ *  the person chose stays there if that version offers an acceptable one; otherwise furnish
+ *  installs the current version (src/catalog.rs, `install_here`). */
 export function urgentAction(
-  app: { held: unknown },
+  app: { held: { chosen?: boolean } | null },
   r: Required | null | undefined,
   state: { pending: boolean; declared: boolean; tried: boolean },
 ): 'install' | 'installCurrent' | null {
   if (!urgent(r) || state.pending || state.declared || state.tried) return null;
-  return app.held ? 'installCurrent' : 'install';
+  return app.held && !app.held.chosen ? 'installCurrent' : 'install';
 }

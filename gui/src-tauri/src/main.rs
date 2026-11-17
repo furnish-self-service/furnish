@@ -53,8 +53,19 @@ struct AppInfo {
     recommended: bool,
     /// Required collection options nobody answered yet: installing waits for them.
     unanswered: Vec<String>,
-    /// Held at this earlier version because the collection's current one failed.
-    held: Option<catalog::Version>,
+    /// Held at this earlier version: the collection's current one failed, or the person chose it.
+    held: Option<HeldInfo>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HeldInfo {
+    #[serde(flatten)]
+    version: catalog::Version,
+    /// The person chose this version (it stays until they choose another).
+    chosen: bool,
+    /// The collection has another version of the app now.
+    newer: bool,
 }
 
 #[derive(Serialize)]
@@ -211,7 +222,11 @@ fn app_info(app: &App) -> AppInfo {
         options_differ: app.options_differ(),
         recommended: app.recommended(),
         unanswered: app.unanswered(),
-        held: app.held_version(),
+        held: app.held_version().map(|version| HeldInfo {
+            version,
+            chosen: app.held.as_ref().is_some_and(|h| h.chosen),
+            newer: app.newer_than_held(),
+        }),
     }
 }
 
@@ -303,7 +318,7 @@ struct ProgressEvent {
     progress: engine::Progress,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Action {
     Install(catalog::Which),
     Uninstall,
@@ -332,7 +347,7 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
             let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
         };
         match action {
-            Action::Install(which) => match app.install_version(which, report) {
+            Action::Install(which) => match app.install_version(which.clone(), report) {
                 Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && app.held.is_none() => {
                     let automatic = furnish::settings::for_collection(&app.collection).settings.fallback == furnish::settings::Fallback::Automatic;
                     let Some(version) = app.previous_version().ok().filter(|_| automatic) else { return Err(err) };
@@ -367,6 +382,19 @@ async fn install_previous(app: tauri::AppHandle, key: String, trigger: Option<St
 #[tauri::command]
 async fn install_current(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
     run(app, key, Action::Install(catalog::Which::Current), trigger).await
+}
+
+/// Install a version of an app the person chose (a commit, see `versions`) and keep it there.
+#[tauri::command]
+async fn install_version(app: tauri::AppHandle, key: String, commit: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+    run(app, key, Action::Install(catalog::Which::Version(commit)), trigger).await
+}
+
+/// The versions of an app the person can choose from, newest first; an error says why there
+/// are none (e.g. the organization turned choosing off).
+#[tauri::command]
+async fn app_versions(key: String) -> CmdResult<Vec<catalog::Version>> {
+    blocking(move || catalog::find_app(&key)?.versions()).await
 }
 
 /// The earlier version furnish would fall back to; an error says why there is none.
@@ -796,6 +824,8 @@ fn main() {
             install_previous,
             install_current,
             previous_version,
+            install_version,
+            app_versions,
             set_collection_setting,
             version,
             self_update_status,

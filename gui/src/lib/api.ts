@@ -34,14 +34,26 @@ export interface AppInfo {
   recommended: boolean;
   /** Names of required collection options nobody answered yet: installing waits for them. */
   unanswered: string[];
-  /** Held at this earlier version because the collection's current one failed. */
-  held: Version | null;
+  /** Held at this earlier version: the collection's current one failed, or the person chose it. */
+  held: Held | null;
 }
 
 /** A version of an app: a commit of its collection, and the day of it. */
 export interface Version {
   commit: string;
   date: string;
+  /** The versions the app's file lists as acceptable at this commit (`versions`), if any. */
+  stated?: import('./required.ts').Entry[];
+  /** The collection's current version of the app. */
+  current?: boolean;
+}
+
+/** The version an app is held at. */
+export interface Held extends Version {
+  /** The person chose it: it stays until they choose another (else: a fallback after a failed install). */
+  chosen: boolean;
+  /** The collection has another version of the app now. */
+  newer: boolean;
 }
 
 /** Who started an operation, for reports: the user (default), automatic updates, or the organization's first-start installs. */
@@ -178,8 +190,10 @@ export interface CollectionSettings {
   blobsOnDemand: boolean;
   /** When an install fails: offer the previous version, install it, or neither. */
   fallback: 'ask' | 'automatic' | 'off';
-  /** Only versions at most this many days older than the failing one; 0: any age. */
+  /** Only versions at most this many days older than the current one; 0: any age. */
   fallbackMaxAgeDays: number;
+  /** People may install any earlier version of an app and keep it. */
+  chooseVersion: boolean;
 }
 
 /** The organization's name, logo and colors (admin policy `branding`). */
@@ -246,6 +260,11 @@ export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | n
 export const installPrevious = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_previous', { key, trigger: trigger ?? null });
 /** For an app held at an earlier version: install the collection's current one. */
 export const installCurrent = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_current', { key, trigger: trigger ?? null });
+/** Install a version of an app the person chose (a commit from `appVersions`) and keep it there. */
+export const installVersion = (key: string, commit: string, trigger?: Trigger) =>
+  invoke<FellBack | null>('install_version', { key, commit, trigger: trigger ?? null });
+/** The versions of an app the person can choose from, newest (the current one) first. */
+export const appVersions = (key: string) => invoke<Version[]>('app_versions', { key });
 /** The version furnish would fall back to; rejects with the reason if there is none. */
 export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
 export const version = () => invoke<string>('version');

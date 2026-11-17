@@ -22,8 +22,9 @@ When your organization adds a collection to its address, furnish adds it the nex
 
 ## An app's page
 
-Click an app for its description, its source and what it sets up on this computer. Three closed sections show details:
+Click an app for its description, its source and what it sets up on this computer. Closed sections show details:
 
+- Versions lists the app's versions from the collection's history, with the day of each. Install next to one installs that version (see [Earlier versions of an app](#earlier-versions-of-an-app)).
 - Steps lists what installing or uninstalling would do: each step, the exact command, and whether it needs administrator rights. Nothing changes until you click Install.
 - Activity log shows what the package manager printed during the last install.
 - DSC configuration shows the app's file in the collection.
@@ -63,6 +64,12 @@ furnish then keeps the app at that version, and its updates don't retry the fail
 On the Collections page, Downloads and earlier versions sets this per collection: offer the previous version, install it without asking, or neither, and how much older it may be. Your organization may set these.
 
 ![The example collection's Downloads and earlier versions section on the Collections page.](images/collection-settings.webp)
+
+## Earlier versions of an app
+
+The Versions section of an app's page lists the versions of the app in the collection's history, newest first: the day of each, the versions of the program the collection's file accepted then, and which one is installed. Install next to a version installs it. furnish then keeps the app at that version until you choose another one, also when the collection changes the app. The app's page says when a newer version is available, and Install the current version goes back to the collection's version. In the terminal: `furnish versions <app>` and `furnish install <app> --version <day or commit>`.
+
+The list holds only versions your organization allows: within the history furnish keeps, not older than the limit for earlier versions, signed where your organization requires it, and with a version of the program the collection still accepts. If the collection requires a newer version for security reasons, furnish installs it even for an app at a version you chose. Your organization can turn choosing a version off; Choosing a version on the Collections page shows whether it is allowed.
 
 ## Updates
 

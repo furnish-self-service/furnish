@@ -14,14 +14,14 @@
 use std::cmp::Ordering;
 
 use anyhow::{Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The property apps write the acceptable versions in.
 pub const PROPERTY: &str = "versions";
 
 /// A comparison operator of a range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Op {
     #[serde(rename = ">=")]
     Ge,
@@ -37,14 +37,14 @@ pub enum Op {
     Ne,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comparator {
     pub op: Op,
     pub version: String,
 }
 
 /// One entry of `versions`. A fixed version is a range with one `=`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Entry {
     Range { all: Vec<Comparator> },

@@ -46,8 +46,17 @@ enum Command {
         #[arg(long, conflicts_with = "current")]
         previous: bool,
         /// For an app held at an earlier version: try the collection's current version again
-        #[arg(long)]
+        #[arg(long, conflicts_with = "version")]
         current: bool,
+        /// Install this version of the app and keep it there: a day (2026-11-02) or a commit, as
+        /// `furnish versions` lists them
+        #[arg(long, value_name = "DAY OR COMMIT", conflicts_with = "previous")]
+        version: Option<String>,
+    },
+    /// List the versions of an app you can install with `furnish install <app> --version`
+    Versions {
+        /// App name, or collection/name if the name is ambiguous
+        app: String,
     },
     /// Uninstall an app, or apps of a kit
     Uninstall {
@@ -295,9 +304,13 @@ struct CollectionSettingsArgs {
     /// right away (automatic), or neither (off)
     #[arg(long, value_parser = ["ask", "automatic", "off"])]
     fallback: Option<String>,
-    /// Fall back only to versions at most this many days older than the failing one (0: any)
+    /// Fall back only to versions at most this many days older than the failing one (0: any);
+    /// also limits the versions you can choose
     #[arg(long, value_name = "DAYS")]
     fallback_max_age: Option<u32>,
+    /// Let people install any earlier version of an app from the collection's history
+    #[arg(long, value_name = "BOOL")]
+    choose_version: Option<bool>,
 }
 
 impl CollectionSettingsArgs {
@@ -314,6 +327,9 @@ impl CollectionSettingsArgs {
         }
         if let Some(v) = self.fallback_max_age {
             changes.push(("fallbackMaxAgeDays", v.into()));
+        }
+        if let Some(v) = self.choose_version {
+            changes.push(("chooseVersion", v.into()));
         }
         changes
     }
@@ -337,6 +353,32 @@ fn print_collection_settings(s: &furnish::settings::CollectionSettings, locked: 
         0 => println!("previous versions: any age{}", org("fallbackMaxAgeDays")),
         d => println!("previous versions: at most {d} days older{}", org("fallbackMaxAgeDays")),
     }
+    let choose = if s.choose_version { "yes" } else { "no" };
+    println!("choose a version:  {choose}{}", org("chooseVersion"));
+}
+
+/// `furnish versions`: the versions of an app that can be installed, newest first.
+fn versions(app: &catalog::App) -> Result<()> {
+    let versions = app.versions()?;
+    let held = app.held.as_ref().map(|h| h.commit.as_str());
+    let mut rows = vec![row(["", "DAY", "COMMIT", "VERSIONS", ""])];
+    for v in &versions {
+        let marker = if Some(v.commit.as_str()) == held || (held.is_none() && v.current) { "✓" } else { " " };
+        let note = if v.current { "current" } else { "" };
+        let stated = if v.stated.is_empty() { String::new() } else { furnish::required::describe(&v.stated) };
+        rows.push(row([marker, &v.date, short(&v.commit), &stated, note]));
+    }
+    print_table(&rows);
+    if versions.len() == 1 {
+        println!("No earlier version of {} can be installed here (see the settings checkoutDepth and fallbackMaxAgeDays).", app.id);
+    } else {
+        println!("Install one with: furnish install {} --version <day or commit>", app.id);
+    }
+    Ok(())
+}
+
+fn short(commit: &str) -> &str {
+    &commit[..7.min(commit.len())]
 }
 
 #[derive(Subcommand)]
@@ -496,6 +538,21 @@ fn run(command: Command) -> Result<()> {
             print_plan(&app, false)
         }
         Command::Uninstall { app, dry_run: true, .. } => print_plan(&catalog::find_app(&app)?, true),
+        Command::Install { app, version: Some(version), .. } => {
+            let app = catalog::find_app(&app)?;
+            let version = app.resolve_version(&version)?;
+            println!("⟳ Installing the version of {} from {}…", app.id, version.date);
+            app.install_version(catalog::Which::Version(version.commit.clone()), print_progress())?;
+            match version.current {
+                true => println!("✓ Installed the current version of {}", app.id),
+                false => println!(
+                    "✓ Installed the version of {} from {}. furnish keeps it until you choose another; furnish install {} --current goes back to the current version.",
+                    app.id, version.date, app.id
+                ),
+            }
+            Ok(())
+        }
+        Command::Versions { app } => versions(&catalog::find_app(&app)?),
         Command::Install { app, previous: true, .. } => {
             let app = catalog::find_app(&app)?;
             install_previous(&app, &app.previous_version()?)
@@ -751,8 +808,10 @@ fn list() -> Result<()> {
             Some(r) => description = format!("{description} (needs {})", r.summary),
             None => {}
         }
-        if let Some(commit) = &app.held {
-            description = format!("{description} (held at an earlier version, {}: furnish install {} --current)", &commit[..7.min(commit.len())], app.id);
+        if let Some(held) = &app.held {
+            let version = app.held_version().map_or_else(|| held.commit[..7.min(held.commit.len())].to_string(), |v| v.date);
+            let why = if held.chosen { "the version you chose" } else { "an earlier version" };
+            description = format!("{description} (held at {why}, from {version}: furnish install {} --current)", app.id);
         }
         if app.options_differ() {
             description = format!("{description} (installed with other options: furnish reinstall {})", app.id);

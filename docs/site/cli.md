@@ -9,7 +9,8 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 | Command | What it does |
 |---|---|
 | `furnish list` | The catalog, with texts in your language (see [Translations](collections.md#translations)), and each app's state: ✓ installed, ↑ update available, · not installed, ★ recommended |
-| `furnish install <app>` | Install or update an app or a kit; `--dry-run` shows the steps, `--with`/`--without` choose optional dependencies or kit items, `--previous` installs the app's previous version, `--current` the collection's version of an app held at an earlier one |
+| `furnish install <app>` | Install or update an app or a kit; `--dry-run` shows the steps, `--with`/`--without` choose optional dependencies or kit items, `--previous` installs the app's previous version, `--version <day or commit>` the version of that day or commit and keeps the app there, `--current` the collection's version of an app held at an earlier one |
+| `furnish versions <app>` | The versions of an app you can install with `--version`, newest first: day, commit and the versions the collection's file accepted; ✓ marks the installed one |
 | `furnish uninstall <app>` | Uninstall; for a kit, `--only` picks the apps |
 | `furnish reinstall <app>` | Apply changed options |
 | `furnish upgrade` | Install available updates (`--all` includes apps with automatic updates off) |
@@ -21,7 +22,7 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 | `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
 | `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`). Also shows furnish's version, how it was installed and whether a new version is out; `--self-update auto\|notify\|off` sets what furnish does with new versions of itself |
 | `furnish self-update` | Install the newest version of furnish, if you installed it from the Windows or macOS download. Elsewhere it says how the new version arrives. `--check` only says whether there is one |
-| `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
+| `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--choose-version <bool>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
 
 `-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.
 

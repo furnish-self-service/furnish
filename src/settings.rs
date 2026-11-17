@@ -34,12 +34,15 @@ pub struct Settings {
     /// What to do when installing or updating an app fails.
     pub fallback: Fallback,
     /// Only fall back to versions at most this many days older than the failing one; 0: any age.
+    /// Also limits the versions people can choose (see `choose_version`).
     pub fallback_max_age_days: u32,
+    /// People may install any earlier version of an app from the collection's history and keep it.
+    pub choose_version: bool,
     /// Reports to the organization's furnish address (see `reports`): off, errors or all.
     pub reporting: crate::reports::Level,
     /// Include this computer's name in reports.
     pub report_hostname: bool,
-    /// The user's values for the four settings above for single collections, keyed by collection.
+    /// The user's values for the settings in `PER_COLLECTION` for single collections, keyed by collection.
     pub collections: std::collections::BTreeMap<String, Map<String, Value>>,
     /// The desktop app's language: the system's, or one the app has.
     pub language: Language,
@@ -142,7 +145,7 @@ pub enum Fallback {
 }
 
 /// The settings that apply per collection.
-pub const PER_COLLECTION: [&str; 4] = ["checkoutDepth", "blobsOnDemand", "fallback", "fallbackMaxAgeDays"];
+pub const PER_COLLECTION: [&str; 5] = ["checkoutDepth", "blobsOnDemand", "fallback", "fallbackMaxAgeDays", "chooseVersion"];
 
 /// The settings for one collection, in effect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -152,6 +155,7 @@ pub struct CollectionSettings {
     pub blobs_on_demand: bool,
     pub fallback: Fallback,
     pub fallback_max_age_days: u32,
+    pub choose_version: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -176,6 +180,7 @@ impl Default for Settings {
             blobs_on_demand: true,
             fallback: Fallback::Ask,
             fallback_max_age_days: 0,
+            choose_version: true,
             reporting: crate::reports::Level::Off,
             report_hostname: false,
             collections: Default::default(),
@@ -554,6 +559,23 @@ mod tests {
         let e = merge(&p, choices.as_object().unwrap());
         assert_eq!(e.settings.update_interval_minutes, 15);
         assert!(!e.settings.load_aware_updates);
+    }
+
+    #[test]
+    fn choosing_a_version_is_on_by_default_and_the_policy_can_lock_it_off() {
+        assert!(Settings::default().choose_version);
+        assert!(collection_merge(&Policy::default(), &Map::new(), "tools").settings.choose_version);
+        let p = policy(json!({"collectionSettings": {"tools": {"chooseVersion": {"value": false, "locked": true}}}}));
+        let choices = json!({"collections": {"tools": {"chooseVersion": true}, "other": {"chooseVersion": false}}});
+        let tools = collection_merge(&p, choices.as_object().unwrap(), "tools");
+        assert!(!tools.settings.choose_version, "the user's value won over the locked one");
+        assert_eq!(tools.locked, ["chooseVersion"]);
+        // Per collection, like the others.
+        assert!(!collection_merge(&p, choices.as_object().unwrap(), "other").settings.choose_version);
+        // A general lock applies to every collection the policy doesn't set it for.
+        let p = policy(json!({"settings": {"chooseVersion": {"value": false, "locked": true}}}));
+        let other = collection_merge(&p, json!({"collections": {"other": {"chooseVersion": true}}}).as_object().unwrap(), "other");
+        assert!(!other.settings.choose_version && other.locked == ["chooseVersion"]);
     }
 
     #[test]
