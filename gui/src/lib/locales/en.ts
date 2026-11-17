@@ -270,6 +270,7 @@ export const en = {
   'plan.note.value.removeMember': "Removes the value from the list <code>{location}</code> in <code>{path}</code>",
   'plan.note.test.output': "Test <code>{command}</code> printed <code>{got}</code>, expected <code>{expected}</code>",
   'plan.note.test.noOutput': "Test <code>{command}</code> printed nothing, expected <code>{expected}</code>",
+  'plan.note.test.present': "<code>{command}</code> finds the setting: it is there but outdated",
   'plan.note.test.exitCode': "Test <code>{command}</code> exited with code {got}, expected {expected}",
   'plan.note.test.json': "Test <code>{command}</code> has <code>{got}</code> at <code>{path}</code>, expected <code>{expected}</code>",
   'plan.note.lines': "Changed lines",

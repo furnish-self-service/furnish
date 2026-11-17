@@ -80,6 +80,38 @@
             }
           }
         },
+        "present": {
+          "type": "object",
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false,
+          "description": "How to tell an outdated setting from a missing one: the setting is there if this passes",
+          "properties": {
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            "exitCode": {
+              "type": "integer",
+              "description": "The expected exit code (default 0)"
+            },
+            "output": {
+              "type": "string",
+              "description": "The expected output"
+            },
+            "jsonPath": {
+              "type": "string",
+              "description": "A place in the command's JSON output that must exist"
+            },
+            "value": {
+              "description": "The value expected at jsonPath"
+            }
+          }
+        },
         "set": {
           "type": "array",
           "items": {

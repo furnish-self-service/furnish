@@ -230,6 +230,8 @@ resources:
     type: Furnish/Command
     properties:
       test: { command: [git, config, --file, "$tmp/conf/gitconfig", fixture.server], output: https://fixture.example }
+      # There, but outdated: any server set (an empty value is none).
+      present: { command: [git, config, --file, "$tmp/conf/gitconfig", --get-regexp, '^fixture\.server$', .] }
       set: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, https://fixture.example]
       remove: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, ""]  # succeeds also with nothing to remove
 YAML
@@ -432,12 +434,11 @@ settings=$(cat "$tmp/conf/settings.json") && printf '%s\n' "${settings//true/fal
 if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't drift" >&2; exit 1; fi
 expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
-expect "$(step uninstall config)" "Uninstalled config"
-# Removing an outdated setting (its test fails) still runs remove. The app then counts as not
-# installed, so this calls the resource the way DSC does.
+# An outdated setting (test fails, present passes) is an update, and uninstalling removes it.
 git config --file "$tmp/conf/gitconfig" fixture.server https://old.fixture.example
-printf '{"test": {"command": ["git", "config", "--file", "%s", "fixture.server"], "output": "https://fixture.example"}, "set": ["true"], "remove": ["git", "config", "--file", "%s", "--unset-all", "fixture.server"], "_exist": false}' \
-    "$tmp/conf/gitconfig" "$tmp/conf/gitconfig" | "$furnish" dsc-resource command set >/dev/null
+expect "$(step list)" "↑  config "
+expect "$(step install config --dry-run)" "finds the setting: it is there but outdated"
+expect "$(step uninstall config)" "Uninstalled config"
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

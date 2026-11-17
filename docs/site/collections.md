@@ -252,6 +252,29 @@ A setting that a tool must apply itself. `test` runs a command and checks its re
     remove: [bw, config, server, https://vault.bitwarden.com]
 ```
 
+A failing test can mean that the setting is missing or that it is there but outdated. `present`, with the same properties as `test`, tells the two apart: if `test` fails and `present` passes, the app shows an update instead of "not installed", and it can be uninstalled. Without `present`, a failing test counts as missing.
+
+A VPN connection that NetworkManager imports from a profile is an example. When the collection brings a new profile, the connection is still there, but it was imported from the old one:
+
+```yaml
+- name: VPN profile
+  type: Furnish/File
+  condition: "[equals(context().os.family, 'Linux')]"
+  properties:
+    path: /etc/openvpn/acme-vpn.ovpn
+    source: files/acme.ovpn
+- name: VPN connection
+  type: Furnish/Command
+  condition: "[equals(context().os.family, 'Linux')]"
+  properties:
+    # Imported from this profile: the copy made at import time is the same.
+    test: { command: [cmp, -s, /etc/openvpn/acme-vpn.ovpn, /var/lib/acme-vpn/imported.ovpn] }
+    # The connection exists, from whichever profile.
+    present: { command: [nmcli, connection, show, id, Acme VPN] }
+    set: [sh, -c, "nmcli connection delete id 'Acme VPN'; nmcli connection import type openvpn file /etc/openvpn/acme-vpn.ovpn && nmcli connection modify acme-vpn connection.id 'Acme VPN' && mkdir -p /var/lib/acme-vpn && cp /etc/openvpn/acme-vpn.ovpn /var/lib/acme-vpn/imported.ovpn"]
+    remove: [sh, -c, "nmcli connection delete id 'Acme VPN'; rm -f /var/lib/acme-vpn/imported.ovpn"]
+```
+
 ### Other DSC resources
 
 An app can also use other DSC resources. An app that sets up a VPN connection or a setting needs no package at all.
@@ -280,7 +303,7 @@ furnish also finds resources where DSC does: in the folders on `PATH` and where 
 
 furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell. The same test runs right after an install, so a resource whose `test` doesn't match what its `set` does makes every install fail.
 
-For `--dry-run` and the steps preview, furnish's own resources describe what they would do. The package and installer resources show their exact commands. The configuration resources name each file and what happens to it, with the number of lines added and removed, and the changed lines of a `Furnish/Block` or of a `Furnish/File` with `content` that isn't private. `Furnish/Line` shows the line, `Furnish/Value` the value at its location before and after, and `Furnish/Command` its test command with the output it expected and got. Other resources show their type and properties.
+For `--dry-run` and the steps preview, furnish's own resources describe what they would do. The package and installer resources show their exact commands. The configuration resources name each file and what happens to it, with the number of lines added and removed, and the changed lines of a `Furnish/Block` or of a `Furnish/File` with `content` that isn't private. `Furnish/Line` shows the line, `Furnish/Value` the value at its location before and after, and `Furnish/Command` its test command with the output it expected and got, and whether `present` found an outdated setting. Other resources show their type and properties.
 
 No other resource may declare one of furnish's types, such as `Furnish/Package`. furnish refuses to run when DSC finds one, whatever its version.
 

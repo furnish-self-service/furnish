@@ -273,6 +273,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.note.value.removeMember': "Quita el valor de la lista <code>{location}</code> en <code>{path}</code>",
   'plan.note.test.output': "La prueba <code>{command}</code> devolvió <code>{got}</code>, se esperaba <code>{expected}</code>",
   'plan.note.test.noOutput': "La prueba <code>{command}</code> no devolvió nada, se esperaba <code>{expected}</code>",
+  'plan.note.test.present': "<code>{command}</code> encuentra el ajuste: existe, pero está desactualizado",
   'plan.note.test.exitCode': "La prueba <code>{command}</code> terminó con el código {got}, se esperaba {expected}",
   'plan.note.test.json': "La prueba <code>{command}</code> tiene <code>{got}</code> en <code>{path}</code>, se esperaba <code>{expected}</code>",
   'plan.note.lines': "Líneas cambiadas",

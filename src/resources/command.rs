@@ -1,6 +1,8 @@
 //! `Furnish/Command`: for tools that must apply a setting themselves. `test` runs a command and
 //! checks its exit code, its output, or a value in its JSON output; `set` runs only when the test
-//! fails, and `remove` (optional) when the test passes and the setting should go.
+//! fails, and `remove` (optional) on uninstall. `present` (optional, the same shape as `test`)
+//! tells an outdated setting from a missing one: the step then counts as there, so the app shows
+//! an update instead of "not installed".
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -14,6 +16,7 @@ use super::{Plan, common, note::{Note, note}, parse, value};
 #[serde(deny_unknown_fields)]
 struct Props {
     test: Test,
+    present: Option<Test>,
     set: Vec<String>,
     remove: Option<Vec<String>>,
     #[serde(rename = "_exist")]
@@ -40,10 +43,16 @@ fn props(v: &Value) -> Result<Props> {
             bail!("{what}: a command, as a list of the program and its arguments");
         }
     }
-    if let Some(path) = &p.test.json_path {
-        value::parse_location(path).context("test.jsonPath")?;
-    } else if p.test.value.is_some() {
-        bail!("test.value needs test.jsonPath");
+    for (what, test) in [("test", Some(&p.test)), ("present", p.present.as_ref())] {
+        let Some(test) = test else { continue };
+        if test.command.is_empty() {
+            bail!("{what}.command: a command, as a list of the program and its arguments");
+        }
+        if let Some(path) = &test.json_path {
+            value::parse_location(path).with_context(|| format!("{what}.jsonPath"))?;
+        } else if test.value.is_some() {
+            bail!("{what}.value needs {what}.jsonPath");
+        }
     }
     Ok(p)
 }
@@ -105,6 +114,14 @@ fn short(text: &str) -> String {
     s
 }
 
+/// Whether a check passes; a program that isn't installed means it doesn't.
+fn passes_check(test: &Test) -> Result<bool> {
+    match passes(test) {
+        Err(e) if e.chain().any(|e| e.is::<common::Missing>()) => Ok(false),
+        result => Ok(result?.0),
+    }
+}
+
 fn run(command: &[String]) -> Result<()> {
     let out = common::run(command)?;
     if !out.status.success() {
@@ -125,10 +142,20 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
             (ok, Some(n))
         }
     };
-    plan.observe("_exist", Some(passes.into()), Some(exist.into()));
-    match (exist, passes) {
-        (true, false) => {
+    // Outdated: the test fails, but `present` finds the setting.
+    let outdated = !passes && test_note.is_some() && match &p.present {
+        Some(present) => passes_check(present)?,
+        None => false,
+    };
+    let there = passes || outdated;
+    plan.observe("_exist", Some(there.into()), Some(exist.into()));
+    match (exist, there) {
+        (true, _) if !passes => {
             let mut steps = test_note.into_iter().collect::<Vec<_>>();
+            if outdated {
+                let present = p.present.as_ref().map(|t| t.command.join(" ")).unwrap_or_default();
+                steps.push(note("test.present", json!({ "command": present })));
+            }
             steps.push(note("run", json!({ "command": p.set.join(" ") })));
             plan.change(steps, move || run(&p.set));
         }
@@ -172,6 +199,37 @@ mod tests {
 
     fn marker_exists(path: &str) -> bool {
         std::path::Path::new(path).exists()
+    }
+
+    #[test]
+    fn present_tells_an_outdated_setting_from_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("server").to_string_lossy().into_owned();
+        let props = json!({
+            "test": {"command": ["cat", marker], "output": "https://vault.example.org"},
+            "present": {"command": ["test", "-s", marker]},
+            "set": ["sh", "-c", format!("echo https://vault.example.org > '{marker}'")],
+            "remove": ["rm", "-f", marker],
+        });
+        // Missing: not there.
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.state["_exist"], false);
+        assert!(!plan.steps.iter().any(|n| n.code == "test.present"));
+        // Outdated: there (the app shows an update), and set updates it.
+        std::fs::write(&marker, "https://old.example.org\n").unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.state["_exist"], true);
+        assert!(plan.steps.iter().any(|n| n.code == "test.present"));
+        (plan.apply.unwrap())().unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none());
+        assert_eq!(plan.state["_exist"], true);
+        // Without present, an outdated setting reads as missing, as before.
+        std::fs::write(&marker, "https://old.example.org\n").unwrap();
+        let mut without = props.clone();
+        without.as_object_mut().unwrap().remove("present");
+        assert_eq!(evaluate(&without).unwrap().state["_exist"], false);
+        assert!(check(&json!({"test": {"command": ["x"]}, "present": {"command": []}, "set": ["x"]})).is_err());
     }
 
     #[test]
