@@ -281,8 +281,13 @@ The flake provides the packages and a NixOS module:
     policy.collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }];
     service.enable = true;
   };
+  # furnish's binary cache: without it, Nix builds furnish from source on every update.
+  nix.settings.extra-substituters = [ "https://furnish.cachix.org" ];
+  nix.settings.extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
 }
 ```
+
+Builds of the `main` branch are in the cache. The two `nix.settings` lines are needed because Nix reads a flake's own cache settings (`nixConfig`) only from the flake a command runs on, never from its inputs: `nixos-rebuild` doesn't ask about furnish's cache and doesn't use it. For other revisions, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so they are compiled once.
 
 On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
 
@@ -347,14 +352,13 @@ furnish refuses an app with another option before it changes anything, and the m
 
 The module keeps furnish's own source in the system, so the configuration still evaluates offline after a garbage collection. You can also run `nix flake update` yourself: the `furnish/apps` input stays where it points.
 
-Builds of the `main` branch are in the binary cache `furnish.cachix.org`, which the flake offers. Nix asks once whether to trust the flake's settings. Or add the cache to your configuration:
+`flake.lock` records the folder `/var/lib/furnish/apps`. Evaluating the configuration on another computer, where that folder doesn't exist and the store doesn't have its content, fails with `error: path '/var/lib/furnish/apps' does not exist`. That happens in a CI job that runs `nix flake check`, or on a machine that builds or deploys this configuration. Point the input at furnish's empty app list there:
 
-```nix
-nix.settings.extra-substituters = [ "https://furnish.cachix.org" ];
-nix.settings.extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
+```sh
+nix flake check --override-input furnish/apps 'github:furnish-self-service/furnish?dir=nix/no-apps'
 ```
 
-Without the cache, and for revisions other than `main`, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so furnish's dependencies are compiled once.
+The computer itself keeps working, also when the folder is gone, as long as its store has the locked content.
 
 ### Installing apps into Home Manager
 
@@ -388,6 +392,8 @@ services.furnish.nix.allowedOptions = [ "programs.*.enable" ];             # opt
 `~/.local/share/furnish/home-apps` (in `$XDG_DATA_HOME` if set, also on macOS) is the person's own small flake with the apps furnish installed for them. furnish creates it when it shows the lines, on the Settings page and with `furnish settings`, so the first `nix flake lock` finds it. A flake input can't use `~`, so the line has the full path. If the input points to another folder, furnish uses that one: it reads the folder from `flake.lock`, or from `flake.nix` before the first lock, so the furnish service finds it too. The module adds the apps' packages to `home.packages`. Without `services.furnish.nix.configuration`, furnish looks in `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` and `~/.config/home-manager`. `services.furnish.nix.flakeAttribute` is the name in `homeConfigurations`, by default the user name.
 
 An install runs entirely as the person, also when the furnish service runs it for them, and needs no administrator rights. furnish writes the app into the person's `apps.json`, runs `nix flake update furnish/home-apps`, builds the generation and activates it, as `home-manager switch` does. It commits `flake.lock` if the repository had no other changes, and puts `apps.json` and `flake.lock` back if the build fails.
+
+The `furnish/home-apps` input points into the person's home folder, so evaluating the configuration elsewhere fails as described for [the NixOS configuration](#installing-apps-into-the-configuration). Use `--override-input furnish/home-apps 'github:furnish-self-service/furnish?dir=nix/no-apps'` there.
 
 #### Home Manager as a NixOS module
 

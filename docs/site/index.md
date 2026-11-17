@@ -54,7 +54,7 @@ sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-servi
 sudo apt update && sudo apt install furnish
 ```
 
-On Fedora and Enterprise Linux 10, save `https://furnish-self-service.github.io/furnish/alpha/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish` (on Enterprise Linux 10, enable EPEL and CRB first). On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. On NixOS, use the flake's NixOS module and its binary cache `furnish.cachix.org` (Nix asks once whether to trust it; without it, Nix builds from source), see [For admins](admins.md#nixos).
+On Fedora and Enterprise Linux 10, save `https://furnish-self-service.github.io/furnish/alpha/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish` (on Enterprise Linux 10, enable EPEL and CRB first). On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. On NixOS, use the flake's NixOS module and add its binary cache `furnish.cachix.org` to `nix.settings`, or Nix builds furnish from source on every update; see [For admins](admins.md#nixos).
 
 To build from source you need git, Rust 1.91 or later and, for the desktop app, Node.js and on Linux WebKitGTK 4.1:
 
