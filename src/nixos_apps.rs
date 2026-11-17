@@ -739,6 +739,9 @@ fn info(message: &str) {
 #[cfg_attr(not(unix), allow(unused_variables))]
 fn as_owner(owner: &Account, program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut c = Command::new(program);
+    for var in crate::catalog::GIT_LOCATION_VARS {
+        c.env_remove(var);
+    }
     #[cfg(unix)]
     if owner.uid != 0 && is_root() {
         use std::os::unix::process::CommandExt;

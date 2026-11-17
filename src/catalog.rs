@@ -1711,9 +1711,24 @@ pub fn find_app(query: &str) -> Result<App> {
 /// Installer files, which blobs_on_demand leaves out of the checkout until an app needs one.
 const INSTALLERS: [&str; 6] = ["*.msi", "*.exe", "*.pkg", "*.dmg", "*.deb", "*.rpm"];
 
+/// Variables that point git at another repository than the one `-C` names, as `git rebase -x`
+/// and git hooks set them for the commands they run. furnish's git commands (and its tests')
+/// never inherit them, so they can't write into whatever repository furnish was started from.
+pub const GIT_LOCATION_VARS: [&str; 6] =
+    ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"];
+
+/// The git program (see [`git_program`]), without the variables in [`GIT_LOCATION_VARS`].
+pub fn git_command() -> Command {
+    let mut cmd = git_program();
+    for var in GIT_LOCATION_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 /// The git program: the system's, else the copy the Windows installer ships next to furnish
 /// (MinGit with git-lfs, in `git\` beside furnish.exe).
-pub fn git_command() -> Command {
+fn git_program() -> Command {
     static BUNDLED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     let bundled = BUNDLED.get_or_init(|| {
         let on_path = env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("git.exe").is_file()));
@@ -1913,6 +1928,15 @@ mod tests {
         assert_eq!(sparse_pattern("i/*.deb").unwrap(), "/i/\\*.deb\n");
         assert_eq!(sparse_pattern("i/[x]?!#\\ .msi").unwrap(), "/i/\\[x\\]\\?\\!\\#\\\\\\ .msi\n");
         assert!(sparse_pattern("a\n/*").is_err());
+    }
+
+    #[test]
+    fn git_commands_ignore_an_inherited_repository() {
+        let cmd = git_command();
+        let removed: Vec<_> = cmd.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k.to_string_lossy().into_owned()).collect();
+        for var in GIT_LOCATION_VARS {
+            assert!(removed.iter().any(|r| r == var), "{var} is passed on");
+        }
     }
 
     #[test]
