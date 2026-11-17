@@ -51,6 +51,7 @@ impl Note {
             "value.set" => format!("Set {} in {}", s("location"), s("path")),
             "value.remove" => format!("Remove {} from {}", s("location"), s("path")),
             "value.add" => format!("Add the value to the list at {} in {}", s("location"), s("path")),
+            "value.keep" => format!("Keep {} in {}: it is {}, which this app doesn't remove", s("location"), s("path"), s("value")),
             "value.removeMember" => format!("Remove the value from the list at {} in {}", s("location"), s("path")),
             "test.output" => format!("Test: {} printed {}, expected {}", s("command"), s("got"), s("expected")),
             "test.noOutput" => format!("Test: {} printed nothing, expected {}", s("command"), s("expected")),

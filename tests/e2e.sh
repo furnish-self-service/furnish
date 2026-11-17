@@ -286,6 +286,9 @@ resources:
   - name: home file
     type: Furnish/File
     properties: { path: "~/$home_file", content: "furnish" }
+  - name: current context
+    type: Furnish/Value
+    properties: { path: "$tmp/conf/kube.yaml", location: "\$.current-context", removeIf: [fixture-prod, fixture-stg] }
   - name: server
     type: Furnish/Command
     properties:
@@ -564,6 +567,7 @@ fi
 # Configuration resources, through DSC: install, test, drift, uninstall.
 mkdir -p "$tmp/conf"
 printf 'Host other.example\n  User me\n' > "$tmp/conf/ssh_config"
+printf 'current-context: fixture-prod\n' > "$tmp/conf/kube.yaml"
 expect "$(step list)" "·  config "
 plan=$(step install config --dry-run)
 expect "$plan" "Add 'Include config.d/fixture.conf' to $tmp/conf/ssh_config"
@@ -577,6 +581,12 @@ grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAI
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
 [ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
+# removeIf: installing leaves the value as it is, there or not, and the app stays installed.
+grep -q '^current-context: fixture-prod$' "$tmp/conf/kube.yaml" || { echo "FAIL: install changed current-context" >&2; exit 1; }
+printf 'kind: Config\n' > "$tmp/conf/kube.yaml"
+expect "$(step list)" "✓  config "
+printf 'current-context: fixture-prod\n' > "$tmp/conf/kube.yaml"
+expect "$(step list)" "✓  config "
 case "$(uname -s)" in
 MINGW* | MSYS*) ;;  # an access list instead of a mode
 *) [ "$(stat -c %a "$tmp/conf/profile.conf" 2>/dev/null || stat -f %Lp "$tmp/conf/profile.conf")" = 600 ] || { echo "FAIL: profile isn't private" >&2; exit 1; } ;;
@@ -590,7 +600,9 @@ expect "$(step list)" "✓  config "
 git config --file "$tmp/conf/gitconfig" fixture.server https://old.fixture.example
 expect "$(step list)" "↑  config "
 expect "$(step install config --dry-run)" "finds the setting: it is there but outdated"
+expect "$(step uninstall config --dry-run)" "Remove \$.current-context from $tmp/conf/kube.yaml"
 expect "$(step uninstall config)" "Uninstalled config"
+if grep -q current-context "$tmp/conf/kube.yaml"; then echo "FAIL: uninstall left the app's current-context" >&2; exit 1; fi
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

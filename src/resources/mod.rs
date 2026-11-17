@@ -609,6 +609,9 @@ struct ValueProps {
     location: String,
     value: Option<Value>,
     merge: Option<value::Merge>,
+    /// Remove the value on uninstall only if it is one of these; install leaves it as it is.
+    #[serde(rename = "removeIf")]
+    remove_if: Option<Vec<Value>>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
     backup: Option<bool>,
@@ -623,6 +626,15 @@ impl ValueProps {
             None => bail!("format: json, jsonc, yaml or toml (the file name doesn't tell)"),
         };
         let merge = self.merge.unwrap_or_default();
+        if let Some(values) = &self.remove_if {
+            if self.value.is_some() || self.merge.is_some() {
+                bail!("removeIf: a step with removeIf only removes, so it takes no value or merge");
+            }
+            if values.is_empty() {
+                bail!("removeIf: the values that the app's uninstall removes, for example [acme-prod]");
+            }
+            return Ok((format, value::check(&self.location, None, merge)?));
+        }
         if self.value.is_none() && (exist(self.exist) || merge != value::Merge::Replace) {
             bail!("value is required");
         }
@@ -642,7 +654,18 @@ fn value(props: &Value) -> Result<Plan> {
     }
     let text = file.text()?;
     let doc = value::parse(format, &text.text).with_context(|| format!("{} can't be read, so furnish leaves it as it is", file.shown))?;
-    let (ops, expected) = value::plan(&doc, &segs, p.value.as_ref(), merge, exist).with_context(|| format!("{}: {}", file.shown, p.location))?;
+    // removeIf: install leaves the value alone, uninstall removes it if it is one of the app's.
+    let found = value::current(&doc, &segs).with_context(|| format!("{}: {}", file.shown, p.location))?;
+    let keep = match &p.remove_if {
+        None => false,
+        Some(_) if exist => true,
+        Some(values) => found.is_some_and(|v| !values.contains(v)),
+    };
+    let (ops, expected) = if keep {
+        (vec![], doc.clone())
+    } else {
+        value::plan(&doc, &segs, p.value.as_ref(), merge, exist).with_context(|| format!("{}: {}", file.shown, p.location))?
+    };
     let observed = |doc: &Value| -> Result<(bool, Option<Value>)> {
         let at = value::current(doc, &segs)?;
         Ok(match (merge, at, &p.value) {
@@ -655,8 +678,16 @@ fn value(props: &Value) -> Result<Plan> {
     let (now_exists, now) = observed(&doc)?;
     let (after_exists, after) = observed(&expected)?;
     plan.observe("_exist", Some(now_exists.into()), Some(after_exists.into()));
-    plan.observe("value", now, after);
+    plan.observe("value", now.clone(), after);
     if ops.is_empty() {
+        // On uninstall, say why a value stays.
+        if p.remove_if.is_some() && !exist && let Some(now) = now {
+            let shown = match now {
+                Value::String(s) => s,
+                other => other.to_string(),
+            };
+            plan.steps = vec![note("value.keep", json!({ "path": file.shown, "location": p.location, "value": shown }))];
+        }
         return Ok(plan);
     }
     let new = value::edit(format, &text.text, &ops, &expected).with_context(|| file.shown.clone())?;
@@ -823,6 +854,64 @@ mod tests {
         assert!(steps[0].params.get("diff").is_some(), "group may read it: the lines are shown");
         let steps = converge("file", json!({"path": p, "content": "b\n", "mode": "600"}));
         assert_eq!(steps[0].params["hidden"], true);
+    }
+
+    #[test]
+    fn current_context_is_removed_on_uninstall_only_when_it_names_the_apps_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir, "config");
+        let mine = "apiVersion: v1\nclusters:\n- name: mine\n  cluster: { server: https://mine.example }\n\
+                    contexts:\n- name: mine\n  context: { cluster: mine, user: me }\ncurrent-context: mine\n\
+                    users:\n- name: me\n  user: { token: secret }\n";
+        let entry = |kind: &str, name: &str, body: Value| {
+            let singular = kind.trim_end_matches('s');
+            json!({"path": p, "format": "yaml", "location": format!("$.{kind}[?@.name=='{name}']"), "merge": "deep", "value": {"name": name, singular: body}})
+        };
+        // The kubeconfig app: cluster, user and context for production and staging, and current-context.
+        let mut app = vec![];
+        for name in ["acme-prod", "acme-stg"] {
+            app.push(entry("clusters", name, json!({"server": format!("https://{name}.acme.example")})));
+            app.push(entry("users", name, json!({"exec": {"command": "kubelogin"}})));
+            app.push(entry("contexts", name, json!({"cluster": name, "user": name})));
+        }
+        app.push(json!({"path": p, "format": "yaml", "location": "$.current-context", "removeIf": ["acme-prod", "acme-stg"]}));
+        let install = |app: &[Value]| app.iter().for_each(|props| drop(converge("value", props.clone())));
+        let uninstall = |app: &[Value]| {
+            app.iter().rev().flat_map(|props| {
+                let mut gone = props.clone();
+                gone["_exist"] = false.into();
+                converge("value", gone)
+            }).collect::<Vec<_>>()
+        };
+        let doc = || value::parse(value::Format::Yaml, &fs::read_to_string(&p).unwrap()).unwrap();
+
+        // Install leaves current-context as it is: nothing to do, in the desired state, no change shown.
+        fs::write(&p, mine.replace("current-context: mine", "current-context: acme-prod")).unwrap();
+        let plan = evaluate("value", app.last().unwrap()).unwrap();
+        assert!(plan.apply.is_none() && plan.steps.is_empty());
+        assert_eq!(plan.state, plan.after, "the preview shows no change");
+        install(&app);
+        assert_eq!(doc()["current-context"], "acme-prod");
+        assert_eq!(doc()["contexts"].as_array().unwrap().len(), 3);
+        // Uninstall removes it, since it names the app's context; kubectl would fail on every command otherwise.
+        let notes = uninstall(&app);
+        assert!(notes.iter().any(|n| n.code == "value.remove" && n.params["location"] == "$.current-context"), "{notes:?}");
+        assert_eq!(doc(), value::parse(value::Format::Yaml, &mine.replace("current-context: mine\n", "")).unwrap());
+
+        // The user's own choice stays, and the preview says why.
+        fs::write(&p, mine).unwrap();
+        install(&app);
+        let notes = uninstall(&app);
+        assert!(notes.iter().any(|n| n.english() == format!("Keep $.current-context in {p}: it is mine, which this app doesn't remove")), "{notes:?}");
+        assert_eq!(doc(), value::parse(value::Format::Yaml, mine).unwrap());
+        // No current-context at all: nothing to do either way.
+        fs::write(&p, "").unwrap();
+        assert!(converge("value", app.last().unwrap().clone()).is_empty());
+        assert!(!Path::new(&p).exists() || fs::read_to_string(&p).unwrap().is_empty());
+
+        assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": ["x"], "value": "x"})).is_err());
+        assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": []})).is_err());
+        assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": ["x"]})).is_ok());
     }
 
     #[test]

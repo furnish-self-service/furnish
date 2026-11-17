@@ -256,44 +256,62 @@ One value in a JSON, JSONC (JSON with comments), YAML or TOML file. The rest of 
 | `location` | Where the value is: a JSONPath that names one place, such as `$.hosts['git.acme.example'].git_protocol`, or a JSON Pointer such as `/hosts/git.acme.example/git_protocol` |
 | `value` | The value |
 | `merge` | `replace` (the default), `deep` or `member` |
+| `removeIf` | Instead of `value` and `merge`: a list of values. Installing leaves the value at the location as it is, and uninstalling removes it only if it is one of these |
 
 Missing objects on the way to the location are created. Only the value at the location counts for the app's state. `[?@.name=='acme-prod']` selects the element of a list whose `name` is `acme-prod`: the step replaces that element, or adds it at the end if there is none, and `value` must have that `name`. In an object, as some tools write their entries keyed by an ID, the filter selects the member whose value has that `name`: the step replaces that member under its key, and fails if there is none, since a new member needs a key and a filter doesn't give one. To add a member, name its key in `location`. `merge: deep` sets the keys of `value` and keeps the other keys at the location. `merge: member` treats the location as a list that must contain `value` and keeps its other elements. `_exist: false` removes the value at the location, the keys of a deep merge, or the element, the whole element also with `merge: deep`.
 
-A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves `current-context` and the other entries as they are. `merge: deep` keeps what others add to an entry: kubectl writes defaults into the user when it saves the file, such as `env: null`, and people set a context's `namespace`. With `replace`, either would show as a change, and installing would undo it:
+A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves the other entries as they are. `merge: deep` keeps what others add to an entry: kubectl writes defaults into the user when it saves the file, such as `env: null`, and people set a context's `namespace`. With `replace`, either would show as a change, and installing would undo it.
+
+Installing leaves `current-context` alone, so the user's choice stays. If it names the app's context when the app is uninstalled, kubectl fails on every command that doesn't name a context, since that context is gone. A step with `removeIf` removes it in that case and keeps any other value. It has nothing to do when the app is installed, so it never makes the app show as not installed or as having an update, and an uninstall that keeps the value says why in the steps preview. In [removal steps](#removal-steps), such a step needs `_exist: false`.
+
+The whole app:
 
 ```yaml
-- name: Acme cluster
-  type: Furnish/Value
-  properties:
-    path: ~/.kube/config
-    format: yaml
-    location: "$.clusters[?@.name=='acme-prod']"
-    merge: deep
-    value:
-      name: acme-prod
-      cluster:
-        server: https://k8s.acme.example
-- name: Acme user
-  type: Furnish/Value
-  properties:
-    path: ~/.kube/config
-    format: yaml
-    location: "$.users[?@.name=='acme-prod']"
-    merge: deep
-    value:
-      name: acme-prod
-      user:
-        exec: { apiVersion: client.authentication.k8s.io/v1beta1, command: kubelogin, args: [get-token] }
-- name: Acme context
-  type: Furnish/Value
-  properties:
-    path: ~/.kube/config
-    format: yaml
-    location: "$.contexts[?@.name=='acme-prod']"
-    merge: deep
-    value:
-      name: acme-prod
-      context: { cluster: acme-prod, user: acme-prod }
+metadata:
+  furnish:
+    name: Acme Kubernetes
+    description: Access to the Acme production cluster with kubectl.
+    categories: [Development]
+resources:
+  - name: Acme cluster
+    type: Furnish/Value
+    properties:
+      path: ~/.kube/config
+      format: yaml
+      location: "$.clusters[?@.name=='acme-prod']"
+      merge: deep
+      value:
+        name: acme-prod
+        cluster:
+          server: https://k8s.acme.example
+  - name: Acme user
+    type: Furnish/Value
+    properties:
+      path: ~/.kube/config
+      format: yaml
+      location: "$.users[?@.name=='acme-prod']"
+      merge: deep
+      value:
+        name: acme-prod
+        user:
+          exec: { apiVersion: client.authentication.k8s.io/v1beta1, command: kubelogin, args: [get-token] }
+  - name: Acme context
+    type: Furnish/Value
+    properties:
+      path: ~/.kube/config
+      format: yaml
+      location: "$.contexts[?@.name=='acme-prod']"
+      merge: deep
+      value:
+        name: acme-prod
+        context: { cluster: acme-prod, user: acme-prod }
+  - name: Current context
+    type: Furnish/Value
+    properties:
+      path: ~/.kube/config
+      format: yaml
+      location: $.current-context
+      removeIf: [acme-prod]
 ```
 
 #### Furnish/Command

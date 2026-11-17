@@ -289,6 +289,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.note.value.remove': "Entfernt <code>{location}</code> aus <code>{path}</code>",
   'plan.note.value.add': "Fügt den Wert zur Liste <code>{location}</code> in <code>{path}</code> hinzu",
   'plan.note.value.removeMember': "Entfernt den Wert aus der Liste <code>{location}</code> in <code>{path}</code>",
+  'plan.note.value.keep': "Behält <code>{location}</code> in <code>{path}</code>: der Wert ist <code>{value}</code>, den diese App nicht entfernt",
   'plan.note.test.output': "Test <code>{command}</code> ergab <code>{got}</code>, erwartet <code>{expected}</code>",
   'plan.note.test.noOutput': "Test <code>{command}</code> ergab nichts, erwartet <code>{expected}</code>",
   'plan.note.test.present': "<code>{command}</code> findet die Einstellung: Sie ist vorhanden, aber veraltet",

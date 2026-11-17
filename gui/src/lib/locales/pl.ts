@@ -308,6 +308,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.note.value.remove': "Usuwa <code>{location}</code> z <code>{path}</code>",
   'plan.note.value.add': "Dodaje wartość do listy <code>{location}</code> w <code>{path}</code>",
   'plan.note.value.removeMember': "Usuwa wartość z listy <code>{location}</code> w <code>{path}</code>",
+  'plan.note.value.keep': "Zostawia <code>{location}</code> w <code>{path}</code>: wartość to <code>{value}</code>, której ta aplikacja nie usuwa",
   'plan.note.test.output': "Test <code>{command}</code> zwrócił <code>{got}</code>, oczekiwano <code>{expected}</code>",
   'plan.note.test.noOutput': "Test <code>{command}</code> nic nie zwrócił, oczekiwano <code>{expected}</code>",
   'plan.note.test.present': "<code>{command}</code> znajduje ustawienie: istnieje, ale jest nieaktualne",

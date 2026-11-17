@@ -78,6 +78,11 @@
           ],
           "description": "replace (default), deep (set value's keys) or member (value is in the list)"
         },
+        "removeIf": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Instead of value: install leaves the value as it is, and uninstall removes it only if it is one of these"
+        },
         "_exist": {
           "type": "boolean",
           "description": "Whether it should be there"
