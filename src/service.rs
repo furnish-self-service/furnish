@@ -85,6 +85,8 @@ pub enum Request {
         #[serde(default)]
         headers: BTreeMap<String, String>,
     },
+    /// The versions of an app people can choose from (`catalog::App::versions`).
+    Versions { app: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -94,6 +96,7 @@ enum Reply {
     Log { level: String, message: String },
     Updated { old: String, new: String },
     Problems(Vec<String>),
+    Versions(Vec<crate::catalog::Version>),
     Done,
     Error(String),
 }
@@ -123,6 +126,14 @@ pub fn update(collection: &str) -> Result<(String, String)> {
     let request = Request::Update { collection: collection.into(), headers: preset_headers() };
     match call(&request, &mut |_| {})? {
         Reply::Updated { old, new } => Ok((old, new)),
+        other => bail!("unexpected answer from the furnish service: {other:?}"),
+    }
+}
+
+/// The versions of an app the service installs that people can choose from.
+pub fn versions(app: &str) -> Result<Vec<crate::catalog::Version>> {
+    match call(&Request::Versions { app: app.into() }, &mut |_| {})? {
+        Reply::Versions(v) => Ok(v),
         other => bail!("unexpected answer from the furnish service: {other:?}"),
     }
 }
@@ -393,13 +404,24 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
                 }
             };
         }
+        // Reading, like updating: every user may see which versions there are.
+        Request::Versions { app: key } => {
+            return match app(&key).and_then(|app| app.versions()) {
+                Ok(versions) => Ok(Reply::Versions(versions)),
+                Err(err) if trusted() => Err(err),
+                Err(err) => {
+                    eprintln!("warning: versions of {key}: {err:#}");
+                    bail!(HIDDEN.replace("{what}", &format!("list the versions of '{key}'")))
+                }
+            };
+        }
         _ => authorize(true)?,
     }
     match request {
         Request::Install { app: key, values, which, install_into } => {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
-            operation(&|report| app.install_here(&values, which, report), install_into.as_deref())
+            operation(&|report| app.install_here(&values, which.clone(), report), install_into.as_deref())
         }
         Request::Uninstall { app: key } => {
             let app = app(&key)?;
@@ -414,7 +436,7 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             if force { engine::force_stop() } else { engine::abort() }
             Ok(Reply::Done)
         }
-        Request::Update { .. } | Request::EnsurePresets { .. } => unreachable!("answered above"),
+        Request::Update { .. } | Request::EnsurePresets { .. } | Request::Versions { .. } => unreachable!("answered above"),
     }
 }
 

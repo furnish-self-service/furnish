@@ -41,7 +41,9 @@ export interface Run {
 
 export interface Queued {
   key: string;
-  action: Busy | 'reinstall' | 'installPrevious' | 'installCurrent';
+  action: Busy | 'reinstall' | 'installPrevious' | 'installCurrent' | 'installVersion';
+  /** For installVersion: the commit of the version the person chose. */
+  commit?: string;
   /** Started by automatic updates, not by the user. */
   auto?: boolean;
 }
@@ -237,7 +239,7 @@ export const requiredUpdate = (key: string) => store.status[key] === 'needsUpdat
 
 
 /** Run one queued operation; resolves to whether it succeeded. */
-async function runOperation(app: AppInfo, action: Queued['action'], auto = false): Promise<boolean> {
+async function runOperation(app: AppInfo, action: Queued['action'], auto = false, commit?: string): Promise<boolean> {
   const trigger: api.Trigger = autoInstalling.has(app.key) ? 'autoInstall' : auto ? 'update' : 'user';
   const installs = action !== 'uninstall' && action !== 'reinstall';
   const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
@@ -247,7 +249,7 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
   let cancelled = false;
   let ok = false;
   try {
-    const fellBack = await api[action](app.key, trigger);
+    const fellBack = action === 'installVersion' ? await api.installVersion(app.key, commit ?? '', trigger) : await api[action](app.key, trigger);
     ok = true;
     if (fellBack)
       toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
@@ -725,6 +727,11 @@ export function installPrevious(app: AppInfo) {
   enqueue(app.key, 'installPrevious');
 }
 
+/** Install a version of the app the person chose (see api.appVersions) and keep it there. */
+export function installVersion(app: AppInfo, commit: string) {
+  enqueue(app.key, 'installVersion', false, commit);
+}
+
 /** For an app held at an earlier version: try the collection's current version again. */
 export function installCurrent(app: AppInfo) {
   enqueue(app.key, 'installCurrent');
@@ -736,9 +743,9 @@ export function uninstall(app: AppInfo) {
   enqueue(app.key, 'uninstall');
 }
 
-function enqueue(key: string, action: Queued['action'], auto = false) {
+function enqueue(key: string, action: Queued['action'], auto = false, commit?: string) {
   if (store.busy[key] || store.queue.some((q) => q.key === key)) return;
-  store.queue.push({ key, action, auto });
+  store.queue.push({ key, action, auto, commit });
   pump();
 }
 
@@ -760,7 +767,7 @@ async function pump() {
   }
   const app = store.apps.find((a) => a.key === next.key);
   if (app) {
-    const ok = await runOperation(app, next.action, next.auto);
+    const ok = await runOperation(app, next.action, next.auto, next.commit);
     // Don't retry an automatic update the user cancelled or that failed, until the app restarts.
     if (next.auto && !ok) declinedUpdates.add(next.key);
   }

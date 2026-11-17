@@ -80,16 +80,23 @@ On Windows, the update is the .msi, which installs for all users. Windows asks f
 
 ## Disk use and earlier versions
 
-Each person's computer keeps a git copy of every collection. Four settings decide how much of it, and what happens when an install fails. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.
+Each person's computer keeps a git copy of every collection. Five settings decide how much of it, what happens when an install fails, and whether people can choose an earlier version of an app. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `blobsOnDemand` | `true` | Download file contents only when needed: installer files (`.msi`, `.deb`, …) when an app that uses them is installed, earlier versions when furnish falls back to one. The copy holds the history's commits and file lists, which are small. |
 | `checkoutDepth` | `0` | Commits of history to keep; `0` keeps all. With `1`, nothing older than the current version is available to fall back to. |
 | `fallback` | `"ask"` | After a failed install or update: `"ask"` offers the app's previous version, `"automatic"` installs it, `"off"` does neither. |
-| `fallbackMaxAgeDays` | `0` | Fall back only to versions at most this many days older than the failing one; `0`: any age. |
+| `fallbackMaxAgeDays` | `0` | Fall back only to versions at most this many days older than the failing one, and offer only such versions to choose from; `0`: any age. |
+| `chooseVersion` | `true` | People can install any earlier version of an app from the history kept, and furnish keeps the app there. |
 
 furnish offers the previous version, and the furnish service installs it, only after installing the app's current version failed on that computer. The previous version is the one that last installed on that computer, else the app's file before the collection's latest change to it. furnish installs it from the files of that commit and keeps the app there until the collection changes the app again. With `trustedKeys`, that commit must be signed by one of the keys, like the current one. An app's [required versions](collections.md#required-versions) apply to earlier versions too: furnish doesn't offer or install an earlier version that has no acceptable version. Turn `fallback` off for collections where an older version must not come back for other reasons, or limit it with `fallbackMaxAgeDays`.
+
+With `chooseVersion`, the app's page and `furnish versions <app>` list the app's versions: the commits within the history kept that changed the app's file, by day, with the versions the file lists in `versions` if it has any. People install one of them, and furnish keeps the app at that version until they choose another or the current one. A later change to the app in the collection doesn't move it; the app's page says that a newer version exists. The same limits as for falling back apply: `checkoutDepth` decides how far back the list goes, `fallbackMaxAgeDays` how much older than the current version a version may be, with `trustedKeys` each commit must be signed by one of the keys, and a version without an acceptable version for the app's [required versions](collections.md#required-versions) isn't listed. When the collection requires a version that the chosen one doesn't offer, furnish installs the required update as for any app: within the chosen version if it offers an acceptable version, else the current version. With `chooseVersion` set to `false`, nobody can choose a version, the furnish service refuses such installs, and apps held at a chosen version follow the collection while it is off. Falling back after a failed install still follows `fallback`. Lock it like the other settings:
+
+```json
+{ "collectionSettings": { "acme": { "chooseVersion": { "value": false, "locked": true } } } }
+```
 
 ## Sign-in without a VPN
 
@@ -124,7 +131,7 @@ What an address sets works like the policy's settings, as defaults that never lo
 |---|---|
 | `autoInstall` | apps of its own collections (`acme/vpn`) |
 | `parameters` | values for its own collections and their apps |
-| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback` and `fallbackMaxAgeDays` for its own collections. furnish ignores other keys, such as `selfUpdate`. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored, and so does the app at the top of its Settings page. |
+| `settings` | `startAtSignIn`, `updateOnLaunch`, `updateIntervalMinutes`, `loadAwareUpdates`, `reporting`, `reportHostname`, `language` and `fallbackLanguage` for everything; `checkoutDepth`, `blobsOnDemand`, `fallback`, `fallbackMaxAgeDays` and `chooseVersion` for its own collections. furnish ignores other keys, such as `selfUpdate`. Give a value plainly (`"reporting": "errors"`) or in the policy's form (`{ "value": "errors" }`, where furnish ignores `locked`). A value that isn't valid for its setting is ignored and the address's other settings still apply; `furnish settings` names what it ignored, and so does the app at the top of its Settings page. |
 | `branding` | the app's name and colors, and a logo and tray icon from its own collections. Only one address brands the app: the first one the policy lists that has `branding`; without addresses in the policy, the first address the person added. |
 
 An address the person added doesn't count as owning a collection the policy presets, or a collection of the person's that comes from another URL.

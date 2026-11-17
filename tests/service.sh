@@ -160,6 +160,28 @@ grep -q "isn't signed" /tmp/service.log || fail "details not in the service's lo
 git -C /srv/org commit -q --amend -S -m signed
 as alice furnish collection update org >/dev/null || fail "signed commit refused"
 
+echo "== choosing a version through the service; only signed ones; the policy can turn it off"
+short() { echo "$1" | cut -c1-7; }
+first=$(git -C /srv/org rev-list --max-parents=0 HEAD)
+echo "# unsigned" >> /srv/org/apps/hyperfine.dsc.yaml
+git -C /srv/org commit -q -a --no-gpg-sign -m "unsigned hyperfine" && unsigned=$(git -C /srv/org rev-parse HEAD)
+echo "# signed" >> /srv/org/apps/hyperfine.dsc.yaml
+git -C /srv/org commit -q -a -S -m "signed hyperfine"
+as alice furnish collection update org >/dev/null || fail "a signed commit after an unsigned one was refused"
+out=$(as alice furnish versions hyperfine 2>&1) || { cat /tmp/service.log; fail "alice couldn't list the versions: $out"; }
+echo "$out" | grep -q "$(short "$first")" || fail "the first version isn't listed: $out"
+echo "$out" | grep -q "$(short "$unsigned")" && fail "the unsigned version is listed: $out"
+as alice furnish install hyperfine --version "$(short "$first")" >/dev/null || { cat /tmp/service.log; fail "alice couldn't install the first version"; }
+as alice furnish list | grep hyperfine | grep -q "the version you chose" || fail "not held at the chosen version: $(as alice furnish list 2>&1)"
+raw "{\"install\":{\"app\":\"org/hyperfine\",\"values\":{},\"which\":{\"version\":\"$unsigned\"}}}" | grep -q "isn't signed" || fail "the service installed an unsigned version"
+if out=$(as bob furnish install hyperfine --version "$(short "$first")" 2>&1); then fail "bob chose a version"; fi
+sed -i 's/"service":/"collectionSettings": {"org": {"chooseVersion": {"value": false, "locked": true}}}, "service":/' /etc/furnish/policy.json
+raw "{\"install\":{\"app\":\"org/hyperfine\",\"values\":{},\"which\":{\"version\":\"$first\"}}}" | grep -q "turned off" || fail "the service installed a chosen version with choosing turned off"
+raw '{"versions":{"app":"org/hyperfine"}}' | grep -q "turned off" || fail "the service listed versions with choosing turned off"
+as alice furnish list | grep hyperfine | grep -q "held" && fail "still held with choosing turned off"
+as alice furnish install hyperfine >/dev/null || fail "updating to the current version failed"
+sed -i 's/"collectionSettings": {"org": {"chooseVersion": {"value": false, "locked": true}}}, //' /etc/furnish/policy.json
+
 echo "== uninstall through the service"
 as alice furnish uninstall hyperfine >/dev/null || fail "alice couldn't uninstall"
 [ ! -f /var/fake-pkgs/hyperfine ] || fail "still installed"

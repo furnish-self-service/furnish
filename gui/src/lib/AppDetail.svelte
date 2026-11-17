@@ -9,6 +9,7 @@
   import ActionButton from './ActionButton.svelte';
   import { highlightYaml } from './highlight';
   import Plan from './Plan.svelte';
+  import Versions from './Versions.svelte';
   import { t, formatDate, lang } from './i18n.svelte';
   import External from './External.svelte';
 
@@ -16,6 +17,9 @@
   let confirming = $state(false);
   let logList = $state<HTMLOListElement>();
   let planOpen = $state(false);
+  let versionsOpen = $state(false);
+  // People may choose a version of the collection's apps (setting chooseVersion).
+  const canChoose = $derived(store.collections.find((c) => c.name === app.collection)?.settings.settings.chooseVersion ?? false);
   // Dependencies to install along with the app; the list below lets users change optional ones.
   let chosen = $state<string[]>([]);
   $effect.pre(() => {
@@ -112,7 +116,14 @@
 
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
 
-  {#if app.held}
+  {#if app.held?.chosen}
+    <div class="differ" role="status">
+      <span>{t(app.held.newer ? 'app.heldChosenNewer' : 'app.heldChosen', { app: appName(app), date: formatDate(app.held.date) })}</span>
+      <button class="secondary" disabled={isPending(app.key)} onclick={() => installCurrent(app)}>
+        {isPending(app.key) ? t('common.installing') : t('app.installCurrent')}
+      </button>
+    </div>
+  {:else if app.held}
     <div class="differ" role="status">
       <span>{t('app.held', { app: appName(app), date: formatDate(app.held.date) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => installCurrent(app)}>
@@ -167,6 +178,13 @@
   {/if}
 
   <!-- Expert details: collapsed by default, one click to reveal. -->
+  {#if canChoose && status !== 'unavailable'}
+    <details class="expert" bind:open={versionsOpen}>
+      <summary>{t('app.versions')} <span class="hint">{t('app.versionsHint')}</span></summary>
+      <!-- Mounted only while open: listing the versions may download earlier files. -->
+      {#if versionsOpen}<Versions {app} />{/if}
+    </details>
+  {/if}
   <details class="expert" bind:open={planOpen}>
     <summary>{t('app.steps')} <span class="hint">{t('app.stepsHint')}</span></summary>
     <!-- Mounted only while open: the preview asks DSC, which takes a moment. -->

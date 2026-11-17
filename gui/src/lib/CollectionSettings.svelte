@@ -32,6 +32,15 @@
       ],
     },
     {
+      key: 'chooseVersion',
+      label: t('cs.chooseVersion'),
+      desc: t('cs.chooseVersionDesc'),
+      choices: [
+        [true, t('cs.chooseVersionOn')],
+        [false, t('cs.chooseVersionOff')],
+      ],
+    },
+    {
       key: 'blobsOnDemand',
       label: t('cs.blobs'),
       desc: t('cs.blobsDesc'),

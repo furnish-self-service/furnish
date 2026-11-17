@@ -55,7 +55,10 @@ test('a required update is urgent only for an installed version that is not acce
 test('required updates install right away, once per check, and a held app goes to the current version', () => {
   const free = { pending: false, declared: false, tried: false };
   assert.equal(urgentAction({ held: null }, required({}), free), 'install');
-  assert.equal(urgentAction({ held: { commit: 'abc', date: '2026-11-01' } }, required({}), free), 'installCurrent');
+  assert.equal(urgentAction({ held: { chosen: false } }, required({}), free), 'installCurrent');
+  // A version the person chose: updated in place; furnish moves it to the current version only if
+  // the chosen one offers nothing acceptable.
+  assert.equal(urgentAction({ held: { chosen: true } }, required({}), free), 'install');
   // Already running or queued (also the one-at-a-time queue: it waits its turn there).
   assert.equal(urgentAction({ held: null }, required({}), { ...free, pending: true }), null);
   // The NixOS or Home Manager configuration installs it: furnish leaves it alone.

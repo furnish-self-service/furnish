@@ -114,13 +114,13 @@ pub struct App {
     /// From a collection the admin policy presets.
     pub managed: bool,
     pub doc: Value,
-    /// Held at this earlier version (a commit), because the collection's current one failed;
-    /// `doc` is that version's (see `versions`).
-    pub held: Option<String>,
+    /// Held at this earlier version, because the collection's current one failed or the person
+    /// chose it (`chosen`); `doc` is that version's (see `versions`).
+    pub held: Option<crate::versions::Held>,
 }
 
 /// Which version of an app to install.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Which {
     /// The version furnish shows: the collection's, or the one the app is held at.
@@ -130,14 +130,25 @@ pub enum Which {
     Current,
     /// The earlier version to fall back to (see `App::previous_version`).
     Previous,
+    /// A version the person chose (a commit, see `App::versions`); the app stays there until they
+    /// choose another one.
+    Version(String),
 }
 
-/// An earlier version of an app.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// A version of an app: a commit of its collection that changed the app's file.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Version {
     pub commit: String,
     /// The day of the commit, e.g. 2026-11-02.
     pub date: String,
+    /// The versions the app's file lists as acceptable at this commit (`versions` of its first
+    /// resource that has them), if it lists any.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stated: Vec<crate::required::Entry>,
+    /// The collection's current version of the app.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub current: bool,
 }
 
 /// Data directory; `FURNISH_DATA_DIR` overrides the OS default.
@@ -849,8 +860,12 @@ impl Collection {
             return app;
         };
         let relative = app.relative_path();
-        if self.blob("HEAD", &relative).as_deref() != Some(held.failed.as_str()) {
-            return app; // the collection changed the app: the next install tries that version
+        let applies = match held.chosen {
+            true => hold_applies(&held, None, crate::settings::for_collection(&self.name).settings.choose_version),
+            false => hold_applies(&held, self.blob("HEAD", &relative).as_deref(), true),
+        };
+        if !applies {
+            return app;
         }
         let version = version_dir(dir, &self.name, &held.commit);
         let earlier = Collection { name: self.name.clone(), dir: version.clone(), managed: self.managed };
@@ -859,7 +874,7 @@ impl Collection {
                 crate::required::carry(&app.doc, &mut earlier.doc);
                 app.doc = earlier.doc;
                 app.dependencies = earlier.dependencies;
-                app.held = Some(held.commit);
+                app.held = Some(held);
             }
             Err(err) => eprintln!("warning: {key}: the version it is held at: {err:#}"),
         }
@@ -882,11 +897,60 @@ impl Collection {
         parse_commit_line(&line).with_context(|| format!("unexpected git log output: {line}"))
     }
 
-    /// The last `n` commits that changed the file, newest first.
+    /// The last `n` commits that changed the file, newest first. Not those that deleted it.
     fn changes(&self, relative: &str, n: usize) -> Vec<(String, i64, String)> {
         let count = format!("-{n}");
-        let out = git(Some(&self.dir), &["log", &count, "--no-renames", "--format=%H %ct %cs", "--", relative]).unwrap_or_default();
+        let out = git(Some(&self.dir), &["log", &count, "--no-renames", "--diff-filter=d", "--format=%H %ct %cs", "--", relative]).unwrap_or_default();
         out.lines().filter_map(parse_commit_line).collect()
+    }
+
+    /// Every commit in the history kept that changed the file (not those that deleted it),
+    /// newest first: (commit, time, day, the file's blob id there).
+    fn file_history(&self, relative: &str) -> Vec<(String, i64, String, String)> {
+        let args = ["log", "--no-renames", "--diff-filter=d", "--raw", "--no-abbrev", "--format=%H %ct %cs", "--", relative];
+        let out = git(Some(&self.dir), &args).unwrap_or_default();
+        let mut history: Vec<(String, i64, String, String)> = Vec::new();
+        for line in out.lines() {
+            // `:<old mode> <new mode> <old blob> <new blob> <status>\t<path>`
+            if let Some(raw) = line.strip_prefix(':') {
+                if let (Some(last), Some(blob)) = (history.last_mut(), raw.split_whitespace().nth(3)) {
+                    last.3 = blob.to_string();
+                }
+            } else if let Some((commit, time, day)) = parse_commit_line(line) {
+                history.push((commit, time, day, String::new()));
+            }
+        }
+        // Merges show no raw diff.
+        for entry in history.iter_mut().filter(|e| e.3.is_empty()) {
+            entry.3 = self.blob(&entry.0, relative).unwrap_or_default();
+        }
+        history.retain(|e| !e.3.is_empty());
+        history
+    }
+
+    /// The contents of blobs, downloading those a blobless copy lacks in one fetch.
+    fn blobs(&self, ids: &[&str]) -> BTreeMap<String, Vec<u8>> {
+        let missing: Vec<&str> = ids.iter().copied().filter(|id| !self.has_object(id)).collect();
+        if !missing.is_empty() && git(Some(&self.dir), &["config", "remote.origin.promisor"]).is_ok_and(|v| v == "true") {
+            // What git does for each missing object on its own, for all of them at once.
+            let mut args = vec!["fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--recurse-submodules=no", "--filter=blob:none", "origin"];
+            args.extend(&missing);
+            if let Err(err) = git(Some(&self.dir), &[&["-c", "fetch.negotiationAlgorithm=noop"][..], &args].concat()) {
+                eprintln!("warning: collection '{}': fetching earlier versions: {err:#}", self.name);
+            }
+        }
+        ids.iter().filter_map(|id| Some((id.to_string(), git_bytes(Some(&self.dir), &["cat-file", "blob", id]).ok()?))).collect()
+    }
+
+    /// Whether the copy has the object, without downloading it.
+    fn has_object(&self, id: &str) -> bool {
+        let mut cmd = git_command();
+        cmd.arg("-C").arg(&self.dir);
+        if self.dir.starts_with(system_dir()) {
+            cmd.args(["-c", "safe.directory=*"]);
+        }
+        cmd.env("GIT_NO_LAZY_FETCH", "1").args(["cat-file", "-e", id]);
+        cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
     }
 
     /// Write files of `commit` to `into`: `collection.yaml`, the app's file, and the installer
@@ -1193,6 +1257,26 @@ fn parse_commit_line(line: &str) -> Option<(String, i64, String)> {
     Some((parts.next()?.to_string(), parts.next()?.parse().ok()?, parts.next()?.to_string()))
 }
 
+/// Whether an app stays at the version it is held at. A version the person chose: while choosing
+/// is on (`choose_version`); with it turned off, the collection's version applies. A fallback:
+/// while the collection's file for the app (`head_blob`) is still the one that failed; once the
+/// collection changes the app, the next install tries that version.
+fn hold_applies(held: &crate::versions::Held, head_blob: Option<&str>, choose_version: bool) -> bool {
+    if held.chosen { choose_version } else { head_blob == Some(held.failed.as_str()) }
+}
+
+/// Whether a version from `time` is more than `days` older than the current one from `newest`
+/// (`fallbackMaxAgeDays`; 0: any age).
+fn older_than(days: u32, time: i64, newest: i64) -> bool {
+    days > 0 && newest - time > i64::from(days) * 86_400
+}
+
+/// The versions an app's file lists as acceptable: those of its first resource with `versions`.
+fn stated_versions(file: &Value) -> Vec<crate::required::Entry> {
+    let mut resources = file["resources"].as_array().into_iter().flatten();
+    resources.find_map(|r| crate::required::parse(r["properties"].get(crate::required::PROPERTY)?).ok()).unwrap_or_default()
+}
+
 /// Where the files of an earlier version of a collection's apps are kept.
 fn version_dir(state_dir: &Path, collection: &str, commit: &str) -> PathBuf {
     state_dir.join("versions").join(collection).join(commit)
@@ -1419,16 +1503,18 @@ impl App {
         self.install_version(Which::Shown, report)
     }
 
-    /// Install the current version, or the previous one (see `previous_version`). Reported.
+    /// Install the current version, the previous one (see `previous_version`) or a chosen one
+    /// (see `versions`). Reported.
     pub fn install_version(&self, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         let event = match which {
             Which::Previous => "fallback",
             _ if self.recorded_values().is_some() => "update",
             _ => "install",
         };
-        let version = match which {
+        let version = match &which {
             Which::Previous => self.previous_version().ok().map(|v| v.commit),
-            Which::Shown if self.held.is_some() => self.held.clone(),
+            Which::Version(commit) => Some(commit.clone()),
+            Which::Shown if self.held.is_some() => self.held.as_ref().map(|h| h.commit.clone()),
             _ => self.collection_handle().head().ok(),
         };
         crate::reports::operation(event, self, version, || self.install_values(self.installed_values(), which, report))
@@ -1450,9 +1536,13 @@ impl App {
         // The checkout may have changed since furnish verified it: only install a signed one.
         collection.verify(&collection.head()?)?;
         let result = match which {
+            // Held at an earlier version that offers nothing acceptable: a required update
+            // installs the collection's current version (see `check`).
+            Which::Shown if self.held.is_some() && self.held_offers_nothing_acceptable(values)? => self.current()?.install_with(values, report),
             Which::Shown => self.install_with(values, report),
             Which::Current => self.current()?.install_with(values, report),
             Which::Previous => return self.install_previous_with(values, report),
+            Which::Version(commit) => return self.install_chosen_with(&commit, values, report),
         };
         // Remembered, so the app may go back to an earlier version (see install_previous_with).
         if let Err(err) = &result
@@ -1473,12 +1563,16 @@ impl App {
         let state = self.state_dir(values);
         crate::options::remember(&state, &self.key(), values)?;
         let collection = self.collection_handle();
-        let held = self.held.as_ref().map(|commit| crate::versions::Held {
-            commit: commit.clone(),
-            failed: collection.blob("HEAD", &self.relative_path()).unwrap_or_default(),
+        let held = self.held.as_ref().map(|held| match held.chosen {
+            true => held.clone(),
+            false => crate::versions::Held {
+                commit: held.commit.clone(),
+                failed: collection.blob("HEAD", &self.relative_path()).unwrap_or_default(),
+                ..Default::default()
+            },
         });
         let commit = match &self.held {
-            Some(commit) => commit.clone(),
+            Some(held) => held.commit.clone(),
             None => collection.head()?,
         };
         crate::versions::installed(&state, &self.key(), &commit, held)
@@ -1528,9 +1622,188 @@ impl App {
 
     /// The version it is held at, if it is (see `held`).
     pub fn held_version(&self) -> Option<Version> {
-        let commit = self.held.as_ref()?;
-        let (commit, _, date) = self.collection_handle().commit_info(commit).ok()?;
-        Some(Version { commit, date })
+        let held = self.held.as_ref()?;
+        match self.collection_handle().commit_info(&held.commit) {
+            Ok((commit, _, date)) => Some(Version { commit, date, ..Default::default() }),
+            // No longer in the history kept (checkoutDepth): the day it was installed with.
+            Err(_) => Some(Version { commit: held.commit.clone(), date: held.date.clone().unwrap_or_default(), ..Default::default() }),
+        }
+    }
+
+    /// Held at an earlier version, and the collection's current file for the app differs from it.
+    pub fn newer_than_held(&self) -> bool {
+        let Some(held) = &self.held else { return false };
+        let collection = self.collection_handle();
+        let relative = self.relative_path();
+        collection.blob("HEAD", &relative).is_none_or(|now| collection.blob(&held.commit, &relative).is_none_or(|then| then != now))
+    }
+
+    /// Whether the version it is held at offers no acceptable version (see `required`) where the
+    /// collection's current version requires some.
+    fn held_offers_nothing_acceptable(&self, values: &serde_json::Map<String, Value>) -> Result<bool> {
+        if !self.current()?.resources_here().iter().any(|r| r["properties"].get(crate::required::PROPERTY).is_some()) {
+            return Ok(false);
+        }
+        Ok(crate::engine::check(&self.doc_for(values))?.required.is_some_and(|r| r.target.is_none()))
+    }
+
+    /// Choosing versions must be on for the collection (setting `chooseVersion`).
+    fn require_choosing(&self) -> Result<()> {
+        if !crate::settings::for_collection(&self.collection).settings.choose_version {
+            bail!("choosing a version of an app is turned off for collection '{}' (chooseVersion)", self.collection);
+        }
+        Ok(())
+    }
+
+    /// The commits within the history kept (checkoutDepth) that changed the app's file, newest
+    /// first, with the time of each and the file's blob id there. The first is the current version.
+    fn history(&self) -> Result<Vec<(Version, i64, String)>> {
+        let history = self.collection_handle().file_history(&self.relative_path());
+        if history.is_empty() {
+            bail!("{} isn't in the history of collection '{}'", self.id, self.collection);
+        }
+        Ok(history
+            .into_iter()
+            .enumerate()
+            .map(|(i, (commit, time, date, blob))| (Version { commit, date, stated: Vec::new(), current: i == 0 }, time, blob))
+            .collect())
+    }
+
+    /// Why a version older than `fallbackMaxAgeDays` allows isn't offered; `None` if it may be.
+    fn too_old(&self, version: &Version, time: i64, newest: i64) -> Option<String> {
+        let days = crate::settings::for_collection(&self.collection).settings.fallback_max_age_days;
+        older_than(days, time, newest).then(|| format!("the version of {} from {} is more than {days} days older than the current one (fallbackMaxAgeDays)", self.id, version.date))
+    }
+
+    /// The versions people can choose from (see the setting `chooseVersion`), newest first, the
+    /// current one first: the commits that changed the app's file within the history kept
+    /// (checkoutDepth), at most fallbackMaxAgeDays older than the current one, signed by a key
+    /// the organization trusts (trustedKeys), and with an acceptable version where the
+    /// collection requires versions. Asks the furnish service for apps it installs.
+    pub fn versions(&self) -> Result<Vec<Version>> {
+        self.require_choosing()?;
+        let values = self.installed_values();
+        if self.remote(&values) {
+            return crate::service::versions(&self.key());
+        }
+        let history = self.history()?;
+        let newest = history[0].1;
+        let history: Vec<_> = history.into_iter().filter(|(v, time, _)| v.current || self.too_old(v, *time, newest).is_none()).collect();
+        let collection = self.collection_handle();
+        let contents = collection.blobs(&history.iter().map(|(_, _, blob)| blob.as_str()).collect::<Vec<_>>());
+        let current = self.current()?;
+        let mut judged = BTreeMap::new();
+        let mut versions = Vec::new();
+        for (mut version, _, blob) in history {
+            let file = contents.get(&blob).and_then(|b| serde_yaml::from_slice::<Value>(b).ok());
+            version.stated = file.as_ref().map(stated_versions).unwrap_or_default();
+            if version.current || self.acceptable(&version, file, &current, &values, &mut judged).is_ok() {
+                versions.push(version);
+            }
+        }
+        Ok(versions)
+    }
+
+    /// The version given as a day (2026-11-02) or a commit (at least 4 characters of
+    /// its id), among the commits that changed the app's file (see `history`).
+    pub fn resolve_version(&self, query: &str) -> Result<Version> {
+        let history = self.history()?;
+        let by_day = query.len() == 10 && query.as_bytes()[4] == b'-' && query.as_bytes()[7] == b'-';
+        let found: Vec<&Version> = history
+            .iter()
+            .map(|(v, _, _)| v)
+            .filter(|v| if by_day { v.date == query } else { query.len() >= 4 && v.commit.starts_with(&query.to_ascii_lowercase()) })
+            .collect();
+        match found.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => bail!("{} has no version {} {query} (see furnish versions {})", self.id, if by_day { "from" } else { "with the commit" }, self.id),
+            more => bail!(
+                "{} has {} versions from {query}; give the commit instead: {}",
+                self.id,
+                more.len(),
+                more.iter().map(|v| short(&v.commit)).collect::<Vec<_>>().join(", ")
+            ),
+        }
+    }
+
+    /// Whether an earlier version may be installed: signed by a trusted key, and offering an
+    /// acceptable version where the collection's current version requires versions (see
+    /// `previous_version`). `file`: the app's file at that commit, if read. `judged`: earlier
+    /// results by what decides them (the resources with versions and their installer files), so
+    /// versions that didn't change those aren't checked again.
+    fn acceptable(
+        &self,
+        version: &Version,
+        file: Option<Value>,
+        current: &App,
+        values: &serde_json::Map<String, Value>,
+        judged: &mut BTreeMap<String, Result<(), String>>,
+    ) -> Result<()> {
+        let collection = self.collection_handle();
+        collection.verify(&version.commit)?;
+        if !current.resources_here().iter().any(|r| r["properties"].get(crate::required::PROPERTY).is_some()) {
+            return Ok(());
+        }
+        let key = file.map(|mut file| {
+            crate::required::carry(&current.doc, &mut file);
+            let decisive: Vec<Value> = file["resources"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|r| r["properties"].get(crate::required::PROPERTY).is_some())
+                .map(|r| {
+                    let mut r = r.clone();
+                    if let Some(installer) = r["properties"]["file"].as_str().filter(|_| r["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case(INSTALLER_TYPE))) {
+                        r["properties"]["file"] = collection.blob(&version.commit, installer).unwrap_or_default().into();
+                    }
+                    r
+                })
+                .collect();
+            serde_json::to_string(&decisive).unwrap_or_default()
+        });
+        if let Some(earlier) = key.as_ref().and_then(|k| judged.get(k)) {
+            return earlier.clone().map_err(|e| anyhow::anyhow!(e));
+        }
+        let scratch = env::temp_dir().join(format!("furnish-version-{}", unique()));
+        let result = (|| {
+            let earlier = self.earlier_at(version, values, &scratch)?;
+            if let Some(required) = crate::engine::check(&earlier.doc_for(values))?.required.filter(|r| r.target.is_none()) {
+                bail!("the version of {} from {} has no acceptable version: needs {}", self.id, version.date, required.summary);
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&scratch);
+        if let Some(key) = key {
+            judged.insert(key, result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
+        }
+        result
+    }
+
+    /// Install a version the person chose (a commit, see `versions`) and hold the app there.
+    /// The current version installs as usual; an earlier one only with `chooseVersion` on, and
+    /// within the limits `versions` lists by.
+    fn install_chosen_with(&self, commit: &str, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
+        let history = self.history()?;
+        let newest = history[0].1;
+        let Some((version, time, _)) = history.into_iter().find(|(v, _, _)| v.commit == commit) else {
+            bail!("{} has no version with the commit {} in the history furnish keeps of collection '{}'", self.id, short(commit), self.collection);
+        };
+        if version.current {
+            return self.current()?.install_with(values, report);
+        }
+        self.require_choosing()?;
+        if let Some(why) = self.too_old(&version, time, newest) {
+            bail!(why);
+        }
+        self.acceptable(&version, None, &self.current()?, values, &mut BTreeMap::new())?;
+        let earlier = self.earlier(&version, values)?;
+        let doc = earlier.doc_here(values);
+        crate::engine::run(&doc, false, report)?;
+        earlier.require_installed(&doc)?;
+        let state = self.state_dir(values);
+        crate::options::remember(&state, &self.key(), values)?;
+        let held = crate::versions::Held { commit: version.commit.clone(), chosen: true, date: Some(version.date.clone()), ..Default::default() };
+        crate::versions::installed(&state, &self.key(), &version.commit, Some(held))
     }
 
     /// The app as the collection has it now, also if it is held at an earlier version.
@@ -1573,11 +1846,11 @@ impl App {
             },
         };
         let days = settings.fallback_max_age_days;
-        if days > 0 && changes.first().is_some_and(|(_, newest, _)| newest - time > i64::from(days) * 86_400) {
+        if changes.first().is_some_and(|(_, newest, _)| older_than(days, time, *newest)) {
             bail!("the previous version of {} is from {date}, more than {days} days older than the current one", self.id);
         }
         collection.verify(&commit)?;
-        let version = Version { commit, date };
+        let version = Version { commit, date, ..Default::default() };
         // Never back to a version the collection's required versions no longer accept.
         let current = self.current()?;
         let values = self.installed_values();
@@ -1593,9 +1866,14 @@ impl App {
     /// The app at an earlier version, with the versions the collection requires now (see
     /// `required::carry`). Its files come from that commit, kept until no app is held there.
     fn earlier(&self, version: &Version, values: &serde_json::Map<String, Value>) -> Result<App> {
+        self.earlier_at(version, values, &version_dir(&self.state_dir(values), &self.collection, &version.commit))
+    }
+
+    /// `earlier`, with the files of that commit in `dir`.
+    fn earlier_at(&self, version: &Version, values: &serde_json::Map<String, Value>, dir: &Path) -> Result<App> {
         let collection = self.collection_handle();
         let relative = self.relative_path();
-        let dir = version_dir(&self.state_dir(values), &self.collection, &version.commit);
+        let dir = dir.to_path_buf();
         if !dir.join(&relative).exists() {
             let _ = fs::remove_dir_all(&dir);
             if let Err(err) = collection.extract(&version.commit, &relative, values, &dir) {
@@ -1627,7 +1905,7 @@ impl App {
         earlier.require_installed(&doc)?;
         crate::options::remember(&state, &self.key(), values)?;
         let failed = collection.blob("HEAD", &relative).unwrap_or_default();
-        let held = crate::versions::Held { commit: version.commit.clone(), failed };
+        let held = crate::versions::Held { commit: version.commit.clone(), failed, ..Default::default() };
         crate::versions::installed(&state, &self.key(), &version.commit, Some(held))
     }
 
@@ -1828,13 +2106,12 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     // Talking to the server: never a terminal prompt (an app has none), and furnish's credentials
     // for that URL, if any (see `auth`); SSH keys, the agent and credential helpers work as usual.
     // Commands that write or read files download the contents they lack (see blobs_on_demand).
-    let network = matches!(
-        args.first(),
-        Some(&("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "reset" | "read-tree" | "cat-file"))
-    );
+    // The command: the first argument after `-c <name>=<value>` pairs.
+    let command = args.iter().enumerate().find(|(i, a)| **a != "-c" && (*i == 0 || args[i - 1] != "-c")).map(|(_, a)| *a);
+    let network = matches!(command, Some("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "reset" | "read-tree" | "cat-file"));
     let url = if !network {
         None
-    } else if args.first() == Some(&"clone") {
+    } else if command == Some("clone") {
         match args.iter().position(|a| *a == "--end-of-options") {
             Some(end) => args.get(end + 1).map(|a| a.to_string()),
             None => args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string()),
@@ -2141,6 +2418,105 @@ mod tests {
         let k = c.load_kit(&dir.join("kits/k.yaml"), &["a".to_string()]).unwrap();
         assert_eq!((k.icon, k.icon_dark), (file("c.svg"), file("k-dark.svg")));
         assert_eq!((c.icon(), c.icon_dark()), (file("c.svg"), file("c-dark.svg")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_chosen_version_stays_until_choosing_is_turned_off_a_fallback_until_the_app_changes() {
+        let chosen = crate::versions::Held { commit: "c1".into(), chosen: true, ..Default::default() };
+        assert!(hold_applies(&chosen, Some("changed"), true), "a collection change moved a chosen version");
+        assert!(!hold_applies(&chosen, None, false), "kept while choosing is turned off");
+        let fallback = crate::versions::Held { commit: "c1".into(), failed: "b2".into(), ..Default::default() };
+        assert!(hold_applies(&fallback, Some("b2"), true));
+        assert!(!hold_applies(&fallback, Some("b3"), true), "kept after the collection changed the app");
+    }
+
+    #[test]
+    fn versions_older_than_the_maximum_age_are_left_out() {
+        let day = 86_400;
+        assert!(!older_than(0, 0, 1000 * day), "0 means any age");
+        assert!(!older_than(7, 5 * day, 10 * day));
+        assert!(!older_than(7, 3 * day, 10 * day), "exactly 7 days older");
+        assert!(older_than(7, 3 * day - 1, 10 * day));
+    }
+
+    #[test]
+    fn a_version_states_the_versions_its_file_accepts() {
+        let file: Value = serde_yaml::from_str("resources:\n  - {name: a, type: T/X}\n  - {name: b, type: Furnish/Package, properties: {name: b, versions: ['>=2', '1.5']}}\n").unwrap();
+        assert_eq!(crate::required::describe(&stated_versions(&file)), crate::required::describe(&crate::required::parse(&serde_json::json!([">=2", "1.5"])).unwrap()));
+        assert!(stated_versions(&serde_json::json!({"resources": [{"name": "a"}]})).is_empty());
+    }
+
+    /// A collection repository with the history of one app: (message, contents or None to delete, days ago).
+    fn app_history(steps: &[(&str, Option<&str>, i64)]) -> (Collection, PathBuf, Vec<String>) {
+        let dir = env::temp_dir().join(format!("furnish-history-{}", unique()));
+        fs::create_dir_all(dir.join("apps")).unwrap();
+        git(Some(&dir), &["init", "-q"]).unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let mut commits = Vec::new();
+        for (message, contents, days_ago) in steps {
+            match contents {
+                Some(c) => fs::write(dir.join("apps/a.dsc.yaml"), c).unwrap(),
+                None => fs::remove_file(dir.join("apps/a.dsc.yaml")).unwrap(),
+            }
+            fs::write(dir.join("notes.txt"), message).unwrap();
+            git(Some(&dir), &["add", "-A"]).unwrap();
+            let date = format!("@{} +0000", now - days_ago * 86_400);
+            let status = git_command()
+                .current_dir(&dir)
+                .env("GIT_COMMITTER_DATE", &date)
+                .env("GIT_AUTHOR_DATE", &date)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", message])
+                .status()
+                .unwrap();
+            assert!(status.success());
+            commits.push(git(Some(&dir), &["rev-parse", "HEAD"]).unwrap());
+        }
+        let collection = Collection { name: format!("history-test-{}", unique()), dir: dir.clone(), managed: false };
+        (collection, dir, commits)
+    }
+
+    #[test]
+    fn an_apps_versions_are_the_commits_that_changed_its_file() {
+        let v = |n: &str| format!("resources:\n  - {{name: a, type: Furnish/Package, properties: {{name: a, versions: ['>={n}']}}}}\n");
+        let (c, dir, commits) = app_history(&[
+            ("one", Some(&v("1")), 30),
+            ("gone", None, 20),
+            ("back", Some(&v("2")), 10),
+            ("notes only", Some(&v("2")), 9),
+            ("three", Some(&v("3")), 1),
+        ]);
+        let app = c.load_app(&dir.join("apps/a.dsc.yaml")).unwrap();
+        let history = app.history().unwrap();
+        let listed: Vec<&str> = history.iter().map(|(v, _, _)| v.commit.as_str()).collect();
+        // Newest first; neither the deletion nor the commit that left the file alone.
+        assert_eq!(listed, [&commits[4], &commits[2], &commits[0]]);
+        assert!(history[0].0.current && !history[1].0.current);
+        assert_eq!(history[2].2, git(Some(&dir), &["rev-parse", &format!("{}:apps/a.dsc.yaml", commits[0])]).unwrap());
+
+        // By day or by commit.
+        let day = history[1].0.date.clone();
+        assert_eq!(app.resolve_version(&day).unwrap().commit, commits[2]);
+        assert_eq!(app.resolve_version(&commits[0][..8]).unwrap().commit, commits[0]);
+        assert_eq!(app.resolve_version(&commits[0][..8].to_uppercase()).unwrap().commit, commits[0]);
+        assert!(app.resolve_version(&commits[1][..8]).is_err(), "the deletion is no version");
+        assert!(app.resolve_version("abc").is_err(), "too short to be a commit");
+        assert!(app.resolve_version("1999-01-01").unwrap_err().to_string().contains("no version from 1999-01-01"));
+
+        // Each with the versions its file states.
+        let contents = c.blobs(&history.iter().map(|(_, _, b)| b.as_str()).collect::<Vec<_>>());
+        let stated = |i: usize| crate::required::describe(&stated_versions(&serde_yaml::from_slice(&contents[&history[i].2]).unwrap()));
+        assert_eq!((stated(0), stated(2)), ("3 or later".to_string(), "1 or later".to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn two_versions_on_one_day_need_the_commit() {
+        let (c, dir, commits) = app_history(&[("one", Some("resources: []\n"), 2), ("two", Some("resources: [] # 2\n"), 2), ("three", Some("resources: [] # 3\n"), 0)]);
+        let app = c.load_app(&dir.join("apps/a.dsc.yaml")).unwrap();
+        let day = app.history().unwrap()[1].0.date.clone();
+        let err = app.resolve_version(&day).unwrap_err().to_string();
+        assert!(err.contains("2 versions from") && err.contains(&commits[0][..7]) && err.contains(&commits[1][..7]), "{err}");
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -3,8 +3,9 @@
 //! data directory of whoever installs, like `installed.json`:
 //!
 //! - `good`: the last commit an app installed from without error.
-//! - `held`: the app runs an earlier version because the current one failed; it stays there
-//!   while the collection's file for the app is still the one that failed (`failed`, a blob id).
+//! - `held`: the app runs an earlier version, either because the current one failed (it stays
+//!   there while the collection's file for the app is still the one that failed, `failed`, a blob
+//!   id), or because the person chose it (`chosen`: it stays there until they choose another).
 //! - `failed`: installing the collection's file for the app (a blob id) failed here. Only then
 //!   may the app go back to an earlier version (`catalog::App::install_previous_with`).
 
@@ -26,14 +27,23 @@ pub struct Record {
 impl Record {
     /// Whether installing this file of the app (a blob id) failed here.
     pub fn has_failed(&self, blob: &str) -> bool {
-        self.failed.as_deref() == Some(blob) || self.held.as_ref().is_some_and(|h| h.failed == blob)
+        self.failed.as_deref() == Some(blob) || self.held.as_ref().is_some_and(|h| !h.failed.is_empty() && h.failed == blob)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Held {
     pub commit: String,
+    /// The collection's file that failed (a blob id); empty for a chosen version.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub failed: String,
+    /// The person chose this version (see `catalog::App::versions`): a change to the app in the
+    /// collection doesn't end the hold.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chosen: bool,
+    /// The day of the commit, for when it has left the history kept (see checkoutDepth).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>,
 }
 
 pub fn all(dir: &Path) -> BTreeMap<String, Record> {
@@ -109,10 +119,29 @@ mod tests {
         let record = get(&dir, "c/app");
         assert_eq!(record.good.as_deref(), Some("c1")); // kept: the version to fall back to
         assert!(record.has_failed("b2") && !record.has_failed("b1"));
-        installed(&dir, "c/app", "c1", Some(Held { commit: "c1".into(), failed: "b2".into() })).unwrap();
+        installed(&dir, "c/app", "c1", Some(Held { commit: "c1".into(), failed: "b2".into(), ..Default::default() })).unwrap();
         assert!(get(&dir, "c/app").has_failed("b2")); // held: still the one that failed
         installed(&dir, "c/app", "c3", None).unwrap();
         assert!(!get(&dir, "c/app").has_failed("b2"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_chosen_version_is_kept_and_its_files_stay() {
+        let dir = std::env::temp_dir().join(format!("furnish-versions-chosen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("versions/c/c1")).unwrap();
+        fs::create_dir_all(dir.join("versions/c/c0")).unwrap();
+        let held = Held { commit: "c1".into(), chosen: true, date: Some("2026-11-02".into()), ..Default::default() };
+        installed(&dir, "c/app", "c1", Some(held.clone())).unwrap();
+        let record = get(&dir, "c/app");
+        assert_eq!(record.held, Some(held));
+        assert!(!record.has_failed("")); // a chosen version failed nothing
+        // Files of the version the app is held at stay, others go.
+        assert!(dir.join("versions/c/c1").is_dir() && !dir.join("versions/c/c0").exists());
+        // Older records without the new fields still read.
+        fs::write(dir.join("versions.json"), r#"{"c/app": {"good": "c1", "held": {"commit": "c1", "failed": "b2"}}}"#).unwrap();
+        assert_eq!(get(&dir, "c/app").held, Some(Held { commit: "c1".into(), failed: "b2".into(), ..Default::default() }));
         let _ = fs::remove_dir_all(&dir);
     }
 }

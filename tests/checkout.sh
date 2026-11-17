@@ -1,6 +1,6 @@
 #!/bin/sh
 # Disk use and fallback: blobless and shallow checkouts, installer files downloaded when their app
-# is installed, and installing the previous version of an app after a failure. Runs in Docker as
+# is installed, installing the previous version of an app after a failure, and choosing a version. Runs in Docker as
 # root, with a small .deb as the installer.
 #
 #   tests/checkout.sh <path/to/furnish>   (a binary that runs on Debian trixie)
@@ -98,6 +98,39 @@ out=$(furnish install tool --previous 2>&1) && fail "went back to an earlier ver
 echo "$out" | grep -q "only after installing its current version failed" || fail "unexpected message: $out"
 [ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 4.0 ] || fail "not at 4.0 anymore"
 
+echo "== choose an earlier version: kept when the collection changes the app"
+short() { echo "$1" | cut -c1-7; }
+v2=$(git -C /tmp/org log --format=%H --grep='^v2$')
+v3=$(git -C /tmp/org log --format=%H --grep='^v3, broken$')
+out=$(furnish versions tool 2>&1) || fail "listing the versions failed: $out"
+[ "$(echo "$out" | grep -c "$(date +%F)")" = 4 ] || fail "not the four versions of tool: $out"
+echo "$out" | grep "$(short "$(git -C /tmp/org rev-parse HEAD)")" | grep "✓" | grep -q current || fail "the current version isn't marked installed: $out"
+echo "$out" | grep -q "$(short "$(git -C /tmp/org rev-parse HEAD~1)")" && fail "a commit that didn't change tool is listed: $out"
+out=$(furnish install tool --version "$(date +%F)" 2>&1) && fail "a day with several versions installed one: $out"
+echo "$out" | grep -q "give the commit instead" || fail "unexpected message: $out"
+furnish install tool --version "$(short "$v2")" >/dev/null || fail "installing the version from v2 failed"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 2.0 ] || fail "not at 2.0"
+furnish list | grep "tool" | grep -q "the version you chose" || fail "not shown as chosen: $(furnish list 2>&1)"
+furnish versions tool | grep "$(short "$v2")" | grep -q "✓" || fail "the chosen version isn't marked installed: $(furnish versions tool)"
+furnish upgrade | grep -q "Nothing to update" || fail "upgrade moves a chosen version"
+deb 5.0; app installers/tool.deb; commit "v5"
+furnish collection update org >/dev/null
+furnish list | grep "tool" | grep -q "the version you chose" || fail "a change to the app ended the hold: $(furnish list 2>&1)"
+furnish upgrade | grep -q "Nothing to update" || fail "upgrade moved a chosen version after a change"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 2.0 ] || fail "not at 2.0 anymore"
+[ -n "$(ls "$FURNISH_DATA_DIR/versions/org/$v2" 2>/dev/null)" ] || fail "files of the chosen version not kept"
+out=$(furnish install tool --version "$(short "$v3")" 2>&1) && fail "the broken version installed"
+furnish list | grep "tool" | grep -q "the version you chose" || fail "a failed choice ended the hold"
+furnish install tool --current >/dev/null || fail "going back to the current version failed"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 5.0 ] || fail "not at 5.0"
+furnish list | grep "tool" | grep -q "held" && fail "still held after --current"
+[ -z "$(ls "$FURNISH_DATA_DIR/versions/org" 2>/dev/null)" ] || fail "files of the chosen version left behind: $(ls "$FURNISH_DATA_DIR/versions/org")"
+furnish collection settings org --choose-version false | grep -q "choose a version:  no" || fail "setting not shown"
+out=$(furnish install tool --version "$(short "$v2")" 2>&1) && fail "a version was chosen while choosing is off"
+echo "$out" | grep -q "turned off" || fail "unexpected message: $out"
+furnish install tool --version "$(short "$(git -C /tmp/org rev-parse HEAD)")" >/dev/null || fail "the current version is refused while choosing is off"
+furnish collection settings org --choose-version true >/dev/null
+
 echo "== first install, automatic: the app's version before its latest change"
 deb 1.0 fresh fresh1.deb; app installers/fresh1.deb fresh; commit "fresh 1"
 deb 2.0 fresh fresh2.deb broken; app installers/fresh2.deb fresh; commit "fresh 2, broken"
@@ -117,6 +150,12 @@ out=$(furnish install secure 2>&1) && fail "a broken or unacceptable version ins
 [ "$(dpkg-query -W -f '${Version}' furnish-test-secure 2>/dev/null)" = 1.0 ] && fail "fell back to 1.0, which versions don't accept: $out"
 out=$(furnish install secure --previous 2>&1) && fail "installed the previous version: $out"
 echo "$out" | grep -q "has no acceptable version: needs 2 or later; the collection's file has 1.0" || fail "unexpected message: $out"
+secure1=$(git -C /tmp/org log --format=%H --grep='^secure 1$')
+out=$(furnish versions secure 2>&1) || fail "listing failed: $out"
+echo "$out" | grep -q "$(short "$secure1")" && fail "a version without an acceptable version is listed: $out"
+echo "$out" | grep -q "2 or later" || fail "the stated versions aren't shown: $out"
+out=$(furnish install secure --version "$(short "$secure1")" 2>&1) && fail "chose a version without an acceptable version: $out"
+echo "$out" | grep -q "has no acceptable version" || fail "unexpected message: $out"
 
 echo "== maximum age"
 deb 1.0 aged aged1.deb; app installers/aged1.deb aged
@@ -126,14 +165,26 @@ furnish collection update org >/dev/null
 furnish collection settings org --fallback ask --fallback-max-age 7 >/dev/null
 out=$(furnish install aged --previous 2>&1) && fail "a version older than 7 days was installed"
 echo "$out" | grep -q "more than 7 days older" || fail "unexpected message: $out"
+aged1=$(git -C /tmp/org log --format=%H --grep='^aged 1$')
+furnish versions aged | grep -q "$(short "$aged1")" && fail "a version older than 7 days is listed"
+out=$(furnish install aged --version "$(short "$aged1")" 2>&1) && fail "chose a version older than 7 days"
+echo "$out" | grep -q "more than 7 days older" || fail "unexpected message: $out"
 
 echo "== admins can lock it off"
-mkdir -p /etc/furnish && printf '{"collectionSettings": {"org": {"fallback": {"value": "off", "locked": true}}}}' > /etc/furnish/policy.json
+furnish install tool --version "$(short "$v2")" >/dev/null || fail "choosing the version from v2 again failed"
+mkdir -p /etc/furnish && printf '{"collectionSettings": {"org": {"fallback": {"value": "off", "locked": true}, "chooseVersion": {"value": false, "locked": true}}}}' > /etc/furnish/policy.json
+out=$(furnish versions tool 2>&1) && fail "versions listed while choosing is locked off"
+echo "$out" | grep -q "turned off" || fail "unexpected message: $out"
+furnish list | grep "tool" | grep -q "held" && fail "still held at the chosen version while choosing is off"
+furnish list | grep -q "↑  tool" || fail "the current version isn't offered as an update: $(furnish list 2>&1)"
+out=$(furnish collection settings org --choose-version true 2>&1) && fail "a locked setting changed"
 out=$(furnish install aged --previous 2>&1) && fail "fallback ran while locked off"
 echo "$out" | grep -q "turned off" || fail "unexpected message: $out"
 out=$(furnish collection settings org --fallback ask 2>&1) && fail "a locked setting changed"
 echo "$out" | grep -q "set by your organization" || fail "unexpected message: $out"
 rm /etc/furnish/policy.json
+furnish list | grep "tool" | grep -q "the version you chose" || fail "the hold didn't come back with choosing on"
+furnish install tool --current >/dev/null
 
 echo "== Git LFS: installers downloaded when their app is installed"
 mkdir -p /tmp/lfs/apps /tmp/lfs/installers && cd /tmp/lfs && git init -q && git lfs install --local >/dev/null && git lfs track '*.deb' >/dev/null
@@ -195,6 +246,15 @@ echo "$out" | grep -q "doesn't follow the current one" || fail "unexpected messa
 cd /tmp/signed && git reset -q --hard "$signed2" && echo 4 > notes.txt && git add -A && git commit -qS -m "signed 3" && cd /
 furnish collection update signed >/dev/null || fail "a signed commit that follows was refused"
 [ "$(git -C "$sc" rev-parse HEAD)" = "$(git -C /tmp/signed rev-parse HEAD)" ] || fail "signed commit didn't arrive"
+echo "== trusted keys: only signed versions can be chosen"
+cd /tmp/signed && sed -i 's/description: Tool/description: Tool 2/' apps/tool.dsc.yaml && git commit -qam "unsigned tool" && unsigned=$(git rev-parse HEAD)
+sed -i 's/description: Tool 2/description: Tool 3/' apps/tool.dsc.yaml && git commit -qS -am "signed tool" && cd /
+furnish collection update signed >/dev/null || fail "a signed commit after an unsigned one was refused"
+out=$(furnish versions signed/tool 2>&1) || fail "listing failed: $out"
+echo "$out" | grep -q "$(short "$signed1")" || fail "the signed version isn't listed: $out"
+echo "$out" | grep -q "$(short "$unsigned")" && fail "the unsigned version is listed: $out"
+out=$(furnish install signed/tool --version "$(short "$unsigned")" 2>&1) && fail "chose an unsigned version"
+echo "$out" | grep -q "isn't signed" || fail "unexpected message: $out"
 rm /etc/furnish/policy.json
 
 echo "checkout OK"
