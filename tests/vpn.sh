@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The example collection's VPN apps on a real system (CI): install acme-vpn, which pulls in
 # openvpn-client, check the configuration where each OS's client looks for it, uninstall acme-vpn
-# and check the configuration is gone and the client stays.
+# and check the configuration is gone and the client stays. On macOS and Linux also a newer
+# profile: the app shows an update, installing imports it again, and uninstalling works while an
+# update is waiting.
 #
 #   tests/vpn.sh path/to/furnish <commit of furnish-self-service/self-service-example>
 #
@@ -86,8 +88,9 @@ Darwin)
     sudo test -f "$ovpn" || fail "no $ovpn"
     [ -d "$client" ] || fail "no $client"
     sudo ls -lR "/Library/Application Support/Tunnelblick/Shared"
-    status=/Library/Application\ Support/Acme\ VPN/acme.ovpn  # what furnish reads for the status
-    ls -l "$status"
+    # The copy Tunnelblick installed from, which furnish compares with the one in Shared/.
+    profile="/Library/Application Support/Tunnelblick/Temp/Acme VPN.tblk/Contents/Resources/config.ovpn"
+    ls -l "$profile"
     ;;
 Linux)
     ovpn=/etc/openvpn/acme-vpn.ovpn
@@ -101,10 +104,29 @@ Linux)
     ca=$(sudo nmcli -g vpn.data connection show id 'Acme VPN' | tr ',' '\n' | sed -n 's/^ *ca = //p')
     [ -n "$ca" ] && sudo test -f "$ca" || fail "no CA certificate in the connection's vpn.data ($ca)"
     echo "CA certificate: $ca"
+    # Only root may read the profile; the stamp has its date and tells which version was imported.
+    profile=$ovpn
+    stamp=/etc/openvpn/acme-vpn.imported
+    ls -l "$ovpn" "$stamp"
+    [ "$(stat -c %a "$ovpn")" = 600 ] || fail "$ovpn isn't mode 600"
+    [ "$(stat -c %Y "$ovpn")" = "$(stat -c %Y "$stamp")" ] || fail "$stamp hasn't the profile's date"
     ;;
 esac
 grep -q "remote vpn.acme.example 1194" "$ovpn" 2>/dev/null || sudo grep -q "remote vpn.acme.example 1194" "$ovpn" \
     || fail "$ovpn has other content"
+
+# A newer profile, as when the collection brings a changed one: the configuration is there but
+# outdated. Installing imports it again; uninstalling works while the update waits.
+newer() { sleep 1; sudo touch "$profile"; expect "$(step list)" "↑  acme-vpn "; }
+case "$(uname -s)" in
+Darwin | Linux)
+    newer
+    expect "$(step -v install acme-vpn)" "Installed acme-vpn"
+    expect "$(step list)" "✓  acme-vpn "
+    [ "$(uname -s)" = Darwin ] || [ "$(stat -c %Y "$ovpn")" = "$(stat -c %Y "$stamp")" ] || fail "$stamp wasn't renewed"
+    newer
+    ;;
+esac
 
 expect "$(step -v uninstall acme-vpn)" "Uninstalled acme-vpn"
 list=$(step list)
@@ -112,7 +134,9 @@ expect "$list" "·  acme-vpn "
 expect "$list" "✓  openvpn-client "
 case "$(uname -s)" in
 Darwin) sudo test ! -e "${ovpn%/Contents/*}" || fail "the configuration is still there"
-    [ ! -e "$status" ] || fail "$status is still there" ;;
+    [ ! -e "${profile%/Contents/*}" ] || fail "${profile%/Contents/*} is still there" ;;
+Linux) [ ! -e "$ovpn" ] || fail "$ovpn is still there"
+    [ ! -e "$stamp" ] || fail "$stamp is still there" ;;
 *) [ ! -e "$ovpn" ] || fail "$ovpn is still there" ;;
 esac
 [ -e "$client" ] || fail "uninstalling acme-vpn removed $client"

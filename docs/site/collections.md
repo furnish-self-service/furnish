@@ -14,7 +14,7 @@ locales/<lang>.yaml      # translations, one file per language
 icons/                   # images the files above refer to
 ```
 
-furnish clones the repository for each user and pulls changes at start and every 30 minutes. It downloads the history's commits, but file contents only for the current version; earlier versions and installer files come when they are needed. The [example collection](https://github.com/furnish-self-service/self-service-example) uses everything on this page with real apps.
+furnish clones the repository for each user and pulls changes at start and every 30 minutes. It downloads the history's commits, but file contents only for the current version; earlier versions and installer files come when they are needed. The [example collection](https://github.com/furnish-self-service/self-service-example) has real apps with kits, translations, icons, dependencies and a question that recommends apps, and its Acme apps set up configuration with `Furnish/Directory`, `File`, `Line`, `Value` and `Command`.
 
 ## Apps
 
