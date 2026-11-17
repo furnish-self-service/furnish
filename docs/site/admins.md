@@ -289,6 +289,8 @@ The flake provides the packages and a NixOS module:
 
 Builds of the `main` branch are in the cache. The two `nix.settings` lines are needed because Nix reads a flake's own cache settings (`nixConfig`) only from the flake a command runs on, never from its inputs: `nixos-rebuild` doesn't ask about furnish's cache and doesn't use it. For other revisions, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so they are compiled once.
 
+`service.enable` runs the furnish service and turns it on in the policy, so the service installs the apps of the preset collections (see [People without administrator rights](#people-without-administrator-rights)). Members of `policy.service.allowedGroup` install without a password.
+
 On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
 
 Packages from the NixOS configuration (`environment.systemPackages`, `users.users.<name>.packages`) and from Home Manager show as installed, with where they come from. furnish finds them in the symlink farms NixOS and Home Manager build, such as `/run/current-system/sw`, and matches them by the package's name in nixpkgs. It doesn't install such a package a second time, doesn't update it, and refuses to uninstall it: you change it in the configuration. The app's page shows the package to remove there, for example `pkgs.jq`.
@@ -304,7 +306,7 @@ services.furnish.nix = {
 };
 ```
 
-The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`. It also writes `/etc/furnish/nixos.json` with what it knows when the system is built: the host name, `system.configurationRevision` if set, whether Home Manager's NixOS module is in use, and its own version. It restarts the furnish service when the policy changes. A flake can't name its own folder, because Nix evaluates a copy in the store, so the folder only comes from this option. Both values win over people's own setting, which the Settings page then shows as read-only. People see the result on the Settings page and with `furnish settings`.
+The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`. It also writes `/etc/furnish/nixos.json` with what it knows when the system is built: the host name, `system.configurationRevision` if set, whether Home Manager's NixOS module is in use, the groups in `nix.trustedGroups` (see [Installing apps into the configuration](#installing-apps-into-the-configuration)), and its own version. It restarts the furnish service when the policy changes. A flake can't name its own folder, because Nix evaluates a copy in the store, so the folder only comes from this option. Both values win over people's own setting, which the Settings page then shows as read-only. People see the result on the Settings page and with `furnish settings`.
 
 Without the option, people can set the folder in the app. Without either, furnish searches, in this order, and takes the first configuration that passes a quick check:
 
@@ -330,14 +332,24 @@ inputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";
 
 `/var/lib/furnish/apps` is a small flake that furnish keeps, with the apps it installed in `apps.json`. The module creates it and adds its packages and options to the system, with no further imports. With `follows`, furnish builds against your nixpkgs, and the apps' packages always come from it. `furnish settings` and the Settings page show the lines when they are missing.
 
-An install needs the furnish service (`services.furnish.service.enable`) and `services.furnish.nix.configuration`. The service:
+An install needs the furnish service (`services.furnish.service.enable`) and `services.furnish.nix.configuration`. Only the service changes the configuration, and it installs only the apps of preset collections. For an app from a collection that someone added themselves, furnish names the collection and refuses. Preset the collection (`services.furnish.policy.collections.preset`) or list its furnish address in `services.furnish.policy.endpoints`, and set `services.furnish.policy.service.allowedGroup` for people who aren't administrators. The service:
 
 1. writes the app into `apps.json`;
 2. runs `nix flake update furnish/apps`, which changes only that entry of `flake.lock`;
 3. builds the system and switches to it;
 4. commits `flake.lock` if the repository had no other changes. Otherwise it leaves committing to you.
 
-If the build fails, furnish puts `apps.json` and `flake.lock` back. Steps 2 to 4 run as the account that owns the configuration's folder, so no process running as root opens a git repository someone else controls; only the switch runs as root. A folder that belongs to a person is rebuilt only when that person or root asks. furnish refuses if anyone else can change the folder or a folder above it.
+If the build fails, furnish puts `apps.json` and `flake.lock` back. Steps 2 to 4 run as the account that owns the configuration's folder, so no process running as root opens a git repository someone else controls; only the switch runs as root. A folder that belongs to a person is rebuilt only when that person or root asks. furnish refuses if anyone else can change the folder or a folder above it, with one exception: a group in `services.furnish.nix.trustedGroups` may.
+
+The check keeps people who can't become root from changing what the service builds and switches to as root. Members of a group that may run any command as root gain nothing from changing the configuration. So by default the list has `wheel` when sudo (`security.sudo` or `security.sudo-rs`) or doas lets `wheel` run any command as root, as the rules NixOS adds for `wheel` do, and is empty otherwise. With `wheelNeedsPassword`, sudo and doas ask for the person's password, and changing the configuration lets them, or a program running as them, have it built as root without that password. A configuration in their own folder allows the same. If the folder belongs to root, steps 2 to 4 run as root, in a repository the group can change.
+
+Set the list yourself for another group whose members can become root, or to `[ ]` to refuse every folder a group can write to. A folder everyone can write to is always refused, and the setgid bit makes no difference. A configuration that the admins share in `/etc/nixos`:
+
+```nix
+systemd.tmpfiles.rules = [ "d /etc/nixos 2775 root wheel -" ];
+services.furnish.nix.configuration = "/etc/nixos";
+# services.furnish.nix.trustedGroups = [ "wheel" ];  # the default with sudo or doas for wheel
+```
 
 Apps may set only the NixOS options you allow. Packages need no entry:
 

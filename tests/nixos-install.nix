@@ -2,8 +2,11 @@
 # furnish writes the app into its local flake, updates furnish/apps in alice's flake.lock and
 # builds the system as alice, makes it the system the computer starts next (rebuild = "boot"), and
 # commits flake.lock because her repository had no other changes. bob may not have alice's
-# configuration rebuilt, an option outside the allowlist is refused, and an uninstall with other
-# changes in the repository leaves flake.lock uncommitted. Run:
+# configuration rebuilt, an option outside the allowlist is refused, an app from a collection alice
+# added herself is refused with a message that names it, and an uninstall with other changes in
+# the repository leaves flake.lock uncommitted. A configuration in /etc/nixos that wheel can change
+# (root:wheel 2775) is rebuilt for alice, a member of wheel, which the module trusts because sudo
+# lets wheel become root; another group that can change it is refused. Run:
 #   nix build -L .#checks.x86_64-linux.nixos-install
 { pkgs, nixpkgs, nixosModule, furnish, module }:
 let
@@ -30,7 +33,7 @@ pkgs.testers.runNixOSTest {
       # As in alice's configuration (nixos-apps/configuration.nix).
       nix = { configuration = "/home/alice/cfg"; allowedOptions = [ "programs.htop.enable" ]; rebuild = "boot"; };
     };
-    users.users.alice.isNormalUser = true;
+    users.users.alice = { isNormalUser = true; extraGroups = [ "wheel" ]; };
     users.users.bob.isNormalUser = true;
     environment.systemPackages = [ pkgs.git ];
     nix.settings = {
@@ -42,6 +45,7 @@ pkgs.testers.runNixOSTest {
   };
   testScript = ''
     import json
+    import shlex
 
     def alice(cmd):
         return machine.succeed(f"su - alice -c 'cd cfg && {cmd}'")
@@ -94,6 +98,19 @@ pkgs.testers.runNixOSTest {
     assert "allowedOptions" in out, out
     assert list(apps()) == ["htop"] and system() == "${after}"
 
+    # From a collection alice added herself: the service installs only preset collections' apps,
+    # and the refusal names the collection and what the administrator can do (#22).
+    machine.succeed(
+        "mkdir -p /srv/mine/apps",
+        "cp ${app "mytop" { packages = [ "hello" ]; }} /srv/mine/apps/mytop.dsc.yaml",
+        "chown -R alice /srv/mine",
+    )
+    machine.succeed("su - alice -c 'cd /srv/mine && git init -q && git add -A && git commit -qm apps'")
+    machine.succeed("su - alice -c 'furnish collection add /srv/mine'")
+    out = machine.fail("su - alice -c 'furnish install mytop' 2>&1")
+    assert "The collection 'mine' isn't preset" in out and "turn it on" not in out, out
+    assert list(apps()) == ["htop"] and system() == "${after}"
+
     # Uninstalling with another change in the repository: flake.lock stays uncommitted.
     alice('echo "# a note" >> configuration.nix')
     print(machine.succeed("su - alice -c 'furnish uninstall htop' 2>&1"))
@@ -102,5 +119,32 @@ pkgs.testers.runNixOSTest {
     assert alice("git log -1 --format=%s").strip() == "furnish: install htop"
     status = alice("git status --porcelain")
     assert sorted(status.split()) == ["M", "M", "configuration.nix", "flake.lock"], status
+
+    # A configuration the admins share (#21): /etc/nixos as root:wheel 2775. sudo lets wheel run
+    # any command as root, so the module trusts wheel, and alice, a member, installs into it.
+    facts = json.loads(machine.succeed("cat /etc/furnish/nixos.json"))
+    assert facts["nix"]["trustedGroups"] == ["wheel"], facts
+    machine.succeed(
+        "mkdir -p /etc/nixos && cp -a /home/alice/cfg/. /etc/nixos/",
+        "chown -R root:wheel /etc/nixos && chmod -R g+rwX /etc/nixos && find /etc/nixos -type d -exec chmod 2775 {} +",
+        "cd /etc/nixos && git add -A && git commit -qm shared",
+    )
+    # furnish looks there now: the module's two files, changed as if it said /etc/nixos.
+    policy = json.loads(machine.succeed("cat /etc/furnish/policy.json"))
+    policy["osSpecific"]["nixos"]["configuration"]["value"] = "/etc/nixos"
+    facts["nix"]["configuration"] = "/etc/nixos"
+    for path, value in [("/etc/furnish/policy.json", policy), ("/etc/furnish/nixos.json", facts)]:
+        machine.succeed(f"rm {path} && echo {shlex.quote(json.dumps(value))} > {path}")
+    machine.succeed("systemctl restart furnish")
+    print(machine.succeed("su - alice -c 'furnish install htop' 2>&1"))
+    assert list(apps()) == ["htop"] and system() == "${after}", system()
+    assert machine.succeed("git -C /etc/nixos log -1 --format=%s").strip() == "furnish: install htop"
+    assert machine.succeed("git -C /etc/nixos status --porcelain").strip() == ""
+
+    # Another group that can change the folder: refused, and the message says how to trust it.
+    machine.succeed("chgrp users /etc/nixos")
+    out = machine.fail("su - alice -c 'furnish uninstall htop' 2>&1")
+    assert "the group users can change /etc/nixos" in out and "trustedGroups" in out, out
+    assert list(apps()) == ["htop"] and system() == "${after}"
   '';
 }
