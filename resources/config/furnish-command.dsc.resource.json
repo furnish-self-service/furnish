@@ -121,12 +121,19 @@
           "description": "The command that applies the setting"
         },
         "remove": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1,
-          "description": "The command that removes the setting"
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            },
+            {
+              "const": "keep"
+            }
+          ],
+          "description": "The command that removes the setting, or keep to leave it in place on uninstall"
         },
         "_exist": {
           "type": "boolean",

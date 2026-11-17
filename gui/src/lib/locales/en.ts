@@ -305,6 +305,7 @@ export const en = {
   'plan.diff.noNewline': "No line break at the end of the file",
   'plan.diff.noNewlineBefore': "No line break at the end of the file before the change",
   'plan.diff.noNewlineAfter': "No line break at the end of the file after the change",
+  'plan.note.command.keep': "Leaves what <code>{command}</code> set up in place",
 
   // Collections.svelte
   'collections.title': 'Collections',

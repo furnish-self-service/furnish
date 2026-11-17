@@ -308,6 +308,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Nessun a capo alla fine del file",
   'plan.diff.noNewlineBefore': "Nessun a capo alla fine del file prima della modifica",
   'plan.diff.noNewlineAfter': "Nessun a capo alla fine del file dopo la modifica",
+  'plan.note.command.keep': "Lascia al suo posto ciò che ha configurato <code>{command}</code>",
 
   // Collections.svelte
   'collections.title': 'Raccolte',

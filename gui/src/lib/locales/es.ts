@@ -308,6 +308,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Sin salto de línea al final del archivo",
   'plan.diff.noNewlineBefore': "Sin salto de línea al final del archivo antes del cambio",
   'plan.diff.noNewlineAfter': "Sin salto de línea al final del archivo después del cambio",
+  'plan.note.command.keep': "Deja en su sitio lo que configuró <code>{command}</code>",
 
   // Collections.svelte
   'collections.title': 'Colecciones',

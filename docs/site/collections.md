@@ -349,7 +349,7 @@ resources:
 
 #### Furnish/Command
 
-A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
+A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. `remove: keep` leaves the setting in place on uninstall (see below). Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
 
 ```yaml
 - name: Vault server
@@ -374,6 +374,28 @@ A setting that a tool must apply itself. `test` runs a command and checks its re
       value: Acme
     set: [openvpn3, config-import, --config, /etc/acme/acme.ovpn, --name, Acme, --persistent]
 ```
+
+Some steps set up something that other apps or programs use too, which uninstalling must not take away. With `remove: keep`, uninstalling leaves the setting as it is, the app can still be uninstalled, and the uninstall preview says the step is kept. A plugin app for a coding assistant is an example: uninstalling removes the plugin and keeps the vendor's marketplace, which other plugins come from:
+
+```yaml
+- name: Acme marketplace
+  type: Furnish/Command
+  properties:
+    test:
+      command: [assistant, plugin, marketplace, list, --json]
+      jsonPath: "$[?@.name=='acme-marketplace'].url"
+      value: https://git.acme.example/marketplace.git
+    set: [assistant, plugin, marketplace, add, https://git.acme.example/marketplace.git]
+    remove: keep
+- name: Acme plugin
+  type: Furnish/Command
+  properties:
+    test: { command: [assistant, plugin, list, --json], jsonPath: "$[?@.id=='tools@acme-marketplace'].id", value: tools@acme-marketplace }
+    set: [assistant, plugin, install, tools@acme-marketplace]
+    remove: [assistant, plugin, uninstall, tools@acme-marketplace]
+```
+
+An app whose steps are all kept still tests as installed after uninstalling, so uninstalling it fails. Give such an app at least one step that uninstalling removes.
 
 A failing test can mean that the setting is missing or that it is there but outdated. `present`, with the same properties as `test`, tells the two apart: if `test` fails and `present` passes, the app shows an update instead of "not installed", and it can be uninstalled. Without `present`, a failing test counts as missing.
 

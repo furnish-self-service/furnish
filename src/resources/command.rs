@@ -1,6 +1,7 @@
 //! `Furnish/Command`: for tools that must apply a setting themselves. `test` runs a command and
 //! checks its exit code, its output, or a value in its JSON output; `set` runs only when the test
-//! fails, and `remove` (optional) on uninstall. `present` (optional, the same shape as `test`)
+//! fails, and `remove` (optional) on uninstall, or `remove: keep` to leave the setting in place
+//! on uninstall. `present` (optional, the same shape as `test`)
 //! tells an outdated setting from a missing one: the step then counts as there, so the app shows
 //! an update instead of "not installed".
 
@@ -18,7 +19,7 @@ struct Props {
     test: Test,
     present: Option<Test>,
     set: Vec<String>,
-    remove: Option<Vec<String>>,
+    remove: Option<Remove>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
 }
@@ -36,9 +37,33 @@ struct Test {
     value: Option<Value>,
 }
 
+/// What uninstalling does: run a command, or `keep` the setting.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Remove {
+    Command(Vec<String>),
+    Word(String),
+}
+
+impl Remove {
+    /// The command, `None` for `keep`.
+    fn command(&self) -> Option<&Vec<String>> {
+        match self {
+            Remove::Command(c) => Some(c),
+            Remove::Word(_) => None,
+        }
+    }
+}
+
 fn props(v: &Value) -> Result<Props> {
     let p: Props = parse(v)?;
-    for (what, command) in [("test.command", Some(&p.test.command)), ("set", Some(&p.set)), ("remove", p.remove.as_ref())] {
+    if let Some(Remove::Word(word)) = &p.remove
+        && word != "keep"
+    {
+        bail!("remove: a command, as a list of the program and its arguments, or 'keep' to leave the setting in place on uninstall");
+    }
+    let remove = p.remove.as_ref().and_then(Remove::command);
+    for (what, command) in [("test.command", Some(&p.test.command)), ("set", Some(&p.set)), ("remove", remove)] {
         if command.is_some_and(Vec::is_empty) {
             bail!("{what}: a command, as a list of the program and its arguments");
         }
@@ -167,8 +192,15 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
         // A failing test means absent or outdated (an update waiting), so removal always runs
         // `remove`, which must therefore do nothing where there is nothing to remove. Its test
         // afterwards proves nothing either way. Where the tool isn't installed, there is nothing.
+        // `remove: keep`: uninstalling leaves the setting as it is.
+        (false, there) if p.remove.as_ref().is_some_and(|r| r.command().is_none()) => {
+            plan.observe("_exist", Some(there.into()), Some(there.into()));
+            if test_note.is_some() {
+                plan.steps = vec![note("command.keep", json!({ "command": p.set.join(" ") }))];
+            }
+        }
         (false, _) if p.remove.is_some() && test_note.is_some() => {
-            let remove = p.remove.unwrap_or_default();
+            let remove = p.remove.and_then(|r| r.command().cloned()).unwrap_or_default();
             plan.change(vec![note("run", json!({ "command": remove.join(" ") }))], move || run(&remove));
             plan.recheck = false;
         }
@@ -255,6 +287,32 @@ mod tests {
         assert!(!marker_exists(&marker), "the outdated setting is left behind");
         // Nothing there: remove runs again and must not fail.
         (evaluate(&props).unwrap().apply.unwrap())().unwrap();
+    }
+
+    #[test]
+    fn remove_keep_leaves_the_setting_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marketplace").to_string_lossy().into_owned();
+        std::fs::write(&marker, "acme\n").unwrap();
+        let props = json!({
+            "test": {"command": ["cat", marker], "output": "acme"},
+            "set": ["sh", "-c", format!("echo acme > '{marker}'")],
+            "remove": "keep",
+            "_exist": false,
+        });
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none(), "nothing runs");
+        assert_eq!((&plan.state["_exist"], &plan.after["_exist"]), (&json!(true), &json!(true)));
+        assert_eq!(plan.steps.iter().map(Note::english).collect::<Vec<_>>(), vec![format!("Keep what sh -c echo acme > '{marker}' set up: uninstalling leaves it in place")]);
+        assert!(marker_exists(&marker));
+        // Not there: nothing to keep, and no error.
+        std::fs::remove_file(&marker).unwrap();
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.apply.is_none());
+        assert_eq!(plan.after["_exist"], false);
+        assert!(check(&props).is_ok());
+        assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": "leave"})).is_err());
+        assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": []})).is_err());
     }
 
     #[test]

@@ -1404,6 +1404,11 @@ mod tests {
         );
         // A type DSC doesn't find here: uninstalling fails before any step, so it doesn't count.
         assert_eq!(first_unremovable(&resources(&[("vpn", "Acme/Vpn")]), caps), None);
+        // A Furnish/Command removes with its remove command, or keeps the setting (`remove: keep`).
+        let command = |remove: Value| vec![json!({"name": "market", "type": "Furnish/Command", "properties": {"test": {"command": ["x"]}, "set": ["x"], "remove": remove}})];
+        assert_eq!(first_unremovable(&command(Value::Null), caps).as_deref(), Some("the resource 'market' (Furnish/Command)"));
+        assert_eq!(first_unremovable(&command(json!("keep")), caps), None);
+        assert_eq!(first_unremovable(&command(json!(["x", "remove"])), caps), None);
         // With removal steps, the resources don't matter (and nothing is looked up).
         let doc = json!({"metadata": {"furnish": {"uninstall": [{"name": "rm", "type": "Microsoft.DSC.Transitional/RunCommandOnSet"}]}},
                          "resources": [{"name": "profile", "type": "Microsoft.Filesystem.File/Content"}]});

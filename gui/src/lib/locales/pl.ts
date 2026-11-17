@@ -325,6 +325,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineBefore': "Przed zmianą brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineAfter': "Po zmianie brak znaku nowego wiersza na końcu pliku",
+  'plan.note.command.keep': "Zostawia to, co ustawiło <code>{command}</code>",
 
   // Collections.svelte
   'collections.title': 'Kolekcje',

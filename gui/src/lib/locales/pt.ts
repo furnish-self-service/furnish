@@ -308,6 +308,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Sem quebra de linha no fim do ficheiro",
   'plan.diff.noNewlineBefore': "Sem quebra de linha no fim do ficheiro antes da alteração",
   'plan.diff.noNewlineAfter': "Sem quebra de linha no fim do ficheiro depois da alteração",
+  'plan.note.command.keep': "Mantém o que <code>{command}</code> configurou",
 
   // Collections.svelte
   'collections.title': 'Coleções',

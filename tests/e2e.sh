@@ -297,6 +297,12 @@ resources:
       present: { command: [git, config, --file, "$tmp/conf/gitconfig", --get-regexp, '^fixture\.server$', .] }
       set: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, https://fixture.example]
       remove: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, ""]  # succeeds also with nothing to remove
+  - name: marketplace
+    type: Furnish/Command
+    properties:
+      test: { command: [git, config, --file, "$tmp/conf/gitconfig", fixture.marketplace], output: acme }
+      set: [git, config, --file, "$tmp/conf/gitconfig", fixture.marketplace, acme]
+      remove: keep  # other apps use it too
 YAML
 
 git -C "$tmp/repo" init -q
@@ -605,7 +611,9 @@ expect "$(step list)" "✓  config "
 git config --file "$tmp/conf/gitconfig" fixture.server https://old.fixture.example
 expect "$(step list)" "↑  config "
 expect "$(step install config --dry-run)" "finds the setting: it is there but outdated"
-expect "$(step uninstall config --dry-run)" "Remove \$.current-context from $tmp/conf/kube.yaml"
+plan=$(step uninstall config --dry-run)
+expect "$plan" "Remove \$.current-context from $tmp/conf/kube.yaml"
+expect "$plan" "Keep what git config --file $tmp/conf/gitconfig fixture.marketplace acme set up"
 expect "$(step uninstall config)" "Uninstalled config"
 if grep -q current-context "$tmp/conf/kube.yaml"; then echo "FAIL: uninstall left the app's current-context" >&2; exit 1; fi
 # A file that a Furnish/Value step edits is the user's: uninstall keeps it, private.
@@ -614,6 +622,7 @@ case "$(uname -s)" in
 MINGW* | MSYS*) ;;
 *) [ "$(stat -c %a "$tmp/conf/settings.json" 2>/dev/null || stat -f %Lp "$tmp/conf/settings.json")" = 600 ] || { echo "FAIL: uninstall changed the mode of settings.json" >&2; exit 1; } ;;
 esac
+[ "$(git config --file "$tmp/conf/gitconfig" fixture.marketplace)" = acme ] || { echo "FAIL: remove: keep didn't keep the setting" >&2; exit 1; }
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

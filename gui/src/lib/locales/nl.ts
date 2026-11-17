@@ -308,6 +308,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Geen regeleinde aan het einde van het bestand",
   'plan.diff.noNewlineBefore': "Geen regeleinde aan het einde van het bestand vóór de wijziging",
   'plan.diff.noNewlineAfter': "Geen regeleinde aan het einde van het bestand na de wijziging",
+  'plan.note.command.keep': "Laat staan wat <code>{command}</code> heeft ingesteld",
 
   // Collections.svelte
   'collections.title': 'Collecties',

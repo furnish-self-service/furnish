@@ -306,6 +306,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.diff.noNewline': "Kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineBefore': "Vor der Änderung kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineAfter': "Nach der Änderung kein Zeilenumbruch am Ende der Datei",
+  'plan.note.command.keep': "Lässt bestehen, was <code>{command}</code> eingerichtet hat",
 
   // Collections.svelte
   'collections.title': 'Sammlungen',

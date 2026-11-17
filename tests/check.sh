@@ -78,6 +78,17 @@ resources:
   - name: server
     type: Furnish/Command
     properties: { test: { command: [bw, config, server], output: "https://vault.acme.example" }, set: [bw, config, server, "https://vault.acme.example"] }'
+# A command that uninstalling leaves in place (remove: keep) is removable; another word is a mistake.
+app kept 'metadata: { furnish: { description: Kept, categories: [Test] } }
+resources:
+  - name: marketplace
+    type: Furnish/Command
+    properties: { test: { command: [assistant, plugin, marketplace, list] }, set: [assistant, plugin, marketplace, add, acme], remove: keep }'
+app leave 'metadata: { furnish: { description: Leave, categories: [Test] } }
+resources:
+  - name: marketplace
+    type: Furnish/Command
+    properties: { test: { command: [assistant, plugin, marketplace, list] }, set: [assistant, plugin, marketplace, add, acme], remove: leave }'
 # An icon that links out of the collection.
 echo '<svg/>' > "$tmp/outside.svg"
 ln -s "$tmp/outside.svg" "$c/icons/outside.svg"
@@ -112,6 +123,8 @@ expect lowercase "installers/lower.msi is not in the collection"
 expect line "doesn't match"
 expect source "files/missing.conf is not in the collection"
 expect command "can't be uninstalled where these resources apply: server (Furnish/Command)"
+echo "$out" | grep -q '^✓ kept ' && ok "kept: remove: keep is removable" || bad "kept: $(echo "$out" | grep -A2 ' kept ')"
+expect leave "or 'keep' to leave the setting in place"
 expect collection.yaml "icon 'icons/outside.svg' is not in the collection"
 expect collection.yaml "iconDark 'icons/missing-dark.svg' is not in the collection"
 [ ! -e "$tmp/pwned" ] && ok "the repository's core.fsmonitor did not run" || bad "core.fsmonitor ran"
