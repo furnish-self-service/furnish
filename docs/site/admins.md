@@ -289,6 +289,8 @@ The flake provides the packages and a NixOS module:
 
 Builds of the `main` branch are in the cache. The two `nix.settings` lines are needed because Nix reads a flake's own cache settings (`nixConfig`) only from the flake a command runs on, never from its inputs: `nixos-rebuild` doesn't ask about furnish's cache and doesn't use it. For other revisions, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so they are compiled once.
 
+`service.enable` runs the furnish service and turns it on in the policy, so the service installs the apps of the preset collections (see [People without administrator rights](#people-without-administrator-rights)). Members of `policy.service.allowedGroup` install without a password.
+
 On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
 
 Packages from the NixOS configuration (`environment.systemPackages`, `users.users.<name>.packages`) and from Home Manager show as installed, with where they come from. furnish finds them in the symlink farms NixOS and Home Manager build, such as `/run/current-system/sw`, and matches them by the package's name in nixpkgs. It doesn't install such a package a second time, doesn't update it, and refuses to uninstall it: you change it in the configuration. The app's page shows the package to remove there, for example `pkgs.jq`.
@@ -330,7 +332,7 @@ inputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";
 
 `/var/lib/furnish/apps` is a small flake that furnish keeps, with the apps it installed in `apps.json`. The module creates it and adds its packages and options to the system, with no further imports. With `follows`, furnish builds against your nixpkgs, and the apps' packages always come from it. `furnish settings` and the Settings page show the lines when they are missing.
 
-An install needs the furnish service (`services.furnish.service.enable`) and `services.furnish.nix.configuration`. The service:
+An install needs the furnish service (`services.furnish.service.enable`) and `services.furnish.nix.configuration`. Only the service changes the configuration, and it installs only the apps of preset collections. For an app from a collection that someone added themselves, furnish names the collection and refuses. Preset the collection (`services.furnish.policy.collections.preset`) or list its furnish address in `services.furnish.policy.endpoints`, and set `services.furnish.policy.service.allowedGroup` for people who aren't administrators. The service:
 
 1. writes the app into `apps.json`;
 2. runs `nix flake update furnish/apps`, which changes only that entry of `flake.lock`;

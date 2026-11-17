@@ -1093,6 +1093,26 @@ pub(crate) fn allowed_resource_types() -> Option<Vec<String>> {
     crate::policy::load_native().allowed_resource_types
 }
 
+/// `App::outside_service` without the computer: `service`, the policy routes preset collections
+/// through the furnish service (`service::enabled`); `managed`, the app's collection is preset.
+fn outside_service(
+    in_service: bool,
+    service: bool,
+    managed: bool,
+    collection: &str,
+    app: &str,
+    per_user: impl FnOnce() -> bool,
+) -> Option<crate::nixos_apps::OutsideService> {
+    use crate::nixos_apps::OutsideService;
+    match () {
+        _ if in_service => None,
+        _ if !service => Some(OutsideService::Off),
+        _ if !managed => Some(OutsideService::NotPreset { collection: collection.to_string() }),
+        _ if per_user() => Some(OutsideService::PerUser { app: app.to_string() }),
+        _ => None,
+    }
+}
+
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
 pub const RESOURCE_TYPES: [&str; 9] = [
     PACKAGE_TYPE,
@@ -1281,6 +1301,25 @@ impl App {
         crate::options::apply(&self.doc, values)
     }
 
+    /// `doc_for`, to run in this process: it says why the furnish service doesn't run it, for
+    /// Furnish/NixOS (`nixos_apps::OutsideService`).
+    fn doc_here(&self, values: &serde_json::Map<String, Value>) -> Value {
+        let mut doc = self.doc_for(values);
+        if let Some(furnish) = doc["metadata"]["furnish"].as_object_mut() {
+            furnish.remove(crate::nixos_apps::OUTSIDE_SERVICE_KEY);
+            if let Some(why) = self.outside_service(values) {
+                furnish.insert(crate::nixos_apps::OUTSIDE_SERVICE_KEY.into(), serde_json::to_value(why).unwrap_or_default());
+            }
+        }
+        doc
+    }
+
+    /// Why this process installs the app with these values and not the furnish service (`None`:
+    /// this is the service, or the service installs it).
+    fn outside_service(&self, values: &serde_json::Map<String, Value>) -> Option<crate::nixos_apps::OutsideService> {
+        outside_service(crate::service::in_service(), crate::service::enabled(), self.managed, &self.collection, &self.id, || self.per_user(values))
+    }
+
     /// The resources that apply on this computer with the current option values, as the engine
     /// filters them (see `engine::applies_here`).
     pub fn resources_here(&self) -> Vec<Value> {
@@ -1346,7 +1385,7 @@ impl App {
     /// Uninstall here with these values: the removal steps, or the resources set to `_exist: false`.
     /// Then the app must no longer test as installed.
     fn remove_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
-        let doc = self.doc_for(values);
+        let doc = self.doc_here(values);
         self.require_removable(&doc)?;
         self.check_out_installers(values)?;
         crate::engine::run(&doc, true, report)?;
@@ -1428,7 +1467,7 @@ impl App {
 
     pub fn install_with(&self, values: &serde_json::Map<String, Value>, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.check_out_installers(values)?;
-        let doc = self.doc_for(values);
+        let doc = self.doc_here(values);
         crate::engine::run(&doc, false, report)?;
         self.require_installed(&doc)?;
         let state = self.state_dir(values);
@@ -1583,7 +1622,7 @@ impl App {
             bail!("{} goes back to an earlier version only after installing its current version failed", self.id);
         }
         let earlier = self.earlier(&version, values)?;
-        let doc = earlier.doc_for(values);
+        let doc = earlier.doc_here(values);
         crate::engine::run(&doc, false, report)?;
         earlier.require_installed(&doc)?;
         crate::options::remember(&state, &self.key(), values)?;
@@ -1830,6 +1869,17 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn why_the_service_doesnt_install_an_app_is_decided_here() {
+        use crate::nixos_apps::OutsideService;
+        let why = |in_service, service, managed, per_user| outside_service(in_service, service, managed, "mine", "htop", || per_user);
+        assert_eq!(why(true, false, false, true), None, "the service itself");
+        assert_eq!(why(false, false, true, false), Some(OutsideService::Off), "no service section in the policy");
+        assert_eq!(why(false, true, false, false), Some(OutsideService::NotPreset { collection: "mine".into() }));
+        assert_eq!(why(false, true, true, true), Some(OutsideService::PerUser { app: "htop".into() }));
+        assert_eq!(why(false, true, true, false), None, "through the service");
+    }
 
     #[test]
     fn only_collections_an_endpoint_lists_anew_are_added_by_the_rules_for_adding() {

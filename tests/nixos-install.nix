@@ -2,8 +2,9 @@
 # furnish writes the app into its local flake, updates furnish/apps in alice's flake.lock and
 # builds the system as alice, makes it the system the computer starts next (rebuild = "boot"), and
 # commits flake.lock because her repository had no other changes. bob may not have alice's
-# configuration rebuilt, an option outside the allowlist is refused, and an uninstall with other
-# changes in the repository leaves flake.lock uncommitted. Run:
+# configuration rebuilt, an option outside the allowlist is refused, an app from a collection alice
+# added herself is refused with a message that names it, and an uninstall with other changes in
+# the repository leaves flake.lock uncommitted. Run:
 #   nix build -L .#checks.x86_64-linux.nixos-install
 { pkgs, nixpkgs, nixosModule, furnish, module }:
 let
@@ -92,6 +93,19 @@ pkgs.testers.runNixOSTest {
     # An option outside services.furnish.nix.allowedOptions: refused, nothing changes.
     out = machine.fail("su - alice -c 'furnish install sshd' 2>&1")
     assert "allowedOptions" in out, out
+    assert list(apps()) == ["htop"] and system() == "${after}"
+
+    # From a collection alice added herself: the service installs only preset collections' apps,
+    # and the refusal names the collection and what the administrator can do (#22).
+    machine.succeed(
+        "mkdir -p /srv/mine/apps",
+        "cp ${app "mytop" { packages = [ "hello" ]; }} /srv/mine/apps/mytop.dsc.yaml",
+        "chown -R alice /srv/mine",
+    )
+    machine.succeed("su - alice -c 'cd /srv/mine && git init -q && git add -A && git commit -qm apps'")
+    machine.succeed("su - alice -c 'furnish collection add /srv/mine'")
+    out = machine.fail("su - alice -c 'furnish install mytop' 2>&1")
+    assert "The collection 'mine' isn't preset" in out and "turn it on" not in out, out
     assert list(apps()) == ["htop"] and system() == "${after}"
 
     # Uninstalling with another change in the repository: flake.lock stays uncommitted.

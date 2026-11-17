@@ -135,7 +135,10 @@
             configuration = entry cfg.nix.configuration;
             flakeAttribute = entry cfg.nix.flakeAttribute;
           };
-          policy = lib.recursiveUpdate (if cfg.policy == null then { } else cfg.policy)
+          # With the service on, furnish sends the preset collections' installs to it: the policy
+          # gets a `service` section (src/service.rs `enabled`), with what `policy.service` sets.
+          policy = lib.recursiveUpdate
+            (lib.recursiveUpdate (lib.optionalAttrs cfg.service.enable { service = { }; }) (if cfg.policy == null then { } else cfg.policy))
             (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
           # What the module knows when the system is built, for furnish (src/nixos.rs). The
           # configuration's folder only comes from the option: in a flake, `self` is a store copy.

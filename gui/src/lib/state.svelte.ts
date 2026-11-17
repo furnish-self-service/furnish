@@ -2,7 +2,7 @@
 import * as api from './api';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 import { applyBranding, type Branding } from './brand';
-import { setLanguage, t, formatDate, lang } from './i18n.svelte';
+import { setLanguage, t, terror, formatDate, lang } from './i18n.svelte';
 import { serverLooks } from './schedule';
 import { contentLanguage, lookup, matches, searchTexts, valueKey } from './content';
 import { urgent, urgentAction } from './required';
@@ -257,7 +257,7 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
     cancelled = message(e) === api.CANCELLED;
     if (cancelled) toast('info', t(`run.cancelled.${kind}`, { app: appName(app) }));
     else {
-      toast('error', t(`run.failed.${kind}`, { app: appName(app) }), message(e));
+      toast('error', t(`run.failed.${kind}`, { app: appName(app) }), terror(message(e)));
       // An earlier version may work (fallback "ask"); none is offered for one furnish fell back to.
       const offer = action === 'install' && !app.held;
       store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };

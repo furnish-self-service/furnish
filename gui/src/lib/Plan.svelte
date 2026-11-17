@@ -5,7 +5,7 @@
   import type { AppInfo, Step } from './api';
   import { store, appName, externalNote, type RunStep } from './state.svelte';
   import { describeCondition } from './conditions';
-  import { t, tparts, parts, formatTime, formatDuration } from './i18n.svelte';
+  import { t, terror, tparts, parts, formatTime, formatDuration } from './i18n.svelte';
   import { dictionaries, type Key } from './i18n.ts';
 
   let { app }: { app: AppInfo } = $props();
@@ -309,7 +309,7 @@
             <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
           {/each}
           {#if row.outcome?.error}
-            <pre class="failure">{row.outcome.error}</pre>
+            <pre class="failure">{terror(row.outcome.error)}</pre>
           {/if}
         </div>
         {#if mode === 'run' && row.state === 'pending' && !running}

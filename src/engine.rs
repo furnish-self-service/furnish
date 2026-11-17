@@ -334,6 +334,8 @@ pub fn init(dir: &Path) -> Result<()> {
             env::set_var("FURNISH_EXE", exe);
         }
         env::set_var("FURNISH_SERVICE", if in_service { "1" } else { "" });
+        // Why the running operation's steps run here and not in the service (`configurator`).
+        env::set_var(crate::nixos_apps::OUTSIDE_SERVICE, "");
         // The settings in effect and what furnish detected (FURNISH_CONFIG__*, FURNISH_DETECTED__*).
         crate::resource_env::init();
     }
@@ -1187,6 +1189,7 @@ fn configurator(doc: &Value) -> Result<Configurator> {
     ensure_own_resources()?;
     // A setting changed in the app applies to the next step.
     crate::resource_env::refresh();
+    crate::nixos_apps::pass_outside_service(doc);
     let mut doc = doc.clone();
     // furnish's own property for required versions (see `crate::required`); DSC doesn't know it.
     crate::required::strip(&mut doc["resources"]);

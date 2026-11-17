@@ -74,7 +74,7 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 
 ### Furnish/NixOS
 
-Adds packages and options to the computer's NixOS configuration and rebuilds the system, through the furnish service, or to the person's Home Manager configuration and activates it. The configuration has to be a flake set up for it (see [NixOS](admins.md#installing-apps-into-the-configuration) and [Home Manager](admins.md#installing-apps-into-home-manager)); otherwise the app shows "Needs ...".
+Adds packages and options to the computer's NixOS configuration and rebuilds the system, through the furnish service, or to the person's Home Manager configuration and activates it. The configuration has to be a flake set up for it (see [NixOS](admins.md#installing-apps-into-the-configuration) and [Home Manager](admins.md#installing-apps-into-home-manager)); otherwise the app shows "Needs ...". Only the furnish service changes the NixOS configuration, and it installs only the apps of the collections the administrator presets. An app from another collection can go only into a standalone Home Manager configuration.
 
 ```yaml
 - name: htop

@@ -730,6 +730,60 @@ pub fn may_rebuild(chain: &Chain, requester: u32) -> Result<u32> {
     Ok(*owner)
 }
 
+/// Why furnish runs an app's steps itself instead of the furnish service, as `catalog` decides
+/// it. The app's document carries it (`OUTSIDE_SERVICE_KEY` in `metadata.furnish`), and the
+/// engine passes it to the resources as `OUTSIDE_SERVICE` (`pass_outside_service`), so the
+/// refusal to change the NixOS configuration names the actual reason.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum OutsideService {
+    /// The policy has no `service` section (on NixOS: `services.furnish.service.enable` is off).
+    Off,
+    /// The service installs only the apps of preset collections, and this collection isn't one.
+    NotPreset { collection: String },
+    /// The app installs for each person (`perUser`), so its steps run as the person.
+    PerUser { app: String },
+}
+
+/// The variable with the `OutsideService` of the running operation, as JSON (empty: unknown).
+pub const OUTSIDE_SERVICE: &str = "FURNISH_OUTSIDE_SERVICE";
+/// Its key in the document's `metadata.furnish`.
+pub const OUTSIDE_SERVICE_KEY: &str = "outsideService";
+
+/// Sets `OUTSIDE_SERVICE` from a document before DSC runs it. The variable exists since
+/// `engine::init`, so this only replaces its value in place, as `resource_env::refresh` does.
+pub fn pass_outside_service(doc: &Value) {
+    let value = match &doc["metadata"]["furnish"][OUTSIDE_SERVICE_KEY] {
+        Value::Null => String::new(),
+        v => v.to_string(),
+    };
+    if std::env::var(OUTSIDE_SERVICE).unwrap_or_default() != value {
+        // SAFETY: the name exists since `engine::init` (see above); only the engine's running
+        // operation changes it.
+        unsafe { std::env::set_var(OUTSIDE_SERVICE, value) };
+    }
+}
+
+/// Why furnish doesn't change the NixOS configuration outside the furnish service, and what the
+/// administrator can do. The desktop app translates these texts (gui/src/lib/i18n.ts,
+/// `knownError`): keep them in step.
+pub fn service_only(why: Option<&OutsideService>) -> String {
+    match why {
+        Some(OutsideService::NotPreset { collection }) => format!(
+            "only the furnish service changes the NixOS configuration, and it installs only the apps of preset collections. \
+             The collection '{collection}' isn't preset: ask your administrator to preset it (services.furnish.policy.collections.preset) \
+             or to list its furnish address in the policy (services.furnish.policy.endpoints), and, unless you're an administrator, \
+             to set services.furnish.policy.service.allowedGroup to a group you're in"
+        ),
+        Some(OutsideService::PerUser { app }) => format!(
+            "only the furnish service changes the NixOS configuration, and {app} installs for each person (perUser), so furnish runs its steps as you"
+        ),
+        Some(OutsideService::Off) | None => {
+            "only the furnish service changes the NixOS configuration: ask your administrator to turn it on (services.furnish.service.enable)".into()
+        }
+    }
+}
+
 /// Prints a log line for furnish (DSC passes the resource's stderr lines on).
 fn info(message: &str) {
     eprintln!("{}", json!({ "info": message }));
@@ -818,7 +872,8 @@ fn owner_write(owner: &Account, path: &Path, bytes: &[u8]) -> Result<()> {
 /// or the person's part for `Place::HomeNixos`) and rebuild the system.
 fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> Result<()> {
     if !in_service() {
-        bail!("only the furnish service changes the NixOS configuration: ask your administrator to turn it on (services.furnish.service.enable)");
+        let why = std::env::var(OUTSIDE_SERVICE).ok().and_then(|v| serde_json::from_str(&v).ok());
+        bail!("{}", service_only(why.as_ref()));
     }
     let entry = desired.entry(place);
     if desired.exist {
@@ -1057,6 +1112,34 @@ mod tests {
         assert!(may_rebuild(&under_bob, 1000).is_err(), "bob could swap the folder");
         let tmp: Chain = vec![("/tmp/cfg".into(), 1000, 0o755), ("/tmp".into(), 0, 0o1777), ("/".into(), 0, 0o755)];
         assert!(may_rebuild(&tmp, 1000).is_err());
+    }
+
+    #[test]
+    fn the_refusal_outside_the_service_names_the_reason() {
+        // gui/src/lib/i18n.test.ts translates these texts: keep both in step.
+        let off = service_only(Some(&OutsideService::Off));
+        assert_eq!(
+            off,
+            "only the furnish service changes the NixOS configuration: ask your administrator to turn it on (services.furnish.service.enable)"
+        );
+        assert_eq!(service_only(None), off, "unknown: resources run by DSC itself");
+        let mine = OutsideService::NotPreset { collection: "mine".into() };
+        assert_eq!(
+            service_only(Some(&mine)),
+            "only the furnish service changes the NixOS configuration, and it installs only the apps of preset collections. \
+             The collection 'mine' isn't preset: ask your administrator to preset it (services.furnish.policy.collections.preset) \
+             or to list its furnish address in the policy (services.furnish.policy.endpoints), and, unless you're an administrator, \
+             to set services.furnish.policy.service.allowedGroup to a group you're in"
+        );
+        assert_eq!(
+            service_only(Some(&OutsideService::PerUser { app: "acme-ssh".into() })),
+            "only the furnish service changes the NixOS configuration, and acme-ssh installs for each person (perUser), so furnish runs its steps as you"
+        );
+        // As the engine passes it (OUTSIDE_SERVICE) and the document carries it.
+        let json = serde_json::to_string(&mine).unwrap();
+        assert_eq!(json, r#"{"reason":"notPreset","collection":"mine"}"#);
+        assert_eq!(serde_json::from_str::<OutsideService>(&json).unwrap(), mine);
+        assert_eq!(serde_json::to_string(&OutsideService::Off).unwrap(), r#"{"reason":"off"}"#);
     }
 
     #[test]
