@@ -164,7 +164,8 @@
         let
           cfg = config.services.furnish;
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          entry = value: { inherit value; locked = cfg.nix.lock; };
+          # Module first: what the configuration says wins over people's own setting.
+          entry = value: { inherit value; locked = true; };
           nixos = lib.filterAttrs (_: v: v.value != null) {
             configuration = entry cfg.nix.configuration;
             flakeAttribute = entry cfg.nix.flakeAttribute;
@@ -206,11 +207,6 @@
                 defaultText = lib.literalExpression "config.networking.hostName";
                 description = "Name in the flake's nixosConfigurations.";
                 example = "alex-laptop";
-              };
-              lock = lib.mkOption {
-                type = lib.types.bool;
-                default = false;
-                description = "Users can't change the two values above (otherwise they are only defaults).";
               };
             };
           };

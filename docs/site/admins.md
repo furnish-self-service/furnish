@@ -289,11 +289,10 @@ Tell furnish where the configuration is through the module:
 services.furnish.nix = {
   configuration = "/home/alex/cfg";  # a string, so it stays the real folder and not a copy in the Nix store
   flakeAttribute = "alex-laptop";    # default: networking.hostName
-  lock = true;                       # without it, both are defaults people can change
 };
 ```
 
-The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`. It also writes `/etc/furnish/nixos.json` with what it knows when the system is built: the host name, `system.configurationRevision` if set, whether Home Manager's NixOS module is in use, and its own version. It restarts the furnish service when the policy changes. A flake can't name its own folder, because Nix evaluates a copy in the store, so the folder only comes from this option. People see the result on the Settings page and with `furnish settings`.
+The module writes these to `osSpecific.nixos` in `/etc/furnish/policy.json`, together with `services.furnish.policy`. It also writes `/etc/furnish/nixos.json` with what it knows when the system is built: the host name, `system.configurationRevision` if set, whether Home Manager's NixOS module is in use, and its own version. It restarts the furnish service when the policy changes. A flake can't name its own folder, because Nix evaluates a copy in the store, so the folder only comes from this option. Both values win over people's own setting, which the Settings page then shows as read-only. People see the result on the Settings page and with `furnish settings`.
 
 Without the option, people can set the folder in the app. Without either, furnish searches, in this order, and takes the first configuration that passes a quick check:
 

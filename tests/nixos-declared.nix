@@ -10,7 +10,7 @@ pkgs.testers.runNixOSTest {
     imports = [ module ];
     services.furnish.enable = true;
     # Not there at first: furnish ignores it and looks in /etc/nixos.
-    services.furnish.nix = { configuration = "/etc/fleet"; flakeAttribute = "fleet"; lock = true; };
+    services.furnish.nix = { configuration = "/etc/fleet"; flakeAttribute = "fleet"; };
     users.users.alice.isNormalUser = true;
     environment.systemPackages = [ pkgs.jq pkgs.git ];
     nix.settings.experimental-features = [ "nix-command" "flakes" ];
