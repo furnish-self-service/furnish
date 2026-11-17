@@ -899,14 +899,13 @@ impl Collection {
 
     /// The last `n` commits that changed the file, newest first. Not those that deleted it.
     fn changes(&self, relative: &str, n: usize) -> Vec<(String, i64, String)> {
-        let count = format!("-{n}");
-        let out = git(Some(&self.dir), &["log", &count, "--no-renames", "--diff-filter=d", "--format=%H %ct %cs", "--", relative]).unwrap_or_default();
-        out.lines().filter_map(parse_commit_line).collect()
+        self.file_history(relative).into_iter().take(n).map(|(commit, time, day, _)| (commit, time, day)).collect()
     }
 
     /// Every commit in the history kept that changed the file (not those that deleted it),
     /// newest first: (commit, time, day, the file's blob id there).
     fn file_history(&self, relative: &str) -> Vec<(String, i64, String, String)> {
+        // --raw: before git 2.48, --diff-filter without a diff output shows no commits at all.
         let args = ["log", "--no-renames", "--diff-filter=d", "--raw", "--no-abbrev", "--format=%H %ct %cs", "--", relative];
         let out = git(Some(&self.dir), &args).unwrap_or_default();
         let mut history: Vec<(String, i64, String, String)> = Vec::new();

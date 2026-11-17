@@ -103,22 +103,23 @@ short() { echo "$1" | cut -c1-7; }
 v2=$(git -C /tmp/org log --format=%H --grep='^v2$')
 v3=$(git -C /tmp/org log --format=%H --grep='^v3, broken$')
 out=$(furnish versions tool 2>&1) || fail "listing the versions failed: $out"
-[ "$(echo "$out" | grep -c "$(date +%F)")" = 4 ] || fail "not the four versions of tool: $out"
+# v2 changed only the installer, not the app's file: v1, v3 and v4 are versions.
+[ "$(echo "$out" | grep -c "$(date +%F)")" = 3 ] || fail "not the three versions of tool: $out"
+echo "$out" | grep -q "$(short "$v2")" && fail "a commit that left the app's file alone is listed: $out"
 echo "$out" | grep "$(short "$(git -C /tmp/org rev-parse HEAD)")" | grep "✓" | grep -q current || fail "the current version isn't marked installed: $out"
-echo "$out" | grep -q "$(short "$(git -C /tmp/org rev-parse HEAD~1)")" && fail "a commit that didn't change tool is listed: $out"
 out=$(furnish install tool --version "$(date +%F)" 2>&1) && fail "a day with several versions installed one: $out"
 echo "$out" | grep -q "give the commit instead" || fail "unexpected message: $out"
-furnish install tool --version "$(short "$v2")" >/dev/null || fail "installing the version from v2 failed"
-[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 2.0 ] || fail "not at 2.0"
+furnish install tool --version "$(short "$v1")" >/dev/null || fail "installing the version from v1 failed"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 1.0 ] || fail "not at 1.0"
 furnish list | grep "tool" | grep -q "the version you chose" || fail "not shown as chosen: $(furnish list 2>&1)"
-furnish versions tool | grep "$(short "$v2")" | grep -q "✓" || fail "the chosen version isn't marked installed: $(furnish versions tool)"
+furnish versions tool | grep "$(short "$v1")" | grep -q "✓" || fail "the chosen version isn't marked installed: $(furnish versions tool)"
 furnish upgrade | grep -q "Nothing to update" || fail "upgrade moves a chosen version"
-deb 5.0; app installers/tool.deb; commit "v5"
+deb 5.0 tool tool5.deb; app installers/tool5.deb; commit "v5"
 furnish collection update org >/dev/null
 furnish list | grep "tool" | grep -q "the version you chose" || fail "a change to the app ended the hold: $(furnish list 2>&1)"
 furnish upgrade | grep -q "Nothing to update" || fail "upgrade moved a chosen version after a change"
-[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 2.0 ] || fail "not at 2.0 anymore"
-[ -n "$(ls "$FURNISH_DATA_DIR/versions/org/$v2" 2>/dev/null)" ] || fail "files of the chosen version not kept"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-tool)" = 1.0 ] || fail "not at 1.0 anymore"
+[ -n "$(ls "$FURNISH_DATA_DIR/versions/org/$v1" 2>/dev/null)" ] || fail "files of the chosen version not kept"
 out=$(furnish install tool --version "$(short "$v3")" 2>&1) && fail "the broken version installed"
 furnish list | grep "tool" | grep -q "the version you chose" || fail "a failed choice ended the hold"
 furnish install tool --current >/dev/null || fail "going back to the current version failed"
@@ -126,7 +127,7 @@ furnish install tool --current >/dev/null || fail "going back to the current ver
 furnish list | grep "tool" | grep -q "held" && fail "still held after --current"
 [ -z "$(ls "$FURNISH_DATA_DIR/versions/org" 2>/dev/null)" ] || fail "files of the chosen version left behind: $(ls "$FURNISH_DATA_DIR/versions/org")"
 furnish collection settings org --choose-version false | grep -q "choose a version:  no" || fail "setting not shown"
-out=$(furnish install tool --version "$(short "$v2")" 2>&1) && fail "a version was chosen while choosing is off"
+out=$(furnish install tool --version "$(short "$v1")" 2>&1) && fail "a version was chosen while choosing is off"
 echo "$out" | grep -q "turned off" || fail "unexpected message: $out"
 furnish install tool --version "$(short "$(git -C /tmp/org rev-parse HEAD)")" >/dev/null || fail "the current version is refused while choosing is off"
 furnish collection settings org --choose-version true >/dev/null
@@ -171,7 +172,7 @@ out=$(furnish install aged --version "$(short "$aged1")" 2>&1) && fail "chose a 
 echo "$out" | grep -q "more than 7 days older" || fail "unexpected message: $out"
 
 echo "== admins can lock it off"
-furnish install tool --version "$(short "$v2")" >/dev/null || fail "choosing the version from v2 again failed"
+furnish install tool --version "$(short "$v1")" >/dev/null || fail "choosing the version from v1 again failed"
 mkdir -p /etc/furnish && printf '{"collectionSettings": {"org": {"fallback": {"value": "off", "locked": true}, "chooseVersion": {"value": false, "locked": true}}}}' > /etc/furnish/policy.json
 out=$(furnish versions tool 2>&1) && fail "versions listed while choosing is locked off"
 echo "$out" | grep -q "turned off" || fail "unexpected message: $out"

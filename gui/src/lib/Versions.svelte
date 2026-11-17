@@ -44,11 +44,13 @@
           {#if v.stated?.length}<span class="stated">{t('versions.stated', { versions: describeNeeds(lang(), v.stated) })}</span>{/if}
         </span>
         <span class="commit">{v.commit.slice(0, 7)}</span>
-        {#if !installedVersion(v)}
-          <button class="secondary" disabled={isPending(app.key)} onclick={() => installVersion(app, v.commit)}>
-            {isPending(app.key) ? t('common.installing') : t('versions.install')}
-          </button>
-        {/if}
+        <span class="act">
+          {#if !installedVersion(v)}
+            <button class="secondary" disabled={isPending(app.key)} onclick={() => installVersion(app, v.commit)}>
+              {isPending(app.key) ? t('common.installing') : t('versions.install')}
+            </button>
+          {/if}
+        </span>
       </li>
     {/each}
   </ul>
@@ -72,7 +74,9 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem 1rem;
-    min-height: 2.4rem;
+    /* As tall with or without the Install button, so the rows line up. */
+    box-sizing: border-box;
+    min-height: 3.5rem;
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--line);
   }
@@ -106,6 +110,12 @@
   .commit {
     font: 0.78rem var(--font-mono);
     color: var(--muted);
+  }
+  /* The same width in every row, so the commits line up. */
+  .act {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 6rem;
   }
   .empty {
     color: var(--muted);

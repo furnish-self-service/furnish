@@ -46,9 +46,10 @@ case "$file" in
     id=$(dpkg-deb -f -- "$file" Package)
     via=apt
     installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' -- "$id" 2>/dev/null | sed -n 's/^installed //p'; }
-    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y -- "$file"; }
+    # --allow-downgrades: the collection's file is the version wanted, also an earlier one.
+    do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades -- "$file"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$id"; }
-    install_desc="apt-get install -y $file" remove_desc="apt-get remove -y $id"
+    install_desc="apt-get install -y --allow-downgrades $file" remove_desc="apt-get remove -y $id"
     # A different version in the collection's file is an update: installing the file brings it.
     latest_version() { dpkg-deb -f -- "$file" Version; }
     newer_version() { v=$(latest_version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
@@ -66,14 +67,14 @@ case "$file" in
         install_desc="dnf install -y $file" remove_desc="dnf remove -y $id"
     elif command -v zypper >/dev/null 2>&1; then
         via=zypper
-        do_install() { run_step zypper --non-interactive install --allow-unsigned-rpm -- "$file"; }
+        do_install() { run_step zypper --non-interactive install --allow-unsigned-rpm --oldpackage -- "$file"; }
         do_remove() { run_step zypper --non-interactive remove -- "$id"; }
         install_desc="zypper install $file" remove_desc="zypper remove $id"
     else
         via=rpm
-        do_install() { run_step rpm -U -- "$file"; }
+        do_install() { run_step rpm -U --oldpackage -- "$file"; }
         do_remove() { run_step rpm -e -- "$id"; }
-        install_desc="rpm -U $file" remove_desc="rpm -e $id"
+        install_desc="rpm -U --oldpackage $file" remove_desc="rpm -e $id"
     fi
     ;;
 *.pkg)
