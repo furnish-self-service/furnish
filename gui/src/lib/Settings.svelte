@@ -53,7 +53,7 @@
   // furnish installs apps into the configuration once its flake.nix has these (src/nixos_apps.rs).
   const appsLines = 'inputs.furnish.inputs.nixpkgs.follows = "nixpkgs";\ninputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";';
   // Set (or with null, forget) a NixOS setting, then show what furnish finds with it.
-  async function saveNixos(name: 'configuration' | 'flakeAttribute', value: string | null) {
+  async function saveNixos(name: 'configuration' | 'flakeAttribute' | 'installInto', value: string | null) {
     try {
       await api.setNixosSetting(name, value);
       if (name === 'configuration') nixosPath = '';
@@ -446,6 +446,38 @@
             {#if nixos.homeManagerConfiguration}<span class="desc"><code class="path">{nixos.homeManagerConfiguration.path}</code></span>{/if}
           </span>
           <span class="control value">{t(nixos.homeManager || nixos.homeManagerConfiguration ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
+        </li>
+        {#if nixos.homeHint}
+          {@const lines = nixos.homeHint.lines.join('\n')}
+          <li class="row">
+            <span class="text">
+              <span class="label">{t('nixos.homeApps')}</span>
+              <span class="desc">{t(`nixos.homeAppsText.${nixos.homeHint.kind}`)}</span>
+            </span>
+            <span class="control">
+              <code class="path snippet">{lines}</code>
+              <button class="secondary" onclick={() => copySnippet(lines)}>{copied === lines ? t('common.copied') : t('common.copy')}</button>
+            </span>
+          </li>
+        {/if}
+        <li class="row">
+          <label class="text" for="nixos-install-into">
+            <span class="label">{t('nixos.installInto')}</span>
+            <span class="desc">{t('nixos.installIntoText')}</span>
+          </label>
+          <span class="control">
+            {#if chosen.installInto?.locked}<span class="org">{t('common.setByOrg')}</span>{/if}
+            <select
+              id="nixos-install-into"
+              value={chosen.installInto?.setBy === 'user' || chosen.installInto?.locked ? chosen.installInto.value : ''}
+              disabled={chosen.installInto?.locked}
+              onchange={(e) => saveNixos('installInto', e.currentTarget.value || null)}
+            >
+              <option value="">{t('nixos.installIntoAutomatic', { place: t(`nixos.installInto.${nixos.installInto}`) })}</option>
+              <option value="system">{t('nixos.installInto.system')}</option>
+              <option value="home">{t('nixos.installInto.home')}</option>
+            </select>
+          </span>
         </li>
       </ul>
       <p class="note">

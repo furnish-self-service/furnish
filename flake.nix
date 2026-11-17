@@ -143,6 +143,13 @@
             hostName = config.networking.hostName;
             configurationRevision = config.system.configurationRevision;
             homeManagerModule = options ? home-manager;
+            # Per person with Home Manager: whether furnish's Home Manager module is on, and the
+            # options apps may set there. From here, not from the person's home folder, which
+            # they could change.
+            homeManagerUsers = lib.optionalAttrs (options ? home-manager) (lib.mapAttrs (_: u: {
+              inherit (u.services.furnish) enable;
+              inherit (u.services.furnish.nix) allowedOptions;
+            }) config.home-manager.users);
             moduleVersion = packages.furnish.version;
             nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions rebuild; };
           };
@@ -186,7 +193,13 @@
               };
             };
           };
-          config = lib.mkIf cfg.enable (lib.mkMerge ([{
+          config = lib.mkIf cfg.enable (lib.mkMerge ([
+          # With Home Manager's NixOS module: furnish's Home Manager module for every person, so
+          # the configuration needs no line for it (services.furnish.enable there turns it on).
+          (lib.optionalAttrs (options ? home-manager) {
+            home-manager.sharedModules = [ (homeManagerModule { inherit apps home-apps; }) ];
+          })
+          {
             environment.systemPackages = [ packages.furnish packages.furnish-gui ] ++ appPackages;
             # Nix packages the furnish service installs for everyone (Furnish/Package as root).
             environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
@@ -227,7 +240,11 @@
       # The Home Manager module, with the apps from furnish's local flakes: the person's own
       # (`home-apps`, standalone Home Manager) and the system's (`apps`, under homes.<user>, for
       # Home Manager as a NixOS module, where the furnish service installs them).
-      homeManagerModule = { apps, home-apps }: args@{ config, lib, pkgs, ... }:
+      # The key lets Nix import it once when a configuration also lists it itself.
+      homeManagerModule = { apps, home-apps }: {
+        key = "furnish#homeManagerModules.default";
+        _file = "furnish/flake.nix#homeManagerModules.default";
+        imports = [ (args@{ config, lib, pkgs, ... }:
         let
           cfg = config.services.furnish;
           user = config.home.username;
@@ -282,7 +299,8 @@
               message = "furnish: an app sets ${s.name}, which isn't in services.furnish.nix.allowedOptions";
             }) appSettings;
           }] ++ map (s: lib.mkIf (s.mine && allowed s.name) (lib.setAttrByPath (lib.splitString "." s.name) s.value)) definitions));
-        };
+        }) ];
+      };
     in {
       packages = forAll (pkgs: let r = rust pkgs; in rec {
         dsc-resources = dscResources pkgs;
@@ -372,9 +390,19 @@
         };
         # NixOS VM: apps from furnish's local flake in a person's data folder end up in their
         # standalone Home Manager configuration.
-        home-manager = import ./tests/home-manager.nix { inherit pkgs nixpkgs homeManagerModule; furnish = self; };
+        home-manager = import ./tests/home-manager.nix {
+          inherit pkgs nixpkgs homeManagerModule;
+          furnish = self;
+          module = self.nixosModules.default;
+        };
         # Evaluation: Home Manager as a NixOS module gets each person's apps from the system's flake.
-        home-manager-nixos = import ./tests/home-manager-nixos.nix { inherit pkgs nixpkgs nixosModule homeManagerModule; furnish = self; };
+        home-manager-nixos = import ./tests/home-manager-nixos.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
+        # NixOS VM: installing an app into Home Manager as a NixOS module, through the service.
+        home-manager-nixos-install = import ./tests/home-manager-nixos-install.nix {
+          inherit pkgs nixpkgs nixosModule;
+          furnish = self;
+          module = self.nixosModules.default;
+        };
       });
     };
 }

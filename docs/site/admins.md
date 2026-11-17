@@ -35,7 +35,7 @@ An admin policy decides which collections people get and what they can change. f
 - `parameters`: values for options and answers to questions, per collection or per app (`acme-it/gimp`), as defaults or `locked`. A question answered here isn't asked.
 - `collectionSettings`: values for one collection of the settings in [Disk use and earlier versions](#disk-use-and-earlier-versions), as defaults or `locked`.
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
-- `osSpecific`: settings for one operating system, grouped by system. Each value is a plain default or `{ "value": …, "locked": true }`, and furnish checks each one on its own. NixOS has `configuration`, `flakeAttribute` and `homeManagerConfiguration`; see [NixOS](#nixos).
+- `osSpecific`: settings for one operating system, grouped by system. Each value is a plain default or `{ "value": …, "locked": true }`, and furnish checks each one on its own. NixOS has `configuration`, `flakeAttribute`, `homeManagerConfiguration` and `installInto`; see [NixOS](#nixos).
 - `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own, such as `Furnish/Package`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
 ## Starting at sign-in
@@ -309,7 +309,7 @@ Without the option, people can set the folder in the app. Without either, furnis
 
 The check reads the file and evaluates nothing. A `flake.nix` must mention `nixosConfigurations` and the flake attribute. A folder someone set only has to contain a `flake.nix` or `configuration.nix`. If the system reports `system.configurationRevision`, furnish compares it with the folder's git commit and says when they differ. When furnish found the folder by searching, the Settings page offers the line to add to the configuration. Folders such as `~/nixos-config` or `~/dotfiles` are only offered as suggestions.
 
-The Home Manager configuration comes from `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
+The Home Manager configuration comes from furnish's Home Manager module (`services.furnish.nix.configuration` there, see [Installing apps into Home Manager](#installing-apps-into-home-manager)), `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
 
 The furnish service ignores people's own settings for this. It takes the location from the policy or from places only root can change, such as `/etc/nixos`. The folder there can still belong to a person, for example when `/etc/nixos/flake.nix` links into a home folder. furnish passes the folder's owner to its resources (see [Settings available to resources](collections.md#settings-available-to-resources)), so a rebuild as root can refuse a configuration that isn't root's (see [Installing apps into the configuration](#installing-apps-into-the-configuration)).
 
@@ -356,3 +356,54 @@ nix.settings.extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPA
 
 Without the cache, and for revisions other than `main`, Nix builds furnish from source. The CLI and the desktop app share one build of their Rust dependencies, so furnish's dependencies are compiled once.
 
+### Installing apps into Home Manager
+
+People who keep their programs in Home Manager can get furnish's apps there instead of in the system. furnish's flake has a Home Manager module for this, `homeManagerModules.default`. With the module set up for a person, apps with a `Furnish/NixOS` resource go into their Home Manager configuration. The setting `osSpecific.nixos.installInto` (`system` or `home`) overrides this, in the policy or on the Settings page. If an app only has options for one of the two (`options` for NixOS, `homeOptions` for Home Manager, see [Writing a collection](collections.md#furnishnixos)), it goes there if that is set up, and otherwise shows "Needs ...".
+
+#### Standalone Home Manager
+
+Add to the Home Manager configuration's `flake.nix`:
+
+```nix
+inputs.furnish.url = "github:furnish-self-service/furnish";
+inputs.furnish.inputs.nixpkgs.follows = "nixpkgs";
+inputs.furnish.inputs.home-apps.url = "path:/home/alice/.local/share/furnish/home-apps";
+
+homeConfigurations.alice = home-manager.lib.homeManagerConfiguration {
+  inherit pkgs;
+  modules = [ furnish.homeManagerModules.default ./home.nix ];
+};
+```
+
+and to `home.nix`:
+
+```nix
+services.furnish.enable = true;
+services.furnish.nix.configuration = "/home/alice/.config/home-manager";  # the folder with flake.nix
+services.furnish.nix.allowedOptions = [ "programs.*.enable" ];             # optional
+```
+
+`~/.local/share/furnish/home-apps` (in `$XDG_DATA_HOME` if set) is the person's own small flake with the apps furnish installed for them. furnish creates it when it shows the lines, on the Settings page and with `furnish settings`, so the first `nix flake lock` finds it. A flake input can't use `~`, so the line has the full path. The module adds the apps' packages to `home.packages`. Without `services.furnish.nix.configuration`, furnish looks in `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` and `~/.config/home-manager`. `services.furnish.nix.flakeAttribute` is the name in `homeConfigurations`, by default the user name.
+
+An install runs entirely as the person, also when the furnish service runs it for them, and needs no administrator rights. furnish writes the app into the person's `apps.json`, runs `nix flake update furnish/home-apps`, builds the generation and activates it, as `home-manager switch` does. It commits `flake.lock` if the repository had no other changes, and puts `apps.json` and `flake.lock` back if the build fails.
+
+#### Home Manager as a NixOS module
+
+With Home Manager's NixOS module in the configuration, furnish's NixOS module adds its Home Manager module for everyone. Turn it on per person, with the options apps may set for them:
+
+```nix
+home-manager.users.alice.services.furnish = {
+  enable = true;
+  nix.allowedOptions = [ "programs.*.enable" ];
+};
+```
+
+The person's apps go into the system's `/var/lib/furnish/apps`, under their user name, and the service rebuilds the system as described above, with the same rules: it needs the service and the `furnish/apps` input line, and a configuration that belongs to a person is rebuilt only when that person or root asks. Each person gets only their own apps. furnish takes the allowlist from the NixOS configuration (`/etc/furnish/nixos.json`), not from the person's home folder.
+
+In both cases, an app may set only the Home Manager options in `services.furnish.nix.allowedOptions` of the Home Manager configuration, and the module refuses to build a configuration with another one. Packages always come from the configuration's nixpkgs.
+
+The module keeps furnish's own source in the generation. Standalone Home Manager doesn't keep nixpkgs or Home Manager itself, so after a garbage collection, building offline fails until Nix can download them again. To keep them too, pass the inputs to the configuration (`extraSpecialArgs = { inherit nixpkgs home-manager; };`) and add:
+
+```nix
+home.extraDependencies = [ nixpkgs home-manager ];
+```

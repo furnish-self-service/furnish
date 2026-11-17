@@ -244,6 +244,25 @@ jobs:
           skipPush: true
       - run: nix build -L .#checks.x86_64-linux.home-manager .#checks.x86_64-linux.home-manager-nixos
 
+  home-manager-nixos:
+    name: NixOS VM (apps in Home Manager as a NixOS module)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Let the runner use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: system-features = nixos-test benchmark big-parallel kvm
+      # Reads furnish's dependencies from the cache (see the flake job); pushes nothing.
+      - uses: cachix/cachix-action@v17
+        with:
+          name: furnish
+          skipPush: true
+      - run: nix build -L .#checks.x86_64-linux.home-manager-nixos-install
+
   flake:
     name: Nix flake (CLI and desktop app)
     runs-on: ubuntu-latest
@@ -464,7 +483,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write

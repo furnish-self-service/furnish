@@ -1,19 +1,32 @@
-# NixOS VM test: apps from furnish's local flake in alice's data folder reach her standalone
-# Home Manager configuration through the nested input furnish/home-apps, here by hand. alice runs
-# `nix flake update furnish/home-apps` in her configuration; it changes only that entry of
-# flake.lock, and building and activating the configuration (what `home-manager switch` does, without
-# its news, which would need a build) gives the generation the test built beforehand with the same
-# apps. Everything runs as alice. The VM is offline. Run:
+# NixOS VM test: alice installs apps with a Furnish/NixOS resource into her standalone Home Manager
+# configuration, through furnish and without the service. `furnish settings` shows the lines her
+# flake.nix needs and creates furnish's local flake in her data folder, which the furnish/home-apps
+# input points at. An install writes the app there, updates only that entry of flake.lock, builds
+# and activates the generation the test built beforehand with the same apps, and commits
+# flake.lock. An option outside her allowlist is refused, an app with only NixOS options needs the
+# NixOS configuration, and an uninstall with other changes in the repository leaves flake.lock
+# uncommitted. Everything runs as alice. The VM is offline. Run:
 #   nix build -L .#checks.x86_64-linux.home-manager
-{ pkgs, nixpkgs, homeManagerModule, furnish }:
+{ pkgs, nixpkgs, homeManagerModule, furnish, module }:
 let
   h = import ./home-manager/homes.nix { inherit pkgs nixpkgs homeManagerModule furnish; };
   before = h.home { };
-  after = h.home { hello.packages = [ "hello" ]; hello.options."programs.htop.enable" = true; };
+  htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
+  after = h.home { inherit htop; };
+  app = name: properties: pkgs.writeText "${name}.dsc.yaml" (builtins.toJSON {
+    metadata.furnish = { description = name; categories = [ "Test" ]; };
+    resources = [{ inherit name; type = "Furnish/NixOS"; properties = { inherit name; } // properties; }];
+  });
 in
 pkgs.testers.runNixOSTest {
   name = "furnish-home-manager";
   nodes.machine = { lib, ... }: {
+    imports = [ module ];
+    # The organization's collection, installed by each person: no service.
+    services.furnish = {
+      enable = true;
+      policy.collections.preset = [{ name = "org"; url = "/srv/org"; }];
+    };
     users.users.alice.isNormalUser = true;
     environment.systemPackages = [ pkgs.git ];
     nix.settings = {
@@ -30,62 +43,84 @@ pkgs.testers.runNixOSTest {
     def alice(cmd, dir=".config/home-manager"):
         return machine.succeed(f"su - alice -c 'cd {dir} && {cmd}'")
 
+    def furnish(cmd, ok=True):
+        run = machine.succeed if ok else machine.fail
+        out = run(f"su - alice -c 'furnish {cmd}' 2>&1")
+        print(out)
+        return out
+
     def lock():
         return json.loads(alice("cat flake.lock"))
 
-    def build():
-        alice("nix build .#homeConfigurations.alice.activationPackage >&2")
-        return alice("readlink result").strip()
+    def apps():
+        return json.loads(alice("cat apps.json", dir=".local/share/furnish/home-apps"))["apps"]
 
-    def install(apps):
-        """What furnish does: write apps.json in alice's local flake."""
-        doc = json.dumps({"version": 1, "apps": apps})
-        path = "/home/alice/.local/share/furnish/home-apps/apps.json"
-        machine.succeed(f"echo '{doc}' > {path} && chown alice {path}")
+    def generation():
+        return alice("readlink -f ~/.local/state/nix/profiles/home-manager").strip()
 
     machine.wait_for_unit("multi-user.target")
     machine.fail("curl -sS --max-time 5 https://github.com")
-    alice("mkdir -p .local/share/furnish/home-apps .config/home-manager", dir=".")
-    alice("cp ${./nixos-apps/apps-flake.nix} flake.nix", dir=".local/share/furnish/home-apps")
-    install({})
+    machine.succeed(
+        "git config --global user.name t && git config --global user.email t@t",
+        "mkdir -p /srv/org/apps",
+        "cp ${app "htop" { inherit (htop) packages; homeOptions = htop.options; }} /srv/org/apps/htop.dsc.yaml",
+        "cp ${app "git" { homeOptions."programs.git.enable" = true; }} /srv/org/apps/git.dsc.yaml",
+        "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
+        "cd /srv/org && git init -q && git add -A && git commit -qm apps",
+        # Without the service, alice clones the collection herself.
+        "chown -R alice /srv/org",
+    )
+    alice("mkdir -p .config/home-manager", dir=".")
     alice("cp ${h.userFlake} flake.nix && cp ${./home-manager/home.nix} home.nix && chmod u+w *")
+
+    # Before the module is on: furnish shows the lines and creates its local flake.
+    out = furnish("settings")
+    assert 'inputs.furnish.inputs.home-apps.url = "path:/home/alice/.local/share/furnish/home-apps";' in out, out
+    assert "homeManagerModules.default" in out, out
+    assert apps() == {}, apps()
+
     alice("git config --global user.name a && git config --global user.email a@a && git init -q && git add -A")
     alice("nix flake lock >&2 && git add -A && git commit -qm config")
-    assert build() == "${before}"
+    alice("nix build .#homeConfigurations.alice.activationPackage >&2 && result/activate >&2 && rm result")
+    assert generation() == "${before}", generation()
+    out = furnish("settings")
+    assert "home-apps.url" not in out, out
+    assert "Apps go into:        your Home Manager configuration (automatic)" in out, out
 
-    # Installing hello: only the furnish/home-apps entry of flake.lock changes.
+    # Installing htop: only furnish/home-apps changes in flake.lock, the generation has hello and
+    # htop, and flake.lock is committed.
     old = lock()
-    install({"hello": {"packages": ["hello"], "options": {"programs.htop.enable": True}}})
-    alice("nix flake update furnish/home-apps >&2")
+    furnish("install htop")
+    assert apps() == {"htop": {"packages": ["hello"], "options": {"programs.htop.enable": True}}}, apps()
+    assert generation() == "${after}", generation()
+    alice("hello && htop --version")
     new = lock()
     node = new["nodes"]["furnish"]["inputs"]["home-apps"]
-    assert new["nodes"][node]["locked"]["narHash"] != old["nodes"][node]["locked"]["narHash"], new
     del old["nodes"][node]["locked"], new["nodes"][node]["locked"]
     assert old == new, (old, new)
-    status = alice("git status --porcelain --untracked-files=no")
-    assert status.strip() == "M flake.lock", status
+    assert alice("git log -1 --format=%s").strip() == "furnish: install htop"
+    assert alice("git status --porcelain").strip() == ""
+    listed = furnish("list")
+    assert any(l.startswith("✓  htop") for l in listed.splitlines()), listed
 
-    # Activating it, as `home-manager switch` does, as alice: the generation has hello and htop.
-    assert build() == "${after}"
-    alice("result/activate >&2")
-    generation = alice("readlink -f ~/.local/state/nix/profiles/home-manager").strip()
-    assert generation == "${after}", generation
-    alice("hello && htop --version")
-    facts = json.loads(alice("cat ~/.config/furnish/home-manager.json"))
-    assert facts["nix"]["configuration"] == "/home/alice/.config/home-manager", facts
-    assert facts["nixosModule"] is False, facts
+    # An option outside services.furnish.nix.allowedOptions: refused, nothing changes.
+    out = furnish("install git", ok=False)
+    assert "allowedOptions" in out, out
+    assert list(apps()) == ["htop"] and generation() == "${after}"
 
-    # Updating the whole flake keeps furnish/home-apps pointed at the local flake.
-    alice("nix flake update >&2")
-    new = lock()
-    assert new["nodes"][node]["original"] == {"type": "path", "path": "/home/alice/.local/share/furnish/home-apps"}, new
-    assert build() == "${after}"
+    # Only NixOS options: the app goes into the NixOS configuration, which isn't set up here.
+    out = furnish("install sshd", ok=False)
+    assert "NixOS" in out, out
+    assert list(apps()) == ["htop"] and generation() == "${after}"
 
-    # After a garbage collection, the generation keeps furnish's and crane's sources. Building
-    # offline also needs nixpkgs' and Home Manager's, which standalone Home Manager doesn't keep.
-    alice("rm result")
-    machine.succeed("nix-collect-garbage >&2")
-    machine.fail("nix-store --check-validity ${before}")
-    machine.succeed("nix-store --check-validity ${furnish.outPath} ${furnish.inputs.crane.outPath}")
+    # Uninstalling with another change in the repository: flake.lock stays uncommitted.
+    alice('echo "# a note" >> home.nix')
+    furnish("uninstall htop")
+    assert apps() == {}, apps()
+    assert generation() == "${before}", generation()
+    alice("! command -v hello")
+    assert alice("git log -1 --format=%s").strip() == "furnish: install htop"
+    status = alice("git status --porcelain")
+    assert sorted(status.split()) == ["M", "M", "flake.lock", "home.nix"], status
   '';
 }

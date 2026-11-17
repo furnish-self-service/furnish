@@ -74,7 +74,7 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 
 ### Furnish/NixOS
 
-Adds packages and NixOS options to the computer's NixOS configuration and rebuilds the system, through the furnish service. The configuration has to be a flake set up for it (see [NixOS](admins.md#installing-apps-into-the-configuration)); otherwise the app shows "Needs ...".
+Adds packages and options to the computer's NixOS configuration and rebuilds the system, through the furnish service, or to the person's Home Manager configuration and activates it. The configuration has to be a flake set up for it (see [NixOS](admins.md#installing-apps-into-the-configuration) and [Home Manager](admins.md#installing-apps-into-home-manager)); otherwise the app shows "Needs ...".
 
 ```yaml
 - name: htop
@@ -85,15 +85,20 @@ Adds packages and NixOS options to the computer's NixOS configuration and rebuil
     packages: [htop]
     options:
       programs.htop.enable: true
+    homeOptions:
+      programs.htop.enable: true
 ```
 
 | Property | Meaning |
 |---|---|
 | `name` | The app's name in furnish's list on the computer; unique among your apps (letters, digits, `_` and `-`) |
-| `packages` | Attribute names in the system's nixpkgs, such as `htop` or `kdePackages.kdenlive`, added to `environment.systemPackages` |
+| `packages` | Attribute names in the configuration's nixpkgs, such as `htop` or `kdePackages.kdenlive`, added to `environment.systemPackages` or `home.packages` |
 | `options` | NixOS options by name and value. Each needs an entry in the computer's `services.furnish.nix.allowedOptions` |
+| `homeOptions` | Home Manager options by name and value, used instead of `options` when the app goes into Home Manager. Each needs an entry in `services.furnish.nix.allowedOptions` of the Home Manager configuration |
 
-Each install or uninstall rebuilds the system once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
+Whether the app goes into the NixOS configuration or Home Manager is up to the computer: Home Manager when furnish's Home Manager module is set up for the person, unless the setting `osSpecific.nixos.installInto` says otherwise. `packages` work in both. An app that sets options should give `options`, `homeOptions` or both. An app with options for only one of them goes there, if that is set up.
+
+Each install or uninstall rebuilds the system or the Home Manager generation once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
 ### Required versions
 

@@ -223,15 +223,19 @@ export type NixosSetup = {
   suggestions: { path: string; problem: NixosProblem | null }[];
   /** A configuration path set that has no configuration, and why. */
   rejected: [string, NixosProblem] | null;
-  chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf };
+  chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf; installInto: NixosLeaf };
   /** Set up with furnish's NixOS module: its `services.furnish.nix` values. */
   module: { nix: { configuration: string | null; flakeAttribute: string | null; allowedOptions: string[]; rebuild: string | null } } | null;
   /** Its flake.nix points furnish/apps at furnish's local flake: furnish can install apps into it. */
   appsInput: boolean;
+  /** Where apps with a Furnish/NixOS resource go now. */
+  installInto: 'system' | 'home';
+  /** Lines missing for installing apps into Home Manager (src/nixos.rs, HomeHint). */
+  homeHint: { kind: 'standalone' | 'nixosModule' | 'input'; lines: string[] } | null;
 };
 export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 /** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */
-export const setNixosSetting = (name: 'configuration' | 'flakeAttribute' | 'homeManagerConfiguration', value: string | null) =>
+export const setNixosSetting = (name: 'configuration' | 'flakeAttribute' | 'homeManagerConfiguration' | 'installInto', value: string | null) =>
   invoke<void>('set_setting', { key: `osSpecific.nixos.${name}`, value });
 export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
 export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });

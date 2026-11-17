@@ -18,6 +18,18 @@
 //!
 //! When building fails, furnish puts apps.json and flake.lock back.
 //!
+//! Home Manager (`Place`). With furnish's Home Manager module set up for a person, apps go into
+//! their Home Manager configuration instead, unless the setting `osSpecific.nixos.installInto`
+//! says `system` (`install_into`). The app's `homeOptions` replace its `options` there.
+//!
+//! - Standalone Home Manager: furnish's local flake is in the person's data folder
+//!   (`home_apps_dir`), which their configuration's furnish/home-apps input points at. Everything
+//!   runs as the person: furnish writes apps.json, updates furnish/home-apps, builds the
+//!   generation and activates it, also when the furnish service runs the resource for them.
+//! - Home Manager as a NixOS module: the person's apps go under `homes.<user>` in the system's
+//!   apps.json, and the service rebuilds the system as above. The allowlist comes from the NixOS
+//!   configuration (/etc/furnish/nixos.json), not from the person's home folder.
+//!
 //! Security. A rebuild runs as root what the configuration says. A configuration that belongs to
 //! a user is rebuilt only when that user (or root) asks, never on behalf of someone else, and
 //! never if anyone else can change it or a folder above it. Steps 2, 3 and 4 run as the folder's
@@ -47,6 +59,40 @@ pub const SETUP_LINES: [&str; 2] =
 /// The local flake's flake.nix (the NixOS module writes the same, `appsFlake`).
 const APPS_FLAKE: &str = "{ outputs = _: { furnish = builtins.fromJSON (builtins.readFile ./apps.json); }; }\n";
 const FACTS: &str = "/etc/furnish/nixos.json";
+/// furnish's input for the apps it installs into a standalone Home Manager configuration.
+pub const HOME_INPUT: &str = "furnish/home-apps";
+
+/// furnish's local flake for a person's standalone Home Manager configuration: `furnish/home-apps`
+/// in their data folder (`$XDG_DATA_HOME`, by default `~/.local/share`). `home`: someone else's
+/// home folder (in the service), where furnish can't see their environment.
+pub fn home_apps_dir(home: Option<&Path>) -> PathBuf {
+    let data = match home {
+        Some(h) => h.join(".local/share"),
+        None => dirs::data_dir().unwrap_or_else(|| PathBuf::from(".local/share")),
+    };
+    data.join("furnish/home-apps")
+}
+
+/// The line for the Home Manager configuration's flake.nix that points furnish/home-apps there.
+pub fn home_setup_line(dir: &Path) -> String {
+    format!("inputs.furnish.inputs.home-apps.url = \"path:{}\";", dir.display())
+}
+
+/// The URL in a setup line, which the configuration's flake.nix has to contain.
+pub fn line_url(line: &str) -> &str {
+    line.split('"').nth(1).unwrap_or(line)
+}
+
+/// Where apps go: `system` or `home`. The setting if there is one; else `home` when furnish's
+/// Home Manager module is set up for the person.
+pub fn install_into(setting: Option<&crate::settings::Leaf>, home_module: bool) -> &'static str {
+    match setting.and_then(|l| l.value.as_str()) {
+        Some("system") => "system",
+        Some("home") => "home",
+        _ if home_module => "home",
+        _ => "system",
+    }
+}
 
 /// One app's part of the configuration.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -67,11 +113,22 @@ pub struct Apps {
     pub version: u32,
     #[serde(default)]
     pub apps: BTreeMap<String, Entry>,
+    /// Home Manager as a NixOS module: each person's apps, by user name (the system's apps.json).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub homes: BTreeMap<String, Home>,
+}
+
+/// One person's apps in the system's apps.json.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Home {
+    #[serde(default)]
+    pub apps: BTreeMap<String, Entry>,
 }
 
 impl Default for Apps {
     fn default() -> Self {
-        Apps { version: 1, apps: BTreeMap::new() }
+        Apps { version: 1, apps: BTreeMap::new(), homes: BTreeMap::new() }
     }
 }
 
@@ -92,6 +149,10 @@ fn plain_name(s: &str, extra: &str) -> bool {
 
 /// Checks an app's entry: package and option names, and each option against the allowlist.
 pub fn check(name: &str, entry: &Entry, allowlist: &[String]) -> Result<()> {
+    check_in(name, entry, allowlist, Place::System)
+}
+
+fn check_in(name: &str, entry: &Entry, allowlist: &[String], place: Place) -> Result<()> {
     if !plain_name(name, "") || name.contains('.') {
         bail!("'{name}' isn't a name for a Furnish/NixOS resource (letters, digits, _ and -)");
     }
@@ -102,10 +163,13 @@ pub fn check(name: &str, entry: &Entry, allowlist: &[String]) -> Result<()> {
     }
     for o in entry.options.keys() {
         if !plain_name(o, "") {
-            bail!("'{o}' isn't a NixOS option's name");
+            bail!("'{o}' isn't an option's name");
         }
         if !allowlist.iter().any(|a| allowed(a, o)) {
-            bail!("the app sets the NixOS option {o}, which isn't in services.furnish.nix.allowedOptions on this computer");
+            match place {
+                Place::System => bail!("the app sets the NixOS option {o}, which isn't in services.furnish.nix.allowedOptions on this computer"),
+                _ => bail!("the app sets the Home Manager option {o}, which isn't in services.furnish.nix.allowedOptions in your Home Manager configuration"),
+            }
         }
     }
     Ok(())
@@ -120,6 +184,8 @@ struct Desired {
     packages: Vec<String>,
     #[serde(default)]
     options: BTreeMap<String, Value>,
+    #[serde(default)]
+    home_options: BTreeMap<String, Value>,
     #[serde(rename = "_exist", default = "yes")]
     exist: bool,
 }
@@ -129,8 +195,30 @@ fn yes() -> bool {
 }
 
 impl Desired {
-    fn entry(&self) -> Entry {
-        Entry { packages: self.packages.clone(), options: self.options.clone() }
+    /// The app's entry in the apps.json of that place: its options for there.
+    fn entry(&self, place: Place) -> Entry {
+        let options = if place == Place::System { &self.options } else { &self.home_options };
+        Entry { packages: self.packages.clone(), options: options.clone() }
+    }
+}
+
+/// Where an app goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// The NixOS configuration (`apps` of the system's apps.json).
+    System,
+    /// Home Manager as a NixOS module (`homes.<user>` of the system's apps.json).
+    HomeNixos,
+    /// Standalone Home Manager (the person's own apps.json, `home_apps_dir`).
+    HomeStandalone,
+}
+
+impl Place {
+    fn name(self) -> &'static str {
+        if self == Place::System { "system" } else { "home" }
+    }
+    fn what(self) -> &'static str {
+        if self == Place::System { "the NixOS configuration" } else { "your Home Manager configuration" }
     }
 }
 
@@ -155,6 +243,7 @@ fn missing(what: impl Into<String>) -> anyhow::Error {
 #[serde(rename_all = "camelCase", default)]
 struct Facts {
     nix: FactsNix,
+    home_manager_users: BTreeMap<String, crate::nixos::HomeUser>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -194,6 +283,255 @@ impl Target {
             return Err(missing(format!("the line {} in {}", SETUP_LINES[1], found.file.display())));
         }
         Ok(Target { dir: found.path, attribute: setup.flake_attribute.value, facts })
+    }
+}
+
+impl Target {
+    /// The options apps may set there: the NixOS module's, or the person's from Home Manager's
+    /// NixOS module, as the NixOS configuration says.
+    fn allowlist(&self, place: Place, user: &str) -> Vec<String> {
+        match place {
+            Place::HomeNixos => self.facts.home_manager_users.get(user).map(|u| u.allowed_options.clone()).unwrap_or_default(),
+            _ => self.facts.nix.allowed_options.clone(),
+        }
+    }
+}
+
+/// A person's standalone Home Manager configuration, ready for furnish to install into.
+struct HomeTarget {
+    dir: PathBuf,
+    attribute: String,
+    allowlist: Vec<String>,
+    apps_dir: PathBuf,
+}
+
+/// Reads a file of the person's: with their rights when furnish runs as root.
+fn read_as(person: &Account, path: &Path) -> Option<String> {
+    if is_root() && person.uid != 0 {
+        owner_read(person, path).ok().flatten().and_then(|b| String::from_utf8(b).ok())
+    } else {
+        std::fs::read_to_string(path).ok()
+    }
+}
+
+/// What furnish's Home Manager module wrote into the person's home (`None`: not set up).
+fn home_facts(person: &Account) -> Option<crate::nixos::HomeFacts> {
+    serde_json::from_str(&read_as(person, &person.home.join(crate::nixos::HOME_FACTS))?).ok()
+}
+
+/// The person's `osSpecific.nixos.installInto`, or the policy's. The service reads the person's
+/// own settings for this one: it only chooses between places they may install into anyway.
+fn install_into_for(person: &Account, module: bool) -> &'static str {
+    let choices = if in_service() {
+        read_as(person, &person.home.join(".local/share/furnish/settings.json")).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    } else {
+        crate::settings::user_choices()
+    };
+    install_into(crate::nixos::chosen(&crate::policy::load(), &choices).install_into.as_ref(), module)
+}
+
+impl HomeTarget {
+    fn find(person: &Account) -> Result<HomeTarget> {
+        let Some(facts) = home_facts(person) else {
+            return Err(missing("furnish's Home Manager module (services.furnish.enable in your Home Manager configuration)"));
+        };
+        let dir = match &facts.nix.configuration {
+            Some(c) => PathBuf::from(c),
+            None if !in_service() => crate::nixos::setup()
+                .and_then(|s| s.home_manager_configuration)
+                .map_or_else(|| person.home.join(".config/home-manager"), |f| f.path),
+            None => person.home.join(".config/home-manager"),
+        };
+        let apps_dir = home_apps_dir(in_service().then_some(person.home.as_path()));
+        let line = home_setup_line(&apps_dir);
+        let Some(flake) = read_as(person, &dir.join("flake.nix")) else {
+            return Err(missing(format!("a Home Manager configuration that is a flake ({} has no flake.nix)", dir.display())));
+        };
+        if !flake.contains(line_url(&line)) {
+            return Err(missing(format!("the line {line} in {}", dir.join("flake.nix").display())));
+        }
+        let attribute = facts.nix.flake_attribute.clone().unwrap_or_else(|| person.name.clone());
+        Ok(HomeTarget { dir, attribute, allowlist: facts.nix.allowed_options, apps_dir })
+    }
+}
+
+/// The person furnish acts for: in the service, who asked; else who runs furnish.
+fn person() -> Result<Account> {
+    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+    let uid = if in_service() {
+        let requester = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok());
+        requester.context("the furnish service doesn't know who asked")?
+    } else {
+        current_uid()
+    };
+    Ok(account(&passwd, uid).unwrap_or_else(|| Account {
+        uid,
+        gid: uid,
+        name: std::env::var("USER").unwrap_or_default(),
+        home: dirs::home_dir().unwrap_or_default(),
+    }))
+}
+
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    // SAFETY: getuid has no preconditions.
+    unsafe { libc::getuid() }
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> u32 {
+    u32::MAX
+}
+
+/// Reads a person's own apps.json, with their rights.
+fn read_apps_as(person: &Account, dir: &Path) -> Result<Apps> {
+    match read_as(person, &dir.join("apps.json")) {
+        Some(text) => serde_json::from_str(&text).with_context(|| format!("reading {}", dir.join("apps.json").display())),
+        None => Ok(Apps::default()),
+    }
+}
+
+/// Writes a person's own local flake, with their rights.
+fn write_apps_as(person: &Account, dir: &Path, apps: &Apps) -> Result<()> {
+    if !(is_root() && person.uid != 0) {
+        return write_apps(dir, apps);
+    }
+    let mut mkdir = as_owner(person, "mkdir");
+    mkdir.arg("-p").arg("--").arg(dir);
+    run(mkdir, "creating furnish's local flake")?;
+    owner_write(person, &dir.join("flake.nix"), APPS_FLAKE.as_bytes())?;
+    owner_write(person, &dir.join("apps.json"), (serde_json::to_string_pretty(apps)? + "\n").as_bytes())
+}
+
+/// Creates furnish's local flake for this person's standalone Home Manager configuration, empty,
+/// so the configuration's first `nix flake lock` finds it.
+pub fn ensure_home_apps(dir: &Path) -> Result<()> {
+    if dir.join("apps.json").exists() { Ok(()) } else { write_apps(dir, &Apps::default()) }
+}
+
+/// Where the app is now, if anywhere: the system's apps, the person's part of them, or the
+/// person's own apps.
+fn find(name: &str, person: &Account) -> Result<Option<(Place, Entry)>> {
+    let system = read_apps(Path::new(APPS_DIR))?;
+    if let Some(e) = system.apps.get(name) {
+        return Ok(Some((Place::System, e.clone())));
+    }
+    if let Some(e) = system.homes.get(&person.name).and_then(|h| h.apps.get(name)) {
+        return Ok(Some((Place::HomeNixos, e.clone())));
+    }
+    let own = read_apps_as(person, &home_apps_dir(in_service().then_some(person.home.as_path())))?;
+    Ok(own.apps.get(name).map(|e| (Place::HomeStandalone, e.clone())))
+}
+
+/// Whether furnish can install into a place: `Missing` says what is missing.
+fn ready(place: Place, person: &Account) -> Result<()> {
+    match place {
+        Place::System => Target::here().map(drop),
+        Place::HomeNixos => {
+            let target = Target::here()?;
+            if !target.facts.home_manager_users.get(&person.name).is_some_and(|u| u.enable) {
+                return Err(missing(format!(
+                    "furnish's Home Manager module for {0} (home-manager.users.{0}.services.furnish.enable in the NixOS configuration)",
+                    person.name
+                )));
+            }
+            Ok(())
+        }
+        Place::HomeStandalone => HomeTarget::find(person).map(drop),
+    }
+}
+
+/// Where to install an app: `install_into`, unless the app has options only for the other place,
+/// then there.
+fn choose(desired: &Desired, person: &Account) -> Result<Place> {
+    let facts = home_facts(person);
+    let home = if facts.as_ref().is_some_and(|f| f.nixos_module) { Place::HomeNixos } else { Place::HomeStandalone };
+    let wanted = if install_into_for(person, facts.is_some()) == "home" { home } else { Place::System };
+    let place = pick(wanted, home, desired);
+    ready(place, person)?;
+    Ok(place)
+}
+
+/// The place an app goes: the wanted one, unless the app sets options only for the other.
+fn pick(wanted: Place, home: Place, desired: &Desired) -> Place {
+    let (system_only, home_only) = (desired.home_options.is_empty() && !desired.options.is_empty(), desired.options.is_empty() && !desired.home_options.is_empty());
+    match wanted {
+        Place::System if home_only => home,
+        Place::HomeNixos | Place::HomeStandalone if system_only => Place::System,
+        p => p,
+    }
+}
+
+/// Install (or remove) an app in the person's standalone Home Manager configuration: as the
+/// person, update furnish/home-apps, build the generation and activate it.
+fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<()> {
+    let entry = desired.entry(Place::HomeStandalone);
+    if desired.exist {
+        check_in(&desired.name, &entry, &home.allowlist, Place::HomeStandalone)?;
+    }
+    let before = read_apps_as(person, &home.apps_dir)?;
+    let mut after = before.clone();
+    if desired.exist {
+        after.apps.insert(desired.name.clone(), entry);
+    } else {
+        after.apps.remove(&desired.name);
+    }
+    let dir = &home.dir;
+    let lock = dir.join("flake.lock");
+    let mut status = as_owner(person, "git");
+    status.arg("-C").arg(dir).args(["status", "--porcelain"]);
+    let clean = run(status, "git status").is_ok_and(|s| s.is_empty());
+    let old_lock = read_as(person, &lock);
+    write_apps_as(person, &home.apps_dir, &after)?;
+    let undo = |why: anyhow::Error| -> anyhow::Error {
+        let mut problems = Vec::new();
+        if let Err(e) = write_apps_as(person, &home.apps_dir, &before) {
+            problems.push(format!("putting back {}: {e:#}", home.apps_dir.display()));
+        }
+        if let Some(old) = &old_lock
+            && let Err(e) = owner_write(person, &lock, old.as_bytes())
+        {
+            problems.push(format!("putting back {}: {e:#}", lock.display()));
+        }
+        if problems.is_empty() { why } else { why.context(problems.join("; ")) }
+    };
+
+    info(&format!("Updating {HOME_INPUT} in {}", lock.display()));
+    let mut update = nix(person);
+    update.args(["flake", "update", HOME_INPUT, "--flake"]).arg(dir);
+    run(update, &format!("nix flake update {HOME_INPUT}")).map_err(&undo)?;
+
+    info(&format!("Building the Home Manager generation from {}", dir.display()));
+    let mut build = nix(person);
+    build.args(["build", "--no-link", "--print-out-paths"]).arg(format!(
+        "{}#homeConfigurations.\"{}\".activationPackage",
+        dir.display(),
+        home.attribute
+    ));
+    let generation = run(build, "building the Home Manager generation").map_err(&undo)?;
+    if !generation.starts_with("/nix/store/") || generation.contains(char::is_whitespace) {
+        return Err(undo(anyhow::anyhow!("building the generation gave no store path: {generation}")));
+    }
+
+    // What `home-manager switch` does after building.
+    info(&format!("Activating {generation}"));
+    run(as_owner(person, &format!("{generation}/activate")), "activating the Home Manager generation")?;
+    commit(person, dir, clean, desired);
+    Ok(())
+}
+
+/// Commits flake.lock as the configuration's owner if the repository had no other changes.
+fn commit(owner: &Account, dir: &Path, clean: bool, desired: &Desired) {
+    if clean {
+        let verb = if desired.exist { "install" } else { "uninstall" };
+        let mut commit = as_owner(owner, "git");
+        commit.arg("-C").arg(dir).args(["commit", "-q", "-m", &format!("furnish: {verb} {}", desired.name), "--", "flake.lock"]);
+        match run(commit, "git commit") {
+            Ok(_) => info(&format!("Committed flake.lock in {}", dir.display())),
+            Err(e) => eprintln!("{}", json!({ "warn": format!("flake.lock changed, commit it yourself: {e:#}") })),
+        }
+    } else {
+        info(&format!("{} has other changes: furnish leaves committing flake.lock to you", dir.display()));
     }
 }
 
@@ -294,7 +632,7 @@ fn info(message: &str) {
 fn as_owner(owner: &Account, program: &str) -> Command {
     let mut c = Command::new(program);
     #[cfg(unix)]
-    if owner.uid != 0 {
+    if owner.uid != 0 && is_root() {
         use std::os::unix::process::CommandExt;
         c.uid(owner.uid).gid(owner.gid);
         c.env("HOME", &owner.home).env("USER", &owner.name).env("LOGNAME", &owner.name);
@@ -341,14 +679,15 @@ fn owner_write(owner: &Account, path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Install (or remove, `desired.exist` false) an app in the configuration and rebuild.
-fn apply(target: &Target, desired: &Desired) -> Result<()> {
+/// Install (or remove, `desired.exist` false) an app in the system's apps.json (`Place::System`,
+/// or the person's part for `Place::HomeNixos`) and rebuild the system.
+fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> Result<()> {
     if !in_service() {
         bail!("only the furnish service changes the NixOS configuration: ask your administrator to turn it on (services.furnish.service.enable)");
     }
-    let entry = desired.entry();
+    let entry = desired.entry(place);
     if desired.exist {
-        check(&desired.name, &entry, &target.facts.nix.allowed_options)?;
+        check_in(&desired.name, &entry, &target.allowlist(place, &person.name), place)?;
     }
     let requester: u32 = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
     let uid = may_rebuild(&chain(&target.dir)?, requester)?;
@@ -358,11 +697,16 @@ fn apply(target: &Target, desired: &Desired) -> Result<()> {
     let apps_dir = Path::new(APPS_DIR);
     let before = read_apps(apps_dir)?;
     let mut after = before.clone();
+    let list = match place {
+        Place::HomeNixos => &mut after.homes.entry(person.name.clone()).or_default().apps,
+        _ => &mut after.apps,
+    };
     if desired.exist {
-        after.apps.insert(desired.name.clone(), entry);
+        list.insert(desired.name.clone(), entry);
     } else {
-        after.apps.remove(&desired.name);
+        list.remove(&desired.name);
     }
+    after.homes.retain(|_, h| !h.apps.is_empty());
     let dir = &target.dir;
     let lock = dir.join("flake.lock");
     // Committed afterwards only if nothing else changed (and it is a git repository).
@@ -415,18 +759,7 @@ fn apply(target: &Target, desired: &Desired) -> Result<()> {
         .arg(format!("{system}/bin/switch-to-configuration"))
         .arg(mode);
     run(switch, "switch-to-configuration")?;
-
-    if clean {
-        let verb = if desired.exist { "install" } else { "uninstall" };
-        let mut commit = as_owner(&owner, "git");
-        commit.arg("-C").arg(dir).args(["commit", "-q", "-m", &format!("furnish: {verb} {}", desired.name), "--", "flake.lock"]);
-        match run(commit, "git commit") {
-            Ok(_) => info(&format!("Committed flake.lock in {}", dir.display())),
-            Err(e) => eprintln!("{}", json!({ "warn": format!("flake.lock changed, commit it yourself: {e:#}") })),
-        }
-    } else {
-        info(&format!("{} has other changes: furnish leaves committing flake.lock to you", dir.display()));
-    }
+    commit(&owner, dir, clean, desired);
     Ok(())
 }
 
@@ -441,10 +774,11 @@ fn is_root() -> bool {
     false
 }
 
-/// The state DSC sees: the app's entry in the local flake.
-fn state(name: &str, entry: Option<&Entry>) -> Value {
-    match entry {
-        Some(e) => json!({ "name": name, "packages": e.packages, "options": e.options, "_exist": true }),
+/// The state DSC sees: the app's entry in a local flake, and where.
+fn state(name: &str, found: Option<&(Place, Entry)>) -> Value {
+    match found {
+        Some((Place::System, e)) => json!({ "name": name, "packages": e.packages, "options": e.options, "installedInto": "system", "_exist": true }),
+        Some((p, e)) => json!({ "name": name, "packages": e.packages, "homeOptions": e.options, "installedInto": p.name(), "_exist": true }),
         None => json!({ "name": name, "_exist": false }),
     }
 }
@@ -473,43 +807,72 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let desired: Desired = serde_json::from_str(&input).context("reading the resource's properties")?;
-    let target = Target::here()?;
-    let apps = read_apps(Path::new(APPS_DIR))?;
-    let current = apps.apps.get(&desired.name);
-    let in_desired_state = if desired.exist { current == Some(&desired.entry()) } else { current.is_none() };
+    let person = person()?;
+    let current = find(&desired.name, &person)?;
+    let in_desired_state = match &current {
+        Some((place, entry)) => desired.exist && *entry == desired.entry(*place),
+        None => !desired.exist,
+    };
     match action {
-        "get" => Ok(state(&desired.name, current)),
+        "get" => Ok(state(&desired.name, current.as_ref())),
         "test" => {
-            let mut s = state(&desired.name, current);
+            let mut s = state(&desired.name, current.as_ref());
             s["_inDesiredState"] = in_desired_state.into();
             Ok(s)
         }
         "set" if what_if => {
-            let mut s = state(&desired.name, desired.exist.then(|| desired.entry()).as_ref());
+            // Installing: where it would go (or stays); removing: where it is.
+            let place = match &current {
+                Some((p, _)) if !desired.exist || in_desired_state => *p,
+                _ if desired.exist => choose(&desired, &person)?,
+                _ => Place::System,
+            };
+            let mut s = state(&desired.name, desired.exist.then(|| (place, desired.entry(place))).as_ref());
+            let what = place.what();
             let step = match (in_desired_state, desired.exist) {
-                (true, true) => format!("{} is in the NixOS configuration", desired.name),
-                (true, false) => format!("{} is not in the NixOS configuration", desired.name),
-                (false, true) => format!("Add {} to the NixOS configuration in {} and rebuild it", desired.name, target.dir.display()),
-                (false, false) => format!("Remove {} from the NixOS configuration in {} and rebuild it", desired.name, target.dir.display()),
+                (true, true) => format!("{} is in {what}", desired.name),
+                (true, false) => format!("{} is not in {what}", desired.name),
+                (false, true) => format!("Add {} to {what} and rebuild it", desired.name),
+                (false, false) => format!("Remove {} from {what} and rebuild it", desired.name),
             };
             let mut lines = vec![json!(step)];
-            if desired.exist
-                && !in_desired_state
-                && let Err(e) = check(&desired.name, &desired.entry(), &target.facts.nix.allowed_options)
-            {
-                lines.push(json!(format!("refused: {e:#}")));
+            if desired.exist && !in_desired_state {
+                let allowlist = match place {
+                    Place::HomeStandalone => HomeTarget::find(&person)?.allowlist,
+                    p => Target::here()?.allowlist(p, &person.name),
+                };
+                if let Err(e) = check_in(&desired.name, &desired.entry(place), &allowlist, place) {
+                    lines.push(json!(format!("refused: {e:#}")));
+                }
             }
             s["_metadata"] = json!({ "whatIf": lines });
             Ok(s)
         }
         "set" => {
             if !in_desired_state {
-                apply(&target, &desired)?;
+                // A changed app first leaves where it was, if it goes elsewhere now.
+                let place = match &current {
+                    Some((p, _)) if !desired.exist => *p,
+                    _ => choose(&desired, &person)?,
+                };
+                if let Some((was, _)) = &current
+                    && *was != place
+                {
+                    put(*was, &Desired { exist: false, ..desired.clone() }, &person)?;
+                }
+                put(place, &desired, &person)?;
             }
-            let apps = read_apps(Path::new(APPS_DIR))?;
-            Ok(state(&desired.name, apps.apps.get(&desired.name)))
+            Ok(state(&desired.name, find(&desired.name, &person)?.as_ref()))
         }
         _ => bail!("usage: get|test|set [--what-if]"),
+    }
+}
+
+/// Installs or removes an app in one place.
+fn put(place: Place, desired: &Desired, person: &Account) -> Result<()> {
+    match place {
+        Place::HomeStandalone => apply_home(&HomeTarget::find(person)?, desired, person),
+        p => apply(&Target::here()?, desired, p, person),
     }
 }
 
@@ -567,6 +930,49 @@ mod tests {
         let passwd = "root:x:0:0:System administrator:/root:/bin/sh\nalice:x:1000:100::/home/alice:/bin/sh\n";
         assert_eq!(account(passwd, 1000), Some(Account { uid: 1000, gid: 100, name: "alice".into(), home: "/home/alice".into() }));
         assert_eq!(account(passwd, 5), None);
+    }
+
+    #[test]
+    fn apps_go_home_when_the_module_is_set_up_unless_the_setting_or_their_options_say_otherwise() {
+        let leaf = |v: &str| crate::settings::Leaf { value: json!(v), set_by: crate::settings::SetBy::User, locked: false };
+        assert_eq!(install_into(None, false), "system");
+        assert_eq!(install_into(None, true), "home");
+        assert_eq!(install_into(Some(&leaf("system")), true), "system");
+        assert_eq!(install_into(Some(&leaf("home")), false), "home");
+        let app = |options: &[&str], home: &[&str]| Desired {
+            name: "a".into(),
+            options: options.iter().map(|o| (o.to_string(), json!(true))).collect(),
+            home_options: home.iter().map(|o| (o.to_string(), json!(true))).collect(),
+            exist: true,
+            ..Default::default()
+        };
+        let h = Place::HomeStandalone;
+        assert_eq!(pick(h, h, &app(&[], &[])), h, "packages only");
+        assert_eq!(pick(h, h, &app(&["programs.x.enable"], &["programs.x.enable"])), h);
+        assert_eq!(pick(h, h, &app(&["services.x.enable"], &[])), Place::System, "NixOS options only");
+        assert_eq!(pick(Place::System, Place::HomeNixos, &app(&[], &["programs.x.enable"])), Place::HomeNixos, "Home Manager options only");
+        assert_eq!(pick(Place::System, h, &app(&["services.x.enable"], &[])), Place::System);
+        let d = app(&["services.x.enable"], &["programs.x.enable"]);
+        assert_eq!(d.entry(Place::System).options.keys().collect::<Vec<_>>(), ["services.x.enable"]);
+        assert_eq!(d.entry(h).options.keys().collect::<Vec<_>>(), ["programs.x.enable"]);
+    }
+
+    #[test]
+    fn the_home_setup_line_names_the_folder() {
+        let line = home_setup_line(Path::new("/home/alice/.local/share/furnish/home-apps"));
+        assert_eq!(line, "inputs.furnish.inputs.home-apps.url = \"path:/home/alice/.local/share/furnish/home-apps\";");
+        assert_eq!(line_url(&line), "path:/home/alice/.local/share/furnish/home-apps");
+        assert_eq!(home_apps_dir(Some(Path::new("/home/bob"))), Path::new("/home/bob/.local/share/furnish/home-apps"));
+    }
+
+    #[test]
+    fn homes_are_kept_apart_and_left_out_when_empty() {
+        let mut apps = Apps::default();
+        assert!(!serde_json::to_string(&apps).unwrap().contains("homes"));
+        apps.homes.entry("alice".into()).or_default().apps.insert("hello".into(), Entry { packages: vec!["hello".into()], ..Default::default() });
+        let text = serde_json::to_string(&apps).unwrap();
+        assert_eq!(serde_json::from_str::<Apps>(&text).unwrap(), apps);
+        assert!(text.contains(r#""homes":{"alice":{"apps":{"hello""#), "{text}");
     }
 
     #[test]

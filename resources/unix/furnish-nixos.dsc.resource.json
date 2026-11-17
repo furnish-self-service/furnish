@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/NixOS",
-  "description": "Add packages and NixOS options to the computer's NixOS configuration (a flake) and rebuild it, through the furnish service",
+  "description": "Add packages and options to the computer's NixOS configuration or the person's Home Manager configuration (flakes) and rebuild it",
   "version": "0.1.0",
   "get": {
     "executable": "furnish-nixos.dsc.resource.sh",
@@ -56,11 +56,24 @@
             "type": "string",
             "pattern": "^[A-Za-z_][A-Za-z0-9_+'-]*(\\.[A-Za-z_][A-Za-z0-9_+'-]*)*$"
           },
-          "description": "Packages from the system's nixpkgs, by attribute name (environment.systemPackages)"
+          "description": "Packages from the configuration's nixpkgs, by attribute name (environment.systemPackages or home.packages)"
         },
         "options": {
           "type": "object",
-          "description": "NixOS options by name, e.g. programs.htop.enable: true; each must be in services.furnish.nix.allowedOptions"
+          "description": "NixOS options by name, e.g. programs.htop.enable: true; each must be in services.furnish.nix.allowedOptions of the NixOS configuration"
+        },
+        "homeOptions": {
+          "type": "object",
+          "description": "Home Manager options by name, used instead of options when the app goes into Home Manager; each must be in services.furnish.nix.allowedOptions of the Home Manager configuration"
+        },
+        "installedInto": {
+          "type": "string",
+          "enum": [
+            "system",
+            "home"
+          ],
+          "readOnly": true,
+          "description": "Where the app is: the NixOS configuration or Home Manager"
         },
         "_exist": {
           "type": "boolean",

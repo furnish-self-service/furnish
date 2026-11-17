@@ -55,7 +55,8 @@ pub struct Settings {
 }
 
 /// The OS-specific settings: (system, name) as in `osSpecific.<system>.<name>`.
-pub const OS_SPECIFIC: [(&str, &str); 3] = [("nixos", "configuration"), ("nixos", "flakeAttribute"), ("nixos", "homeManagerConfiguration")];
+pub const OS_SPECIFIC: [(&str, &str); 4] =
+    [("nixos", "configuration"), ("nixos", "flakeAttribute"), ("nixos", "homeManagerConfiguration"), ("nixos", "installInto")];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -73,6 +74,9 @@ pub struct NixosSettings {
     pub flake_attribute: Option<String>,
     /// The folder with the Home Manager configuration (`flake.nix` or `home.nix`).
     pub home_manager_configuration: Option<String>,
+    /// Where Furnish/NixOS installs apps: `system` or `home`; unset: `home` when furnish's Home
+    /// Manager module is set up for the person, else `system` (see `nixos_apps`).
+    pub install_into: Option<String>,
 }
 
 /// Who set an OS-specific value that is in effect.
@@ -325,6 +329,11 @@ pub fn check_os_value(os: &str, name: &str, value: &Value) -> Result<()> {
         ("nixos", "configuration" | "homeManagerConfiguration") => {
             if !s.starts_with('/') || s.contains(['\n', '\0']) {
                 bail!("'{s}' isn't an absolute path (such as /home/alex/nixos-config)");
+            }
+        }
+        ("nixos", "installInto") => {
+            if !matches!(s, "system" | "home") {
+                bail!("'{s}' isn't a place to install apps into (system or home)");
             }
         }
         ("nixos", "flakeAttribute") => {

@@ -152,8 +152,13 @@ struct NixosArgs {
     /// NixOS: the folder of your Home Manager configuration
     #[arg(long, value_name = "PATH")]
     home_manager_configuration: Option<std::path::PathBuf>,
-    /// NixOS: find the configuration on its own again (forgets the three settings above)
-    #[arg(long, conflicts_with_all = ["nixos_configuration", "nixos_flake_attribute", "home_manager_configuration"])]
+    /// NixOS: install apps with a Furnish/NixOS resource into the NixOS configuration (system) or
+    /// your Home Manager configuration (home); default: home when furnish's Home Manager module
+    /// is set up for you
+    #[arg(long, value_parser = ["system", "home"])]
+    nixos_install_into: Option<String>,
+    /// NixOS: find the configuration on its own again (forgets the four settings above)
+    #[arg(long, conflicts_with_all = ["nixos_configuration", "nixos_flake_attribute", "home_manager_configuration", "nixos_install_into"])]
     nixos_reset: bool,
 }
 
@@ -165,7 +170,7 @@ impl NixosArgs {
             Ok(p.display().to_string().into())
         };
         if self.nixos_reset {
-            for key in ["configuration", "flakeAttribute", "homeManagerConfiguration"] {
+            for key in ["configuration", "flakeAttribute", "homeManagerConfiguration", "installInto"] {
                 let key = format!("osSpecific.nixos.{key}");
                 if !furnish::settings::effective().locked.contains(&key) {
                     set(&key, serde_json::Value::Null)?;
@@ -180,6 +185,9 @@ impl NixosArgs {
         }
         if let Some(p) = &self.home_manager_configuration {
             set("osSpecific.nixos.homeManagerConfiguration", absolute(p)?)?;
+        }
+        if let Some(i) = &self.nixos_install_into {
+            set("osSpecific.nixos.installInto", i.clone().into())?;
         }
         Ok(())
     }
@@ -239,8 +247,33 @@ fn print_nixos(s: &furnish::nixos::Setup) {
         println!("                     ignoring {}: {}", path.display(), problem.text(&s.flake_attribute.value));
     }
     if let Some(f) = &s.home_manager_configuration {
-        println!("Home Manager:        {} ({})", f.path.display(), how(f));
+        let from = if f.source == Source::Module { "set in it, services.furnish.nix".to_string() } else { how(f) };
+        println!("Home Manager:        {} ({from})", f.path.display());
     }
+    use furnish::nixos::HomeHintKind;
+    if let Some(h) = &s.home_hint {
+        println!(
+            "                     {}",
+            match h.kind {
+                HomeHintKind::Standalone => "to let furnish install apps into it, add to its flake.nix:",
+                HomeHintKind::NixosModule => "to let furnish install apps into it, add to the NixOS configuration:",
+                HomeHintKind::Input => "to let furnish install apps into it, add to its flake.nix:",
+            }
+        );
+        for line in &h.lines {
+            println!("                       {line}");
+        }
+        if h.kind == HomeHintKind::Standalone {
+            println!("                     and furnish.homeManagerModules.default to its modules, with services.furnish.enable = true;");
+        }
+    }
+    let into = if s.install_into == "home" { "your Home Manager configuration" } else { "the NixOS configuration" };
+    let why = match s.chosen.install_into.as_ref().map(|l| l.set_by) {
+        Some(furnish::settings::SetBy::User) => "set by you",
+        Some(furnish::settings::SetBy::Organization) => "set by your organization",
+        None => "automatic",
+    };
+    println!("Apps go into:        {into} ({why})");
 }
 
 /// Settings that can differ per collection (`furnish collection settings`).
