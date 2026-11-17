@@ -140,6 +140,19 @@
           policy = lib.recursiveUpdate
             (lib.recursiveUpdate (lib.optionalAttrs cfg.service.enable { service = { }; }) (if cfg.policy == null then { } else cfg.policy))
             (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
+          # Whether sudo, sudo-rs or doas let every member of wheel run any command as root, as
+          # the rules NixOS adds for wheel do: then wheel may change the configuration's folder
+          # (`nix.trustedGroups`). sudo: a rule for the group with the command ALL, as root or ALL.
+          # doas: a rule for the group without `cmd`, as root or anyone (`runAs` unset).
+          sudoWheel = s: s.enable && lib.any (r:
+            lib.elem "wheel" (r.groups or [ ])
+            && lib.elem (lib.head (lib.splitString ":" (r.runAs or "ALL:ALL"))) [ "ALL" "root" ]
+            && lib.any (c: (if builtins.isString c then c else c.command) == "ALL") (r.commands or [ ])) s.extraRules;
+          doasWheel = d: d.enable && lib.any (r:
+            lib.elem "wheel" (r.groups or [ ]) && lib.elem (r.runAs or null) [ null "root" ] && (r.cmd or null) == null) d.extraRules;
+          wheelIsRoot = sudoWheel config.security.sudo
+            || (options.security ? sudo-rs && sudoWheel config.security.sudo-rs)
+            || doasWheel config.security.doas;
           # What the module knows when the system is built, for furnish (src/nixos.rs). The
           # configuration's folder only comes from the option: in a flake, `self` is a store copy.
           facts = {
@@ -154,7 +167,7 @@
               inherit (u.services.furnish.nix) allowedOptions;
             }) config.home-manager.users);
             moduleVersion = packages.furnish.version;
-            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions rebuild; };
+            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions rebuild trustedGroups; };
           };
         in {
           options.services.furnish = {
@@ -188,6 +201,13 @@
                 default = [ ];
                 description = "NixOS options that apps (Furnish/NixOS) may set; `*` stands for one part of the name. Packages need no entry.";
                 example = [ "programs.*.enable" "services.flatpak.enable" ];
+              };
+              trustedGroups = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = lib.optional wheelIsRoot "wheel";
+                defaultText = lib.literalMD ''`[ "wheel" ]` when sudo, sudo-rs or doas let wheel run any command as root (the rules NixOS adds for wheel), else `[ ]`'';
+                description = "Groups whose members may become root anyway. The furnish service rebuilds a configuration whose folder, or a folder above it, one of these groups can write to; it refuses other groups and folders everyone can write to.";
+                example = [ "wheel" "nixos-admins" ];
               };
               rebuild = lib.mkOption {
                 type = lib.types.enum [ "switch" "boot" ];

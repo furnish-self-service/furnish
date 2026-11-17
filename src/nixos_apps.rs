@@ -32,7 +32,9 @@
 //!
 //! Security. A rebuild runs as root what the configuration says. A configuration that belongs to
 //! a user is rebuilt only when that user (or root) asks, never on behalf of someone else, and
-//! never if anyone else can change it or a folder above it. Steps 2, 3 and 4 run as the folder's
+//! never if anyone else can change it or a folder above it. A group whose members may become
+//! root anyway may (`services.furnish.nix.trustedGroups`, by default `wheel` where sudo or doas
+//! let it run anything as root). Steps 2, 3 and 4 run as the folder's
 //! owner, not as root: then no root process opens a git repository another account controls
 //! (git's hooks and config would run as root; libgit2 in Nix refuses such a repository), and
 //! furnish reads and writes the owner's files only with the owner's rights. Only the switch runs
@@ -274,6 +276,9 @@ struct Facts {
 struct FactsNix {
     allowed_options: Vec<String>,
     rebuild: Option<String>,
+    /// Groups whose members may become root anyway (`services.furnish.nix.trustedGroups`): a
+    /// configuration folder they can write to is still rebuilt (`may_rebuild`).
+    trusted_groups: Vec<String>,
 }
 
 /// The configuration to install into, as furnish finds it now; in the service (and the resource
@@ -691,8 +696,8 @@ fn account(passwd: &str, uid: u32) -> Option<Account> {
     })
 }
 
-/// The owner and mode of a folder and of each folder above it.
-pub type Chain = Vec<(PathBuf, u32, u32)>;
+/// A folder and each folder above it: path, owner (uid), group (gid) and mode.
+pub type Chain = Vec<(PathBuf, u32, u32, u32)>;
 
 #[cfg(unix)]
 fn chain(dir: &Path) -> Result<Chain> {
@@ -700,9 +705,26 @@ fn chain(dir: &Path) -> Result<Chain> {
     dir.ancestors()
         .map(|d| {
             let m = std::fs::symlink_metadata(d).with_context(|| format!("reading {}", d.display()))?;
-            Ok((d.to_path_buf(), m.uid(), m.mode()))
+            Ok((d.to_path_buf(), m.uid(), m.gid(), m.mode()))
         })
         .collect()
+}
+
+/// A group's name from the system's group database (`None`: no such group).
+#[cfg(unix)]
+fn group_name(gid: u32) -> Option<String> {
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: zeroed group is a valid out-parameter; getgrgid_r fills it with pointers into buf.
+    let mut gr: libc::group = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::group = std::ptr::null_mut();
+    let rc = unsafe { libc::getgrgid_r(gid, &mut gr, buf.as_mut_ptr(), buf.len(), &mut found) };
+    // SAFETY: gr_name points to a NUL-terminated string in buf.
+    (rc == 0 && !found.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr(gr.gr_name) }.to_string_lossy().into_owned())
+}
+
+#[cfg(not(unix))]
+fn group_name(_: u32) -> Option<String> {
+    None
 }
 
 #[cfg(not(unix))]
@@ -713,15 +735,29 @@ fn chain(_: &Path) -> Result<Chain> {
 /// Who may have the configuration rebuilt: its folder's owner (uid). Refused when another account
 /// besides root and the owner can change the folder or one above it (a folder others can write
 /// to with the sticky bit, such as /tmp, counts as changeable), or when `requester` is another
-/// user than the owner or root.
-pub fn may_rebuild(chain: &Chain, requester: u32) -> Result<u32> {
-    let Some((dir, owner, _)) = chain.first() else { bail!("no configuration folder") };
-    for (d, uid, mode) in chain {
+/// user than the owner or root. A folder its group can write to counts as unchangeable when the
+/// group is one of `trusted` (`services.furnish.nix.trustedGroups`), whose members may become
+/// root anyway; `group` names a gid. The setgid bit changes nothing.
+pub fn may_rebuild(chain: &Chain, requester: u32, trusted: &[String], group: impl Fn(u32) -> Option<String>) -> Result<u32> {
+    let Some((dir, owner, _, _)) = chain.first() else { bail!("no configuration folder") };
+    for (d, uid, gid, mode) in chain {
         if *uid != 0 && uid != owner {
             bail!("{} belongs to another account than {}, which could change the configuration", d.display(), dir.display());
         }
-        if mode & 0o022 != 0 {
+        if mode & 0o002 != 0 {
             bail!("others can change {}, so furnish doesn't rebuild the configuration in {}", d.display(), dir.display());
+        }
+        if mode & 0o020 != 0 {
+            let name = group(*gid);
+            if !name.as_ref().is_some_and(|n| trusted.contains(n)) {
+                let name = name.unwrap_or_else(|| gid.to_string());
+                bail!(
+                    "the group {name} can change {}, so furnish doesn't rebuild the configuration in {}. \
+                     If every member of {name} may become root anyway, add it to services.furnish.nix.trustedGroups",
+                    d.display(),
+                    dir.display()
+                );
+            }
         }
     }
     if *owner != 0 && requester != *owner && requester != 0 {
@@ -796,10 +832,14 @@ fn as_owner(owner: &Account, program: impl AsRef<std::ffi::OsStr>) -> Command {
     for var in crate::catalog::GIT_LOCATION_VARS {
         c.env_remove(var);
     }
+    // Also for root, whose configuration the service runs these for (/etc/nixos): without HOME,
+    // git wouldn't read root's settings, such as the name it commits flake.lock with.
     #[cfg(unix)]
-    if owner.uid != 0 && is_root() {
+    if is_root() {
         use std::os::unix::process::CommandExt;
-        c.uid(owner.uid).gid(owner.gid);
+        if owner.uid != 0 {
+            c.uid(owner.uid).gid(owner.gid);
+        }
         c.env("HOME", &owner.home).env("USER", &owner.name).env("LOGNAME", &owner.name);
         c.current_dir(&owner.home);
     }
@@ -880,7 +920,7 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
         check_in(&desired.name, &entry, &target.allowlist(place, &person.name), place)?;
     }
     let requester: u32 = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
-    let uid = may_rebuild(&chain(&target.dir)?, requester)?;
+    let uid = may_rebuild(&chain(&target.dir)?, requester, &target.facts.nix.trusted_groups, group_name)?;
     let owner = lookup(uid).with_context(|| format!("no account with the id {uid}"))?;
 
     let apps_dir = Path::new(APPS_DIR);
@@ -1098,20 +1138,62 @@ mod tests {
 
     #[test]
     fn a_configuration_is_rebuilt_only_for_its_owner_or_root() {
+        let none: &[String] = &[];
+        let rebuild = |chain: &Chain, requester| may_rebuild(chain, requester, none, |_| Some("users".into()));
         let alice = |mode| -> Chain {
-            vec![("/home/alice/cfg".into(), 1000, mode), ("/home/alice".into(), 1000, 0o700), ("/home".into(), 0, 0o755), ("/".into(), 0, 0o755)]
+            vec![
+                ("/home/alice/cfg".into(), 1000, 100, mode),
+                ("/home/alice".into(), 1000, 100, 0o700),
+                ("/home".into(), 0, 0, 0o755),
+                ("/".into(), 0, 0, 0o755),
+            ]
         };
-        assert_eq!(may_rebuild(&alice(0o755), 1000).unwrap(), 1000);
-        assert_eq!(may_rebuild(&alice(0o755), 0).unwrap(), 1000);
-        let err = may_rebuild(&alice(0o755), 1001).unwrap_err().to_string();
+        assert_eq!(rebuild(&alice(0o755), 1000).unwrap(), 1000);
+        assert_eq!(rebuild(&alice(0o755), 0).unwrap(), 1000);
+        let err = rebuild(&alice(0o755), 1001).unwrap_err().to_string();
         assert!(err.contains("another user"), "{err}");
-        assert!(may_rebuild(&alice(0o775), 1000).is_err(), "the group can change it");
-        let root: Chain = vec![("/etc/nixos".into(), 0, 0o755), ("/etc".into(), 0, 0o755), ("/".into(), 0, 0o755)];
-        assert_eq!(may_rebuild(&root, 1001).unwrap(), 0);
-        let under_bob: Chain = vec![("/home/bob/x/cfg".into(), 1000, 0o755), ("/home/bob/x".into(), 1001, 0o755), ("/".into(), 0, 0o755)];
-        assert!(may_rebuild(&under_bob, 1000).is_err(), "bob could swap the folder");
-        let tmp: Chain = vec![("/tmp/cfg".into(), 1000, 0o755), ("/tmp".into(), 0, 0o1777), ("/".into(), 0, 0o755)];
-        assert!(may_rebuild(&tmp, 1000).is_err());
+        assert!(rebuild(&alice(0o775), 1000).is_err(), "the group can change it");
+        let root: Chain = vec![("/etc/nixos".into(), 0, 0, 0o755), ("/etc".into(), 0, 0, 0o755), ("/".into(), 0, 0, 0o755)];
+        assert_eq!(rebuild(&root, 1001).unwrap(), 0);
+        let under_bob: Chain = vec![("/home/bob/x/cfg".into(), 1000, 100, 0o755), ("/home/bob/x".into(), 1001, 100, 0o755), ("/".into(), 0, 0, 0o755)];
+        assert!(rebuild(&under_bob, 1000).is_err(), "bob could swap the folder");
+        let tmp: Chain = vec![("/tmp/cfg".into(), 1000, 100, 0o755), ("/tmp".into(), 0, 0, 0o1777), ("/".into(), 0, 0, 0o755)];
+        assert!(rebuild(&tmp, 1000).is_err());
+    }
+
+    #[test]
+    fn a_folder_a_trusted_group_can_change_is_rebuilt() {
+        // gid 1: wheel, 100: users, 7: a group without a name.
+        let name = |gid: u32| match gid {
+            0 => Some("root".to_string()),
+            1 => Some("wheel".to_string()),
+            100 => Some("users".to_string()),
+            _ => None,
+        };
+        let wheel = ["wheel".to_string()];
+        let etc_nixos = |gid, mode| -> Chain { vec![("/etc/nixos".into(), 0, gid, mode), ("/etc".into(), 0, 0, 0o755), ("/".into(), 0, 0, 0o755)] };
+        // The shared /etc/nixos of #21: root:wheel 2775.
+        assert_eq!(may_rebuild(&etc_nixos(1, 0o2775), 1000, &wheel, name).unwrap(), 0);
+        assert_eq!(may_rebuild(&etc_nixos(1, 0o775), 1000, &wheel, name).unwrap(), 0);
+        assert_eq!(may_rebuild(&etc_nixos(1, 0o2755), 1000, &[], name).unwrap(), 0, "setgid alone");
+        let err = may_rebuild(&etc_nixos(1, 0o2775), 1000, &[], name).unwrap_err().to_string();
+        assert!(err.contains("the group wheel can change /etc/nixos") && err.contains("services.furnish.nix.trustedGroups"), "{err}");
+        let err = may_rebuild(&etc_nixos(100, 0o2775), 1000, &wheel, name).unwrap_err().to_string();
+        assert!(err.contains("the group users can change /etc/nixos"), "another group: {err}");
+        let err = may_rebuild(&etc_nixos(7, 0o775), 1000, &wheel, name).unwrap_err().to_string();
+        assert!(err.contains("the group 7 can change"), "a group without a name: {err}");
+        for mode in [0o2777, 0o777, 0o757, 0o3777] {
+            let err = may_rebuild(&etc_nixos(1, mode), 1000, &wheel, name).unwrap_err().to_string();
+            assert!(err.contains("others can change /etc/nixos"), "{mode:o}: {err}");
+        }
+        // A folder above it counts the same.
+        let above = |gid| -> Chain { vec![("/srv/cfg/nixos".into(), 0, 0, 0o755), ("/srv/cfg".into(), 0, gid, 0o2775), ("/".into(), 0, 0, 0o755)] };
+        assert_eq!(may_rebuild(&above(1), 1000, &wheel, name).unwrap(), 0);
+        assert!(may_rebuild(&above(100), 1000, &wheel, name).unwrap_err().to_string().contains("the group users can change /srv/cfg"));
+        // A person's configuration: a trusted group changes nothing about who may ask.
+        let alice: Chain = vec![("/home/alice/cfg".into(), 1000, 1, 0o2775), ("/home/alice".into(), 1000, 100, 0o700), ("/".into(), 0, 0, 0o755)];
+        assert_eq!(may_rebuild(&alice, 1000, &wheel, name).unwrap(), 1000);
+        assert!(may_rebuild(&alice, 1001, &wheel, name).unwrap_err().to_string().contains("another user"));
     }
 
     #[test]
