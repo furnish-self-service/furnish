@@ -563,8 +563,10 @@
   .notice ul {
     margin: 0;
     padding-left: 1.2rem;
-    font: 0.8rem var(--font-mono);
     overflow-wrap: anywhere;
+  }
+  .notice code {
+    font: 0.8rem var(--font-mono);
   }
   .rows {
     margin: 0;
