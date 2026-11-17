@@ -71,6 +71,18 @@ expect "$(step list)" "·  acme-vpn "
 
 expect "$(step -v install acme-vpn)" "Installed acme-vpn"
 list=$(step list)
+if ! grep -q "✓  acme-vpn " <<<"$list"; then
+    # What the user sees of the configuration, and the steps furnish finds not set up.
+    step install --dry-run acme-vpn || true
+    if [ "$(uname -s)" = Darwin ]; then
+        tb="/Library/Application Support/Tunnelblick"
+        sudo ls -leR "$tb" || true
+        for p in "$tb" "$tb/Temp" "$tb/Temp/Acme VPN.tblk/Contents/Resources/config.ovpn" "$tb/Shared" \
+            "$tb/Shared/Acme VPN.tblk" "$tb/Shared/Acme VPN.tblk/Contents/Resources/config.ovpn"; do
+            ${run[@]+"${run[@]}"} ls -ld "$p" 2>&1 || true
+        done
+    fi
+fi
 expect "$list" "✓  acme-vpn "
 expect "$list" "✓  openvpn-client "
 
