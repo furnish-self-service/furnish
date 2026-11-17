@@ -380,5 +380,7 @@ export const onToTray = (handler: () => void) => listen('furnish://to-tray', () 
 export const onShown = (handler: () => void) => listen('furnish://shown', () => handler());
 /** Clone the admin's preset collections; returns problems (e.g. offline). */
 export const ensurePresets = () => invoke<string[]>('ensure_presets');
-/** Fetch the organizations' descriptions again; returns those that fail the checks (old ones stay). */
-export const refreshEndpoints = () => invoke<string[]>('refresh_endpoints');
+/** Fetch the organizations' descriptions again and add the collections new in those of addresses
+ *  the user added. Returns problems (descriptions that fail the checks keep the old ones) and the
+ *  added collections. */
+export const refreshEndpoints = () => invoke<{ problems: string[]; added: string[] }>('refresh_endpoints');

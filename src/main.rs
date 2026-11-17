@@ -793,9 +793,16 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
             let collections = match name {
                 Some(name) => vec![catalog::get(&name)?],
                 None => {
-                    // All of them: the organizations' descriptions too, which may have changed.
-                    for problem in furnish::endpoint::refresh() {
+                    // All of them: the organizations' descriptions too, which may have changed
+                    // and list new collections.
+                    let refreshed = furnish::endpoint::refresh();
+                    for problem in refreshed.problems {
                         eprintln!("warning: {problem}");
+                    }
+                    for name in refreshed.added {
+                        let c = catalog::get(&name)?;
+                        println!("✓ Added '{name}' with {} app(s)", c.apps().len());
+                        ask_unanswered(&c)?;
                     }
                     catalog::collections()?
                 }

@@ -235,6 +235,11 @@ struct Cached {
     /// When the endpoint was added (seconds since the epoch), to know which came first.
     #[serde(default)]
     added: u64,
+    /// The collections furnish has added for this endpoint, or found there already. A collection
+    /// it lists later that isn't among them is new, and added (see `catalog::add_new`); one the
+    /// person removed stays here, so it isn't added again. `None` in files of earlier versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offered: Option<Vec<String>>,
 }
 
 /// Fetch an endpoint's description and check it: its collections and reports are on the endpoint
@@ -275,39 +280,84 @@ pub fn discover(origin: &str) -> Result<Description> {
     Ok(description)
 }
 
+/// What `refresh` did: the problems to show, and the collections it added.
+#[derive(Debug, Default, Serialize)]
+pub struct Refresh {
+    pub problems: Vec<String>,
+    pub added: Vec<String>,
+}
+
 /// Fetch the descriptions of the known endpoints again, the way `discover` does when adding one,
 /// so what an organization changes reaches everyone who added its address. Without `usersCanAdd`,
 /// only the endpoints the admin policy names. An endpoint that doesn't answer keeps its saved
 /// description quietly (a log line); one that answers with a description that fails the checks
-/// keeps it too, and is returned as a problem.
-pub fn refresh() -> Vec<String> {
-    let mut problems = Vec::new();
+/// keeps it too, and is returned as a problem. Collections new in the description of an endpoint
+/// the person added are added (see `catalog::add_new`); those of endpoints the policy names are
+/// presets, which `catalog::ensure_presets` sets up.
+pub fn refresh() -> Refresh {
+    let mut result = Refresh::default();
     for (origin, _) in known() {
-        if allowed(&origin).is_err() {
-            continue;
-        }
+        let Ok(native) = allowed(&origin) else { continue };
         match discover(&origin) {
-            Ok(_) => {}
+            Ok(description) => {
+                if !native.endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin.as_str())) {
+                    let (added, problems) = crate::catalog::add_new(&origin, &description);
+                    result.added.extend(added.into_iter().map(|c| c.name));
+                    result.problems.extend(problems);
+                }
+            }
             Err(err) if err.is::<Unreachable>() => eprintln!("note: keeping the saved description of {}: {}", host(&origin), err.root_cause()),
-            Err(err) => problems.push(format!("{err:#}; keeping the saved description")),
+            Err(err) => result.problems.push(format!("{err:#}; keeping the saved description")),
         }
     }
     for warning in crate::policy::load().warnings {
         eprintln!("warning: {warning}");
     }
-    problems
+    result
+}
+
+/// The collections furnish has added for an endpoint (see `Cached::offered`).
+pub fn offered(origin: &str) -> Vec<String> {
+    read_cached(origin).and_then(|c| c.offered).unwrap_or_default()
+}
+
+/// Remember that furnish added these collections of an endpoint, or found them there already.
+pub fn mark_offered(origin: &str, names: &[String]) -> Result<()> {
+    let Some(mut cached) = read_cached(origin) else { return Ok(()) };
+    let offered = cached.offered.get_or_insert_with(Vec::new);
+    for name in names {
+        if !offered.contains(name) {
+            offered.push(name.clone());
+        }
+    }
+    crate::auth::write_private(&file(origin, "json"), (serde_json::to_string_pretty(&cached)? + "\n").as_bytes())?;
+    Ok(())
+}
+
+fn read_cached(origin: &str) -> Option<Cached> {
+    fs::read_to_string(file(origin, "json")).ok().and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// The collections an endpoint counts as offered after saving a new description: those saved
+/// before; for a file of an earlier version, which didn't keep them, all that its old description
+/// listed (furnish added those when the person added the address); none for a new endpoint.
+fn offered_before(old: Option<&Cached>) -> Vec<String> {
+    old.map_or_else(Vec::new, |c| {
+        c.offered.clone().unwrap_or_else(|| c.description.collections.iter().map(|c| c.name.clone()).collect())
+    })
 }
 
 fn remember(origin: &str, description: &Description) -> Result<()> {
     private_dir(&dir())?;
     let path = file(origin, "json");
-    let old = fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Cached>(&t).ok());
+    let old = read_cached(origin);
     // Another identity provider or client: the sign-in from the old one goes (see `Tokens`).
     if old.as_ref().is_some_and(|c| c.description.issuer != description.issuer || c.description.client_id != description.client_id) {
         logout(origin);
     }
+    let offered = Some(offered_before(old.as_ref()));
     let added = old.map_or_else(now, |c| c.added);
-    let cached = Cached { origin: origin.to_string(), description: description.clone(), added };
+    let cached = Cached { origin: origin.to_string(), description: description.clone(), added, offered };
     crate::auth::write_private(&path, (serde_json::to_string_pretty(&cached)? + "\n").as_bytes())?;
     Ok(())
 }
@@ -802,6 +852,30 @@ fn html_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_an_endpoint_listed_before_counts_as_offered() {
+        let d = |names: &[&str]| -> Description {
+            let collections: Vec<_> = names.iter().map(|n| serde_json::json!({"name": n, "url": format!("https://f.tld/git/{n}.git")})).collect();
+            serde_json::from_value(serde_json::json!({"name": "Acme", "issuer": "https://login.tld", "clientId": "furnish", "collections": collections})).unwrap()
+        };
+        let cached = |offered: Option<&[&str]>| Cached {
+            origin: "https://f.tld".into(),
+            description: d(&["a", "b"]),
+            added: 1,
+            offered: offered.map(|o| o.iter().map(|s| s.to_string()).collect()),
+        };
+        // A new endpoint: furnish added nothing yet (add_endpoint marks what it adds).
+        assert!(offered_before(None).is_empty());
+        // Saved before: kept as it is, also names the endpoint no longer lists.
+        assert_eq!(offered_before(Some(&cached(Some(&["a", "gone"])))), ["a", "gone"]);
+        // A file of an earlier version: everything its old description listed.
+        assert_eq!(offered_before(Some(&cached(None))), ["a", "b"]);
+        // Files of earlier versions read; without offered, the field isn't written.
+        let old: Cached = serde_json::from_value(serde_json::json!({"origin": "https://f.tld", "description": d(&["a"])})).unwrap();
+        assert_eq!(old.offered, None);
+        assert!(!serde_json::to_string(&old).unwrap().contains("offered"));
+    }
 
     #[test]
     fn what_counts_as_an_endpoint() {

@@ -272,7 +272,8 @@ export function visibleApps(view: View, query: string): AppInfo[] {
 export async function updateCollections(): Promise<string[]> {
   const changed: string[] = [];
   // The organizations' descriptions first: their settings, branding and collections may have changed.
-  const errors = await api.refreshEndpoints().catch((e) => [message(e)]);
+  const refreshed = await api.refreshEndpoints().catch((e) => ({ problems: [message(e)], added: [] as string[] }));
+  const errors = refreshed.problems;
   await reloadSettings();
   for (const c of store.collections) {
     try {
@@ -282,7 +283,9 @@ export async function updateCollections(): Promise<string[]> {
       errors.push(`${c.name}: ${message(e)}`);
     }
   }
-  if (changed.length) await loadAll();
+  if (refreshed.added.length) toast('info', t('collections.added', { names: refreshed.added.join(', ') }));
+  // Also asks the new collections' questions (unless postponed this session).
+  if (changed.length || refreshed.added.length) await loadAll();
   // A collection whose update failed (e.g. a commit its checks refuse) shows its update as available.
   else store.collections = await api.listCollections().catch(() => store.collections);
   if (errors.length) throw new Error(errors.join('\n'));

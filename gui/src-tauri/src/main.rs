@@ -511,10 +511,12 @@ async fn ensure_presets() -> CmdResult<Vec<String>> {
     blocking(|| Ok(catalog::ensure_presets())).await
 }
 
-/// Fetch the organizations' descriptions again; returns those that fail the checks (the saved
-/// ones stay). Endpoints that don't answer keep theirs without a problem.
+/// Fetch the organizations' descriptions again and add the collections new in those of addresses
+/// the user added. Returns the added collections and problems: descriptions that fail the checks
+/// (the saved ones stay), collections that couldn't be added. Endpoints that don't answer keep
+/// theirs without a problem.
 #[tauri::command]
-async fn refresh_endpoints() -> CmdResult<Vec<String>> {
+async fn refresh_endpoints() -> CmdResult<furnish::endpoint::Refresh> {
     blocking(|| Ok(furnish::endpoint::refresh())).await
 }
 

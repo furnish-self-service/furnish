@@ -280,21 +280,106 @@ pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>
     }
     let presets = crate::policy::load().collections.preset;
     let mut added = Vec::new();
-    for c in &description.collections {
-        check_name(&c.name)?;
-        if presets.iter().any(|p| p.name == c.name && p.url != c.url) {
-            bail!("'{}' is the name of a collection your organization provides", c.name);
-        }
-        let dir = collections_dir().join(&c.name);
-        if dir.join(".git").exists() {
-            match origin_url(&dir) {
-                Ok(url) if url == c.url => continue, // already there
-                _ => bail!("a collection named '{}' already exists", c.name),
+    let mut present = Vec::new();
+    let result = (|| -> Result<()> {
+        for c in &description.collections {
+            check_name(&c.name)?;
+            if presets.iter().any(|p| p.name == c.name && p.url != c.url) {
+                bail!("'{}' is the name of a collection your organization provides", c.name);
             }
+            let dir = collections_dir().join(&c.name);
+            if dir.join(".git").exists() {
+                match origin_url(&dir) {
+                    Ok(url) if url == c.url => {
+                        present.push(c.name.clone()); // already there
+                        continue;
+                    }
+                    _ => bail!("a collection named '{}' already exists", c.name),
+                }
+            }
+            added.push(clone(&c.url, &c.name, preset, false)?);
+            present.push(c.name.clone());
         }
-        added.push(clone(&c.url, &c.name, preset, false)?);
-    }
+        Ok(())
+    })();
+    // What it lists later on top of these is new (see `add_new`).
+    let marked = crate::endpoint::mark_offered(origin, &present);
+    result?;
+    marked?;
     Ok(added)
+}
+
+/// What to do with a collection that an endpoint the person added lists, and that furnish hasn't
+/// added for it before.
+#[derive(Debug, PartialEq)]
+enum Offer<'a> {
+    Add(&'a crate::endpoint::Collection),
+    /// The person has it already, from the same URL.
+    Present(&'a str),
+    /// Not added, for this reason.
+    Refused(String),
+}
+
+/// The collections `listed` by an endpoint that aren't `offered` yet, and what to do with each,
+/// by the rules for adding an endpoint (`add_endpoint`): a valid name, not a preset's name (a
+/// preset with the same URL is left to `ensure_presets`), and not a collection of the person's
+/// from another URL (`local_url`: the git URL of the person's collection of that name).
+fn offers<'a>(
+    listed: &'a [crate::endpoint::Collection],
+    offered: &[String],
+    presets: &[crate::policy::Preset],
+    local_url: impl Fn(&str) -> Option<String>,
+) -> Vec<Offer<'a>> {
+    listed
+        .iter()
+        .filter(|c| !offered.contains(&c.name))
+        .filter(|c| !presets.iter().any(|p| p.name == c.name && p.url == c.url))
+        .map(|c| {
+            if let Err(err) = check_name(&c.name) {
+                return Offer::Refused(format!("{err:#}"));
+            }
+            if presets.iter().any(|p| p.name == c.name) {
+                return Offer::Refused(format!("'{}' is the name of a collection your organization provides", c.name));
+            }
+            match local_url(&c.name) {
+                Some(url) if url == c.url => Offer::Present(&c.name),
+                Some(_) => Offer::Refused(format!("a collection named '{}' already exists", c.name)),
+                None => Offer::Add(c),
+            }
+        })
+        .collect()
+}
+
+/// Add the collections new in the description of an endpoint the person added: those it lists
+/// that furnish didn't add for it before (see `endpoint::offered`). A collection the person
+/// removed isn't added again, and one the endpoint stops listing stays. Returns the added
+/// collections and problems as messages; a collection that couldn't be added is tried again next
+/// time.
+pub fn add_new(origin: &str, description: &crate::endpoint::Description) -> (Vec<Collection>, Vec<String>) {
+    let presets = crate::policy::load().collections.preset;
+    let local_url = |name: &str| {
+        let dir = collections_dir().join(name);
+        dir.join(".git").exists().then(|| origin_url(&dir).ok()).flatten()
+    };
+    let host = crate::endpoint::url_host(origin);
+    let (mut added, mut present, mut problems) = (Vec::new(), Vec::new(), Vec::new());
+    for offer in offers(&description.collections, &crate::endpoint::offered(origin), &presets, local_url) {
+        match offer {
+            Offer::Add(c) => match clone(&c.url, &c.name, false, false) {
+                Ok(collection) => {
+                    present.push(c.name.clone());
+                    added.push(collection);
+                }
+                Err(err) => problems.push(format!("{host}: couldn't add its new collection '{}': {err:#}", c.name)),
+            },
+            Offer::Present(name) => present.push(name.to_string()),
+            Offer::Refused(why) => problems.push(format!("{host}: not adding its new collection: {why}")),
+        }
+    }
+    if let Err(err) = crate::endpoint::mark_offered(origin, &present) {
+        problems.push(format!("{host}: {err:#}"));
+    }
+    (added, problems)
 }
 
 /// Clone the admin's preset collections this user doesn't have yet. Returns problems as messages
@@ -1668,6 +1753,37 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_collections_an_endpoint_lists_anew_are_added_by_the_rules_for_adding() {
+        use crate::endpoint::Collection as Listed;
+        let e = |name: &str| Listed { name: name.into(), url: format!("https://furnish.acme.tld/git/{name}.git") };
+        let listed = [e("tools"), e("removed"), e("new"), e("mine"), e("same"), e("it"), e("preset"), e("CON")];
+        // Added before (and then removed by the person, or not): never again.
+        let offered = ["tools".to_string(), "removed".to_string()];
+        let presets = [
+            crate::policy::Preset { name: "it".into(), url: "https://git.acme.tld/it.git".into() },
+            crate::policy::Preset { name: "preset".into(), url: e("preset").url },
+        ];
+        let local = |name: &str| match name {
+            "tools" => Some(e("tools").url),
+            "mine" => Some("https://github.com/me/mine.git".into()),
+            "same" => Some(e("same").url),
+            _ => None,
+        };
+        assert_eq!(
+            offers(&listed, &offered, &presets, local),
+            [
+                Offer::Add(&listed[2]),
+                Offer::Refused("a collection named 'mine' already exists".into()),
+                Offer::Present("same"),
+                Offer::Refused("'it' is the name of a collection your organization provides".into()),
+                // "preset": the admin's, from the same URL, set up by ensure_presets.
+                Offer::Refused("invalid collection name 'CON': Windows reserves it for a device".into()),
+            ]
+        );
+        assert!(offers(&listed, &listed.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), &presets, local).is_empty());
+    }
 
     #[test]
     fn collection_name_from_url() {

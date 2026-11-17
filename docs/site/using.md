@@ -16,6 +16,8 @@ A collection can ask a question when you add it, for example what you work on. f
 
 If your organization has a furnish address, furnish signs you in with your organization's account in the browser. When that sign-in expires, a banner asks you to sign in again; until then furnish can't fetch new apps or updates from your organization.
 
+When your organization adds a collection to its address, furnish adds it the next time it updates the collections. A collection you removed stays removed; to get it back, add the address again.
+
 ![The banner asking to sign in to Acme.](images/sign-in.webp)
 
 ## An app's page

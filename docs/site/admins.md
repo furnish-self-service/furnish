@@ -112,6 +112,10 @@ furnish signs people in with OpenID Connect (authorization code with PKCE; the c
 
 furnish fetches `furnish.json` again each time it updates all collections: when the app starts (if it updates on launch), at the update interval, and with "Update all" or `furnish collection update`. Changes to the description reach people who added the address themselves without them adding it again. If the address doesn't answer, furnish keeps the description it has. If the new description fails the checks above, furnish also keeps the old one and shows why when people update their collections.
 
+When the address lists a new collection, furnish adds it for people who added the address themselves and asks its questions, as when they add a collection; the address's `parameters` can answer them. It doesn't add a collection whose name a preset collection or one of the person's own collections from another URL has, and says so when people update their collections. A collection the person removed isn't added again, also if the address stops listing it and lists it again later; adding the address again brings it back. For an address the policy lists, new collections become presets.
+
+When the address stops listing a collection, furnish keeps it and the apps installed from it, and people can remove it. The address's defaults no longer apply to it, and its updates fail once the address no longer serves it. For an address the policy lists, the collection stops being a preset.
+
 To make the address's collections presets, list it in the policy: `"endpoints": ["furnish.myorg.tld"]`. With `"usersCanAdd": false` in `collections`, people can only add the addresses the policy lists, and furnish ignores others they added before.
 
 What an address sets works like the policy's settings, as defaults that never lock anything; the policy wins where both set something. An address only sets things for its own collections, the ones its `furnish.json` lists:
