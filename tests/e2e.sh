@@ -418,7 +418,8 @@ expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
 [ "$(head -n 1 "$tmp/conf/ssh_config")" = "Include config.d/fixture.conf" ] || { echo "FAIL: the Include line isn't first" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
 grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAIL: no block" >&2; exit 1; }
-[ "$(cat "$tmp/conf/profile.conf")" = "$(cat "$tmp/repo/files/profile.conf")" ] || { echo "FAIL: profile not copied" >&2; exit 1; }
+# Git on Windows may check the collection out with CRLF line ends; the copy has the checkout's bytes.
+[ "$(tr -d '\r' < "$tmp/conf/profile.conf")" = "$(cat "$tmp/repo/files/profile.conf")" ] || { echo "FAIL: profile not copied" >&2; exit 1; }
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
 [ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
