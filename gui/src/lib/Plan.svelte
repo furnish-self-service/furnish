@@ -5,7 +5,8 @@
   import type { AppInfo, Step } from './api';
   import { store, appName, type RunStep } from './state.svelte';
   import { describeCondition } from './conditions';
-  import { t, parts, formatTime, formatDuration } from './i18n.svelte';
+  import { t, tparts, parts, formatTime, formatDuration } from './i18n.svelte';
+  import { dictionaries, type Key } from './i18n.ts';
 
   let { app }: { app: AppInfo } = $props();
 
@@ -84,6 +85,15 @@
     const condition = detail.match(/^Not on this system: (.+)$/)?.[1];
     return condition ? { text: describeCondition(condition) ?? t('plan.conditionFalse'), condition } : null;
   }
+  type Note = NonNullable<Step['notes']>[number];
+  /** furnish's configuration resources describe their steps as notes to translate; a note of a
+   *  newer furnish that this interface doesn't know shows the English details instead. */
+  const known = (n: Note) => `plan.note.${n.code}` in dictionaries.en || n.code === 'run';
+  function noteParts(n: Note) {
+    const p = n.params as Record<string, string | number>;
+    return tparts(`plan.note.${n.code}` as Key, n.code === 'file.create' ? { ...p, n: p.lines } : p);
+  }
+  const diffLines = (n: Note) => (Array.isArray(n.params.diff) ? (n.params.diff as string[]) : []);
   const show = (v: unknown) => (v === null || v === undefined ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
   const seconds = formatDuration;
   const clock = (ms: number) => formatTime(ms, true);
@@ -181,6 +191,24 @@
             <span class="name">{step.name}</span>
             <span class="type">{step.type}</span>
           </div>
+          {#if step.notes?.length && step.notes.every(known)}
+            {#each step.notes as n}
+              {#if n.code === 'run'}
+                <div class="command">
+                  <span class="who">{t('plan.runs')}</span>
+                  <code>{n.params.command}</code>
+                </div>
+              {:else}
+                <p class="detail">{#each noteParts(n) as part}{#if part.tag}<code class="inline">{part.text}</code>{:else}{part.text}{/if}{/each}</p>
+                {#if diffLines(n).length}
+                  <details class="lines">
+                    <summary>{t('plan.note.lines')}</summary>
+                    <pre>{#each diffLines(n) as l}<span class:add={l.startsWith('+')} class:del={l.startsWith('-')}>{l}</span>{'\n'}{/each}</pre>
+                  </details>
+                {/if}
+              {/if}
+            {/each}
+          {:else}
           {#each step.details as detail}
             {@const c = command(detail)}
             {@const skip = skipReason(detail)}
@@ -195,6 +223,7 @@
               <p class="detail">{detail}</p>
             {/if}
           {/each}
+          {/if}
           {#each row.outcome?.changes ?? step.changes as change}
             <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
           {/each}
@@ -432,6 +461,31 @@
     font: 0.8rem/1.45 var(--font-mono);
     color: #d5e5e3;
     word-break: break-all;
+  }
+  .detail code.inline {
+    font: 0.82em var(--font-mono);
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .lines summary {
+    font-size: 0.8rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .lines pre {
+    margin: 0.3rem 0 0;
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+    background: var(--hover);
+    font: 0.78rem/1.4 var(--font-mono);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .lines .add {
+    color: var(--accent-ink);
+  }
+  .lines .del {
+    color: var(--danger);
   }
   .diff {
     margin: 0;

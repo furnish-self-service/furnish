@@ -102,13 +102,16 @@ start "$work/policy-reports.json" && shoot reports
 # Last, as it installs 7zip: German, collection settings, falling back to an earlier version.
 rm -rf "$work/data/endpoints"
 start "$work/policy.json" && shoot fallback
+# furnish's configuration resources in the steps view (a collection with such apps, see shoot.mjs).
+start "$work/policy.json" && shoot steps
+start "$work/policy.json" && shoot stepsdrift
 # Phone crops: cut each window screenshot to its element (x.crop holds WxH+X+Y in pixels).
 docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots sh -c \
-    'for c in '"$out"'/*.crop; do convert "${c%.crop}.png" -crop "$(cat "$c")" +repage "${c%.crop}.png" && rm "$c"; done'
+    'for c in '"$out"'/*.crop; do [ -f "$c" ] || continue; convert "${c%.crop}.png" -crop "$(cat "$c")" +repage "${c%.crop}.png" && rm "$c"; done'
 # The branded look for phones: the top left (logo, name, the first accent-colored buttons).
 [ ! -f "$out/branded.png" ] || docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots \
     convert "$out/branded.png" -crop 1100x700+0+0 +repage "$out/branded-mobile.png"
-# WebP for the web: a fraction of the PNG size at the same look.
-docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots \
+# WebP for the web: a fraction of the PNG size at the same look (KEEP_PNG=1: leave the PNGs).
+[ -n "${KEEP_PNG:-}" ] || docker run --rm --user "$(id -u):$(id -g)" -v "$out:$out" furnish-screenshots \
     sh -c 'for f in '"$out"'/*.png; do convert "$f" -quality 88 "${f%.png}.webp" && rm "$f"; done'
 ls -l "$out"

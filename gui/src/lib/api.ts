@@ -98,6 +98,8 @@ export interface Step {
   action: Action;
   /** The resource's own description of what it would do, e.g. the exact command. */
   details: string[];
+  /** The same as notes to translate (furnish's configuration resources): `plan.note.<code>`. */
+  notes?: { code: string; params: Record<string, unknown> }[];
   changes: { property: string; before: unknown; after: unknown }[];
 }
 

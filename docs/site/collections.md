@@ -105,6 +105,8 @@ The resources that write files have these properties in common:
 | `backup` | `true` keeps a copy of the file before each change, named `<file>.<date and time in UTC>~` |
 | `validate` | A command that checks the new file before it replaces the old one, with `'%s'` for its path, for example `[ssh, -G, -F, '%s', git.acme.example]`. If it exits with another code than 0, the step fails and the file stays as it was |
 
+A file that the account checking the app's status may not read, such as a root-only file that the furnish service wrote, counts as set up if it exists: furnish can't compare its contents as that account. The steps preview says so.
+
 A file is replaced in one step, so programs never read half of it. It keeps its mode, owner and encoding, including a byte order mark and Windows line ends.
 
 To tell whether an app is installed, each resource computes the change it would make to the file and reports the desired state when there is none. Installing makes that change. A setting someone changed by hand shows as an available update, and installing again sets it back.
@@ -237,7 +239,7 @@ A kubeconfig merge takes one step each for the cluster, the user and the context
 
 #### Furnish/Command
 
-A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall when the test passes; without it, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
+A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
 
 ```yaml
 - name: Vault server
@@ -278,7 +280,7 @@ furnish also finds resources where DSC does: in the folders on `PATH` and where 
 
 furnish uses `test` to tell whether an app is installed. A resource that is not in the desired state and doesn't report `_exist` counts as not installed. Some resources always report the desired state, such as `RunCommandOnSet`. Combine those with a resource that can tell. The same test runs right after an install, so a resource whose `test` doesn't match what its `set` does makes every install fail.
 
-For `--dry-run` and the steps preview, furnish's own resources show their exact commands. Other resources show their type and properties.
+For `--dry-run` and the steps preview, furnish's own resources describe what they would do. The package and installer resources show their exact commands. The configuration resources name each file and what happens to it, with the number of lines added and removed, and the changed lines of a `Furnish/Block` or of a `Furnish/File` with `content` that isn't private. `Furnish/Line` shows the line, `Furnish/Value` the value at its location before and after, and `Furnish/Command` its test command with the output it expected and got. Other resources show their type and properties.
 
 No other resource may declare one of furnish's types, such as `Furnish/Package`. furnish refuses to run when DSC finds one, whatever its version.
 

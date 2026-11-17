@@ -675,6 +675,10 @@ pub struct Step {
     pub action: Action,
     /// The resource's own description of its steps (DSC's `_metadata.whatIf`), e.g. the exact command.
     pub details: Vec<String>,
+    /// The same as notes the GUI translates, from furnish's configuration resources
+    /// (`_metadata.furnish`): `{code, params}`, see resources/note.rs.
+    #[serde(default)]
+    pub notes: Vec<Value>,
     /// Properties that would change, other than presence (`_exist`).
     pub changes: Vec<Change>,
 }
@@ -757,6 +761,8 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
                     // A step without preview ran its command, even if its state reads the same.
                     action: match action(&r.before_state, &r.after_state) {
                         Action::Nothing if step.details.first().is_some_and(|d| d == NO_PREVIEW) => Action::Change,
+                        // A configuration resource changed what its properties don't show (see preview).
+                        Action::Nothing if !step.notes.is_empty() && step.action != Action::Nothing => step.action,
                         a => a,
                     },
                     changes: changes(&r.before_state, &r.after_state),
@@ -900,7 +906,7 @@ fn preview(doc: &Value) -> Result<Step> {
     let kind = resource["type"].as_str().unwrap_or_default().to_string();
     let skipped = || {
         let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
-        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, changes: vec![] }
+        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, notes: vec![], changes: vec![] }
     };
     if !applies_here(resource, doc) {
         return Ok(skipped());
@@ -915,7 +921,7 @@ fn preview(doc: &Value) -> Result<Step> {
         Err(DscError::NotImplemented(_)) => {
             let mut details = vec![NO_PREVIEW.to_string()];
             details.extend(property_lines(&resource["properties"]));
-            return Ok(Step { name, kind, action: Action::Change, details, changes: vec![] });
+            return Ok(Step { name, kind, action: Action::Change, details, notes: vec![], changes: vec![] });
         }
         Err(e) => return Err(e.into()),
     };
@@ -936,7 +942,15 @@ fn preview(doc: &Value) -> Result<Step> {
         SetResult::Resource(r) => (r.before_state.clone(), r.after_state.clone()),
         SetResult::Group(_) => (Value::Null, Value::Null),
     };
-    Ok(Step { name, kind, action: action(&before, &after), details, changes: changes(&before, &after) })
+    let other = r.metadata.as_ref().map(|m| &m.other);
+    let notes = other.and_then(|m| m.get("furnish")).and_then(Value::as_array).cloned().unwrap_or_default();
+    // furnish's configuration resources don't show whole files as properties, so a change can
+    // leave the properties shown as they were; they say so (see resources::run).
+    let action = match action(&before, &after) {
+        Action::Nothing if other.and_then(|m| m.get("furnishChange")) == Some(&Value::Bool(true)) => Action::Change,
+        a => a,
+    };
+    Ok(Step { name, kind, action, details, notes, changes: changes(&before, &after) })
 }
 
 /// One line per property, `name: value`, shortened to a line's length.

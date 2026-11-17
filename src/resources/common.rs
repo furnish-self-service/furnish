@@ -58,18 +58,27 @@ pub struct Managed {
     pub shown: String,
     pub real: PathBuf,
     pub bytes: Option<Vec<u8>>,
+    /// The file (or a folder on the way) exists but this account may not read it, e.g. a root-only file that the furnish
+    /// service wrote, while furnish works out the app's status as the user.
+    pub unreadable: bool,
 }
 
 impl Managed {
     pub fn open(path: &str) -> Result<Self> {
         let real = resolve(&expand(path)?)?;
+        let mut unreadable = false;
         let bytes = match fs::read(&real) {
             Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) if real.is_dir() => bail!("{path} is a folder"),
+            // Also when a folder on the way can't be opened: then furnish can't tell either.
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                unreadable = true;
+                None
+            }
             Err(e) => return Err(anyhow!(e).context(format!("reading {path}"))),
         };
-        Ok(Managed { shown: path.to_string(), real, bytes })
+        Ok(Managed { shown: path.to_string(), real, bytes, unreadable })
     }
 
     /// The file's text (empty if there is no file), decoded from its encoding.

@@ -9,6 +9,7 @@
 
 mod command;
 mod common;
+mod note;
 pub mod text;
 pub mod value;
 
@@ -21,6 +22,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use common::{Managed, Missing, Text, WriteOptions};
+use note::{Note, note};
 
 /// The first argument that makes furnish run a resource instead of a command.
 pub const COMMAND: &str = "dsc-resource";
@@ -95,16 +97,26 @@ fn run(args: &[String]) -> Result<String> {
         }
         "set" if what_if => {
             let mut after = plan.after;
-            after.insert("_metadata".into(), json!({ "whatIf": plan.steps }));
+            // whatIf for the CLI and logs, furnish for the GUI (translated there).
+            let english: Vec<String> = plan.steps.iter().map(Note::english).collect();
+            let notes: Vec<Value> = plan.steps.iter().map(|n| json!({ "code": n.code, "params": n.params })).collect();
+            // furnishChange: the properties shown may read the same before and after (a moved line,
+            // a file's contents), so furnish learns from this that the step changes something.
+            after.insert("_metadata".into(), json!({ "whatIf": english, "furnish": notes, "furnishChange": plan.apply.is_some() }));
             after
         }
+        "set" if plan.unverified.is_some() => bail!("{}", plan.unverified.unwrap_or_default()),
         "set" => match plan.apply {
             None => plan.state,
+            Some(apply) if !plan.recheck => {
+                apply()?;
+                plan.after
+            }
             Some(apply) => {
                 apply()?;
                 let again = evaluate(kind, &props)?;
                 if again.apply.is_some() {
-                    bail!("still not in the desired state after the change ({})", plan.steps.join("; "));
+                    bail!("still not in the desired state after the change ({})", plan.steps.iter().map(Note::english).collect::<Vec<_>>().join("; "));
                 }
                 again.state
             }
@@ -122,16 +134,21 @@ pub struct Plan {
     state: Map<String, Value>,
     /// The state set would leave.
     after: Map<String, Value>,
-    /// What set would do, one line per step, for previews.
-    steps: Vec<String>,
+    /// What set would do, one note per step, for previews.
+    steps: Vec<Note>,
     /// Makes the change; `None` if the resource is in its desired state.
     apply: Option<Box<dyn FnOnce() -> Result<()>>>,
+    /// Why the state is assumed rather than found (see [`unreadable`]); set then refuses.
+    unverified: Option<String>,
+    /// Test again after set and fail if something would still change (not after a removal
+    /// command, whose test proves nothing, see command.rs).
+    recheck: bool,
 }
 
 impl Plan {
     fn new(props: &Value) -> Self {
         let state = props.as_object().cloned().unwrap_or_default();
-        Plan { after: state.clone(), state, steps: vec![], apply: None }
+        Plan { after: state.clone(), state, steps: vec![], apply: None, unverified: None, recheck: true }
     }
 
     /// Set an observed property: its value now and after set (`None`: absent).
@@ -144,10 +161,26 @@ impl Plan {
         }
     }
 
-    fn change(&mut self, steps: Vec<String>, apply: impl FnOnce() -> Result<()> + 'static) {
+    fn change(&mut self, steps: Vec<Note>, apply: impl FnOnce() -> Result<()> + 'static) {
         self.steps = steps;
         self.apply = Some(Box::new(apply));
     }
+}
+
+/// The plan for a file this account can't read. furnish works out an app's status as the user,
+/// also for apps the furnish service installed, and a file that only root may read (a VPN
+/// profile with mode 600, say) can't be compared then. It exists, so the resource counts as set
+/// up (removed: as still there); the service, which installs and removes such apps, reads it.
+fn unreadable(mut plan: Plan, file: &Managed, exist: bool) -> Plan {
+    plan.observe("_exist", Some(true.into()), Some(exist.into()));
+    plan.steps = vec![note("file.unreadable", json!({ "path": file.shown }))];
+    let why = format!("can't read {}: changing it needs the rights of whoever may read it (administrator)", file.name());
+    if !exist {
+        let refuse = why.clone();
+        plan.apply = Some(Box::new(move || bail!("{refuse}")));
+    }
+    plan.unverified = Some(why);
+    plan
 }
 
 fn evaluate(kind: &str, props: &Value) -> Result<Plan> {
@@ -240,21 +273,21 @@ fn check_mode(mode: &Option<String>, private: Option<bool>) -> Result<()> {
 }
 
 /// Observe and fix `mode` or `private` of an existing file or folder.
-fn permissions(plan: &mut Plan, path: &Path, shown: &str, mode: Option<u32>, private: bool, folder: bool) -> Result<Vec<String>> {
+fn permissions(plan: &mut Plan, path: &Path, shown: &str, mode: Option<u32>, private: bool, folder: bool) -> Result<Vec<Note>> {
     let mut steps = Vec::new();
     if let Some(mode) = mode
         && let Some(actual) = common::mode(path)
     {
         plan.observe("mode", Some(format!("{actual:03o}").into()), Some(format!("{mode:03o}").into()));
         if actual != mode {
-            steps.push(format!("Set the mode of {shown} to {mode:o}"));
+            steps.push(note("mode", json!({ "path": shown, "mode": format!("{mode:03o}") })));
         }
     }
     if private {
         let actual = common::is_private(path, folder)?;
         plan.observe("private", Some(actual.into()), Some(true.into()));
         if !actual {
-            steps.push(format!("Make {shown} accessible only to you"));
+            steps.push(note("private", json!({ "path": shown })));
         }
     }
     Ok(steps)
@@ -280,9 +313,9 @@ fn directory(props: &Value) -> Result<Plan> {
         let empty = fs::read_dir(&path)?.next().is_none();
         plan.observe("_exist", Some(true.into()), Some((!empty).into()));
         if empty {
-            plan.change(vec![format!("Remove the empty folder {shown}")], move || Ok(fs::remove_dir(&path)?));
+            plan.change(vec![note("dir.remove", json!({ "path": shown }))], move || Ok(fs::remove_dir(&path)?));
         } else {
-            plan.steps = vec![format!("Keep {shown}: it isn't empty")];
+            plan.steps = vec![note("dir.keep", json!({ "path": shown }))];
         }
         return Ok(plan);
     }
@@ -291,7 +324,7 @@ fn directory(props: &Value) -> Result<Plan> {
         permissions(&mut plan, &path, &shown, mode, private, true)?
     } else {
         plan.observe("mode", None, mode.map(|m| format!("{m:03o}").into()));
-        vec![format!("Create the folder {shown}")]
+        vec![note("dir.create", json!({ "path": shown }))]
     };
     if !steps.is_empty() {
         plan.change(steps, move || {
@@ -337,13 +370,13 @@ fn write_options(mode: Option<u32>, private: Option<bool>, backup: Option<bool>,
 }
 
 /// The preview lines for writing a file.
-fn write_steps(file: &Managed, options: &WriteOptions, what: String) -> Vec<String> {
-    let mut steps = vec![what];
+fn write_steps(file: &Managed, options: &WriteOptions, what: Vec<Note>) -> Vec<Note> {
+    let mut steps = what;
     if options.backup && file.bytes.is_some() {
-        steps.push(format!("Keep a copy of the current {} first", file.shown));
+        steps.push(note("backup", json!({ "path": file.shown })));
     }
     if let Some(command) = &options.validate {
-        steps.push(format!("Check the new file first: {}", command.join(" ").replace("%s", "<new file>")));
+        steps.push(note("validate", json!({ "command": command.join(" ").replace("%s", "<new file>") })));
     }
     steps
 }
@@ -353,13 +386,16 @@ fn file(props: &Value) -> Result<Plan> {
     p.check()?;
     let mut plan = Plan::new(props);
     let file = Managed::open(&p.path)?;
+    if file.unreadable {
+        return Ok(unreadable(plan, &file, exist(p.exist)));
+    }
     let mode = p.mode.as_deref().map(common::parse_mode).transpose()?;
     let options = write_options(mode, p.private, p.backup, &p.validate);
     let found = file.bytes.is_some();
     if !exist(p.exist) {
         plan.observe("_exist", Some(found.into()), Some(false.into()));
         if found {
-            let steps = vec![format!("Delete {}", file.shown)];
+            let steps = vec![note("file.delete", json!({ "path": file.shown }))];
             plan.change(steps, move || common::delete(&file, &options));
         }
         return Ok(plan);
@@ -367,9 +403,14 @@ fn file(props: &Value) -> Result<Plan> {
     plan.observe("_exist", Some(found.into()), Some(true.into()));
     let current = file.bytes.as_deref().and_then(|b| Text::decode(b).ok());
     // The new contents, `None` if they stay.
+    // Whole files aren't shown as properties (they may be long or secret): a note says what changes.
+    let mut what = None;
     let new: Option<Vec<u8>> = match (&p.content, &p.source) {
         (Some(content), _) => {
-            plan.observe("content", current.as_ref().map(|t| t.text.clone().into()), Some(content.clone().into()));
+            let old = current.as_ref().map(|t| t.text.as_str()).filter(|_| found);
+            if old != Some(content.as_str()) {
+                what = Some(note::text_change(&file.shown, old, content, options.private));
+            }
             match &current {
                 Some(t) if t.text == *content => None,
                 Some(t) => Some(t.encode(content)),
@@ -379,15 +420,20 @@ fn file(props: &Value) -> Result<Plan> {
         (None, Some(source)) => {
             let bytes = fs::read(source).with_context(|| format!("reading {source} from the collection"))?;
             let same = file.bytes.as_deref() == Some(bytes.as_slice());
-            plan.observe("source", same.then(|| source.clone().into()), Some(source.clone().into()));
+            if !same {
+                let name = Path::new(source).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                what = Some(note("file.copy", json!({ "path": file.shown, "source": name })));
+            }
             (!same).then_some(bytes)
         }
-        (None, None) => (!found).then(Vec::new),
+        (None, None) => {
+            what = (!found).then(|| note("file.create", json!({ "path": file.shown, "lines": 0 })));
+            (!found).then(Vec::new)
+        }
     };
     let mut steps = if found { permissions(&mut plan, &file.real, &file.shown, mode, options.private, false)? } else { vec![] };
     if let Some(bytes) = new {
-        let verb = if found { "Write" } else { "Create" };
-        let mut all = write_steps(&file, &options, format!("{verb} {}", file.shown));
+        let mut all = write_steps(&file, &options, what.into_iter().collect());
         all.append(&mut steps);
         plan.change(all, move || common::write(&file, &bytes, &options));
     } else if !steps.is_empty() {
@@ -405,8 +451,18 @@ fn file(props: &Value) -> Result<Plan> {
 }
 
 /// The change of a text-editing resource: write `new` if it differs from the file's text.
-fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, what: String) {
+/// `diff`: the first note also gets the lines added and removed and the changed lines (Block;
+/// Line and Value show their line or value, which says it all).
+fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, mut what: Vec<Note>, diff: bool) {
     if new != text.text {
+        if diff && let Some(first) = what.first_mut() {
+            let counts = note::text_change(&file.shown, Some(text.text.as_str()), &new, false);
+            for key in ["added", "removed", "diff"] {
+                if let Some(v) = counts.params.get(key) {
+                    first.params.insert(key.into(), v.clone());
+                }
+            }
+        }
         let steps = write_steps(&file, &options, what);
         plan.change(steps, move || common::write(&file, &text.encode(&new), &options));
     }
@@ -458,21 +514,23 @@ fn block(props: &Value) -> Result<Plan> {
     let app = p.app.as_deref().context("app is missing: furnish sets it to <collection>/<app> when it loads the app")?;
     let mut plan = Plan::new(props);
     let file = Managed::open(&p.path)?;
+    if file.unreadable {
+        return Ok(unreadable(plan, &file, exist(p.exist)));
+    }
     let text = file.text()?;
     let block = text::Block { content: &p.content, comment: p.comment.as_deref().unwrap_or("#"), app, insert };
     let current = block.current(&text.text).with_context(|| file.shown.clone())?;
     let exist = exist(p.exist);
     let new = block.apply(&text.text, exist).with_context(|| file.shown.clone())?;
-    let content = p.content.trim_end_matches('\n').to_string();
     plan.observe("_exist", Some(current.is_some().into()), Some(exist.into()));
-    plan.observe("content", current.clone().map(Value::from), exist.then(|| content.clone().into()));
-    let what = match (&current, exist) {
-        (None, _) => format!("Add the block to {}", file.shown),
-        (Some(_), true) => format!("Update the block in {}", file.shown),
-        (Some(_), false) => format!("Remove the block from {}", file.shown),
+    let code = match (&current, exist) {
+        (None, _) => "block.add",
+        (Some(_), true) => "block.update",
+        (Some(_), false) => "block.remove",
     };
+    let what = vec![note(code, json!({ "path": file.shown }))];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    text_change(&mut plan, file, text, new, options, what, true);
     Ok(plan)
 }
 
@@ -517,24 +575,23 @@ fn line(props: &Value) -> Result<Plan> {
     let line = p.check()?;
     let mut plan = Plan::new(props);
     let file = Managed::open(&p.path)?;
+    if file.unreadable {
+        return Ok(unreadable(plan, &file, exist(p.exist)));
+    }
     let text = file.text()?;
     let exist = exist(p.exist);
     let current = line.current(&text.text);
     let new = line.apply(&text.text, exist);
     plan.observe("_exist", Some(current.is_some().into()), Some(exist.into()));
-    plan.observe("line", current.map(|(l, _)| l.into()), exist.then(|| p.line.clone().into()));
-    let placed = current.is_some_and(|(_, placed)| placed);
-    for (key, given) in [("before", &p.before), ("after", &p.after)] {
-        plan.observe(key, given.clone().filter(|_| placed).map(Value::from), given.clone().filter(|_| exist).map(Value::from));
-    }
-    let what = match (current, exist) {
-        (_, false) => format!("Remove '{}' from {}", current.map_or(p.line.as_str(), |(l, _)| l), file.shown),
-        (None, true) => format!("Add '{}' to {}", p.line, file.shown),
-        (Some((l, _)), true) if l != p.line => format!("Replace '{l}' with '{}' in {}", p.line, file.shown),
-        (Some(_), true) => format!("Move '{}' to its place in {}", p.line, file.shown),
-    };
+    let path = file.shown.clone();
+    let what = vec![match (current, exist) {
+        (_, false) => note("line.remove", json!({ "path": path, "line": current.map_or(p.line.as_str(), |(l, _)| l) })),
+        (None, true) => note("line.add", json!({ "path": path, "line": p.line })),
+        (Some((l, _)), true) if l != p.line => note("line.replace", json!({ "path": path, "line": p.line, "old": l })),
+        (Some(_), true) => note("line.move", json!({ "path": path, "line": p.line })),
+    }];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    text_change(&mut plan, file, text, new, options, what, false);
     Ok(plan)
 }
 
@@ -574,6 +631,9 @@ fn value(props: &Value) -> Result<Plan> {
     let exist = exist(p.exist);
     let mut plan = Plan::new(props);
     let file = Managed::open(&p.path)?;
+    if file.unreadable {
+        return Ok(unreadable(plan, &file, exist));
+    }
     let text = file.text()?;
     let doc = value::parse(format, &text.text).with_context(|| format!("{} can't be read, so furnish leaves it as it is", file.shown))?;
     let (ops, expected) = value::plan(&doc, &segs, p.value.as_ref(), merge, exist).with_context(|| format!("{}: {}", file.shown, p.location))?;
@@ -594,14 +654,15 @@ fn value(props: &Value) -> Result<Plan> {
         return Ok(plan);
     }
     let new = value::edit(format, &text.text, &ops, &expected).with_context(|| file.shown.clone())?;
-    let what = match (merge, exist) {
-        (value::Merge::Member, true) => format!("Add the value to the list at {} in {}", p.location, file.shown),
-        (value::Merge::Member, false) => format!("Remove the value from the list at {} in {}", p.location, file.shown),
-        (_, true) => format!("Set {} in {}", p.location, file.shown),
-        (_, false) => format!("Remove {} from {}", p.location, file.shown),
+    let code = match (merge, exist) {
+        (value::Merge::Member, true) => "value.add",
+        (value::Merge::Member, false) => "value.removeMember",
+        (_, true) => "value.set",
+        (_, false) => "value.remove",
     };
+    let what = vec![note(code, json!({ "path": file.shown, "location": p.location }))];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    text_change(&mut plan, file, text, new, options, what, false);
     Ok(plan)
 }
 
@@ -610,7 +671,7 @@ mod tests {
     use super::*;
 
     /// test, then set, then test again, through the same functions DSC's calls run.
-    fn converge(kind: &str, props: Value) -> Vec<String> {
+    fn converge(kind: &str, props: Value) -> Vec<Note> {
         let plan = evaluate(kind, &props).unwrap();
         let steps = plan.steps.clone();
         if let Some(apply) = plan.apply {
@@ -645,7 +706,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = path(&dir, "config.d/acme.conf");
         let props = json!({"path": p, "content": "Host git.acme.example\n"});
-        assert_eq!(converge("file", props.clone()), vec![format!("Create {p}")]);
+        assert_eq!(converge("file", props.clone()).iter().map(Note::english).collect::<Vec<_>>(), vec![format!("Create {p} (1 line)")]);
         assert_eq!(fs::read_to_string(&p).unwrap(), "Host git.acme.example\n");
         assert!(converge("file", props.clone()).is_empty());
         converge("file", json!({"path": p, "_exist": false}));
@@ -673,6 +734,33 @@ mod tests {
         converge("value", props);
         assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
         assert!(fs::read_to_string(&p).unwrap().contains("git.example.org"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_only_root_may_read_counts_as_set_up_and_set_refuses() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root reads everything
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir, "acme-vpn.ovpn");
+        fs::write(&p, "remote vpn.acme.example\n").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o000)).unwrap();
+        for (kind, props) in [
+            ("file", json!({"path": p, "content": "remote vpn.acme.example\n"})),
+            ("line", json!({"path": p, "line": "remote vpn.acme.example"})),
+            ("block", json!({"path": p, "content": "x", "app": "acme/vpn"})),
+            ("value", json!({"path": p, "format": "yaml", "location": "$.a", "value": 1})),
+        ] {
+            let plan = evaluate(kind, &props).unwrap();
+            assert!(plan.apply.is_none(), "{kind}: in the desired state as far as the user can tell");
+            assert_eq!(plan.state["_exist"], true);
+            assert_eq!(plan.steps[0].code, "file.unreadable");
+            assert!(plan.unverified.is_some(), "{kind}: set refuses");
+        }
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
     #[test]

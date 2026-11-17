@@ -231,7 +231,7 @@ resources:
     properties:
       test: { command: [git, config, --file, "$tmp/conf/gitconfig", fixture.server], output: https://fixture.example }
       set: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, https://fixture.example]
-      remove: [git, config, --file, "$tmp/conf/gitconfig", --unset, fixture.server]
+      remove: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, ""]  # succeeds also with nothing to remove
 YAML
 
 git -C "$tmp/repo" init -q
@@ -433,6 +433,12 @@ if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't dr
 expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
 expect "$(step uninstall config)" "Uninstalled config"
+# Removing an outdated setting (its test fails) still runs remove. The app then counts as not
+# installed, so this calls the resource the way DSC does.
+git config --file "$tmp/conf/gitconfig" fixture.server https://old.fixture.example
+printf '{"test": {"command": ["git", "config", "--file", "%s", "fixture.server"], "output": "https://fixture.example"}, "set": ["true"], "remove": ["git", "config", "--file", "%s", "--unset-all", "fixture.server"], "_exist": false}' \
+    "$tmp/conf/gitconfig" "$tmp/conf/gitconfig" | "$furnish" dsc-resource command set >/dev/null
+if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
 [ ! -e "$tmp/conf/profile.conf" ] && [ ! -e ~/"$home_file" ] || { echo "FAIL: files left behind" >&2; exit 1; }

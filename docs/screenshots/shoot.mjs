@@ -1,12 +1,12 @@
 // Takes the website's and docs' screenshots of the real furnish app (see run.sh), one scene per
 // app start: `main` (furnish's look), `branded` (an organization's), `dark`, `endpoint`, `reports`,
 // `fallback` (German, collection settings, an earlier app version).
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 // run.sh picks the port, so runs side by side (host network) don't meet each other's driver.
 const DRIVER = `http://127.0.0.1:${process.env.DRIVER_PORT || 4444}`;
-const [scene, , out] = process.argv.slice(2);
+const [scene, work, out] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
 let session;
@@ -102,7 +102,62 @@ async function settled() {
   }, 90000);
 }
 
+/** The steps view of furnish's configuration resources (STEPS_APPS: app name → file prefix), in
+ *  English and German. `prefix`: the files' names start with it. */
+async function stepsShots(prefix) {
+  const apps = { 'Acme VPN': 'file', 'Acme Git over SSH': 'text', 'Acme Kubernetes': 'value', 'Acme Vault': 'command' };
+  for (const [lang, discover] of [['en', 'Discover'], ['de', 'Entdecken']]) {
+    await click(nav('Settings'));
+    await click(`//select[@id='language']/option[@value='${lang}']`);
+    for (const [app, name] of Object.entries(apps)) {
+      await click(nav(discover));
+      await settled();
+      await click(`${card(app)}//button[contains(@aria-label, '${app}')]`);
+      await click("//details[summary[contains(., 'Steps') or contains(., 'Schritte')]]/summary");
+      await waitFor('preview', async () => (await findAll("//details[@open]//li")).length > 0);
+      await sleep(1500);
+      await js(`document.evaluate("//details[@open][.//li]", document, null, 9, null).singleNodeValue.scrollIntoView({block: "start"})`);
+      // The changed lines, where a step has them.
+      for (const id of await findAll("//details[contains(@class,'lines')]/summary")) await wd('POST', s(`/element/${id}/click`), {});
+      await shot(`steps-${name}-${prefix}-${lang}`);
+    }
+  }
+  await click(nav('Einstellungen'));
+  await click("//select[@id='language']/option[@value='en']");
+  await waitFor('English', () => find(nav('Settings')));
+}
+
 const scenes = {
+  // furnish's configuration resources before they are installed, then installed.
+  async steps() {
+    mkdirSync(`${work}/home/.ssh`, { recursive: true });
+    mkdirSync(`${work}/home/.kube`, { recursive: true });
+    writeFileSync(`${work}/home/.ssh/config`, 'ServerAliveInterval 30\n\nHost github.com\n  User git\n');
+    writeFileSync(`${work}/home/.kube/config`, 'apiVersion: v1\nkind: Config\nclusters:\n- name: home\n  cluster:\n    server: https://home.example:6443\ncurrent-context: home\n');
+    await settled();
+    await stepsShots('before');
+    for (const app of ['Acme VPN', 'Acme Git over SSH', 'Acme Kubernetes', 'Acme Vault']) {
+      await click(nav('Discover'));
+      await settled();
+      await click(`${card(app)}//button[normalize-space()='Install']`);
+      await waitFor(`${app} installed`, () => find(`${card(app)}//*[normalize-space()='Installed']`), 60000);
+    }
+    // Changes made by hand, which the next start shows as drift.
+    const { readFileSync, chmodSync } = await import('node:fs');
+    const edit = (file, f) => writeFileSync(`${work}/home/${file}`, f(readFileSync(`${work}/home/${file}`, 'utf8')));
+    edit('.config/acme-vpn/acme.ovpn', (t) => t.replace('proto udp', 'proto tcp').replace('auth-user-pass\n', ''));
+    chmodSync(`${work}/home/.config/acme-vpn/acme.ovpn`, 0o644);
+    edit('.ssh/config', (t) => t.replace('Include config.d/acme.conf\n', '') + 'Include config.d/acme.conf\n');
+    edit('.ssh/known_hosts', (t) => t.replace('example1', 'example9'));
+    edit('.kube/config', (t) => t.replace('https://k8s.acme.example', 'https://old.acme.example'));
+    edit('.claude/settings.json', (t) => t.replace('true', 'false'));
+    edit('.config/vault.ini', (t) => t.replace('https://vault.acme.example', 'https://vault.bitwarden.com'));
+  },
+  async stepsdrift() {
+    await settled();
+    await stepsShots('drift');
+  },
+
   async main() {
     // First launch: the collection's required question.
     await waitFor('question', () => find("//dialog[@open]//select[@data-question='role']"), 60000);
