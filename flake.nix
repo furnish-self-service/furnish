@@ -6,6 +6,10 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   # Builds the Rust dependencies once for both packages (cargoArtifacts below).
   inputs.crane.url = "github:ipetkov/crane/v0.23.4";
+  # Apps furnish installs into the NixOS configuration. Empty here; on a computer, the
+  # configuration points it at furnish's local flake (docs/site/admins.md):
+  #   inputs.furnish.inputs.apps.url = "git+file:///var/lib/furnish/apps";
+  inputs.apps.url = "path:./nix/no-apps";
 
   # Builds of main, so admins download furnish instead of compiling it. Nix asks once whether to
   # trust these settings; alternatively add both to nix.settings (docs/site/admins.md).
@@ -14,7 +18,7 @@
     extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
   };
 
-  outputs = { self, nixpkgs, crane }:
+  outputs = { self, nixpkgs, crane, apps }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -96,6 +100,84 @@
           buildPhaseCargoCommand = "${cargoBuildCli}\n${cargoBuildGui}";
         });
       };
+      # The NixOS module, with the apps from furnish's local flake (the `apps` input).
+      nixosModule = apps: { config, options, lib, pkgs, ... }:
+        let
+          cfg = config.services.furnish;
+          packages = self.packages.${pkgs.stdenv.hostPlatform.system};
+          # The local flake lists attribute names in the system's nixpkgs (nix/no-apps/flake.nix).
+          appPackages = map (name: lib.attrByPath (lib.splitString "." name)
+            (throw "furnish: nixpkgs has no package ${name}") pkgs) apps.furnish.systemPackages;
+          # Module first: what the configuration says wins over people's own setting.
+          entry = value: { inherit value; locked = true; };
+          nixos = lib.filterAttrs (_: v: v.value != null) {
+            configuration = entry cfg.nix.configuration;
+            flakeAttribute = entry cfg.nix.flakeAttribute;
+          };
+          policy = lib.recursiveUpdate (if cfg.policy == null then { } else cfg.policy)
+            (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
+          # What the module knows when the system is built, for furnish (src/nixos.rs). The
+          # configuration's folder only comes from the option: in a flake, `self` is a store copy.
+          facts = {
+            hostName = config.networking.hostName;
+            configurationRevision = config.system.configurationRevision;
+            homeManagerModule = options ? home-manager;
+            moduleVersion = packages.furnish.version;
+            nix = { inherit (cfg.nix) configuration flakeAttribute; };
+          };
+        in {
+          options.services.furnish = {
+            enable = lib.mkEnableOption "furnish, the self-service app catalog";
+            policy = lib.mkOption {
+              type = lib.types.nullOr (pkgs.formats.json { }).type;
+              default = null;
+              description = "Admin policy (/etc/furnish/policy.json): settings, preset collections, options, service.";
+              example = { collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }]; service.allowedGroup = "users"; };
+            };
+            service.enable = lib.mkEnableOption "the furnish service, which installs your organization's apps for users without administrator rights";
+            # Where this computer's NixOS configuration is (see docs/site/admins.md). Written to
+            # the policy as osSpecific.nixos.*; furnish searches only without it.
+            nix = {
+              configuration = lib.mkOption {
+                # A string, not a path: a path literal would become a copy in the Nix store.
+                type = lib.types.nullOr (lib.types.strMatching "/.*");
+                default = null;
+                description = "Folder of the NixOS configuration (with flake.nix or configuration.nix), as a string.";
+                example = "/home/alex/cfg";
+              };
+              flakeAttribute = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = config.networking.hostName;
+                defaultText = lib.literalExpression "config.networking.hostName";
+                description = "Name in the flake's nixosConfigurations.";
+                example = "alex-laptop";
+              };
+            };
+          };
+          config = lib.mkIf cfg.enable {
+            environment.systemPackages = [ packages.furnish packages.furnish-gui ] ++ appPackages;
+            # Nix packages the furnish service installs for everyone (Furnish/Package as root).
+            environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
+            environment.etc."furnish/policy.json" = lib.mkIf (policy != { }) { text = builtins.toJSON policy; };
+            environment.etc."furnish/nixos.json".text = builtins.toJSON facts;
+            security.polkit.enable = true;
+            systemd.services.furnish = lib.mkIf cfg.service.enable {
+              description = "furnish service: installs apps your organization provides";
+              wantedBy = [ "multi-user.target" ];
+              wants = [ "network-online.target" ];
+              after = [ "network-online.target" ];
+              path = with pkgs; [ bash coreutils git git-lfs nix ];
+              # It reads the policy once for its resources (FURNISH_CONFIG__*): restart on changes.
+              restartTriggers = [ (builtins.toJSON policy) ];
+              serviceConfig = {
+                ExecStart = "${packages.furnish}/bin/furnish service";
+                Restart = "on-failure";
+                UMask = "0022";
+                StateDirectory = "furnish";
+              };
+            };
+          };
+        };
     in {
       packages = forAll (pkgs: let r = rust pkgs; in rec {
         dsc-resources = dscResources pkgs;
@@ -160,80 +242,7 @@
       # NixOS: services.furnish.enable = true installs the app and the CLI; `policy` writes
       # /etc/furnish/policy.json; `service.enable` runs the furnish service (users without
       # administrator rights). `furnish service install` doesn't work on NixOS: use this instead.
-      nixosModules.default = { config, options, lib, pkgs, ... }:
-        let
-          cfg = config.services.furnish;
-          packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          # Module first: what the configuration says wins over people's own setting.
-          entry = value: { inherit value; locked = true; };
-          nixos = lib.filterAttrs (_: v: v.value != null) {
-            configuration = entry cfg.nix.configuration;
-            flakeAttribute = entry cfg.nix.flakeAttribute;
-          };
-          policy = lib.recursiveUpdate (if cfg.policy == null then { } else cfg.policy)
-            (lib.optionalAttrs (nixos != { }) { osSpecific.nixos = nixos; });
-          # What the module knows when the system is built, for furnish (src/nixos.rs). The
-          # configuration's folder only comes from the option: in a flake, `self` is a store copy.
-          facts = {
-            hostName = config.networking.hostName;
-            configurationRevision = config.system.configurationRevision;
-            homeManagerModule = options ? home-manager;
-            moduleVersion = packages.furnish.version;
-            nix = { inherit (cfg.nix) configuration flakeAttribute; };
-          };
-        in {
-          options.services.furnish = {
-            enable = lib.mkEnableOption "furnish, the self-service app catalog";
-            policy = lib.mkOption {
-              type = lib.types.nullOr (pkgs.formats.json { }).type;
-              default = null;
-              description = "Admin policy (/etc/furnish/policy.json): settings, preset collections, options, service.";
-              example = { collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }]; service.allowedGroup = "users"; };
-            };
-            service.enable = lib.mkEnableOption "the furnish service, which installs your organization's apps for users without administrator rights";
-            # Where this computer's NixOS configuration is (see docs/site/admins.md). Written to
-            # the policy as osSpecific.nixos.*; furnish searches only without it.
-            nix = {
-              configuration = lib.mkOption {
-                # A string, not a path: a path literal would become a copy in the Nix store.
-                type = lib.types.nullOr (lib.types.strMatching "/.*");
-                default = null;
-                description = "Folder of the NixOS configuration (with flake.nix or configuration.nix), as a string.";
-                example = "/home/alex/cfg";
-              };
-              flakeAttribute = lib.mkOption {
-                type = lib.types.nullOr lib.types.str;
-                default = config.networking.hostName;
-                defaultText = lib.literalExpression "config.networking.hostName";
-                description = "Name in the flake's nixosConfigurations.";
-                example = "alex-laptop";
-              };
-            };
-          };
-          config = lib.mkIf cfg.enable {
-            environment.systemPackages = [ packages.furnish packages.furnish-gui ];
-            # Nix packages the furnish service installs for everyone (Furnish/Package as root).
-            environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
-            environment.etc."furnish/policy.json" = lib.mkIf (policy != { }) { text = builtins.toJSON policy; };
-            environment.etc."furnish/nixos.json".text = builtins.toJSON facts;
-            security.polkit.enable = true;
-            systemd.services.furnish = lib.mkIf cfg.service.enable {
-              description = "furnish service: installs apps your organization provides";
-              wantedBy = [ "multi-user.target" ];
-              wants = [ "network-online.target" ];
-              after = [ "network-online.target" ];
-              path = with pkgs; [ bash coreutils git git-lfs nix ];
-              # It reads the policy once for its resources (FURNISH_CONFIG__*): restart on changes.
-              restartTriggers = [ (builtins.toJSON policy) ];
-              serviceConfig = {
-                ExecStart = "${packages.furnish}/bin/furnish service";
-                Restart = "on-failure";
-                UMask = "0022";
-                StateDirectory = "furnish";
-              };
-            };
-          };
-        };
+      nixosModules.default = nixosModule apps;
 
       # `nix flake check`: the packages and furnish's library tests (`nix build` runs no tests).
       checks = forAll (pkgs: let r = rust pkgs; in {
@@ -245,6 +254,8 @@
         });
         # NixOS VM: packages from the system's configuration show as installed.
         nixos-declared = import ./tests/nixos-declared.nix { inherit pkgs; module = self.nixosModules.default; };
+        # NixOS VM: apps from furnish's local flake, a nested input, end up in the system.
+        nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
       });
     };
 }
