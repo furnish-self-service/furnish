@@ -77,7 +77,7 @@ if ! grep -q "✓  acme-vpn " <<<"$list"; then
     if [ "$(uname -s)" = Darwin ]; then
         tb="/Library/Application Support/Tunnelblick"
         sudo ls -leR "$tb" || true
-        for p in "$tb" "$tb/Temp" "$tb/Temp/Acme VPN.tblk/Contents/Resources/config.ovpn" "$tb/Shared" \
+        for p in "/Library/Application Support/Acme VPN/config.ovpn" "$tb" "$tb/Shared" \
             "$tb/Shared/Acme VPN.tblk" "$tb/Shared/Acme VPN.tblk/Contents/Resources/config.ovpn"; do
             ${run[@]+"${run[@]}"} ls -ld "$p" 2>&1 || true
         done
@@ -100,9 +100,11 @@ Darwin)
     sudo test -f "$ovpn" || fail "no $ovpn"
     [ -d "$client" ] || fail "no $client"
     sudo ls -lR "/Library/Application Support/Tunnelblick/Shared"
-    # The copy Tunnelblick installed from, which furnish compares with the one in Shared/.
-    profile="/Library/Application Support/Tunnelblick/Temp/Acme VPN.tblk/Contents/Resources/config.ovpn"
+    # The profile the .tblk was built from, which furnish compares with the copy in Shared/. The
+    # .tblk built in Tunnelblick's Temp/ is gone after the install.
+    profile="/Library/Application Support/Acme VPN/config.ovpn"
     ls -l "$profile"
+    sudo test ! -e "/Library/Application Support/Tunnelblick/Temp/Acme VPN.tblk" || fail "the .tblk is still in Temp/"
     ;;
 Linux)
     ovpn=/etc/openvpn/acme-vpn.ovpn
@@ -146,7 +148,7 @@ expect "$list" "·  acme-vpn "
 expect "$list" "✓  openvpn-client "
 case "$(uname -s)" in
 Darwin) sudo test ! -e "${ovpn%/Contents/*}" || fail "the configuration is still there"
-    [ ! -e "${profile%/Contents/*}" ] || fail "${profile%/Contents/*} is still there" ;;
+    [ ! -e "${profile%/*}" ] || fail "${profile%/*} is still there" ;;
 Linux) [ ! -e "$ovpn" ] || fail "$ovpn is still there"
     [ ! -e "$stamp" ] || fail "$stamp is still there" ;;
 *) [ ! -e "$ovpn" ] || fail "$ovpn is still there" ;;
