@@ -1,0 +1,106 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Line",
+  "description": "One line of a text file",
+  "version": "0.1.0",
+  "get": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "line",
+      "get"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "line",
+      "test"
+    ],
+    "input": "stdin",
+    "return": "state"
+  },
+  "set": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "line",
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
+    ],
+    "input": "stdin",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Line",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file's path: absolute or starting with ~/"
+        },
+        "line": {
+          "type": "string",
+          "description": "The line"
+        },
+        "match": {
+          "type": "string",
+          "description": "A regular expression for the line to replace; line must match it"
+        },
+        "before": {
+          "type": "string",
+          "description": "The line must come before the first line that matches this regular expression"
+        },
+        "after": {
+          "type": "string",
+          "description": "The line must come after the last line that matches this regular expression"
+        },
+        "_exist": {
+          "type": "boolean",
+          "description": "Whether it should be there"
+        },
+        "backup": {
+          "type": "boolean",
+          "description": "Keep a timestamped copy of the file before each change"
+        },
+        "validate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command run on the new file before it replaces the old one; '%s' stands for its path"
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

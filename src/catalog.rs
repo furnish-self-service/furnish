@@ -992,18 +992,18 @@ impl Collection {
             // DSC requires it; don't make every app author repeat it.
             doc["$schema"] = DSC_SCHEMA.into();
         }
-        self.check_resources(&mut doc["resources"], allowed)?;
+        let id = path.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".dsc.yaml").to_string();
+        self.check_resources(&mut doc["resources"], allowed, &id)?;
         // Removal steps are resources too: the same policy and installer checks.
         if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {
             if !steps.as_array().is_some_and(|s| !s.is_empty() && s.iter().all(Value::is_object)) {
                 bail!("metadata.furnish.uninstall: a list of DSC resources, like resources");
             }
-            self.check_resources(steps, allowed).context("metadata.furnish.uninstall")?;
+            self.check_resources(steps, allowed, &id).context("metadata.furnish.uninstall")?;
         }
         let meta = &doc["metadata"]["furnish"];
-        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
         Ok(App {
-            id: file_name.trim_end_matches(".dsc.yaml").to_string(),
+            id,
             collection: self.name.clone(),
             name: meta["name"].as_str().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()),
             description: meta["description"].as_str().unwrap_or_default().trim().to_string(),
@@ -1026,8 +1026,10 @@ impl Collection {
     }
 
     /// Check the resources of a document, and those nested in groups and adapters
-    /// (`properties.resources`): types the policy allows, and installer files in the collection.
-    fn check_resources(&self, resources: &mut Value, allowed: Option<&[String]>) -> Result<()> {
+    /// (`properties.resources`): types the policy allows, installer and source files in the
+    /// collection, and the properties of the configuration resources. `Furnish/Block` gets the
+    /// app's name for its markers.
+    fn check_resources(&self, resources: &mut Value, allowed: Option<&[String]>, app: &str) -> Result<()> {
         for resource in resources.as_array_mut().into_iter().flatten() {
             let name = resource["name"].as_str().unwrap_or("?").to_string();
             let kind = resource["type"].as_str().unwrap_or_default().to_string();
@@ -1041,30 +1043,42 @@ impl Collection {
                 bail!("resource '{name}': type '{kind}' isn't allowed by your organization (allowed: {}, {})", RESOURCE_TYPES.join(", "), allowed.join(", "));
             }
             if resource["properties"]["resources"].is_array() {
-                self.check_resources(&mut resource["properties"]["resources"], allowed)?;
+                self.check_resources(&mut resource["properties"]["resources"], allowed, app)?;
             }
-            if canonical != Some(&INSTALLER_TYPE) {
-                continue;
+            if canonical == Some(&BLOCK_TYPE) {
+                resource["properties"]["app"] = format!("{}/{app}", self.name).into();
             }
+            let (key, what) = match canonical {
+                Some(&INSTALLER_TYPE) => ("file", "installer"),
+                Some(&FILE_TYPE) => ("source", "source"),
+                Some(kind) => {
+                    crate::resources::check(kind, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
+                    continue;
+                }
+                None => continue,
+            };
             // Windows passes properties as environment variables, whose names ignore case.
             let keys = resource["properties"].as_object().into_iter().flat_map(|p| p.keys());
-            if let Some(key) = keys.into_iter().find(|k| k.eq_ignore_ascii_case("file") && *k != "file") {
-                bail!("installer property '{key}': did you mean 'file'?");
+            if let Some(other) = keys.into_iter().find(|k| k.eq_ignore_ascii_case(key) && *k != key) {
+                bail!("{what} property '{other}': did you mean '{key}'?");
             }
-            // Installer files are given relative to the collection; resources need absolute paths.
-            if let Some(file) = resource["properties"]["file"].as_str() {
+            // Installer and source files are given relative to the collection; resources need absolute paths.
+            if let Some(file) = resource["properties"][key].as_str() {
                 if file.chars().any(char::is_control) {
-                    bail!("installer '{}' has control characters in its name", file.escape_debug());
+                    bail!("{what} '{}' has control characters in its name", file.escape_debug());
                 }
-                let outside = || format!("installer '{file}' is outside the collection");
+                let outside = || format!("{what} '{file}' is outside the collection");
                 let resolved = match fs::symlink_metadata(self.dir.join(file)) {
                     Ok(_) => self.file_in_repo(file).with_context(outside)?,
                     // Not checked out yet (blobs_on_demand): installing the app checks it out.
                     Err(_) => self.file_in_repo_later(file).with_context(outside)?,
                 };
-                resource["properties"]["file"] = resolved.to_string_lossy().into_owned().into();
-            } else if !resource["properties"]["file"].is_null() {
-                bail!("installer file must be a path in the collection");
+                resource["properties"][key] = resolved.to_string_lossy().into_owned().into();
+            } else if !resource["properties"][key].is_null() {
+                bail!("{what} file must be a path in the collection");
+            }
+            if canonical == Some(&FILE_TYPE) {
+                crate::resources::check(FILE_TYPE, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
             }
         }
         Ok(())
@@ -1077,7 +1091,19 @@ pub(crate) fn allowed_resource_types() -> Option<Vec<String>> {
 }
 
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
-pub const RESOURCE_TYPES: [&str; 3] = ["Furnish/Package", INSTALLER_TYPE, "Furnish/NixOS"];
+pub const RESOURCE_TYPES: [&str; 9] = [
+    "Furnish/Package",
+    INSTALLER_TYPE,
+    "Furnish/NixOS",
+    "Furnish/Directory",
+    FILE_TYPE,
+    BLOCK_TYPE,
+    "Furnish/Line",
+    "Furnish/Value",
+    "Furnish/Command",
+];
+const FILE_TYPE: &str = "Furnish/File";
+const BLOCK_TYPE: &str = "Furnish/Block";
 const INSTALLER_TYPE: &str = "Furnish/Installer";
 
 /// Whether two resolved paths are the same (Windows: ignoring case, like its file systems).
@@ -1432,9 +1458,12 @@ impl App {
         let mut files = Vec::new();
         let steps = crate::engine::removal_steps(&self.doc).into_iter().flatten();
         for resource in self.doc["resources"].as_array().into_iter().flatten().chain(steps) {
-            let Some(file) = resource["properties"]["file"].as_str().filter(|_| resource["type"] == INSTALLER_TYPE) else {
-                continue;
+            let file = match resource["type"].as_str() {
+                Some(INSTALLER_TYPE) => resource["properties"]["file"].as_str(),
+                Some(FILE_TYPE) => resource["properties"]["source"].as_str(),
+                _ => None,
             };
+            let Some(file) = file else { continue };
             let applies = resource["condition"].as_str().is_none_or(|c| crate::options::condition_holds(c, values).unwrap_or(true));
             // Paths of files not checked out start from the canonical directory (file_in_repo_later).
             let base = self.collection_dir.canonicalize().map(plain_path).unwrap_or_else(|_| self.collection_dir.clone());

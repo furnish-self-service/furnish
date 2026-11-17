@@ -262,7 +262,10 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         None => {
             let cant: Vec<String> = resources
                 .iter()
-                .filter(|r| matches!(crate::engine::removes(r["type"].as_str().unwrap_or_default()), Ok(Some(false))))
+                .filter(|r| {
+                    let kind = r["type"].as_str().unwrap_or_default();
+                    (kind == "Furnish/Command" && r["properties"]["remove"].is_null()) || matches!(crate::engine::removes(kind), Ok(Some(false)))
+                })
                 .map(|r| format!("{} ({})", r["name"].as_str().unwrap_or("?"), r["type"].as_str().unwrap_or_default()))
                 .collect();
             if !cant.is_empty() {
@@ -342,6 +345,15 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         }
         if kind == "Furnish/NixOS" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/NixOS needs properties.name")));
+        }
+        if kind == "Furnish/File"
+            && let Some(source) = r["properties"]["source"].as_str()
+        {
+            // load_app made the path absolute; it may not be checked out (blobs_on_demand).
+            let path = PathBuf::from(source);
+            if !path.is_file() && !in_repository(dir, &path) {
+                findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
+            }
         }
         if kind == "Furnish/Installer" {
             match r["properties"]["file"].as_str() {

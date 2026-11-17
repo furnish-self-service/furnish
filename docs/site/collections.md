@@ -40,7 +40,7 @@ resources:
       name: GIMP.GIMP.3
 ```
 
-furnish ships three resources, `Furnish/Package`, `Furnish/Installer` and `Furnish/NixOS`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
+furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
@@ -91,6 +91,165 @@ Adds packages and NixOS options to the computer's NixOS configuration and rebuil
 
 Each install or uninstall rebuilds the system once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
+### Configuration
+
+Six resources set up configuration: folders, files, parts of files and settings that a tool applies itself. They work the same on Windows, macOS and Linux, so one step covers every system. Each of them can remove what it set up, so an app made of them needs no removal steps.
+
+Paths are absolute or start with `~/`, which furnish replaces with the home folder on every system. Missing parent folders are created. A path that is a symbolic link is written through to its target. If the target can't be written, as with a file that Home Manager links from the Nix store, the step fails and names the file.
+
+The resources that write files have these properties in common:
+
+| Property | Meaning |
+|---|---|
+| `_exist` | `false` removes the file, or the resource's part of it |
+| `backup` | `true` keeps a copy of the file before each change, named `<file>.<date and time in UTC>~` |
+| `validate` | A command that checks the new file before it replaces the old one, with `'%s'` for its path, for example `[ssh, -G, -F, '%s', git.acme.example]`. If it exits with another code than 0, the step fails and the file stays as it was |
+
+A file is replaced in one step, so programs never read half of it. It keeps its mode, owner and encoding, including a byte order mark and Windows line ends.
+
+To tell whether an app is installed, each resource computes the change it would make to the file and reports the desired state when there is none. Installing makes that change. A setting someone changed by hand shows as an available update, and installing again sets it back.
+
+A value that starts with `[` is a DSC expression. Write `[[` for a pattern or text that starts with `[`.
+
+#### Furnish/Directory
+
+A folder. `_exist: false` removes it only when it is empty.
+
+| Property | Meaning |
+|---|---|
+| `path` | The folder |
+| `mode` | Its mode on macOS and Linux, for example `'750'` |
+| `private` | `true`: only the user may open it. On Windows, its access list grants only the user access and inherits nothing; on macOS and Linux, its mode is 700 |
+
+```yaml
+- name: VPN folder
+  type: Furnish/Directory
+  properties:
+    path: ~/.config/acme-vpn
+    private: true
+```
+
+#### Furnish/File
+
+A whole file, with the text in `content` or a copy of `source`, a file in the collection. furnish checks `source` like the `file` of `Furnish/Installer`: it must be in the collection, and furnish downloads it when the app is installed. Without either, the file only has to exist. `mode` and `private` work as for folders, with mode 600 for a private file.
+
+```yaml
+- name: VPN profile
+  type: Furnish/File
+  properties:
+    path: ~/.config/acme-vpn/acme.ovpn
+    source: files/acme.ovpn
+    private: true
+```
+
+#### Furnish/Block
+
+Lines between two marker comments that name the app, for example `# BEGIN furnish acme/ssh` and `# END furnish acme/ssh`. If the file has the markers, the step replaces what is between them. Otherwise it adds the block at `insert`: `top`, `bottom` (the default), `before: <pattern>` or `after: <pattern>`. The position counts only for that first time, so the block stays where it is, also when someone adds lines above it. Two apps get two blocks. `_exist: false` removes the block with its markers.
+
+| Property | Meaning |
+|---|---|
+| `path` | The file |
+| `content` | The lines between the markers |
+| `comment` | What starts a comment in the file, default `#` |
+| `insert` | Where the block goes the first time |
+
+```yaml
+- name: Git server host keys
+  type: Furnish/Block
+  properties:
+    path: ~/.ssh/known_hosts
+    content: |
+      git.acme.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGq7…
+```
+
+#### Furnish/Line
+
+One line, for files where marker comments aren't allowed. Patterns are regular expressions ([syntax](https://docs.rs/regex/latest/regex/#syntax)) and match anywhere in a line unless they use `^` and `$`.
+
+| Property | Meaning |
+|---|---|
+| `path` | The file |
+| `line` | The line |
+| `match` | A pattern for the line to replace |
+| `before` | The line must come before the first line that matches this pattern |
+| `after` | The line must come after the last line that matches this pattern |
+
+Without `match`, a line equal to `line` must exist. The step adds it only if it's missing, so it never adds a second one, and removal deletes every equal line. With `match`, a line that matches must exist and equal `line`: the step replaces the first match, deletes further matches, and adds `line` if nothing matches. `line` must match `match`, or the next install wouldn't find it and would add it again; furnish refuses such an app when it loads it.
+
+`before` and `after` are part of the desired state. A line that someone moved past one of these lines shows as an available update, and installing again moves it back. A missing line goes right after the `after` match, else right before the `before` match, else at the end. ssh reads an `Include` only before the first `Host` or `Match` line:
+
+```yaml
+- name: SSH configuration
+  type: Furnish/Line
+  properties:
+    path: ~/.ssh/config
+    line: Include config.d/acme.conf
+    before: '^\s*(Host|Match)\s'
+```
+
+#### Furnish/Value
+
+One value in a JSON, JSONC (JSON with comments), YAML or TOML file. The rest of the file keeps its keys, their order and its comments. A file that doesn't parse stops the step with an error, and furnish leaves it as it is.
+
+| Property | Meaning |
+|---|---|
+| `path` | The file |
+| `format` | `json`, `jsonc`, `yaml` or `toml`; by default from the file's extension |
+| `location` | Where the value is: a JSONPath that names one place, such as `$.hosts['git.acme.example'].git_protocol`, or a JSON Pointer such as `/hosts/git.acme.example/git_protocol` |
+| `value` | The value |
+| `merge` | `replace` (the default), `deep` or `member` |
+
+Missing objects on the way to the location are created. Only the value at the location counts for the app's state. `[?@.name=='acme-prod']` selects the element of a list whose `name` is `acme-prod`: the step replaces that element, or adds it at the end if there is none, and `value` must have that `name`. `merge: deep` sets the keys of `value` and keeps the other keys at the location. `merge: member` treats the location as a list that must contain `value` and keeps its other elements. `_exist: false` removes the value at the location, the keys of a deep merge, or the element.
+
+A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves `current-context` and the other entries as they are:
+
+```yaml
+- name: Acme cluster
+  type: Furnish/Value
+  properties:
+    path: ~/.kube/config
+    format: yaml
+    location: "$.clusters[?@.name=='acme-prod']"
+    value:
+      name: acme-prod
+      cluster:
+        server: https://k8s.acme.example
+- name: Acme user
+  type: Furnish/Value
+  properties:
+    path: ~/.kube/config
+    format: yaml
+    location: "$.users[?@.name=='acme-prod']"
+    value:
+      name: acme-prod
+      user:
+        exec: { apiVersion: client.authentication.k8s.io/v1beta1, command: kubelogin, args: [get-token] }
+- name: Acme context
+  type: Furnish/Value
+  properties:
+    path: ~/.kube/config
+    format: yaml
+    location: "$.contexts[?@.name=='acme-prod']"
+    value:
+      name: acme-prod
+      context: { cluster: acme-prod, user: acme-prod }
+```
+
+#### Furnish/Command
+
+A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall when the test passes; without it, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
+
+```yaml
+- name: Vault server
+  type: Furnish/Command
+  properties:
+    test:
+      command: [bw, config, server]
+      output: https://vault.acme.example
+    set: [bw, config, server, https://vault.acme.example]
+    remove: [bw, config, server, https://vault.bitwarden.com]
+```
+
 ### Other DSC resources
 
 An app can also use other DSC resources. An app that sets up a VPN connection or a setting needs no package at all.
@@ -121,7 +280,7 @@ furnish uses `test` to tell whether an app is installed. A resource that is not 
 
 For `--dry-run` and the steps preview, furnish's own resources show their exact commands. Other resources show their type and properties.
 
-No other resource may declare `Furnish/Package`, `Furnish/Installer` or `Furnish/NixOS`. furnish refuses to run when DSC finds one, whatever its version.
+No other resource may declare one of furnish's types, such as `Furnish/Package`. furnish refuses to run when DSC finds one, whatever its version.
 
 Your organization can limit which resource types apps may use (see [For admins](admins.md#the-policy)).
 
@@ -185,7 +344,7 @@ resources:
 
 To uninstall the app, furnish runs the removal steps in their order instead of the resources. The steps preview and `furnish uninstall --dry-run` show them. A removal step whose command exits with a code other than the expected one fails the uninstall. Afterwards furnish tests the app's resources as usual. If they still find the app, the uninstall fails with a message that says so. The organization's list of allowed resource types and the checks on installer files apply to removal steps too.
 
-Without removal steps, furnish looks at each resource that applies on the computer. A resource can remove if its manifest has a `delete` operation or its `set` handles `_exist` (`handlesExist: true`). `Furnish/Package`, `Furnish/Installer` and `Microsoft.Windows/Registry` can. If one of the app's resources can't, furnish doesn't offer to uninstall the app: the app's page shows a note instead of the Uninstall button, and `furnish uninstall` refuses. `furnish check` warns about such apps.
+Without removal steps, furnish looks at each resource that applies on the computer. A resource can remove if its manifest has a `delete` operation or its `set` handles `_exist` (`handlesExist: true`). furnish's own resources and `Microsoft.Windows/Registry` can, except a `Furnish/Command` without `remove`. If one of the app's resources can't, furnish doesn't offer to uninstall the app: the app's page shows a note instead of the Uninstall button, and `furnish uninstall` refuses. `furnish check` warns about such apps.
 
 ### Dependencies
 

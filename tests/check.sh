@@ -61,6 +61,23 @@ resources:
   - name: setup
     type: furnish/installer
     properties: { file: installers/lower.msi }'
+# Configuration resources: a line that doesn't match its pattern, a source file that isn't there,
+# and a command that can't be removed.
+app line 'metadata: { furnish: { description: Line, categories: [Test] } }
+resources:
+  - name: editor
+    type: Furnish/Line
+    properties: { path: ~/.profile, line: EDITOR=vim, match: "^export EDITOR=" }'
+app source 'metadata: { furnish: { description: Source, categories: [Test] } }
+resources:
+  - name: profile
+    type: Furnish/File
+    properties: { path: ~/.acme/profile.conf, source: files/missing.conf }'
+app command 'metadata: { furnish: { description: Command, categories: [Test] } }
+resources:
+  - name: server
+    type: Furnish/Command
+    properties: { test: { command: [bw, config, server], output: "https://vault.acme.example" }, set: [bw, config, server, "https://vault.acme.example"] }'
 # An icon that links out of the collection.
 echo '<svg/>' > "$tmp/outside.svg"
 ln -s "$tmp/outside.svg" "$c/icons/outside.svg"
@@ -92,6 +109,9 @@ expect empty "no resources"
 expect undescribed "warning: no description"
 expect starter "ghost"
 expect lowercase "installers/lower.msi is not in the collection"
+expect line "doesn't match"
+expect source "files/missing.conf is not in the collection"
+expect command "can't be uninstalled where these resources apply: server (Furnish/Command)"
 expect collection.yaml "icon 'icons/outside.svg' is not in the collection"
 expect collection.yaml "iconDark 'icons/missing-dark.svg' is not in the collection"
 [ ! -e "$tmp/pwned" ] && ok "the repository's core.fsmonitor did not run" || bad "core.fsmonitor ran"

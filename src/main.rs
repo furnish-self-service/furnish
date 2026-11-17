@@ -363,6 +363,10 @@ enum CollectionCommand {
 }
 
 fn main() -> ExitCode {
+    // DSC runs furnish's configuration resources as `furnish dsc-resource …`.
+    if let Some(code) = furnish::resources::dispatch() {
+        return ExitCode::from(code);
+    }
     let cli = Cli::parse();
     if let Command::NixosResource { action, what_if } = &cli.command {
         return furnish::nixos_apps::resource(action, *what_if);

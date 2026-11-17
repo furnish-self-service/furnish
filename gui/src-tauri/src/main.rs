@@ -706,6 +706,10 @@ async fn remove_collection(name: String) -> CmdResult<()> {
 }
 
 fn main() {
+    // DSC runs furnish's configuration resources as `furnish-gui dsc-resource …` (see engine::init).
+    if let Some(code) = furnish::resources::dispatch() {
+        std::process::exit(code.into());
+    }
     // On Wayland the compositor finds the app's icon via the desktop file named like the app ID,
     // which GTK takes from the program name ("furnish-gui", the binary). The packages install
     // furnish.desktop, so name the program to match.

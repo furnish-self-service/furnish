@@ -1,0 +1,138 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Block",
+  "description": "Lines between marker comments that name the app",
+  "version": "0.1.0",
+  "get": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "block",
+      "get"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "block",
+      "test"
+    ],
+    "input": "stdin",
+    "return": "state"
+  },
+  "set": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "block",
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
+    ],
+    "input": "stdin",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Block",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file's path: absolute or starting with ~/"
+        },
+        "content": {
+          "type": "string",
+          "description": "The lines between the markers"
+        },
+        "comment": {
+          "type": "string",
+          "description": "What starts a comment in the file (default #)"
+        },
+        "insert": {
+          "description": "Where the block goes the first time: top, bottom, {before: <pattern>} or {after: <pattern>}",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "top",
+                "bottom"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "before"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "before": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "after"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "after": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "app": {
+          "type": "string",
+          "description": "<collection>/<app>, for the markers; furnish sets it"
+        },
+        "_exist": {
+          "type": "boolean",
+          "description": "Whether it should be there"
+        },
+        "backup": {
+          "type": "boolean",
+          "description": "Keep a timestamped copy of the file before each change"
+        },
+        "validate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command run on the new file before it replaces the old one; '%s' stands for its path"
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/File",
+  "description": "A whole file: its content or a file from the collection",
+  "version": "0.1.0",
+  "get": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "file",
+      "get"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "file",
+      "test"
+    ],
+    "input": "stdin",
+    "return": "state"
+  },
+  "set": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "file",
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
+    ],
+    "input": "stdin",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "File",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file's path: absolute or starting with ~/"
+        },
+        "content": {
+          "type": "string",
+          "description": "The file's text"
+        },
+        "source": {
+          "type": "string",
+          "description": "A file in the collection to copy (furnish makes the path absolute)"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{3,4}$",
+          "description": "Unix mode, e.g. '600' (ignored on Windows)"
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Only the user may access it: mode 600 (folders 700) on Unix, an access list on Windows"
+        },
+        "_exist": {
+          "type": "boolean",
+          "description": "Whether it should be there"
+        },
+        "backup": {
+          "type": "boolean",
+          "description": "Keep a timestamped copy of the file before each change"
+        },
+        "validate": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "A command run on the new file before it replaces the old one; '%s' stands for its path"
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

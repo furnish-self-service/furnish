@@ -198,6 +198,42 @@ resources:
 YAML
 fi
 
+# furnish's configuration resources: one app for every system, no conditions needed.
+mkdir -p "$tmp/repo/files" "$tmp/conf-seed"
+printf 'remote vpn.fixture.example 1194\n' > "$tmp/repo/files/profile.conf"
+home_file=".furnish-e2e-$$"
+cat > "$tmp/repo/apps/config.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: Configuration resources
+    categories: [Test]
+resources:
+  - name: folder
+    type: Furnish/Directory
+    properties: { path: "$tmp/conf", private: true }
+  - name: profile
+    type: Furnish/File
+    properties: { path: "$tmp/conf/profile.conf", source: files/profile.conf, private: true }
+  - name: include
+    type: Furnish/Line
+    properties: { path: "$tmp/conf/ssh_config", line: Include config.d/fixture.conf, before: '^\s*(Host|Match)\s' }
+  - name: host
+    type: Furnish/Block
+    properties: { path: "$tmp/conf/ssh_config", content: "Host git.fixture.example\n  User git", backup: true }
+  - name: plugin
+    type: Furnish/Value
+    properties: { path: "$tmp/conf/settings.json", location: "\$.enabledPlugins['fixture@market']", value: true }
+  - name: home file
+    type: Furnish/File
+    properties: { path: "~/$home_file", content: "furnish" }
+  - name: server
+    type: Furnish/Command
+    properties:
+      test: { command: [git, config, --file, "$tmp/conf/gitconfig", fixture.server], output: https://fixture.example }
+      set: [git, config, --file, "$tmp/conf/gitconfig", fixture.server, https://fixture.example]
+      remove: [git, config, --file, "$tmp/conf/gitconfig", --unset, fixture.server]
+YAML
+
 git -C "$tmp/repo" init -q
 git -C "$tmp/repo" add -A
 git -C "$tmp/repo" -c user.name=t -c user.email=t@t commit -qm init
@@ -370,6 +406,38 @@ if $dsc; then
     grep -q "Installed dsc-differs" <<<"$out" && { echo "FAIL: furnish reported dsc-differs installed" >&2; exit 1; }
     expect "$(step list)" "·  dsc-differs "
 fi
+
+# Configuration resources, through DSC: install, test, drift, uninstall.
+mkdir -p "$tmp/conf"
+printf 'Host other.example\n  User me\n' > "$tmp/conf/ssh_config"
+expect "$(step list)" "·  config "
+plan=$(step install config --dry-run)
+expect "$plan" "Add 'Include config.d/fixture.conf' to $tmp/conf/ssh_config"
+expect "$plan" "Set \$.enabledPlugins\['fixture@market'\] in $tmp/conf/settings.json"
+expect "$(step install config)" "Installed config"
+expect "$(step list)" "✓  config "
+[ "$(head -n 1 "$tmp/conf/ssh_config")" = "Include config.d/fixture.conf" ] || { echo "FAIL: the Include line isn't first" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
+grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAIL: no block" >&2; exit 1; }
+cmp -s "$tmp/conf/profile.conf" "$tmp/repo/files/profile.conf" || { echo "FAIL: profile not copied" >&2; exit 1; }
+grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
+[ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
+[ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
+case "$(uname -s)" in
+MINGW* | MSYS*) ;;  # an access list instead of a mode
+*) [ "$(stat -c %a "$tmp/conf/profile.conf" 2>/dev/null || stat -f %Lp "$tmp/conf/profile.conf")" = 600 ] || { echo "FAIL: profile isn't private" >&2; exit 1; } ;;
+esac
+# A value changed by hand shows as drift; installing again fixes it.
+sed 's/true/false/' "$tmp/conf/settings.json" > "$tmp/settings" && cat "$tmp/settings" > "$tmp/conf/settings.json"
+if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't drift" >&2; exit 1; fi
+expect "$(step install config)" "Installed config"
+expect "$(step list)" "✓  config "
+expect "$(step uninstall config)" "Uninstalled config"
+expect "$(step list)" "·  config "
+[ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
+[ ! -e "$tmp/conf/profile.conf" ] && [ ! -e ~/"$home_file" ] || { echo "FAIL: files left behind" >&2; exit 1; }
+ls "$tmp/conf"/ssh_config.*~ >/dev/null || { echo "FAIL: no backup of ssh_config" >&2; exit 1; }
+[ -d "$tmp/conf" ] || { echo "FAIL: a folder that isn't empty was removed" >&2; exit 1; }
+
 [ "$n" -gt 0 ] || echo "(no installer format can be built on this platform: installer test skipped)" >&2
 step collection remove fixture >/dev/null
 

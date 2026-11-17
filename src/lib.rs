@@ -11,6 +11,7 @@ pub mod nixos_apps;
 pub mod options;
 pub mod policy;
 pub mod reports;
+pub mod resources;
 pub mod selfupdate;
 pub mod resource_env;
 pub mod service;

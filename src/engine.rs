@@ -265,6 +265,10 @@ pub fn init(dir: &Path) -> Result<()> {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
         }
     }
+    // The configuration resources run in this program (see resources::dispatch).
+    for (file, contents) in crate::resources::manifests(&env::current_exe()?)? {
+        fs::write(dir.join(file), contents)?;
+    }
     let _ = BUNDLED_DIR.set(dir.to_path_buf());
     let path: Vec<PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_default()).collect();
     let in_service = crate::service::in_service();
@@ -555,12 +559,14 @@ fn unremovable_unlocked(doc: &Value) -> Result<Option<String>> {
     Ok(first_unremovable(&resources, |kind| found.iter().find(|(k, _)| k == kind).map(|(_, c)| c.as_slice())))
 }
 
-/// The first resource whose type `capabilities` knows and that can't remove.
+/// The first resource whose type `capabilities` knows and that can't remove. A `Furnish/Command`
+/// removes only with its `remove` command.
 fn first_unremovable<'a>(resources: &[Value], capabilities: impl Fn(&str) -> Option<&'a [Capability]>) -> Option<String> {
     resources.iter().find_map(|r| {
         let kind = r["type"].as_str().unwrap_or_default();
         let name = r["name"].as_str().unwrap_or("?");
-        (!can_remove(capabilities(kind)?)).then(|| format!("the resource '{name}' ({kind})"))
+        let command_without_remove = kind.eq_ignore_ascii_case("Furnish/Command") && r["properties"]["remove"].is_null();
+        (command_without_remove || !can_remove(capabilities(kind)?)).then(|| format!("the resource '{name}' ({kind})"))
     })
 }
 

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
+  "type": "Furnish/Directory",
+  "description": "A folder, with a Unix mode or access only for the user",
+  "version": "0.1.0",
+  "get": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "directory",
+      "get"
+    ],
+    "input": "stdin"
+  },
+  "test": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "directory",
+      "test"
+    ],
+    "input": "stdin",
+    "return": "state"
+  },
+  "set": {
+    "executable": "furnish",
+    "args": [
+      "dsc-resource",
+      "directory",
+      "set",
+      {
+        "whatIfArg": "--what-if"
+      }
+    ],
+    "input": "stdin",
+    "handlesExist": true,
+    "implementsPretest": true,
+    "return": "state"
+  },
+  "schema": {
+    "embedded": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Directory",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The folder's path: absolute or starting with ~/"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{3,4}$",
+          "description": "Unix mode, e.g. '600' (ignored on Windows)"
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Only the user may access it: mode 600 (folders 700) on Unix, an access list on Windows"
+        },
+        "_exist": {
+          "type": "boolean",
+          "description": "Whether it should be there; a folder that isn't empty is kept"
+        },
+        "_inDesiredState": {
+          "type": "boolean",
+          "readOnly": true
+        },
+        "_metadata": {
+          "type": "object",
+          "readOnly": true,
+          "description": "What-if details: the steps a set would perform",
+          "properties": {
+            "whatIf": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -570,7 +570,7 @@ pub fn inventory(apps: Vec<Installed>) {
 
 /// Milliseconds since 1970 as `2026-11-15T08:03:06.042Z`. Milliseconds keep two reports of the
 /// same second apart (Loki keeps only one of two equal entries with the same time).
-fn rfc3339(millis: u64) -> String {
+pub(crate) fn rfc3339(millis: u64) -> String {
     let secs = millis / 1000;
     // Days to civil date (Howard Hinnant's algorithm), valid from 1970 on.
     let days = (secs / 86_400) as i64 + 719_468;

@@ -36,7 +36,7 @@ An admin policy decides which collections people get and what they can change. f
 - `collectionSettings`: values for one collection of the settings in [Disk use and earlier versions](#disk-use-and-earlier-versions), as defaults or `locked`.
 - `autoInstall`: apps furnish installs on its first start, once each. If someone uninstalls one later, it stays uninstalled.
 - `osSpecific`: settings for one operating system, grouped by system. Each value is a plain default or `{ "value": …, "locked": true }`, and furnish checks each one on its own. NixOS has `configuration`, `flakeAttribute` and `homeManagerConfiguration`; see [NixOS](#nixos).
-- `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own `Furnish/Package` and `Furnish/Installer`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
+- `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own, such as `Furnish/Package`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
 ## Starting at sign-in
 
