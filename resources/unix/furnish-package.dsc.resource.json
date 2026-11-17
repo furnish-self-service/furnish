@@ -63,9 +63,10 @@
           "enum": [
             "nixos",
             "home-manager",
-            "profile"
+            "profile",
+            "other"
           ],
-          "description": "Nix only: where the installed package comes from: the NixOS configuration, the Home Manager configuration, or a nix profile (the user's or the shared one)"
+          "description": "Where the installed package comes from: with Nix the NixOS configuration, the Home Manager configuration or a nix profile (the user's or the shared one); other: installed outside furnish (see command)"
         },
         "declaredIn": {
           "type": "string",
@@ -139,6 +140,16 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9:/._?=&#+][A-Za-z0-9:/._?=&#+-]*$",
           "description": "Flake reference to install Nix packages from (default: the registry's nixpkgs, which NixOS pins to the system's)"
+        },
+        "command": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._+][A-Za-z0-9._+-]*$",
+          "description": "A program the package provides, e.g. claude. If the package manager doesn't have the package but the program is there (installed with npm or the vendor's installer, say), the package counts as installed outside furnish: furnish neither installs it again nor updates or removes it"
+        },
+        "path": {
+          "type": "string",
+          "readOnly": true,
+          "description": "Where the program was found, when the package was installed outside furnish (managedBy: other)"
         }
       }
     }

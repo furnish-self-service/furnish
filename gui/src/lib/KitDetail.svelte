@@ -17,6 +17,7 @@
     kitName,
     kitDescription,
     categoryName,
+    externalStatus,
   } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
@@ -132,8 +133,8 @@
               <AppIcon {app} size={36} />
               <span class="text">
                 <span class="name">{appName(app)}</span>
-                {#if store.declared[item.key]}
-                  <span class="desc">{t(store.declared[item.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager')}</span>
+                {#if store.external[item.key]}
+                  <span class="desc">{externalStatus(store.external[item.key])}</span>
                 {:else if store.unremovable[item.key]}
                   <span class="desc">{t('kit.cantUninstall')}</span>
                 {:else if others.length}

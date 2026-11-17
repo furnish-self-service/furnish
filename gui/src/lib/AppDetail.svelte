@@ -1,7 +1,7 @@
 <script lang="ts">
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent } from './state.svelte';
+  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus } from './state.svelte';
   import Options from './Options.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
@@ -9,7 +9,7 @@
   import { highlightYaml } from './highlight';
   import Plan from './Plan.svelte';
   import { t, formatDate } from './i18n.svelte';
-  import Declared from './Declared.svelte';
+  import External from './External.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
@@ -36,7 +36,7 @@
     const what = store.reasons[app.key] ?? t('common.missingTool');
     switch (status) {
       case 'installed':
-        if (store.declared[app.key]) return t(store.declared[app.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager');
+        if (store.external[app.key]) return externalStatus(store.external[app.key]);
         return t('app.status.installed');
       case 'needsUpdate': return t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
@@ -66,9 +66,9 @@
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
-        {#if store.declared[app.key]}
-          <!-- The system's configuration installs it: removing it is done there. -->
-          <Declared declared={store.declared[app.key]} />
+        {#if store.external[app.key]}
+          <!-- Installed outside furnish: removing it is done there. -->
+          <External external={store.external[app.key]} />
         {:else if store.unremovable[app.key]}
           <!-- A resource can't remove what it set up, and the collection gives no removal steps. -->
           <p class="unremovable">{t('app.cantUninstall', { collection: app.collection })}</p>
@@ -78,7 +78,7 @@
       {:else}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
-      {#if installed && !store.declared[app.key]}
+      {#if installed && !store.external[app.key]}
         <label class="auto">
           <input
             type="checkbox"

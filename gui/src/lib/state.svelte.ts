@@ -63,8 +63,8 @@ export const store = $state({
   reasons: {} as Record<string, string>,
   /** Apps furnish can't uninstall: a resource can't remove what it set up and the app has no removal steps. */
   unremovable: {} as Record<string, true>,
-  /** Apps the NixOS or Home Manager configuration installs: shown as installed, left to it. */
-  declared: {} as Record<string, api.Declared>,
+  /** Apps installed outside furnish (NixOS, Home Manager, another tool): shown as installed, left alone. */
+  external: {} as Record<string, api.External>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
@@ -196,8 +196,8 @@ export async function checkStatus(key: string) {
     else delete store.reasons[key];
     if (check.removable) delete store.unremovable[key];
     else store.unremovable[key] = true;
-    if (check.declared) store.declared[key] = check.declared;
-    else delete store.declared[key];
+    if (check.external) store.external[key] = check.external;
+    else delete store.external[key];
   } catch {
     store.status[key] = 'error';
   }
@@ -749,6 +749,16 @@ export const wanted = () => [
 ];
 const textsOf = (collection: string) => store.collections.find((c) => c.name === collection);
 const translated = (collection: string, get: Parameters<typeof lookup>[2]) => lookup(textsOf(collection), wanted(), get);
+
+const externalKeys = {
+  nixos: ['app.status.nixos', 'app.declaredNixos'],
+  'home-manager': ['app.status.homeManager', 'app.declaredHomeManager'],
+  other: ['app.status.other', 'app.installedOutside'],
+} as const;
+/** The status of an app installed outside furnish, e.g. "Installed via Home Manager". */
+export const externalStatus = (e: api.External) => t(externalKeys[e.by][0]);
+/** Why furnish leaves an app installed outside it alone, and how to uninstall it. */
+export const externalNote = (e: api.External) => t(externalKeys[e.by][1]);
 
 export const appName = (app: Pick<AppInfo, 'id' | 'name' | 'collection'>) =>
   translated(app.collection, (f) => f.apps?.[app.id]?.name) ?? app.name ?? app.id;
