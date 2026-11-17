@@ -1,7 +1,7 @@
 // node --test --experimental-strip-types src/lib/content.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { best, contentLanguage, lookup, matches, normalize, searchTexts, type CollectionTexts } from './content.ts';
+import { best, contentLanguage, initial, lookup, matches, normalize, searchTexts, type CollectionTexts } from './content.ts';
 
 const office: CollectionTexts = {
   language: 'en',
@@ -65,4 +65,12 @@ test("search finds texts in the app's language, the fallback, the collection's o
   assert.ok(find('courriel', ['de', 'fr']), 'fallback language');
   assert.ok(!find('courriel', ['de', 'en']), 'other languages are not searched');
   assert.ok(find('MAIL', ['de', 'en']), 'id');
+});
+
+test('an icon letter is the first character of the shown name', () => {
+  assert.equal(initial('Post'), 'P');
+  assert.equal(initial('  écrire'), 'É');
+  assert.equal(initial('istanbul', 'tr'), 'İ');
+  assert.equal(initial('👩‍💻 Dev tools'), '👩‍💻');
+  assert.equal(initial(''), '');
 });

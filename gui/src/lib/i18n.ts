@@ -72,3 +72,17 @@ export function placeholders(entry: Entry): string[] {
 
 // Portugal counts 0 as plural; plain 'pt' follows Brazil, where 0 takes the singular.
 export const pluralRules = (lang: Lang) => new Intl.PluralRules(lang === 'pt' ? 'pt-PT' : lang);
+
+/** A value furnish ignored, as the backend reports it (`settings::Warning`): a code and its
+ *  fields. `reason` is the check's own message, in English. */
+export type SettingsWarning =
+  | { code: 'endpoint'; host: string; key: string; reason: string }
+  | { code: 'policy' | 'user'; key: string; reason: string }
+  | { code: 'unknownSetting'; key: string }
+  | { code: 'invalidSettings'; reason: string };
+
+/** The text for an ignored value: its key and parameters, for `translate` or `tparts`. */
+export function warningText(w: SettingsWarning): [Key, Params] {
+  const { code, ...params } = w;
+  return [`settings.warning.${code}`, params];
+}

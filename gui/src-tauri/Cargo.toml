@@ -41,3 +41,10 @@ libloading = "0.7"
 # The taskbar's theme (SystemUsesLightTheme) and when it changes, for the tray icon's color.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }
+
+# The Dock icon from the branding logo (see app_icon.rs), with the crates Tauri uses for its own.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
+png = "0.18"

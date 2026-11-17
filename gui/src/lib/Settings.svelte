@@ -4,8 +4,8 @@
   // control on the right. Settings the admin policy locks stay visible, not editable.
   import * as api from './api';
   import { store, changeSettings, checkForUpdates, checkSelfUpdate, restartToUpdate, toast, isLocked } from './state.svelte';
-  import { t, parts, formatTime } from './i18n.svelte';
-  import { languages, type Lang } from './i18n.ts';
+  import { t, parts, tparts, formatTime } from './i18n.svelte';
+  import { languages, warningText, type Lang } from './i18n.ts';
 
   const intervals = $derived([
     [15, t('settings.every15')],
@@ -109,7 +109,9 @@
       <strong>{t('settings.warnings')}</strong>
       <p>{t('settings.warningsText', { brand })}</p>
       <ul>
-        {#each store.warnings as warning}<li>{warning}</li>{/each}
+        {#each store.warnings as warning}
+          <li>{#each tparts(...warningText(warning)) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}</li>
+        {/each}
       </ul>
     </div>
   {/if}

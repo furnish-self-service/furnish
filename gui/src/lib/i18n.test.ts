@@ -1,7 +1,7 @@
 // node --test --experimental-strip-types src/lib/i18n.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dictionaries, markedParts, parts, placeholders, pluralRules, resolve, translate, type Lang } from './i18n.ts';
+import { dictionaries, markedParts, parts, placeholders, pluralRules, resolve, translate, warningText, type Lang } from './i18n.ts';
 
 const { en } = dictionaries;
 const others = Object.entries(dictionaries).filter(([lang]) => lang !== 'en') as [Lang, typeof en][];
@@ -65,4 +65,18 @@ test('marked text splits into parts without becoming markup', () => {
     { text: 'y', tag: 'code' },
   ]);
   assert.deepEqual(parts('<b>only</b>'), [{ text: 'only', tag: 'b' }]);
+});
+
+test('ignored settings in the app language, with the key marked as code', () => {
+  const endpoint = { code: 'endpoint', host: 'furnish.acme.tld', key: 'reporting', reason: 'unknown variant `x`' } as const;
+  assert.equal(translate('en', ...warningText(endpoint)), '<code>reporting</code> from furnish.acme.tld: unknown variant `x`');
+  assert.equal(translate('de', ...warningText(endpoint)), '<code>reporting</code> von furnish.acme.tld: unknown variant `x`');
+  assert.equal(
+    translate('fr', ...warningText({ code: 'unknownSetting', key: 'osSpecific.macos.x' })),
+    '<code>osSpecific.macos.x</code>, défini par votre organisation : ce paramètre n’existe pas',
+  );
+  // Every code the backend sends has a text in every language.
+  for (const code of ['endpoint', 'policy', 'user', 'unknownSetting', 'invalidSettings']) {
+    for (const d of Object.values(dictionaries)) assert.ok(`settings.warning.${code}` in d, code);
+  }
 });

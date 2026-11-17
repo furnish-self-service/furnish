@@ -1,8 +1,16 @@
 <script lang="ts">
   import type { AppInfo } from './api';
+  import { appName } from './state.svelte';
+  import { lang } from './i18n.svelte';
+  import { initial } from './content';
 
-  // Apps and kits: anything with an id and an optional icon.
-  let { app, size = 56 }: { app: Pick<AppInfo, 'id' | 'icon' | 'iconDark'>; size?: number } = $props();
+  // Apps and kits: anything with an id and an optional icon. `name`: the name shown (kits pass
+  // theirs); without it, the app's, translated.
+  let {
+    app,
+    name,
+    size = 56,
+  }: { app: Pick<AppInfo, 'id' | 'name' | 'collection' | 'icon' | 'iconDark'>; name?: string; size?: number } = $props();
 
   // Stable hue per app, so its fallback tile is recognizable across views.
   const hue = $derived([...app.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7));
@@ -15,7 +23,7 @@
   </picture>
 {:else}
   <div class="icon letter" aria-hidden="true" style:--size="{size}px" style:--hue={hue}>
-    {app.id.charAt(0).toUpperCase()}
+    {initial(name ?? appName(app), lang())}
   </div>
 {/if}
 

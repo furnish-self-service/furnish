@@ -70,7 +70,7 @@
   <button class="back" onclick={onback}>{t('common.back')}</button>
 
   <header>
-    <AppIcon app={kit} size={96} />
+    <AppIcon app={kit} name={kitName(kit)} size={96} />
     <div class="heading">
       <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
       <h1>{kitName(kit)}</h1>

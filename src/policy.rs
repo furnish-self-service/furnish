@@ -54,7 +54,7 @@ pub struct Policy {
     pub allowed_resource_types: Option<Vec<String>>,
     /// Not part of the policy: endpoint settings `with_endpoints` left out, and why.
     #[serde(skip)]
-    pub warnings: Vec<String>,
+    pub warnings: Vec<crate::settings::Warning>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]
@@ -239,7 +239,11 @@ pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint
             let default = || Entry { value: value.clone(), locked: false };
             let applies = ENDPOINT_SETTINGS.contains(&key.as_str()) || crate::settings::PER_COLLECTION.contains(&key.as_str());
             if applies && let Err(err) = crate::settings::check_value(key, value) {
-                policy.warnings.push(format!("{}: ignoring setting '{key}': {err:#}", crate::endpoint::url_host(origin)));
+                policy.warnings.push(crate::settings::Warning::Endpoint {
+                    host: crate::endpoint::url_host(origin),
+                    key: key.clone(),
+                    reason: format!("{err:#}"),
+                });
                 continue;
             }
             if ENDPOINT_SETTINGS.contains(&key.as_str()) {
@@ -421,7 +425,7 @@ mod tests {
         assert_eq!(p.settings["language"], Entry { value: "de".into(), locked: false });
         assert_eq!(p.collection_settings["acme"].keys().collect::<Vec<_>>(), ["blobsOnDemand"]);
         assert_eq!(p.warnings.len(), 3, "{:?}", p.warnings);
-        assert!(p.warnings.iter().any(|w| w.starts_with("furnish.acme.tld: ignoring setting 'reporting'")), "{:?}", p.warnings);
+        assert!(p.warnings.iter().map(ToString::to_string).any(|w| w.starts_with("furnish.acme.tld: ignoring setting 'reporting'")), "{:?}", p.warnings);
         // What the endpoint sets validly still counts, and saving other settings isn't affected.
         let e = crate::settings::merge(&p, &serde_json::Map::new());
         assert!(!e.settings.load_aware_updates);

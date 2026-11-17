@@ -190,7 +190,7 @@ The app then shows your name, logo and color. furnish derives the lighter and da
 
 ![furnish as "Acme Apps" with an orange accent.](images/branded.webp)
 
-The logo can be an SVG, PNG, JPEG or WebP file of up to 1 MB, given as a path inside one of your preset collections or as an absolute path. It also replaces furnish's icon in the system tray and the macOS menu bar, in its own colors. Text in an SVG logo doesn't show in the tray, so convert it to paths, or set a tray icon.
+The logo can be an SVG, PNG, JPEG or WebP file of up to 1 MB, given as a path inside one of your preset collections or as an absolute path. While furnish runs, the logo also replaces its icon on the window, in the taskbar and the Dock, and in the system tray and the macOS menu bar, in its own colors. The Start menu, pinned taskbar buttons and Launchpad keep furnish's icon, and on Linux so do the app menu and taskbars on Wayland. Text in an SVG logo doesn't show in these icons, so convert it to paths.
 
 A tray icon in one color fits in better next to the other icons there:
 

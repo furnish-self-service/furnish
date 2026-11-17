@@ -83,7 +83,7 @@ export const store = $state({
   /** Settings the admin policy locks. */
   locked: [] as string[],
   /** Values from the policy, a furnish address or settings.json that were ignored, and why. */
-  warnings: [] as string[],
+  warnings: [] as import('./i18n.ts').SettingsWarning[],
   /** From the admin policy: whether users may add collections. */
   usersCanAddCollections: true,
   /** App whose optional dependencies the install dialog asks about. */

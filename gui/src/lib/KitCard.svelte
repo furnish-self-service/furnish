@@ -13,7 +13,7 @@
 <article class="card kit">
   <button class="open" onclick={onopen} aria-label={t('kit.openKit', { name: kitName(kit) })}></button>
   <header>
-    <AppIcon app={kit} />
+    <AppIcon app={kit} name={kitName(kit)} />
     <div class="title">
       <p class="eyebrow">{t('kit.eyebrow', { apps: t('common.apps', { n: kit.items.length }) })}</p>
       <h3>{kitName(kit)}</h3>

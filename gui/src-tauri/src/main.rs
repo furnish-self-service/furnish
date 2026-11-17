@@ -3,6 +3,7 @@
 
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
+mod app_icon;
 mod autostart;
 mod selfupdate;
 mod tray;
@@ -163,9 +164,14 @@ fn pending_link(app: tauri::AppHandle) -> Option<String> {
     app.deep_link().get_current().ok().flatten().and_then(|urls| urls.first().map(|u| u.to_string()))
 }
 
+/// The branding, for the page. The window's title and icon and the tray icon follow it here: the
+/// page asks at start and whenever the policy or an organization's description changed.
 #[tauri::command]
-fn get_branding() -> BrandingInfo {
-    branding_info()
+fn get_branding(app: tauri::AppHandle) -> BrandingInfo {
+    let info = branding_info();
+    app_icon::refresh(&app, &info.name);
+    tray::refresh_icon(&app);
+    info
 }
 
 #[derive(Serialize)]
@@ -733,6 +739,7 @@ fn main() {
             let brand = branding_info().name;
             let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("no main window in tauri.conf.json")?;
             tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?.title(&brand).visible(!hidden).build()?;
+            app_icon::refresh(app.handle(), &brand);
             if let Err(err) = tray::create(app.handle(), &tray::Texts::english(&brand)) {
                 eprintln!("warning: no tray icon: {err:#}");
             }

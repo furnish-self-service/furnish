@@ -194,7 +194,36 @@ pub struct Effective {
     pub users_can_add_collections: bool,
     /// Values that were ignored because they aren't valid for their setting, and why: from the
     /// admin policy, an endpoint's description or the user's own file.
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Warning>,
+}
+
+/// A value furnish ignored, and why. The desktop app translates it from the code and fields;
+/// `Display` gives the English text the CLI prints. `reason` is the check's own message.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "code", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Warning {
+    /// A furnish address's description sets an invalid value.
+    Endpoint { host: String, key: String, reason: String },
+    /// The admin policy sets an invalid value.
+    Policy { key: String, reason: String },
+    /// The user's settings.json has an invalid value.
+    User { key: String, reason: String },
+    /// The admin policy names a setting furnish doesn't have.
+    UnknownSetting { key: String },
+    /// The values together don't make valid settings: furnish uses its defaults.
+    InvalidSettings { reason: String },
+}
+
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Warning::Endpoint { host, key, reason } => write!(f, "{host}: ignoring setting '{key}': {reason}"),
+            Warning::Policy { key, reason } => write!(f, "ignoring the admin policy's value for '{key}': {reason}"),
+            Warning::User { key, reason } => write!(f, "ignoring your value for '{key}' in settings.json: {reason}"),
+            Warning::UnknownSetting { key } => write!(f, "the admin policy names an unknown setting '{key}'"),
+            Warning::InvalidSettings { reason } => write!(f, "ignoring invalid settings: {reason}"),
+        }
+    }
 }
 
 pub fn load() -> Settings {
@@ -265,12 +294,12 @@ fn policy_leaf(policy: &Policy, os: &str, name: &str) -> Option<crate::policy::E
 
 /// An OS-specific value in effect: the policy's if locked, else the user's, else the policy's
 /// default. An invalid value counts as not set and adds a warning.
-pub fn os_specific_leaf(policy: &Policy, choices: &Map<String, Value>, os: &str, name: &str, warnings: &mut Vec<String>) -> Option<Leaf> {
+pub fn os_specific_leaf(policy: &Policy, choices: &Map<String, Value>, os: &str, name: &str, warnings: &mut Vec<Warning>) -> Option<Leaf> {
     let key = format!("osSpecific.{os}.{name}");
     let theirs = policy_leaf(policy, os, name).filter(|e| match check_os_value(os, name, &e.value) {
         Ok(()) => true,
         Err(err) => {
-            warnings.push(format!("ignoring the admin policy's value for '{key}': {err:#}"));
+            warnings.push(Warning::Policy { key: key.clone(), reason: format!("{err:#}") });
             false
         }
     });
@@ -283,7 +312,7 @@ pub fn os_specific_leaf(policy: &Policy, choices: &Map<String, Value>, os: &str,
     if let Some(v) = mine {
         match check_os_value(os, name, v) {
             Ok(()) => return Some(Leaf { value: v.clone(), set_by: SetBy::User, locked: false }),
-            Err(err) => warnings.push(format!("ignoring your value for '{key}' in settings.json: {err:#}")),
+            Err(err) => warnings.push(Warning::User { key, reason: format!("{err:#}") }),
         }
     }
     theirs.map(|e| Leaf { value: e.value, set_by: SetBy::Organization, locked: false })
@@ -398,9 +427,9 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
     let mut warnings = policy.warnings.clone();
     for (key, entry) in &policy.settings {
         if !merged.contains_key(key) {
-            warnings.push(format!("the admin policy names an unknown setting '{key}'"));
+            warnings.push(Warning::UnknownSetting { key: key.clone() });
         } else if let Err(err) = check_value(key, &entry.value) {
-            warnings.push(format!("ignoring the admin policy's value for '{key}': {err:#}"));
+            warnings.push(Warning::Policy { key: key.clone(), reason: format!("{err:#}") });
         } else {
             merged.insert(key.clone(), entry.value.clone());
         }
@@ -415,14 +444,14 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
             Ok(()) => {
                 merged.insert(key.clone(), value.clone());
             }
-            Err(err) => warnings.push(format!("ignoring your value for '{key}' in settings.json: {err:#}")),
+            Err(err) => warnings.push(Warning::User { key: key.clone(), reason: format!("{err:#}") }),
         }
     }
     let mut locked: Vec<String> = policy.settings.iter().filter(|(_, e)| e.locked).map(|(k, _)| k.clone()).collect();
     let mut os_specific = Map::new();
     for (os, names) in &policy.os_specific {
         for name in names.keys().filter(|n| !OS_SPECIFIC.contains(&(os.as_str(), n.as_str()))) {
-            warnings.push(format!("the admin policy names an unknown setting 'osSpecific.{os}.{name}'"));
+            warnings.push(Warning::UnknownSetting { key: format!("osSpecific.{os}.{name}") });
         }
     }
     for (os, name) in OS_SPECIFIC {
@@ -436,7 +465,7 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
     }
     merged.insert("osSpecific".into(), os_specific.into());
     let settings = serde_json::from_value(Value::Object(merged)).unwrap_or_else(|err| {
-        warnings.push(format!("ignoring invalid settings: {err}"));
+        warnings.push(Warning::InvalidSettings { reason: err.to_string() });
         Settings::default()
     });
     Effective {
@@ -473,6 +502,21 @@ pub fn check_value(key: &str, value: &Value) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn warnings_are_a_code_with_fields_for_the_app_and_english_for_the_cli() {
+        let w = Warning::Endpoint { host: "furnish.acme.tld".into(), key: "reporting".into(), reason: "unknown variant".into() };
+        assert_eq!(
+            serde_json::to_value(&w).unwrap(),
+            json!({"code": "endpoint", "host": "furnish.acme.tld", "key": "reporting", "reason": "unknown variant"})
+        );
+        assert_eq!(w.to_string(), "furnish.acme.tld: ignoring setting 'reporting': unknown variant");
+        let w = Warning::UnknownSetting { key: "osSpecific.macos.x".into() };
+        assert_eq!(serde_json::to_value(&w).unwrap(), json!({"code": "unknownSetting", "key": "osSpecific.macos.x"}));
+        assert_eq!(w.to_string(), "the admin policy names an unknown setting 'osSpecific.macos.x'");
+        let w = Warning::InvalidSettings { reason: "bad".into() };
+        assert_eq!(serde_json::to_value(&w).unwrap(), json!({"code": "invalidSettings", "reason": "bad"}));
+    }
 
     fn policy(v: Value) -> Policy {
         serde_json::from_value(v).unwrap()
@@ -547,8 +591,8 @@ mod tests {
         assert_eq!(e.settings.checkout_depth, 5);
         assert_eq!(e.settings.fallback, Fallback::Ask);
         assert_eq!(e.warnings.len(), 3, "{:?}", e.warnings);
-        assert!(e.warnings.iter().any(|w| w.contains("'reporting'") && w.contains("unknown variant")), "{:?}", e.warnings);
-        assert!(e.warnings.iter().any(|w| w.contains("'fallback' in settings.json")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().map(Warning::to_string).any(|w| w.contains("'reporting'") && w.contains("unknown variant")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().map(Warning::to_string).any(|w| w.contains("'fallback' in settings.json")), "{:?}", e.warnings);
         // Saving a value checks that value only.
         assert!(check_value("parameters", &json!({"tools": {"role": "admin"}})).is_ok());
         assert!(check_value("reporting", &json!({"value": "off"})).is_err());
@@ -634,12 +678,12 @@ mod tests {
         assert_eq!(n.home_manager_configuration, None);
         assert_eq!(e.locked, ["osSpecific.nixos.flakeAttribute"]);
         assert_eq!(e.warnings.len(), 3, "{:?}", e.warnings);
-        assert!(e.warnings.iter().any(|w| w.contains("'osSpecific.nixos.homeManagerConfiguration'") && w.contains("absolute")), "{:?}", e.warnings);
-        assert!(e.warnings.iter().any(|w| w.contains("unknown setting 'osSpecific.macos.x'")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().map(Warning::to_string).any(|w| w.contains("'osSpecific.nixos.homeManagerConfiguration'") && w.contains("absolute")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().map(Warning::to_string).any(|w| w.contains("unknown setting 'osSpecific.macos.x'")), "{:?}", e.warnings);
         // Without the user's value, the policy's default; an invalid value of the user's counts as unset.
         let e = merge(&p, json!({"osSpecific": {"nixos": {"configuration": 5}}}).as_object().unwrap());
         assert_eq!(e.settings.os_specific.nixos.configuration.as_deref(), Some("/etc/fleet"));
-        assert!(e.warnings.iter().any(|w| w.contains("your value for 'osSpecific.nixos.configuration'")), "{:?}", e.warnings);
+        assert!(e.warnings.iter().map(Warning::to_string).any(|w| w.contains("your value for 'osSpecific.nixos.configuration'")), "{:?}", e.warnings);
         let mut w = Vec::new();
         let leaf = os_specific_leaf(&p, &Map::new(), "nixos", "configuration", &mut w).unwrap();
         assert_eq!((leaf.set_by, leaf.locked), (SetBy::Organization, false));

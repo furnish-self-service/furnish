@@ -102,3 +102,10 @@ export function searchTexts(
   ]);
   return [item.id, item.name, item.description, item.collection, ...item.categories, ...translated];
 }
+
+/** The letter an icon without a picture shows: the name's first character (a whole emoji or
+ *  accented letter), upper-cased for the language. */
+export function initial(name: string, lang?: string): string {
+  const first = new Intl.Segmenter(lang, { granularity: 'grapheme' }).segment(name.trim())[Symbol.iterator]().next().value;
+  return first ? first.segment.toLocaleUpperCase(lang) : '';
+}
