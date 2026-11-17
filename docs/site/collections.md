@@ -101,7 +101,7 @@ Each install or uninstall rebuilds the system or the Home Manager generation onc
 
 Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. A `condition` can't do this, because it doesn't see whether furnish's modules are set up. An app that is already in a configuration counts as set up, so it can still be removed.
 
-This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. After the generation is activated, the `Line` step finds the line and changes nothing. Everywhere else, only the `Line` step runs:
+This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. Home Manager puts all includes into one `Include` line before the first `Host`, so the `Line` step accepts an `Include` that names the file among others. After the generation is activated, the `Line` step finds that line and changes nothing. Everywhere else, only the `Line` step runs:
 
 ```yaml
 - name: SSH include through Home Manager
@@ -117,9 +117,10 @@ This suits a step that helps another step where Home Manager manages a file. Whe
     path: ~/.ssh/config
     line: Include config.d/acme.conf
     before: '^\s*(Host|Match)\s'
+    accept: '^\s*Include\s(.*\s)?config\.d/acme\.conf(\s|$)'
 ```
 
-`programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself. Home Manager writes all includes into one `Include` line, before the first `Host`. If the configuration has includes of its own, that line also names them, the `Line` step doesn't find its exact line, and it fails on the link. The computer's `allowedOptions` needs `programs.ssh.includes`.
+`programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself. Home Manager's `allowedOptions` needs `programs.ssh.includes`.
 
 ### Required versions
 
@@ -259,8 +260,11 @@ One line, for files where marker comments aren't allowed. Patterns are regular e
 | `match` | A pattern for the line to replace |
 | `before` | The line must come before the first line that matches this pattern |
 | `after` | The line must come after the last line that matches this pattern |
+| `accept` | A pattern for a line that counts as the line, where the line may be. Removal leaves such a line |
 
 Without `match`, a line equal to `line` must exist. The step adds it only if it's missing, so it never adds a second one, and removal deletes every equal line. With `match`, a line that matches must exist and equal `line`: the step replaces the first match, deletes further matches, and adds `line` if nothing matches. `line` must match `match`, or the next install wouldn't find it and would add it again; furnish refuses such an app when it loads it.
+
+With `accept`, a line that matches it counts as present, and the step adds `line` only if no such line is in place. This suits a line that a tool may have written in another form, such as an `Include` that names other files too. `line` must match `accept`, and an app can't use both `match` and `accept`.
 
 `before` and `after` are part of the desired state. A line that someone moved past one of these lines shows as an available update, and installing again moves it back. A missing line goes right after the `after` match, else right before the `before` match, else at the end. ssh reads an `Include` only before the first `Host` or `Match` line:
 

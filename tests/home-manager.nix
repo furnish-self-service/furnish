@@ -1,14 +1,16 @@
 # NixOS VM test: alice installs apps with a Furnish/NixOS resource into her standalone Home Manager
-# configuration, through furnish and without the service. `furnish settings` shows the lines her
-# flake.nix needs and creates furnish's local flake in her data folder, which the furnish/home-apps
-# input points at. An install writes the app there, updates only that entry of flake.lock, builds
-# and activates the generation the test built beforehand with the same apps, and commits
+# configuration. `furnish settings` shows the lines her flake.nix needs and creates furnish's local
+# flake in her data folder ($XDG_DATA_HOME, ~/data here), which the furnish/home-apps input points
+# at. The organization's apps install through the furnish service, which acts as alice: it finds
+# the folder from her flake.lock, writes the app there, updates only that entry of flake.lock,
+# builds and activates the generation the test built beforehand with the same apps, and commits
 # flake.lock. An option outside her allowlist is refused, an app with only NixOS options needs the
 # NixOS configuration, and an uninstall with other changes in the repository leaves flake.lock
-# uncommitted. Everything runs as alice. The owner's example from #8: an app adds an ssh Include
-# with a Furnish/NixOS step (onlyIfSetUp) before a Furnish/Line step. For alice, Home Manager
-# writes the line and the Line step finds it; for bob, without Home Manager, the first step isn't
-# needed and the Line step writes it. The VM is offline. Run:
+# uncommitted. The owner's example from #8, an app for each person (perUser): an ssh Include
+# through a Furnish/NixOS step (onlyIfSetUp) before a Furnish/Line step. For alice, Home Manager
+# writes it into one Include line with her own include, and the Line step accepts that line; for
+# bob, without Home Manager, the first step isn't needed and the Line step writes it. The VM is
+# offline. Run:
 #   nix build -L .#checks.x86_64-linux.home-manager
 { pkgs, nixpkgs, homeManagerModule, furnish, module }:
 let
@@ -19,7 +21,7 @@ let
   include = "config.d/acme.conf";
   ssh = h.home { acme-ssh = { packages = [ ]; options."programs.ssh.includes" = [ include ]; }; };
   acme-ssh = pkgs.writeText "acme-ssh.dsc.yaml" (builtins.toJSON {
-    metadata.furnish = { description = "acme-ssh"; categories = [ "Test" ]; };
+    metadata.furnish = { description = "acme-ssh"; categories = [ "Test" ]; perUser = true; };
     resources = [
       {
         name = "SSH include through Home Manager";
@@ -29,7 +31,12 @@ let
       {
         name = "SSH include";
         type = "Furnish/Line";
-        properties = { path = "~/.ssh/config"; line = "Include ${include}"; before = "^\\s*(Host|Match)\\s"; };
+        properties = {
+          path = "~/.ssh/config";
+          line = "Include ${include}";
+          before = "^\\s*(Host|Match)\\s";
+          accept = "^\\s*Include\\s(.*\\s)?config\\.d/acme\\.conf(\\s|$)";
+        };
       }
     ];
   });
@@ -42,10 +49,13 @@ pkgs.testers.runNixOSTest {
   name = "furnish-home-manager";
   nodes.machine = { lib, ... }: {
     imports = [ module ];
-    # The organization's collection, installed by each person: no service.
     services.furnish = {
       enable = true;
-      policy.collections.preset = [{ name = "org"; url = "/srv/org"; }];
+      service.enable = true;
+      policy = {
+        collections.preset = [{ name = "org"; url = "/srv/org"; }];
+        service.allowedGroup = "users";
+      };
     };
     users.users.alice.isNormalUser = true;
     users.users.bob.isNormalUser = true;
@@ -74,12 +84,12 @@ pkgs.testers.runNixOSTest {
         return json.loads(alice("cat flake.lock"))
 
     def apps():
-        return json.loads(alice("cat apps.json", dir=".local/share/furnish/home-apps"))["apps"]
+        return json.loads(alice("cat apps.json", dir="data/furnish/home-apps"))["apps"]
 
     def generation():
         return alice("readlink -f ~/.local/state/nix/profiles/home-manager").strip()
 
-    machine.wait_for_unit("multi-user.target")
+    machine.wait_for_unit("furnish.service")
     machine.fail("curl -sS --max-time 5 https://github.com")
     machine.succeed(
         "git config --global user.name t && git config --global user.email t@t",
@@ -89,15 +99,13 @@ pkgs.testers.runNixOSTest {
         "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
         "cp ${acme-ssh} /srv/org/apps/acme-ssh.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
-        # Without the service, alice clones the collection herself.
-        "chown -R alice /srv/org",
     )
-    alice("mkdir -p .config/home-manager", dir=".")
+    alice("echo export XDG_DATA_HOME=/home/alice/data > .profile && mkdir -p .config/home-manager", dir=".")
     alice("cp ${h.userFlake} flake.nix && cp ${./home-manager/home.nix} home.nix && chmod u+w *")
 
     # Before the module is on: furnish shows the lines and creates its local flake.
     out = furnish("settings")
-    assert 'inputs.furnish.inputs.home-apps.url = "path:/home/alice/.local/share/furnish/home-apps";' in out, out
+    assert 'inputs.furnish.inputs.home-apps.url = "path:/home/alice/data/furnish/home-apps";' in out, out
     assert "homeManagerModules.default" in out, out
     assert apps() == {}, apps()
 
@@ -109,13 +117,15 @@ pkgs.testers.runNixOSTest {
     assert "home-apps.url" not in out, out
     assert "Apps go into:        your Home Manager configuration (automatic)" in out, out
 
-    # Installing htop: only furnish/home-apps changes in flake.lock, the generation has hello and
-    # htop, and flake.lock is committed.
+    # Installing htop, through the service: only furnish/home-apps changes in flake.lock, the
+    # generation has hello and htop, and flake.lock is committed, all as alice.
     old = lock()
     furnish("install htop")
     assert apps() == {"htop": {"packages": ["hello"], "options": {"programs.htop.enable": True}}}, apps()
     assert generation() == "${after}", generation()
     alice("hello && htop --version")
+    machine.succeed("stat -c %U /home/alice/data/furnish/home-apps/apps.json | grep -qx alice")
+    machine.fail("test -e /home/alice/.local/share/furnish/home-apps")
     new = lock()
     node = new["nodes"]["furnish"]["inputs"]["home-apps"]
     del old["nodes"][node]["locked"], new["nodes"][node]["locked"]
@@ -145,11 +155,14 @@ pkgs.testers.runNixOSTest {
     status = alice("git status --porcelain")
     assert sorted(status.split()) == ["M", "M", "flake.lock", "home.nix"], status
 
-    # The ssh Include: Home Manager writes it into ~/.ssh/config (a link into the store), and the
-    # Line step, which runs after the activation, finds it there.
+    # The ssh Include: Home Manager writes it into ~/.ssh/config (a link into the store), in one
+    # line with alice's own include, and the Line step, which runs after the activation, accepts it.
     furnish("install acme-ssh")
     assert generation() == "${ssh}", generation()
-    machine.succeed("test -L /home/alice/.ssh/config", "grep -qx 'Include ${include}' /home/alice/.ssh/config")
+    machine.succeed("test -L /home/alice/.ssh/config")
+    config = machine.succeed("cat /home/alice/.ssh/config")
+    print(config)
+    assert any(l.startswith("Include ") and "~/.ssh/own.conf" in l.split() and "${include}" in l.split() for l in config.splitlines()), config
     listed = furnish("list")
     assert any(l.startswith("✓  acme-ssh") for l in listed.splitlines()), listed
 

@@ -67,6 +67,10 @@
           "type": "string",
           "description": "The line must come after the last line that matches this regular expression"
         },
+        "accept": {
+          "type": "string",
+          "description": "A regular expression: a line in place that matches it counts as the line, and removal leaves it; line must match it"
+        },
         "mode": {
           "type": "string",
           "pattern": "^[0-7]{3,4}$",

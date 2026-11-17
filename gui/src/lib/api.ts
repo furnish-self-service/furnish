@@ -213,7 +213,7 @@ export type NixosFound = {
 };
 /** A value of `osSpecific.nixos` set by the user or the organization. */
 export type NixosLeaf = { value: string; setBy: 'user' | 'organization'; locked: boolean } | null;
-/** How this NixOS computer is set up; null on other systems. */
+/** How this NixOS computer is set up, or Home Manager on another system with Nix; null otherwise. */
 export type NixosSetup = {
   configuration: NixosFound | null;
   flakeAttribute: { value: string; source: NixosSource };
@@ -232,6 +232,8 @@ export type NixosSetup = {
   installInto: 'system' | 'home';
   /** Lines missing for installing apps into Home Manager (src/nixos.rs, HomeHint). */
   homeHint: { kind: 'standalone' | 'nixosModule' | 'input'; lines: string[] } | null;
+  /** NixOS; false: another system with Nix, where only Home Manager counts. */
+  nixos: boolean;
 };
 export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 /** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */

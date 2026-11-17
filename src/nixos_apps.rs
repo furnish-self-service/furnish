@@ -62,15 +62,35 @@ const FACTS: &str = "/etc/furnish/nixos.json";
 /// furnish's input for the apps it installs into a standalone Home Manager configuration.
 pub const HOME_INPUT: &str = "furnish/home-apps";
 
-/// furnish's local flake for a person's standalone Home Manager configuration: `furnish/home-apps`
-/// in their data folder (`$XDG_DATA_HOME`, by default `~/.local/share`). `home`: someone else's
-/// home folder (in the service), where furnish can't see their environment.
-pub fn home_apps_dir(home: Option<&Path>) -> PathBuf {
-    let data = match home {
-        Some(h) => h.join(".local/share"),
-        None => dirs::data_dir().unwrap_or_else(|| PathBuf::from(".local/share")),
-    };
+/// Where furnish suggests its local flake for this person's standalone Home Manager
+/// configuration: `furnish/home-apps` in `$XDG_DATA_HOME`, by default `~/.local/share`, also on
+/// macOS (a flake input can't have the space of `~/Library/Application Support`). Once the
+/// configuration points its input somewhere, furnish uses that folder (`configured_home_apps`).
+pub fn home_apps_dir() -> PathBuf {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".local/share"));
     data.join("furnish/home-apps")
+}
+
+/// The folder a Home Manager configuration's furnish/home-apps input points at: as flake.lock
+/// has it (what Nix uses), else as flake.nix says. The service takes it from here, because it
+/// can't see the person's environment (`$XDG_DATA_HOME`).
+pub fn configured_home_apps(lock: Option<&str>, flake: &str) -> Option<PathBuf> {
+    let from_lock = lock.and_then(|l| serde_json::from_str::<Value>(l).ok()).and_then(|l| {
+        let nodes = &l["nodes"];
+        let node = |v: &Value| v.as_str().map(str::to_string);
+        let furnish = node(&nodes[l["root"].as_str()?]["inputs"]["furnish"])?;
+        let apps = node(&nodes[&furnish]["inputs"]["home-apps"])?;
+        let original = &nodes[&apps]["original"];
+        (original["type"] == "path").then(|| original["path"].as_str().map(PathBuf::from)).flatten()
+    });
+    from_lock.or_else(|| {
+        let re = regex::Regex::new(r#"home-apps\.url\s*=\s*"path:([^"]+)""#).ok()?;
+        re.captures(flake).map(|c| PathBuf::from(&c[1]))
+    })
+    .filter(|p| p.is_absolute())
 }
 
 /// The line for the Home Manager configuration's flake.nix that points furnish/home-apps there.
@@ -326,7 +346,8 @@ fn home_facts(person: &Account) -> Option<crate::nixos::HomeFacts> {
 /// own settings for this one: it only chooses between places they may install into anyway.
 fn install_into_for(person: &Account, module: bool) -> &'static str {
     let choices = if in_service() {
-        read_as(person, &person.home.join(".local/share/furnish/settings.json")).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        let data = if cfg!(target_os = "macos") { "Library/Application Support/furnish" } else { ".local/share/furnish" };
+        read_as(person, &person.home.join(data).join("settings.json")).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     } else {
         crate::settings::user_choices()
     };
@@ -338,41 +359,64 @@ impl HomeTarget {
         let Some(facts) = home_facts(person) else {
             return Err(missing("furnish's Home Manager module (services.furnish.enable in your Home Manager configuration)"));
         };
-        let dir = match &facts.nix.configuration {
-            Some(c) => PathBuf::from(c),
-            None if !in_service() => crate::nixos::setup()
-                .and_then(|s| s.home_manager_configuration)
-                .map_or_else(|| person.home.join(".config/home-manager"), |f| f.path),
-            None => person.home.join(".config/home-manager"),
-        };
-        let apps_dir = home_apps_dir(in_service().then_some(person.home.as_path()));
-        let line = home_setup_line(&apps_dir);
+        let dir = home_dir_of(person, &facts);
         let Some(flake) = read_as(person, &dir.join("flake.nix")) else {
             return Err(missing(format!("a Home Manager configuration that is a flake ({} has no flake.nix)", dir.display())));
         };
-        if !flake.contains(line_url(&line)) {
-            return Err(missing(format!("the line {line} in {}", dir.join("flake.nix").display())));
-        }
+        let Some(apps_dir) = configured_home_apps(read_as(person, &dir.join("flake.lock")).as_deref(), &flake) else {
+            let suggested = if in_service() { person.home.join(".local/share/furnish/home-apps") } else { home_apps_dir() };
+            return Err(missing(format!("the line {} in {}", home_setup_line(&suggested), dir.join("flake.nix").display())));
+        };
         let attribute = facts.nix.flake_attribute.clone().unwrap_or_else(|| person.name.clone());
         Ok(HomeTarget { dir, attribute, allowlist: facts.nix.allowed_options, apps_dir })
     }
 }
 
+/// The folder of the person's Home Manager configuration: from furnish's Home Manager module,
+/// else (outside the service) as furnish finds it, else `~/.config/home-manager`.
+fn home_dir_of(person: &Account, facts: &crate::nixos::HomeFacts) -> PathBuf {
+    match &facts.nix.configuration {
+        Some(c) => PathBuf::from(c),
+        None if !in_service() => crate::nixos::setup()
+            .and_then(|s| s.home_manager_configuration)
+            .map_or_else(|| person.home.join(".config/home-manager"), |f| f.path),
+        None => person.home.join(".config/home-manager"),
+    }
+}
+
 /// The person furnish acts for: in the service, who asked; else who runs furnish.
 fn person() -> Result<Account> {
-    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let uid = if in_service() {
         let requester = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok());
         requester.context("the furnish service doesn't know who asked")?
     } else {
         current_uid()
     };
-    Ok(account(&passwd, uid).unwrap_or_else(|| Account {
+    Ok(lookup(uid).unwrap_or_else(|| Account {
         uid,
         gid: uid,
         name: std::env::var("USER").unwrap_or_default(),
         home: dirs::home_dir().unwrap_or_default(),
     }))
+}
+
+/// An account from the system's user database (also macOS's directory service and NSS), else
+/// from /etc/passwd.
+fn lookup(uid: u32) -> Option<Account> {
+    #[cfg(unix)]
+    {
+        let mut buf = vec![0 as libc::c_char; 16 * 1024];
+        // SAFETY: zeroed passwd is a valid out-parameter; getpwuid_r fills it with pointers into buf.
+        let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        let rc = unsafe { libc::getpwuid_r(uid, &mut pw, buf.as_mut_ptr(), buf.len(), &mut found) };
+        if rc == 0 && !found.is_null() {
+            // SAFETY: pw_name and pw_dir point to NUL-terminated strings in buf.
+            let text = |p: *const libc::c_char| unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned();
+            return Some(Account { uid, gid: pw.pw_gid, name: text(pw.pw_name), home: PathBuf::from(text(pw.pw_dir)) });
+        }
+    }
+    account(&std::fs::read_to_string("/etc/passwd").unwrap_or_default(), uid)
 }
 
 #[cfg(unix)]
@@ -422,8 +466,15 @@ fn find(name: &str, person: &Account) -> Result<Option<(Place, Entry)>> {
     if let Some(e) = system.homes.get(&person.name).and_then(|h| h.apps.get(name)) {
         return Ok(Some((Place::HomeNixos, e.clone())));
     }
-    let own = read_apps_as(person, &home_apps_dir(in_service().then_some(person.home.as_path())))?;
+    let Some(dir) = own_apps_dir(person) else { return Ok(None) };
+    let own = read_apps_as(person, &dir)?;
     Ok(own.apps.get(name).map(|e| (Place::HomeStandalone, e.clone())))
+}
+
+/// The person's own local flake, where their configuration points (`None`: it points nowhere).
+fn own_apps_dir(person: &Account) -> Option<PathBuf> {
+    let dir = home_dir_of(person, &home_facts(person).unwrap_or_default());
+    configured_home_apps(read_as(person, &dir.join("flake.lock")).as_deref(), &read_as(person, &dir.join("flake.nix"))?)
 }
 
 /// Whether furnish can install into a place: `Missing` says what is missing.
@@ -464,7 +515,7 @@ fn place_for(desired: &Desired, person: &Account) -> Place {
 pub const ONLY_IF_SET_UP: &str = "onlyIfSetUp";
 
 /// Why a step is skipped for `ONLY_IF_SET_UP`, as the preview shows it ("Not needed here: …").
-pub const NOT_NIXOS: &str = "this computer doesn't run NixOS";
+pub const NO_NIX: &str = "Nix isn't installed on this computer";
 pub const NO_HOME: &str = "Home Manager isn't set up for you";
 pub const NO_SYSTEM: &str = "the NixOS configuration isn't set up for furnish";
 
@@ -472,7 +523,7 @@ pub const NO_SYSTEM: &str = "the NixOS configuration isn't set up for furnish";
 /// `None` when it applies. Decided before DSC runs, because elsewhere the resource may not exist.
 /// A step whose app is already in a local flake applies, so it can be removed.
 pub fn not_needed_here(resource: &Value) -> Option<&'static str> {
-    not_needed(resource, Path::new("/etc/NIXOS").exists(), |desired| {
+    not_needed(resource, crate::nixos::nix_installed(), |desired| {
         let person = person().ok()?;
         if find(&desired.name, &person).ok().flatten().is_some() {
             return None;
@@ -484,12 +535,12 @@ pub fn not_needed_here(resource: &Value) -> Option<&'static str> {
 
 /// `not_needed_here` without the computer: `unready` gives the place the app would go to if that
 /// isn't set up.
-fn not_needed(resource: &Value, nixos: bool, unready: impl FnOnce(&Desired) -> Option<Place>) -> Option<&'static str> {
+fn not_needed(resource: &Value, nix: bool, unready: impl FnOnce(&Desired) -> Option<Place>) -> Option<&'static str> {
     if resource["type"] != "Furnish/NixOS" || resource["properties"][ONLY_IF_SET_UP] != true {
         return None;
     }
-    if !nixos {
-        return Some(NOT_NIXOS);
+    if !nix {
+        return Some(NO_NIX);
     }
     let desired: Desired = serde_json::from_value(resource["properties"].clone()).ok()?;
     unready(&desired).map(|place| if place == Place::System { NO_SYSTEM } else { NO_HOME })
@@ -558,7 +609,7 @@ fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<
 
     // What `home-manager switch` does after building.
     info(&format!("Activating {generation}"));
-    run(as_owner(person, &format!("{generation}/activate")), "activating the Home Manager generation")?;
+    run(as_owner(person, format!("{generation}/activate")), "activating the Home Manager generation")?;
     commit(person, dir, clean, desired);
     Ok(())
 }
@@ -672,7 +723,7 @@ fn info(message: &str) {
 
 /// A command as the configuration's owner: their ids (no other groups), home and name.
 #[cfg_attr(not(unix), allow(unused_variables))]
-fn as_owner(owner: &Account, program: &str) -> Command {
+fn as_owner(owner: &Account, program: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut c = Command::new(program);
     #[cfg(unix)]
     if owner.uid != 0 && is_root() {
@@ -681,8 +732,32 @@ fn as_owner(owner: &Account, program: &str) -> Command {
         c.env("HOME", &owner.home).env("USER", &owner.name).env("LOGNAME", &owner.name);
         c.current_dir(&owner.home);
     }
+    // Nix's programs, also for git (flakes) and Home Manager's activation.
+    if let Some(bin) = nix_program(owner).parent().filter(|b| !b.as_os_str().is_empty()) {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![bin.to_path_buf()];
+        dirs.extend(std::env::split_paths(&path));
+        if let Ok(joined) = std::env::join_paths(dirs) {
+            c.env("PATH", joined);
+        }
+    }
     c.stdin(Stdio::null());
     c
+}
+
+/// The nix program: on PATH, else where NixOS and Nix's installers put it. A desktop app or the
+/// furnish service may start without it on PATH, e.g. on macOS or another Linux.
+fn nix_program(owner: &Account) -> PathBuf {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let on_path = std::env::split_paths(&path).map(|d| d.join("nix"));
+    let usual = [
+        PathBuf::from("/run/current-system/sw/bin/nix"),
+        PathBuf::from("/nix/var/nix/profiles/default/bin/nix"),
+        owner.home.join(".nix-profile/bin/nix"),
+        owner.home.join(".local/state/nix/profile/bin/nix"),
+        PathBuf::from(format!("/etc/profiles/per-user/{}/bin/nix", owner.name)),
+    ];
+    on_path.chain(usual).find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("nix"))
 }
 
 /// Runs a command; its output goes to the log, its error into the failure.
@@ -697,7 +772,7 @@ fn run(mut c: Command, what: &str) -> Result<String> {
 }
 
 fn nix(owner: &Account) -> Command {
-    let mut c = as_owner(owner, "nix");
+    let mut c = as_owner(owner, nix_program(owner));
     c.args(["--extra-experimental-features", "nix-command flakes"]);
     c
 }
@@ -734,8 +809,7 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     }
     let requester: u32 = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
     let uid = may_rebuild(&chain(&target.dir)?, requester)?;
-    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-    let owner = account(&passwd, uid).with_context(|| format!("no account with the id {uid}"))?;
+    let owner = lookup(uid).with_context(|| format!("no account with the id {uid}"))?;
 
     let apps_dir = Path::new(APPS_DIR);
     let before = read_apps(apps_dir)?;
@@ -1006,7 +1080,7 @@ mod tests {
         let ssh = json!({"name": "SSH include through Home Manager", "type": "Furnish/NixOS",
             "properties": {"name": "acme-ssh", "onlyIfSetUp": true, "homeOptions": {"programs.ssh.includes": ["config.d/acme.conf"]}}});
         let ready = |_: &Desired| None;
-        assert_eq!(not_needed(&ssh, false, ready), Some(NOT_NIXOS), "Windows, macOS, other Linux");
+        assert_eq!(not_needed(&ssh, false, ready), Some(NO_NIX), "Windows, or no Nix");
         assert_eq!(not_needed(&ssh, true, |_| Some(Place::HomeStandalone)), Some(NO_HOME));
         assert_eq!(not_needed(&ssh, true, |_| Some(Place::HomeNixos)), Some(NO_HOME));
         assert_eq!(not_needed(&ssh, true, |_| Some(Place::System)), Some(NO_SYSTEM));
@@ -1028,7 +1102,20 @@ mod tests {
         let line = home_setup_line(Path::new("/home/alice/.local/share/furnish/home-apps"));
         assert_eq!(line, "inputs.furnish.inputs.home-apps.url = \"path:/home/alice/.local/share/furnish/home-apps\";");
         assert_eq!(line_url(&line), "path:/home/alice/.local/share/furnish/home-apps");
-        assert_eq!(home_apps_dir(Some(Path::new("/home/bob"))), Path::new("/home/bob/.local/share/furnish/home-apps"));
+        assert!(home_apps_dir().ends_with("furnish/home-apps"));
+        // The configuration says where its input points; flake.lock first.
+        let flake = r#"{ inputs.furnish.inputs.home-apps.url = "path:/home/alice/data/furnish/home-apps"; }"#;
+        assert_eq!(configured_home_apps(None, flake), Some(PathBuf::from("/home/alice/data/furnish/home-apps")));
+        let nested = r#"furnish = { url = "github:x/y"; inputs.home-apps.url = "path:/srv/a"; };"#;
+        assert_eq!(configured_home_apps(None, nested), Some(PathBuf::from("/srv/a")));
+        assert_eq!(configured_home_apps(None, "{ }"), None);
+        assert_eq!(configured_home_apps(None, r#"home-apps.url = "path:./relative";"#), None);
+        let lock = r#"{"root": "root", "version": 7, "nodes": {
+            "root": {"inputs": {"furnish": "furnish", "nixpkgs": "nixpkgs"}},
+            "furnish": {"inputs": {"home-apps": "home-apps_2", "nixpkgs": ["nixpkgs"]}},
+            "home-apps_2": {"locked": {"type": "path", "path": "/home/alice/locked"}, "original": {"type": "path", "path": "/home/alice/locked"}}}}"#;
+        assert_eq!(configured_home_apps(Some(lock), flake), Some(PathBuf::from("/home/alice/locked")));
+        assert_eq!(configured_home_apps(Some("{}"), flake), Some(PathBuf::from("/home/alice/data/furnish/home-apps")));
     }
 
     #[test]

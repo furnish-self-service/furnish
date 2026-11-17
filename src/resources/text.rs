@@ -101,12 +101,14 @@ impl Block<'_> {
 
 /// One line: `line` exists, or with `pattern`, a line matching it exists and equals `line`.
 /// With `before`/`after`, the line must also come before the first line matching `before` and
-/// after the last line matching `after`.
+/// after the last line matching `after`. With `accept`, a line matching it in place counts as the
+/// line, e.g. an ssh `Include` that names other files too.
 pub struct Line {
     pub line: String,
     pub pattern: Option<Regex>,
     pub before: Option<Regex>,
     pub after: Option<Regex>,
+    pub accept: Option<Regex>,
 }
 
 impl Line {
@@ -134,12 +136,27 @@ impl Line {
         if self.after.is_some() { lo } else { hi }
     }
 
-    /// The first managed line, and whether it is where `before`/`after` want it.
+    /// The first managed line, and whether it is where `before`/`after` want it; without one,
+    /// an accepted line in place.
     pub fn current<'t>(&self, text: &'t str) -> Option<(&'t str, bool)> {
+        let lines = split(text);
+        self.own(text).or_else(|| self.accepted(&lines).map(|i| (lines[i], true)))
+    }
+
+    /// The first managed line, and whether it is in place; an accepted line doesn't count, since
+    /// removal leaves it.
+    pub fn own<'t>(&self, text: &'t str) -> Option<(&'t str, bool)> {
         let lines = split(text);
         let (lo, hi) = self.range(&lines);
         let i = lines.iter().position(|l| self.ours(l))?;
         Some((lines[i], (lo..hi).contains(&i)))
+    }
+
+    /// An accepted line where the line may be.
+    fn accepted(&self, lines: &[&str]) -> Option<usize> {
+        let re = self.accept.as_ref()?;
+        let (lo, hi) = self.range(lines);
+        (lo..hi).find(|&i| re.is_match(lines[i]))
     }
 
     /// The text with the line in place (`exist`), or without any managed line.
@@ -154,6 +171,9 @@ impl Line {
         }
         let (lo, hi) = self.range(&lines);
         let placed = |i: &usize| (lo..hi).contains(i);
+        if ours.is_empty() && self.accepted(&lines).is_some() {
+            return text.to_string();
+        }
         let result = match (&self.pattern, ours.first()) {
             // Without a pattern, any equal line in place will do.
             (None, _) if ours.iter().any(placed) => lines,
@@ -231,7 +251,7 @@ mod tests {
 
     #[test]
     fn the_ssh_include_goes_before_the_first_host_or_match() {
-        let line = Line { line: "Include config.d/acme.conf".into(), pattern: None, before: re(r"^\s*(Host|Match)\s"), after: None };
+        let line = Line { line: "Include config.d/acme.conf".into(), pattern: None, before: re(r"^\s*(Host|Match)\s"), after: None, accept: None };
         let config = "# mine\nServerAliveInterval 30\nHost github.com\n  User git\nMatch all\n";
         let set = line.apply(config, true);
         assert_eq!(set, "# mine\nServerAliveInterval 30\nInclude config.d/acme.conf\nHost github.com\n  User git\nMatch all\n");
@@ -247,7 +267,7 @@ mod tests {
 
     #[test]
     fn a_line_without_match_is_never_added_twice_and_removal_takes_every_copy() {
-        let line = Line { line: "export A=1".into(), pattern: None, before: None, after: None };
+        let line = Line { line: "export A=1".into(), pattern: None, before: None, after: None, accept: None };
         let text = "x\nexport A=1\ny";
         assert_eq!(line.apply(text, true), text, "present: no duplicate, and the missing last newline stays missing");
         assert_eq!(line.apply("x\n", true), "x\nexport A=1\n");
@@ -256,7 +276,7 @@ mod tests {
 
     #[test]
     fn a_line_with_match_replaces_the_first_match_and_removes_the_others() {
-        let line = Line { line: "PasswordAuthentication no".into(), pattern: re(r"^#?\s*PasswordAuthentication\s"), before: None, after: None };
+        let line = Line { line: "PasswordAuthentication no".into(), pattern: re(r"^#?\s*PasswordAuthentication\s"), before: None, after: None, accept: None };
         let text = "a\n#PasswordAuthentication yes\nb\nPasswordAuthentication yes\n";
         assert_eq!(line.current(text), Some(("#PasswordAuthentication yes", true)));
         let set = line.apply(text, true);
@@ -267,8 +287,30 @@ mod tests {
     }
 
     #[test]
+    fn an_accepted_line_counts_and_stays_on_removal() {
+        // Home Manager writes every include into one line (#8).
+        let line = Line {
+            line: "Include config.d/acme.conf".into(),
+            pattern: None,
+            before: re(r"^\s*(Host|Match)\s"),
+            after: None,
+            accept: re(r"^\s*Include\s(.*\s)?config\.d/acme\.conf(\s|$)"),
+        };
+        let combined = "Include ~/.ssh/own.conf config.d/acme.conf\n\nHost *\n  ForwardAgent no\n";
+        assert_eq!(line.current(combined), Some(("Include ~/.ssh/own.conf config.d/acme.conf", true)));
+        assert_eq!(line.apply(combined, true), combined);
+        assert_eq!(line.apply(combined, false), combined, "removal takes only the line itself");
+        assert_eq!(line.own(combined), None, "so it counts as removed");
+        // After a Host line, ssh doesn't read it: not accepted, the line goes before the Host.
+        let late = "Host *\nInclude config.d/acme.conf other\n";
+        assert_eq!(line.current(late), None);
+        assert_eq!(line.apply(late, true), "Include config.d/acme.conf\nHost *\nInclude config.d/acme.conf other\n");
+        assert_eq!(line.apply("Include config.d/acme.conf.bak\n", true), "Include config.d/acme.conf.bak\nInclude config.d/acme.conf\n");
+    }
+
+    #[test]
     fn after_is_a_condition_too() {
-        let line = Line { line: "editor = vim".into(), pattern: re(r"^editor\s*="), before: re(r"^\["), after: re(r"^\[core\]") };
+        let line = Line { line: "editor = vim".into(), pattern: re(r"^editor\s*="), before: re(r"^\["), after: re(r"^\[core\]"), accept: None };
         let text = "editor = nano\n[core]\nx = 1\n[user]\n";
         let set = line.apply(text, true);
         assert_eq!(set, "[core]\neditor = vim\nx = 1\n[user]\n");

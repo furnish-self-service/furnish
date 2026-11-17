@@ -1554,11 +1554,11 @@ mod tests {
     }
 
     #[test]
-    fn a_nixos_step_only_where_set_up_is_dropped_off_nixos_and_its_preview_says_why() {
-        if Path::new("/etc/NIXOS").exists() {
-            return; // On NixOS, whether it applies depends on how the computer is set up.
+    fn a_nixos_step_only_where_set_up_is_dropped_without_nix_and_its_preview_says_why() {
+        if crate::nixos::nix_installed() {
+            return; // With Nix, whether it applies depends on how the computer is set up.
         }
-        // The owner's example (#8): on a computer without NixOS, only the Line step is left.
+        // The owner's example (#8): on a computer without Nix, only the Line step is left.
         let doc = json!({"resources": [
             {"name": "SSH include through Home Manager", "type": "Furnish/NixOS",
              "properties": {"name": "acme-ssh", "onlyIfSetUp": true, "homeOptions": {"programs.ssh.includes": ["config.d/acme.conf"]}}},
@@ -1571,7 +1571,7 @@ mod tests {
         assert_eq!(kept["resources"][0]["dependsOn"], json!([]));
         let step = json!({"resources": [doc["resources"][0].clone()]});
         let p = preview(&step).unwrap();
-        assert_eq!((p.action, p.details), (Action::Skipped, vec!["Not needed here: this computer doesn't run NixOS".to_string()]));
+        assert_eq!((p.action, p.details), (Action::Skipped, vec!["Not needed here: Nix isn't installed on this computer".to_string()]));
         // Without the property, the step stays: the resource then says what it needs.
         let mut plain = doc.clone();
         plain["resources"][0]["properties"].as_object_mut().unwrap().remove("onlyIfSetUp");

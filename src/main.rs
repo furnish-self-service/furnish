@@ -207,6 +207,8 @@ fn print_nixos(s: &furnish::nixos::Setup) {
         Source::UsualPlace | Source::Hostname => "the usual place".to_string(),
     };
     match &s.configuration {
+        // Another system with Nix: only Home Manager.
+        _ if !s.nixos => {}
         Some(f) => {
             let kind = if f.kind == furnish::nixos::Kind::Flake { "flake" } else { "channels" };
             let mut line = format!("NixOS configuration: {} ({kind}, {})", f.path.display(), how(f));
@@ -266,6 +268,9 @@ fn print_nixos(s: &furnish::nixos::Setup) {
         if h.kind == HomeHintKind::Standalone {
             println!("                     and furnish.homeManagerModules.default to its modules, with services.furnish.enable = true;");
         }
+    }
+    if !s.nixos {
+        return;
     }
     let into = if s.install_into == "home" { "your Home Manager configuration" } else { "the NixOS configuration" };
     let why = match s.chosen.install_into.as_ref().map(|l| l.set_by) {

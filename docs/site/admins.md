@@ -362,6 +362,8 @@ People who keep their programs in Home Manager can get furnish's apps there inst
 
 #### Standalone Home Manager
 
+This works on NixOS and on any other Linux system or Mac with Nix. On the other systems, apps with a `Furnish/NixOS` resource always go into Home Manager, and the Settings page has a Home Manager section instead of the NixOS one.
+
 Add to the Home Manager configuration's `flake.nix`:
 
 ```nix
@@ -383,7 +385,7 @@ services.furnish.nix.configuration = "/home/alice/.config/home-manager";  # the 
 services.furnish.nix.allowedOptions = [ "programs.*.enable" ];             # optional
 ```
 
-`~/.local/share/furnish/home-apps` (in `$XDG_DATA_HOME` if set) is the person's own small flake with the apps furnish installed for them. furnish creates it when it shows the lines, on the Settings page and with `furnish settings`, so the first `nix flake lock` finds it. A flake input can't use `~`, so the line has the full path. The module adds the apps' packages to `home.packages`. Without `services.furnish.nix.configuration`, furnish looks in `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` and `~/.config/home-manager`. `services.furnish.nix.flakeAttribute` is the name in `homeConfigurations`, by default the user name.
+`~/.local/share/furnish/home-apps` (in `$XDG_DATA_HOME` if set, also on macOS) is the person's own small flake with the apps furnish installed for them. furnish creates it when it shows the lines, on the Settings page and with `furnish settings`, so the first `nix flake lock` finds it. A flake input can't use `~`, so the line has the full path. If the input points to another folder, furnish uses that one: it reads the folder from `flake.lock`, or from `flake.nix` before the first lock, so the furnish service finds it too. The module adds the apps' packages to `home.packages`. Without `services.furnish.nix.configuration`, furnish looks in `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` and `~/.config/home-manager`. `services.furnish.nix.flakeAttribute` is the name in `homeConfigurations`, by default the user name.
 
 An install runs entirely as the person, also when the furnish service runs it for them, and needs no administrator rights. furnish writes the app into the person's `apps.json`, runs `nix flake update furnish/home-apps`, builds the generation and activates it, as `home-manager switch` does. It commits `flake.lock` if the repository had no other changes, and puts `apps.json` and `flake.lock` back if the build fails.
 

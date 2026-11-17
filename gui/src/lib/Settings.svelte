@@ -335,9 +335,10 @@
     {@const config = nixos.configuration}
     {@const chosen = nixos.chosen}
     <section aria-labelledby="nixos-title">
-      <h2 id="nixos-title">NixOS</h2>
-      <p class="intro">{t('nixos.declared')}</p>
+      <h2 id="nixos-title">{nixos.nixos ? 'NixOS' : 'Home Manager'}</h2>
+      <p class="intro">{t(nixos.nixos ? 'nixos.declared' : 'nixos.homeOnly')}</p>
       <ul class="rows">
+        {#if nixos.nixos}
         <li class="row">
           <span class="text">
             <span class="label">{t('nixos.config')}</span>
@@ -440,9 +441,10 @@
             </span>
           </li>
         {/if}
+        {/if}
         <li class="row">
           <span class="text">
-            <span class="label">{t('nixos.homeManager')}</span>
+            <span class="label">{t(nixos.nixos ? 'nixos.homeManager' : 'nixos.config')}</span>
             {#if nixos.homeManagerConfiguration}<span class="desc"><code class="path">{nixos.homeManagerConfiguration.path}</code></span>{/if}
           </span>
           <span class="control value">{t(nixos.homeManager || nixos.homeManagerConfiguration ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
@@ -452,7 +454,7 @@
           <li class="row">
             <span class="text">
               <span class="label">{t('nixos.homeApps')}</span>
-              <span class="desc">{t(`nixos.homeAppsText.${nixos.homeHint.kind}`)}</span>
+              <span class="desc">{#each parts(t(`nixos.homeAppsText.${nixos.homeHint.kind}`)) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}</span>
             </span>
             <span class="control">
               <code class="path snippet">{lines}</code>
@@ -460,6 +462,7 @@
             </span>
           </li>
         {/if}
+        {#if nixos.nixos}
         <li class="row">
           <label class="text" for="nixos-install-into">
             <span class="label">{t('nixos.installInto')}</span>
@@ -479,6 +482,7 @@
             </select>
           </span>
         </li>
+        {/if}
       </ul>
       <p class="note">
         {#each parts(t('nixos.installs')) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}

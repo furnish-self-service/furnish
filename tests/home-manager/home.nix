@@ -11,5 +11,7 @@
   };
   # Home Manager writes ~/.ssh/config, for the app that adds an Include (tests/home-manager.nix).
   programs.ssh.enable = true;
+  # An include of her own, which Home Manager writes into the same line as the app's.
+  programs.ssh.includes = [ "~/.ssh/own.conf" ];
   manual.manpages.enable = false;
 }

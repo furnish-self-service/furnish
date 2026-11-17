@@ -88,7 +88,7 @@
   /** A Furnish/NixOS step with onlyIfSetUp where its configuration isn't set up:
    *  "Not needed here: <reason>", with the reasons of src/nixos_apps.rs. */
   const notNeededReasons: Record<string, Key> = {
-    "this computer doesn't run NixOS": 'plan.notNeeded.nixos',
+    "Nix isn't installed on this computer": 'plan.notNeeded.nix',
     "Home Manager isn't set up for you": 'plan.notNeeded.home',
     "the NixOS configuration isn't set up for furnish": 'plan.notNeeded.system',
   };

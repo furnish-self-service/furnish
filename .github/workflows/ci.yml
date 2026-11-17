@@ -154,6 +154,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+  home-manager-linux:
+    name: Nix (Home Manager without NixOS)
+    needs: linux-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: bin
+      - run: chmod +x bin/furnish && tests/home-manager.sh bin/furnish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   nix-declared:
     name: Nix (packages from the NixOS configuration)
     needs: linux-binary
@@ -483,7 +497,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write

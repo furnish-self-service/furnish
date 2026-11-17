@@ -252,6 +252,8 @@ pub struct Setup {
     pub install_into: &'static str,
     /// The lines that are missing for furnish to install apps into Home Manager.
     pub home_hint: Option<HomeHint>,
+    /// NixOS; else another system with Nix, where only Home Manager counts.
+    pub nixos: bool,
 }
 
 /// What a person adds once so furnish can install apps into their Home Manager configuration.
@@ -370,8 +372,8 @@ pub fn setup() -> Option<Setup> {
     let ctx = Context::here();
     let mut setup = detect(&ctx)?;
     // So that the configuration's first `nix flake lock` with the line finds furnish's flake.
-    if setup.home_hint.as_ref().is_some_and(|h| h.kind != HomeHintKind::NixosModule)
-        && let Err(e) = crate::nixos_apps::ensure_home_apps(&crate::nixos_apps::home_apps_dir(None))
+    if let Some(line) = setup.home_apps_line.as_ref().filter(|_| setup.home_hint.is_some())
+        && let Err(e) = crate::nixos_apps::ensure_home_apps(Path::new(crate::nixos_apps::line_url(line).trim_start_matches("path:")))
     {
         eprintln!("warning: can't create furnish's flake for Home Manager: {e:#}");
     }
@@ -382,10 +384,20 @@ pub fn setup() -> Option<Setup> {
     Some(setup)
 }
 
-/// Where the configuration is, without comparing commits (no process runs). `None`: not NixOS.
+/// Whether Nix is installed (NixOS, or Nix on another system).
+pub fn nix_installed() -> bool {
+    Path::new("/nix/store").is_dir()
+}
+
+/// Where the configuration is, without comparing commits (no process runs). `None`: neither
+/// NixOS nor, on another system with Nix, a Home Manager configuration.
 pub fn detect(ctx: &Context) -> Option<Setup> {
-    if !ctx.fs(Path::new("/etc/NIXOS")).exists() {
+    let nixos = ctx.fs(Path::new("/etc/NIXOS")).exists();
+    if !nixos && !ctx.fs(Path::new("/nix/store")).is_dir() {
         return None;
+    }
+    if !nixos {
+        return home_only(ctx);
     }
     let module: Option<ModuleFacts> =
         std::fs::read_to_string(ctx.fs(Path::new("/etc/furnish/nixos.json"))).ok().and_then(|t| serde_json::from_str(&t).ok());
@@ -449,18 +461,80 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
         _ => Vec::new(),
     };
     let apps_input = configuration.as_ref().is_some_and(|f| f.kind == Kind::Flake && crate::nixos_apps::has_input(&ctx.fs(&f.path)));
+    let h = home_part(ctx, module.as_ref());
+    Some(Setup {
+        apps_input,
+        configuration,
+        home_manager_configuration: h.configuration,
+        home_module: h.module,
+        home_apps_line: h.line,
+        home_apps_input: h.input,
+        install_into: h.install_into,
+        home_hint: h.hint,
+        nixos: true,
+        home_manager: h.present || module.as_ref().is_some_and(|m| m.home_manager_module),
+        flake_attribute,
+        suggestions,
+        rejected,
+        chosen: ctx.chosen.clone(),
+        module,
+    })
+}
+
+/// Another system with Nix: only the Home Manager part, if there is a Home Manager.
+fn home_only(ctx: &Context) -> Option<Setup> {
+    let h = home_part(ctx, None);
+    if !h.present {
+        return None;
+    }
+    Some(Setup {
+        apps_input: false,
+        configuration: None,
+        home_manager_configuration: h.configuration,
+        home_module: h.module,
+        home_apps_line: h.line,
+        home_apps_input: h.input,
+        // Without NixOS, apps can only go into Home Manager.
+        install_into: "home",
+        home_hint: h.hint,
+        nixos: false,
+        home_manager: true,
+        flake_attribute: Attribute { value: ctx.hostname(), source: Source::Hostname },
+        suggestions: Vec::new(),
+        rejected: None,
+        chosen: ctx.chosen.clone(),
+        module: None,
+    })
+}
+
+/// What `detect` finds about Home Manager.
+struct HomePart {
+    configuration: Option<Found>,
+    module: Option<HomeFacts>,
+    line: Option<String>,
+    input: bool,
+    install_into: &'static str,
+    hint: Option<HomeHint>,
+    /// This person has Home Manager.
+    present: bool,
+}
+
+fn home_part(ctx: &Context, module: Option<&ModuleFacts>) -> HomePart {
     let home_module = ctx.home.as_ref().and_then(|h| HomeFacts::read(&ctx.fs(h)));
     let home_manager_configuration = home_manager(ctx, home_module.as_ref());
     // Standalone only: with the NixOS module, the system's apps flake has the person's apps.
-    let home_apps_line = (!home_module.as_ref().is_some_and(|m| m.nixos_module) && !ctx.in_service)
-        .then(|| crate::nixos_apps::home_setup_line(&crate::nixos_apps::home_apps_dir(None)));
-    let home_apps_input = match (&home_manager_configuration, &home_apps_line) {
-        (Some(f), Some(line)) => f.kind == Kind::Flake && std::fs::read_to_string(ctx.fs(&f.file)).is_ok_and(|t| t.contains(crate::nixos_apps::line_url(line))),
-        _ => false,
-    };
+    let standalone = !home_module.as_ref().is_some_and(|m| m.nixos_module) && !ctx.in_service;
+    // Where the configuration points furnish/home-apps, else where furnish suggests it.
+    let configured = home_manager_configuration.as_ref().filter(|f| f.kind == Kind::Flake).and_then(|f| {
+        let flake = std::fs::read_to_string(ctx.fs(&f.file)).ok()?;
+        let lock = std::fs::read_to_string(ctx.fs(&f.path.join("flake.lock"))).ok();
+        crate::nixos_apps::configured_home_apps(lock.as_deref(), &flake)
+    });
+    let home_apps_input = standalone && configured.is_some();
+    let home_apps_line = standalone.then(|| crate::nixos_apps::home_setup_line(&configured.unwrap_or_else(crate::nixos_apps::home_apps_dir)));
     let install_into = crate::nixos_apps::install_into(ctx.chosen.install_into.as_ref(), home_module.is_some());
     let home_present = home_manager_configuration.is_some() || has_home_manager(ctx);
-    let nixos_module = module.as_ref().is_some_and(|m| m.home_manager_module);
+    let nixos_module = module.is_some_and(|m| m.home_manager_module);
     let home_hint = match (&home_module, &home_apps_line) {
         _ if !home_present || ctx.in_service => None,
         (None, _) if nixos_module => Some(HomeHint {
@@ -478,22 +552,15 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
         (Some(_), Some(line)) if !home_apps_input => Some(HomeHint { kind: HomeHintKind::Input, lines: vec![line.clone()] }),
         _ => None,
     };
-    Some(Setup {
-        apps_input,
-        configuration,
-        home_manager_configuration,
-        home_module,
-        home_apps_line,
-        home_apps_input,
+    HomePart {
+        configuration: home_manager_configuration,
+        module: home_module,
+        line: home_apps_line,
+        input: home_apps_input,
         install_into,
-        home_hint,
-        home_manager: has_home_manager(ctx) || module.as_ref().is_some_and(|m| m.home_manager_module),
-        flake_attribute,
-        suggestions,
-        rejected,
-        chosen: ctx.chosen.clone(),
-        module,
-    })
+        hint: home_hint,
+        present: home_present,
+    }
 }
 
 fn source_of(l: &Leaf) -> Source {
@@ -926,6 +993,28 @@ mod tests {
         fs::write(f.root.join("etc/furnish/nixos.json"), r#"{"homeManagerModule":true}"#).unwrap();
         let hint = detect(&ctx).unwrap().home_hint.unwrap();
         assert_eq!((hint.kind, hint.lines), (HomeHintKind::NixosModule, vec!["home-manager.users.alice.services.furnish.enable = true;".to_string()]));
+    }
+
+    #[test]
+    fn without_nixos_only_home_manager_counts() {
+        let f = Fake::new("hm-only");
+        fs::remove_file(f.root.join("etc/NIXOS")).unwrap();
+        let ctx = f.ctx();
+        assert_eq!(detect(&ctx), None, "no Nix");
+        fs::create_dir_all(f.root.join("nix/store")).unwrap();
+        assert_eq!(detect(&ctx), None, "Nix without Home Manager");
+        f.flake("/home/alice/.config/home-manager", "{ }");
+        let s = detect(&ctx).unwrap();
+        assert!(!s.nixos && s.configuration.is_none() && s.home_manager);
+        assert_eq!((s.home_hint.unwrap().kind, s.install_into), (HomeHintKind::Standalone, "home"));
+        // The configuration's own path counts, wherever furnish would suggest it.
+        f.flake("/home/alice/.config/home-manager", r#"{ inputs.furnish.inputs.home-apps.url = "path:/home/alice/data/furnish/home-apps"; }"#);
+        let facts = f.root.join("home/alice").join(HOME_FACTS);
+        fs::create_dir_all(facts.parent().unwrap()).unwrap();
+        fs::write(&facts, "{}").unwrap();
+        let s = detect(&ctx).unwrap();
+        assert!(s.home_apps_input && s.home_hint.is_none(), "{:?}", s.home_hint);
+        assert_eq!(s.home_apps_line.as_deref(), Some(r#"inputs.furnish.inputs.home-apps.url = "path:/home/alice/data/furnish/home-apps";"#));
     }
 
     #[test]

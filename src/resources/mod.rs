@@ -623,6 +623,7 @@ struct LineProps {
     pattern: Option<String>,
     before: Option<String>,
     after: Option<String>,
+    accept: Option<String>,
     mode: Option<String>,
     private: Option<bool>,
     #[serde(rename = "_exist")]
@@ -644,11 +645,21 @@ impl LineProps {
         {
             bail!("line '{}' doesn't match '{}': the next run wouldn't find it and would add it again", self.line, re.as_str());
         }
+        let accept = self.accept.as_deref().map(|p| regex(p, "accept")).transpose()?;
+        if let Some(re) = &accept {
+            if pattern.is_some() {
+                bail!("match and accept: use one of them (match replaces lines, accept leaves them as they are)");
+            }
+            if !re.is_match(&self.line) {
+                bail!("line '{}' doesn't match accept '{}'", self.line, re.as_str());
+            }
+        }
         Ok(text::Line {
             line: self.line.clone(),
             pattern,
             before: self.before.as_deref().map(|p| regex(p, "before")).transpose()?,
             after: self.after.as_deref().map(|p| regex(p, "after")).transpose()?,
+            accept,
         })
     }
 }
@@ -663,7 +674,7 @@ fn line(props: &Value) -> Result<Plan> {
     }
     let text = file.text()?;
     let exist = exist(p.exist);
-    let current = line.current(&text.text);
+    let current = if exist { line.current(&text.text) } else { line.own(&text.text) };
     let new = line.apply(&text.text, exist);
     plan.observe("_exist", Some(current.is_some().into()), Some(exist.into()));
     let path = file.shown.clone();
