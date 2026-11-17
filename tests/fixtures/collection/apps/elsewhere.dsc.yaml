@@ -10,3 +10,4 @@ resources:
     properties:
       name: elsewhere-tool
       command: elsewhere-tool
+      versions: [">=1.0"]  # a version furnish can't read when installed outside it

@@ -139,6 +139,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'app.status.securityUpdate': 'Geïnstalleerd, beveiligingsupdate vereist',
   'app.status.unacceptable': 'Versie {installed} is geïnstalleerd. {needs}',
   'app.requiredUpdate': '{collection} vereist {needs}. Versie {installed} is geïnstalleerd, dus {target} wordt meteen geïnstalleerd.',
+  'app.requiredUnknown': '{brand} kan de versie van deze app niet toetsen aan de versies die {collection} vereist.',
+  'app.requiredUnknownAt': '{brand} kan de versie van deze app niet toetsen aan de versies die {collection} vereist: ze is buiten {brand} geïnstalleerd, in {path}.',
   'app.autoUpdateRequired': '{collection} vereist deze update, dus die wordt ook zonder automatische updates geïnstalleerd.',
   'required.needs': 'Vereist {needs}; {via} biedt {offered} aan',
   'required.needsNone': 'Vereist {needs}; {via} biedt geen versie aan',

@@ -458,7 +458,7 @@
     {
       "type": "table",
       "title": "Devices on a version that isn't acceptable",
-      "description": "Devices whose installed version of an app isn't one of the versions its collection lists, from each device's latest requirement report per app in the time range. notAcceptable: furnish installs an acceptable version with the next update. noneOffered: the package manager offers no acceptable version. Since: when the device reported it; furnish reports only changes, so widen the time range to see devices that have been on such a version for longer.",
+      "description": "Devices whose installed version of an app isn't one of the versions its collection lists, from each device's latest requirement report per app in the time range. notAcceptable: furnish installs an acceptable version with the next update. noneOffered: the package manager offers no acceptable version. unknown: furnish can't read the installed version (installed outside furnish, say), so it can't check it. Since: when the device reported it; furnish reports only changes, so widen the time range to see devices that have been on such a version for longer.",
       "gridPos": {
         "x": 0,
         "y": 26,
@@ -501,6 +501,11 @@
                         "text": "none offered",
                         "color": "red",
                         "index": 1
+                      },
+                      "unknown": {
+                        "text": "version unknown",
+                        "color": "yellow",
+                        "index": 2
                       }
                     }
                   }
@@ -532,7 +537,7 @@
             "type": "loki",
             "uid": "furnish-loki"
           },
-          "expr": "max by (device_id, user_email, host_name, furnish_app, outcome, furnish_installed_version, furnish_offered_version) (max_over_time({service_name=\"furnish\", event=\"requirement\", outcome=~\"notAcceptable|noneOffered\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range])) == on (device_id, furnish_app) group_left max by (device_id, furnish_app) (max_over_time({service_name=\"furnish\", event=\"requirement\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range]))",
+          "expr": "max by (device_id, user_email, host_name, furnish_app, outcome, furnish_installed_version, furnish_offered_version) (max_over_time({service_name=\"furnish\", event=\"requirement\", outcome=~\"notAcceptable|noneOffered|unknown\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range])) == on (device_id, furnish_app) group_left max by (device_id, furnish_app) (max_over_time({service_name=\"furnish\", event=\"requirement\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range]))",
           "queryType": "instant",
           "editorMode": "code",
           "instant": true,

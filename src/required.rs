@@ -88,6 +88,9 @@ pub struct Required {
     pub via: String,
     /// A `Furnish/Installer`: what is offered is the collection's file.
     pub installer: bool,
+    /// Installed, but furnish can't read the version (installed outside furnish, or a package
+    /// manager that doesn't know it): furnish can't check it and leaves it as it is.
+    pub unknown: bool,
     /// The version furnish installs; `None`: no acceptable version is offered.
     pub target: Option<String>,
     /// The acceptable versions, as the app lists them.
@@ -683,6 +686,7 @@ impl Facts {
         let ok = |v: &str| matches(entries, scheme, v);
         self.pinnable
             && self.available.is_none()
+            && self.installed.as_deref() != Some("?")
             && match (&self.latest, self.known_installed()) {
                 (Some(latest), installed) => !ok(latest) || installed.is_some_and(|i| !ok(i) && compare(scheme, latest, i) != Ordering::Greater),
                 (None, Some(installed)) => !ok(installed),
@@ -695,6 +699,10 @@ impl Facts {
 /// the package manager installs a given version, the newest acceptable one it offers; else the
 /// installed version if it is acceptable; else nothing acceptable is offered.
 pub fn decide(entries: &[Entry], facts: &Facts) -> Decision {
+    // Installed, version unknown: can't be checked, and nothing goes on top of it.
+    if facts.installed.as_deref() == Some("?") {
+        return Decision::Free;
+    }
     let scheme = facts.scheme.unwrap_or(Scheme::Generic);
     let ok = |v: &str| matches(entries, scheme, v);
     let installed = facts.known_installed();
@@ -709,8 +717,6 @@ pub fn decide(entries: &[Entry], facts: &Facts) -> Decision {
         None if installed_ok != Some(false) && facts.available.is_none() => Decision::Free,
         _ => match best(entries, facts) {
             Some(version) => Decision::Exactly(version),
-            // Installed, version unknown: leave it be.
-            None if facts.installed.as_deref() == Some("?") => Decision::Free,
             None => Decision::NoneOffered,
         },
     }
@@ -734,6 +740,21 @@ fn best(entries: &[Entry], facts: &Facts) -> Option<String> {
 /// acceptable version is offered.
 pub fn assess(resource: &str, entries: &[Entry], facts: &Facts) -> (Decision, Option<Required>) {
     let decision = decide(entries, facts);
+    if facts.installed.as_deref() == Some("?") {
+        let required = Required {
+            resource: resource.to_string(),
+            installed: None,
+            acceptable: true,
+            offered: facts.latest.clone(),
+            via: facts.via.clone(),
+            installer: facts.installer,
+            unknown: true,
+            target: None,
+            needs: entries.to_vec(),
+            summary: format!("furnish can't read the installed version, so it can't check it against the required versions ({})", describe(entries)),
+        };
+        return (decision, Some(required));
+    }
     let scheme = facts.scheme.unwrap_or(Scheme::Generic);
     let installed = facts.known_installed();
     let acceptable = installed.is_none_or(|i| matches(entries, scheme, i));
@@ -758,6 +779,7 @@ pub fn assess(resource: &str, entries: &[Entry], facts: &Facts) -> (Decision, Op
         offered: facts.latest.clone(),
         via: facts.via.clone(),
         installer: facts.installer,
+        unknown: false,
         target,
         needs: entries.to_vec(),
         summary: format!("{}; {offered}", describe(entries)),
@@ -1138,8 +1160,15 @@ mod tests {
     #[test]
     fn unknown_versions_leave_things_as_they_are() {
         let required = entries(json!([">=2"]));
-        // Installed, version unknown: can't judge it.
-        assert_eq!(assess("x", &required, &facts(Some("?"), Some("1.0"), None, "pacman")), (Decision::Free, None));
+        // Installed, version unknown: can't judge it, and nothing is installed on top of it, even
+        // where a version could be pinned.
+        for f in [facts(Some("?"), Some("1.0"), None, "pacman"), facts(Some("?"), Some("1.0"), Some(&["2.1", "1.0"]), "winget")] {
+            let (decision, shown) = assess("x", &required, &f);
+            assert_eq!(decision, Decision::Free);
+            let shown = shown.unwrap();
+            assert!(shown.unknown && shown.acceptable && shown.target.is_none() && shown.installed.is_none());
+        }
+        assert!(!facts(Some("?"), Some("1.0"), None, "winget").need_list(&required));
         // Nothing known about what is offered (offline): leave the install to the package manager.
         assert_eq!(assess("x", &required, &facts(None, None, None, "pacman")), (Decision::Free, None));
         assert_eq!(assess("x", &required, &facts(Some("2.1"), None, None, "pacman")), (Decision::Free, None));

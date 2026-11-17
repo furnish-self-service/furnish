@@ -32,6 +32,7 @@ batch1() {
         report 91bd-dave 0.9.0 "$(inventory)" ;;
     erin@myorg.tld)
         report 5c02-erin 0.9.0 "$(op install succeeded design/gimp beef001)"
+        report 5c02-erin 0.9.0 '"event":"requirement","outcome":"unknown","app":"design/gimp","collection":"design","offeredVersion":"2.10.38"'
         report 5c02-erin 0.9.0 "$(op uninstall cancelled design/gimp beef001)"
         report 5c02-erin 0.9.0 '"event":"collectionUpdate","outcome":"failed","collection":"design","error":"git fetch: connection refused"'
         report 5c02-erin 0.9.0 "$(inventory)" ;;

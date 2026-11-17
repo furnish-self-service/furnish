@@ -139,6 +139,8 @@ export const fr: Record<keyof typeof en, Entry> = {
   'app.status.securityUpdate': 'Installé, mise à jour de sécurité requise',
   'app.status.unacceptable': 'La version {installed} est installée. {needs}',
   'app.requiredUpdate': '{collection} exige {needs}. La version {installed} est installée, donc {target} s’installe tout de suite.',
+  'app.requiredUnknown': '{brand} ne peut pas vérifier la version de cette app par rapport aux versions qu’exige {collection}.',
+  'app.requiredUnknownAt': '{brand} ne peut pas vérifier la version de cette app par rapport aux versions qu’exige {collection} : elle a été installée en dehors de {brand}, dans {path}.',
   'app.autoUpdateRequired': '{collection} exige cette mise à jour : elle s’installe même sans mises à jour automatiques.',
   'required.needs': 'Nécessite {needs} ; {via} propose {offered}',
   'required.needsNone': 'Nécessite {needs} ; {via} ne propose aucune version',

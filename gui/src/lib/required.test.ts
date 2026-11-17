@@ -11,6 +11,7 @@ const required = (r: Partial<Required>): Required => ({
   offered: '128.0.5',
   via: 'winget',
   installer: false,
+  unknown: false,
   target: '128.0.5',
   needs: [range(['>=', '128.0.3'])],
   summary: '',
@@ -63,4 +64,11 @@ test('required updates install right away, once per check, and a held app goes t
   assert.equal(urgentAction({ held: null }, required({}), { ...free, tried: true }), null);
   assert.equal(urgentAction({ held: null }, required({ target: null }), free), null);
   assert.equal(urgentAction({ held: null }, null, free), null);
+});
+
+test('an installed version that can\'t be read is neither urgent nor unmet', () => {
+  const r = required({ unknown: true, installed: null, acceptable: true, target: null });
+  assert.equal(unmet(r), false);
+  assert.equal(urgent(r), false);
+  assert.equal(urgentAction({ held: null }, r, { pending: false, declared: false, tried: false }), null);
 });

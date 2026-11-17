@@ -136,6 +136,8 @@ export const en = {
   'app.status.securityUpdate': 'Installed, security update required',
   'app.status.unacceptable': 'Version {installed} is installed. {needs}',
   'app.requiredUpdate': '{collection} requires {needs}. Version {installed} is installed, so {target} installs right away.',
+  'app.requiredUnknown': '{brand} can\'t check this app\'s version against the versions {collection} requires.',
+  'app.requiredUnknownAt': '{brand} can\'t check this app\'s version against the versions {collection} requires: it was installed outside {brand}, at {path}.',
   'app.autoUpdateRequired': '{collection} requires this update, so it installs even with automatic updates off.',
   'required.needs': 'Needs {needs}; {via} offers {offered}',
   'required.needsNone': 'Needs {needs}; {via} offers no version',

@@ -708,6 +708,7 @@ fn list() -> Result<()> {
             }
         };
         match required {
+            Some(r) if r.unknown => description = format!("{description} (version unknown: can't check the required versions)"),
             Some(r) if !r.acceptable && r.target.is_some() => description = format!("{description} (security update required: {})", r.summary),
             Some(r) => description = format!("{description} (needs {})", r.summary),
             None => {}

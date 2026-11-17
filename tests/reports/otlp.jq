@@ -16,9 +16,9 @@ def record: . as $r | {
   timeUnixNano: ((.time | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) * 1000000000
   + ((.time | capture("\\.(?<ms>[0-9]{3})Z$").ms // "0") | tonumber) * 1000000 | tostring),
   severityNumber: (if .outcome == "failed" or .outcome == "noneOffered" then 17
-    elif .event == "fallback" or .outcome == "notAcceptable" then 13 else 9 end),
+    elif .event == "fallback" or .outcome == "notAcceptable" or .outcome == "unknown" then 13 else 9 end),
   severityText: (if .outcome == "failed" or .outcome == "noneOffered" then "ERROR"
-    elif .event == "fallback" or .outcome == "notAcceptable" then "WARN" else "INFO" end),
+    elif .event == "fallback" or .outcome == "notAcceptable" or .outcome == "unknown" then "WARN" else "INFO" end),
   body: {stringValue: (if .apps then "\(.event) of \(.apps | length) apps" else "\(.event) \(.app // .collection) \(.outcome)" end)},
   attributes: [names[] | select($r[.[0]] != null) | attr(.[1]; $r[.[0]])]};
 {resourceLogs: [group_by(resource | tostring)[] | {resource: {attributes: (.[0] | resource)}, scopeLogs: [{scope: {name: "furnish"}, logRecords: map(record)}]}]}

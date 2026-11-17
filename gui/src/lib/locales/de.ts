@@ -137,6 +137,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'app.status.securityUpdate': 'Installiert, Sicherheitsupdate erforderlich',
   'app.status.unacceptable': 'Version {installed} ist installiert. {needs}',
   'app.requiredUpdate': '{collection} verlangt {needs}. Installiert ist Version {installed}, deshalb wird {target} sofort installiert.',
+  'app.requiredUnknown': '{brand} kann die Version dieser App nicht mit den Versionen abgleichen, die {collection} verlangt.',
+  'app.requiredUnknownAt': '{brand} kann die Version dieser App nicht mit den Versionen abgleichen, die {collection} verlangt: Sie wurde außerhalb von {brand} installiert, unter {path}.',
   'app.autoUpdateRequired': '{collection} verlangt dieses Update, deshalb wird es auch ohne automatische Updates installiert.',
   'required.needs': 'Benötigt {needs}; {via} bietet {offered} an',
   'required.needsNone': 'Benötigt {needs}; {via} bietet keine Version an',

@@ -143,7 +143,7 @@ For `Furnish/Installer`, the collection's file is what is offered, so it has to 
 
 furnish never falls back to an earlier version of the app that the current `versions` don't accept (see [When an install fails](using.md#when-an-install-fails)).
 
-A package installed outside furnish (see `command`) has no version furnish can read, so furnish leaves it as it is whatever `versions` says.
+Sometimes furnish can't read the installed version: for a package installed outside furnish (see `command`), or one the package manager installed without a version, such as some portable winget packages. furnish then leaves the app as it is and installs nothing over it. The app's page says that furnish can't check its version against `versions`, and where it is installed if it was installed outside furnish. `furnish list` says "version unknown", and [reports](admins.md#reports) record it.
 
 `Furnish/NixOS` takes no `versions`: its packages come from the system's nixpkgs, which decides their version.
 

@@ -19,6 +19,8 @@ export interface Required {
   via: string;
   /** A `Furnish/Installer`: `offered` is the version of the collection's file. */
   installer: boolean;
+  /** Installed, but the version can't be read (installed outside furnish, say): it can't be checked and is left as it is. */
+  unknown: boolean;
   /** The version furnish installs; null: no acceptable version is offered. */
   target: string | null;
   needs: Entry[];
@@ -60,7 +62,7 @@ export const urgent = (r: Required | null | undefined): r is Required & { target
 
 /** No acceptable version is offered, and the app isn't installed at an acceptable one. */
 export const unmet = (r: Required | null | undefined): r is Required =>
-  !!r && r.target === null && (r.installed === null || !r.acceptable);
+  !!r && !r.unknown && r.target === null && (r.installed === null || !r.acceptable);
 
 /** Whether to install a required security update right away, and how: ignores the user's
  *  automatic-update choices, declined updates, load and the interval, but never queues an app

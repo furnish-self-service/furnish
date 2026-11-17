@@ -139,6 +139,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'app.status.securityUpdate': 'Installata, aggiornamento di sicurezza obbligatorio',
   'app.status.unacceptable': 'È installata la versione {installed}. {needs}',
   'app.requiredUpdate': '{collection} richiede {needs}. È installata la versione {installed}, quindi {target} viene installata subito.',
+  'app.requiredUnknown': '{brand} non può confrontare la versione di questa app con le versioni richieste da {collection}.',
+  'app.requiredUnknownAt': '{brand} non può confrontare la versione di questa app con le versioni richieste da {collection}: è stata installata al di fuori di {brand}, in {path}.',
   'app.autoUpdateRequired': '{collection} richiede questo aggiornamento, quindi viene installato anche con gli aggiornamenti automatici disattivati.',
   'required.needs': 'Richiede {needs}; {via} offre {offered}',
   'required.needsNone': 'Richiede {needs}; {via} non offre nessuna versione',

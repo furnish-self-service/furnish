@@ -129,6 +129,7 @@ const steps = [
     await waitFor('elsewhere marked', () => find(`${card('elsewhere')}//*[normalize-space()='Installed outside furnish']`));
     await click(`${card('elsewhere')}//button[@aria-label='Open elsewhere']`);
     await waitFor('where its program is', async () => (await text('//section')).includes('/bin/elsewhere-tool'));
+    await waitFor('its version can\'t be checked', async () => (await text('//section')).includes("furnish can't check this app's version against the versions fixture requires: it was installed outside furnish, at "));
     if ((await findAll(button('Uninstall'))).length) throw new Error('offers Uninstall');
     await click(button('Discover'));
   }],

@@ -21,7 +21,7 @@ processors:
           - set(attributes["event"], "other")
           - set(attributes["event"], attributes["furnish.event"]) where IsMatch(attributes["furnish.event"], "^(install|update|uninstall|reinstall|fallback|collectionUpdate|inventory|requirement)$")
           - set(attributes["outcome"], "other")
-          - set(attributes["outcome"], attributes["furnish.outcome"]) where IsMatch(attributes["furnish.outcome"], "^(succeeded|failed|cancelled|reported|notAcceptable|noneOffered|acceptable)$")
+          - set(attributes["outcome"], attributes["furnish.outcome"]) where IsMatch(attributes["furnish.outcome"], "^(succeeded|failed|cancelled|reported|notAcceptable|noneOffered|unknown|acceptable)$")
   # Loki makes labels only of resource attributes: move event and outcome there.
   groupbyattrs/loki:
     keys: [event, outcome]

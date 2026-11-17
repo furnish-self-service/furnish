@@ -41,8 +41,8 @@ pub enum Level {
 pub struct Event {
     /// install, update, uninstall, reinstall, fallback, collectionUpdate, inventory or requirement.
     pub event: &'static str,
-    /// succeeded, failed or cancelled; `reported` for inventory; notAcceptable, noneOffered or
-    /// acceptable for requirement (see [`requirement`]).
+    /// succeeded, failed or cancelled; `reported` for inventory; notAcceptable, noneOffered,
+    /// unknown or acceptable for requirement (see [`requirement`]).
     pub outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
@@ -183,7 +183,7 @@ fn queue(event: Event) -> bool {
 /// An app's unmet requirement as last recorded (kept in `reports/requirements.json`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Unmet {
-    /// notAcceptable or noneOffered.
+    /// notAcceptable, noneOffered or unknown.
     outcome: String,
     installed: Option<String>,
     offered: Option<String>,
@@ -194,6 +194,9 @@ impl Unmet {
     /// installed (installing fails then, and that is reported).
     fn of(required: Option<&crate::required::Required>) -> Option<Unmet> {
         let r = required?;
+        if r.unknown {
+            return Some(Unmet { outcome: "unknown".into(), installed: None, offered: r.offered.clone() });
+        }
         if r.installed.is_none() || r.acceptable {
             return None;
         }
@@ -225,6 +228,7 @@ fn requirement_in(state: &Path, app: &str, collection: &str, now: Option<Unmet>,
         event: "requirement",
         outcome: match &now {
             Some(u) if u.outcome == "noneOffered" => "noneOffered",
+            Some(u) if u.outcome == "unknown" => "unknown",
             Some(_) => "notAcceptable",
             None => "acceptable",
         },
@@ -542,7 +546,7 @@ fn otlp_record(report: &serde_json::Value) -> serde_json::Value {
     let text = |key: &str| report[key].as_str().unwrap_or_default();
     let (number, severity) = match (text("event"), text("outcome")) {
         (_, "failed") | ("requirement", "noneOffered") => (17, "ERROR"),
-        ("fallback", _) | ("requirement", "notAcceptable") => (13, "WARN"),
+        ("fallback", _) | ("requirement", "notAcceptable" | "unknown") => (13, "WARN"),
         _ => (9, "INFO"),
     };
     let body = match report["apps"].as_array() {
@@ -807,6 +811,7 @@ mod tests {
             offered: Some(offered.into()),
             via: "winget".into(),
             installer: false,
+            unknown: false,
             target: target.map(Into::into),
             needs: vec![],
             summary: String::new(),
@@ -843,6 +848,11 @@ mod tests {
         // Another app has its own state.
         assert_eq!(check("acme/zoom", Some(required(Some("5.0"), false, "5.1", None)), true), some("noneOffered", "5.0", "5.1"));
         assert_eq!(check("acme/zoom", Some(required(Some("5.0"), false, "5.1", None)), true), None);
+        // Installed, version unknown (outside furnish, say): recorded once, and when it changes.
+        let unknown = || Some(crate::required::Required { unknown: true, ..required(None, true, "5.2", None) });
+        assert_eq!(check("acme/zoom", unknown(), true), Some(("unknown", None, Some("5.2".to_string()))));
+        assert_eq!(check("acme/zoom", unknown(), true), None);
+        assert_eq!(check("acme/zoom", Some(required(Some("5.0"), false, "5.1", None)), true), some("noneOffered", "5.0", "5.1"));
         // Acceptable again: once.
         assert_eq!(check("acme/firefox", None, true), Some(("acceptable", None, None)));
         assert_eq!(check("acme/firefox", None, true), None);

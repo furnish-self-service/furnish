@@ -99,7 +99,7 @@ got=$(loki "$(expr "Devices without inventory for \$stale")" | sed 's/=[0-9]*//g
 unacceptable="Devices on a version that isn't acceptable"
 got=$(loki "$(expr "$unacceptable")")
 rows=$(printf '%s\n' "$got" | sed 's/=[0-9.e+]*//g')
-[ "$rows" = "2a77-carol,acme/vscode,1.80.0,1.95.2,notAcceptable,carol@myorg.tld 91bd-dave,acme/firefox,115.0,128.0.3,notAcceptable,dave@myorg.tld e410-bob,acme/zoom,5.0,5.1,noneOffered,bob@myorg.tld" ] \
+[ "$rows" = "2a77-carol,acme/vscode,1.80.0,1.95.2,notAcceptable,carol@myorg.tld 5c02-erin,design/gimp,2.10.38,unknown,erin@myorg.tld 91bd-dave,acme/firefox,115.0,128.0.3,notAcceptable,dave@myorg.tld e410-bob,acme/zoom,5.0,5.1,noneOffered,bob@myorg.tld" ] \
     && ok "devices on an unacceptable version: $rows" || bad "devices on an unacceptable version: got '$got' from: $(expr "$unacceptable")"
 # The value is the report's time in milliseconds ("Since").
 since=$(printf '%s\n' "$got" | tr ' ' '\n' | sed 's/.*=//' | awk -v a="$sent_at" -v b="$(date +%s)" '$1 < a * 1000 || $1 > (b + 1) * 1000 { print }')
@@ -145,7 +145,7 @@ while read -r q; do
         [ "$got" = "0.10.0=3 0.9.0=2" ] && ok "panel $title: one series per version: $got" || bad "panel $title: expected 0.10.0=3 0.9.0=2, got $got" ;;
     "Devices on a version that isn't acceptable (A)")
         got=$(printf '%s\n' "$response" | jq -r '[.results.A.frames[] | .schema.fields[1].labels | "\(.device_id),\(.furnish_app),\(.outcome)"] | sort | join(" ")')
-        want="2a77-carol,acme/vscode,notAcceptable 91bd-dave,acme/firefox,notAcceptable e410-bob,acme/zoom,noneOffered"
+        want="2a77-carol,acme/vscode,notAcceptable 5c02-erin,design/gimp,unknown 91bd-dave,acme/firefox,notAcceptable e410-bob,acme/zoom,noneOffered"
         [ "$got" = "$want" ] && ok "panel $title: $got" || bad "panel $title: expected $want, got $got" ;;
     esac
 done <<EOF
@@ -177,7 +177,7 @@ wait_for 30 others && ok "reports with made-up event and outcome are stored unde
 events=$(curl -s "$loki/loki/api/v1/label/event/values" | jq -r '.data | sort | join(" ")')
 outcomes=$(curl -s "$loki/loki/api/v1/label/outcome/values" | jq -r '.data | sort | join(" ")')
 [ "$events" = "collectionUpdate fallback install inventory other reinstall requirement uninstall update" ] && ok "event labels: $events" || bad "event labels: $events"
-[ "$outcomes" = "acceptable cancelled failed noneOffered notAcceptable other reported succeeded" ] && ok "outcome labels: $outcomes" || bad "outcome labels: $outcomes"
+[ "$outcomes" = "acceptable cancelled failed noneOffered notAcceptable other reported succeeded unknown" ] && ok "outcome labels: $outcomes" || bad "outcome labels: $outcomes"
 streams=$(curl -s -G "$loki/loki/api/v1/series" --data-urlencode 'match[]={service_name="furnish"}' | jq '.data | length')
 [ "$streams" -le 40 ] && ok "Loki streams: $streams" || bad "Loki streams: $streams, want at most 40"
 

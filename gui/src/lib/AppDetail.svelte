@@ -69,6 +69,11 @@
       {#if securityUpdate && required.installed}
         <p class="required-detail">{t('app.requiredUpdate', { collection: app.collection, needs: describeNeeds(lang(), required.needs), installed: required.installed, target: required.target ?? '' })}</p>
       {/if}
+      {#if required?.unknown}
+        <p class="required-unknown">{store.external[app.key]?.path
+          ? t('app.requiredUnknownAt', { brand: store.brand.name, collection: app.collection, path: store.external[app.key].path ?? '' })
+          : t('app.requiredUnknown', { brand: store.brand.name, collection: app.collection })}</p>
+      {/if}
     </div>
     <div class="cta">
       {#if status === 'installed' && confirming}
@@ -236,6 +241,11 @@
   }
   .status.required {
     color: var(--danger);
+  }
+  .required-unknown {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.9em;
   }
   .required-detail {
     margin: 0.3rem 0 0;

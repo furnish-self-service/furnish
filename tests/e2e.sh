@@ -365,6 +365,7 @@ PATH="$elsewhere:$PATH"
 list=$(step list)
 expect "$list" "✓  elsewhere "
 expect "$list" "installed outside furnish: .*elsewhere-tool"
+expect "$list" "version unknown: can't check the required versions"
 expect "$(step install elsewhere)" "elsewhere is already installed: it was installed outside furnish"
 if ! $real; then [ ! -f "$tmp/pkgs/elsewhere-tool" ] || { echo "FAIL: installed a second copy" >&2; exit 1; }; fi
 out=$("$furnish" uninstall elsewhere 2>&1) && { echo "FAIL: uninstalled a program furnish didn't install: $out" >&2; exit 1; }
