@@ -14,6 +14,7 @@
   import KitDetail from './lib/KitDetail.svelte';
   import Toasts from './lib/Toasts.svelte';
   import { t, formatTime, lang } from './lib/i18n.svelte';
+  import { createHistory } from './lib/history';
 
   start();
   // The tray menu follows the language, the branding and what furnish is doing.
@@ -53,6 +54,29 @@
   function go(next: View) {
     store.view = next;
   }
+  // Back and forward like a browser: thumb buttons (3 back, 4 forward), Alt+Left/Right, Cmd+[ / ].
+  const pages = createHistory<View>();
+  $effect(() => pages.seen($state.snapshot(store.view) as View));
+  function step(where: 'back' | 'forward') {
+    const next = where === 'back' ? pages.back() : pages.forward();
+    if (next) store.view = next;
+  }
+  function onMouse(e: MouseEvent) {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault(); // the webview's own history is empty; keep it from trying
+    if (e.type === 'mouseup') step(e.button === 3 ? 'back' : 'forward');
+  }
+  function onKey(e: KeyboardEvent) {
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    const cmd = e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+    const where =
+      (alt && e.key === 'ArrowLeft') || (cmd && e.key === '[') ? 'back'
+      : (alt && e.key === 'ArrowRight') || (cmd && e.key === ']') ? 'forward'
+      : null;
+    if (!where) return;
+    e.preventDefault();
+    step(where);
+  }
   // The install button keeps one width whatever it says; measure that width from this
   // language's labels in the system font (see the sizer below and ActionButton.svelte).
   let actionWidth = $state(0);
@@ -70,6 +94,8 @@
   const isActive = (page: string, name?: string) =>
     view.page === page && (name === undefined || (view.page === 'category' && view.name === name));
 </script>
+
+<svelte:window onmousedown={onMouse} onmouseup={onMouse} onkeydown={onKey} />
 
 {#snippet sizer()}
   {#each idleLabels as label}<span>{label}</span>{/each}
