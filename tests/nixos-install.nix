@@ -133,6 +133,8 @@ pkgs.testers.runNixOSTest {
         "mkdir -p /etc/nixos && cp -a /home/alice/cfg/. /etc/nixos/",
         "chown -R alice:wheel /etc/nixos && chown root /etc/nixos",
         "chmod -R g+rwX /etc/nixos && find /etc/nixos -type d -exec chmod 2775 {} +",
+        # git refuses a work tree of root's to alice too, so she allows it herself, as admins do.
+        "su - alice -c 'git config --global --add safe.directory /etc/nixos'",
         "su - alice -c 'cd /etc/nixos && git add -A && git commit -qm shared'",
     )
     owners = machine.succeed("stat -c %U:%G /etc/nixos/.git /etc/nixos/flake.lock /etc/nixos/flake.nix").split()
