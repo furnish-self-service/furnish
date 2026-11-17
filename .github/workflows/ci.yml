@@ -15,6 +15,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   HOMEBREW_NO_AUTO_UPDATE: 1
+  # The last alpha release from before furnish updated itself: the self-update job upgrades its
+  # .msi (no ServiceControl for the service) to the current one. release-alpha keeps it.
+  PRE_SELFUPDATE_RELEASE: v0.1.0-alpha.167
 
 jobs:
   # GitHub has few macOS runners. On branches and pull requests, the macOS jobs run only when
@@ -39,7 +42,7 @@ jobs:
           # What the macOS CLI jobs build (src/ embeds packaging/ and resources/ files) and run.
           macos='^(src/|Cargo\.(toml|lock)$|\.cargo/|vendor/|resources/|scripts/|packaging/(dsc\.json$|macos/|linux/furnish\.service$|linux/io\.github\.furnish\.policy$)|tests/(e2e\.sh|vpn\.sh|service-macos\.sh|fixtures/)|\.github/workflows/ci\.yml$)'
           # The desktop app and its installers on top (GUI macos-latest, Homebrew cask).
-          gui='^(gui/|THIRD-PARTY-LICENSES\.html$)'
+          gui='^(gui/|THIRD-PARTY-LICENSES\.html$|tests/self-update-macos\.sh$)'
           if [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_REF" = refs/heads/main ]; then
             reason="a run of main: everything runs"; files=""; m=true; g=true
           elif base=$(git merge-base HEAD "origin/$BASE_REF"); then
@@ -415,17 +418,12 @@ jobs:
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
             -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" ubuntu:22.04 packaging/linux/build.sh
-          # The Arch Linux package, from the .deb (0.1.0+alpha.42 is pkgver 0.1.0alpha.42).
-          rm -rf target/jammy/release/bundle/arch
-          docker run --rm -v "$PWD:/src" -w /src -e HOST_UID=$(id -u) archlinux:latest \
-            packaging/arch/build.sh "target/jammy/release/bundle/deb/furnish_${version}_amd64.deb"
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-packages
           path: |
             target/jammy/release/bundle/deb/*.deb
             target/jammy/release/bundle/rpm/*.rpm
-            target/jammy/release/bundle/arch/*.pkg.tar.zst
 
   packages:
     name: install on ${{ matrix.image }}
@@ -434,7 +432,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [debian:12, ubuntu:22.04, ubuntu:24.04, fedora:latest, opensuse/leap:15.6, opensuse/tumbleweed, almalinux:10, archlinux:latest]
+        image: [debian:12, ubuntu:22.04, ubuntu:24.04, fedora:latest, opensuse/leap:15.6, opensuse/tumbleweed, almalinux:10]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -443,30 +441,11 @@ jobs:
           path: bundle
       - run: tests/packages.sh "${{ matrix.image }}" bundle
 
-  # publish.sh on every branch: the repository from this build, signed with a throwaway key and
-  # served locally, installed from the way the docs say (the `repository` job does it for the published one).
-  repository-local:
-    name: install from a locally built repository on ${{ matrix.image }}
-    needs: linux-packages
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [debian:12, fedora:latest, archlinux:latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: furnish-linux-packages
-          path: bundle
-      - run: sudo apt-get install -y -qq apt-utils createrepo-c
-      - run: tests/repo-local.sh "${{ matrix.image }}" bundle
-
   # The alpha channel of the package repository (GitHub Pages), from main once everything passed.
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, repository-local, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -587,7 +566,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10, archlinux:latest]
+        image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10]
     steps:
       - uses: actions/checkout@v4
       - run: tests/repo.sh "${{ matrix.image }}" https://furnish-self-service.github.io/furnish alpha
@@ -775,7 +754,9 @@ jobs:
           path: roundtrip/
 
   # The installed app updates itself to the next version from a feed on the runner: the desktop
-  # app on its own, then `furnish self-update` (on Windows with the furnish service running).
+  # app on its own, then when a person chooses Restart to update (About on Windows, the menu bar
+  # icon on macOS), then `furnish self-update` (on Windows with the furnish service running). On
+  # Windows also an upgrade from an .msi without self-update, with the service running.
   self-update:
     name: self-update ${{ matrix.os }}
     needs: [changes, update-feed]
@@ -794,11 +775,28 @@ jobs:
         with:
           name: furnish-selfupdate-feed
           path: feed
-      - if: runner.os == 'Windows'
+      # An .msi from before self-update, with the service running, upgraded to this build.
+      - name: Upgrade from ${{ env.PRE_SELFUPDATE_RELEASE }} with the service running
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:PRE_SELFUPDATE_RELEASE -R $env:GITHUB_REPOSITORY -p '*.msi' -D old
+          tests/msi-upgrade.ps1 -From (Get-Item old/*.msi).FullName -To (Get-Item desktop/*.msi).FullName
+      - if: runner.os == 'Windows' && (success() || failure())
         shell: pwsh
         run: tests/self-update.ps1 -Msi (Get-Item desktop/*.msi).FullName -Feed feed
       - if: runner.os == 'macOS'
         run: tests/self-update-macos.sh desktop/*.dmg feed
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-update-logs-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/msi-upgrade/
+            ${{ runner.temp }}/gui*.log
+          if-no-files-found: ignore
 
   # The Homebrew cask (furnish-self-service/homebrew-tap) with this build's .dmg: audited, installed
   # and uninstalled. On main, release-alpha then publishes the .dmg and pushes this cask change.

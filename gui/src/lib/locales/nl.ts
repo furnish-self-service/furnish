@@ -379,7 +379,6 @@ export const nl: Record<keyof typeof en, Entry> = {
   'settings.methodHomebrew': 'Homebrew',
   'settings.methodDeb': 'Pakketbron (APT)',
   'settings.methodRpm': 'Pakketbron (DNF of Zypper)',
-  'settings.methodPacman': 'Pakketbron (pacman)',
   'settings.methodNix': 'Nix',
   'settings.selfUpdate': 'Nieuwe versies van {brand}',
   'settings.selfUpdateAuto': 'Automatisch installeren',

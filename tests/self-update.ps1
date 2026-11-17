@@ -1,7 +1,8 @@
 # furnish updates itself on Windows: the installed .msi (this build) takes the next version from a
 # feed on this computer, first in the desktop app (automatic, hidden in the tray, restarted by the
-# installer), then with `furnish self-update` while the furnish service runs, which the installer
-# stops and starts again. Run as administrator on a throwaway machine (CI).
+# installer), then by a person in the open app (Settings → About: Restart to update, pressed
+# through UI Automation), then with `furnish self-update` while the furnish service runs,
+# which the installer stops and starts again. Run as administrator on a throwaway machine (CI).
 #
 #   tests/self-update.ps1 -Msi furnish_0.1.0_x64.msi -Feed <folder with latest.json, windows/…>
 #
@@ -25,7 +26,24 @@ function Install-Msi([string]$Path) {
     if ($p.ExitCode) { Fail "msiexec /i $Path exited with $($p.ExitCode)" }
 }
 
-function Version { ((& "$app\furnish.exe" --version) -replace '^furnish ', '').Trim() }
+# The app's buttons as Windows UI Automation sees them (WebView2 exposes the page's), the way a
+# screen reader finds and presses them.
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$UIA = [System.Windows.Automation.AutomationElement]
+function Find-Button($Window, [string]$Name, [int]$Seconds = 60) {
+    $isButton = New-Object System.Windows.Automation.PropertyCondition($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        $found = $Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $isButton) | Where-Object { $_.Current.Name -like $Name } | Select-Object -First 1
+        if ($found) { return $found }
+        Start-Sleep 1
+    }
+    $names = ($Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $isButton) | ForEach-Object { $_.Current.Name }) -join ' | '
+    Fail "no button '$Name' within $Seconds s; the window has: $names"
+}
+function Press($Button) { $Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+
+function Version { try { ((& "$app\furnish.exe" --version) -replace '^furnish ', '').Trim() } catch { '(none: an install is running?)' } }
 
 # An update is done when no installer runs any more: neither a client (msiexec /i) nor the
 # install itself (Windows Installer holds Global\_MSIExecute while it runs).
@@ -63,6 +81,32 @@ try {
     for ($i = 0; $i -lt 30 -and -not (Get-Process ($gui.BaseName) -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
     if (-not (Get-Process ($gui.BaseName) -ErrorAction SilentlyContinue)) { Fail "the installer didn't start the desktop app again" }
     Write-Host "✓ $current -> $v, and the app runs again"
+    Get-Process ($gui.BaseName) | Stop-Process -Force
+
+    # The button a person presses: with `auto` the update downloads on its own, but waits while
+    # the window is open (until it is closed to the tray) unless someone chooses Restart to update.
+    # (Update now, offered with `notify`, downloads and restarts in one go.)
+    Write-Host "== Restart to update in Settings → About (the window open)"
+    Install-Msi $old.FullName
+    if ((Version) -ne $current) { Fail "reinstalling $($old.Name) left $(Version)" }
+    $running = Start-Process $gui.FullName -PassThru
+    for ($i = 0; $i -lt 60 -and (Get-Process -Id $running.Id).MainWindowHandle -eq [IntPtr]::Zero; $i++) { Start-Sleep 1 }
+    $handle = (Get-Process -Id $running.Id).MainWindowHandle
+    if ($handle -eq [IntPtr]::Zero) { Fail 'the desktop app shows no window' }
+    $window = $UIA::FromHandle($handle)
+    Press (Find-Button $window 'Settings*')
+    $restart = Find-Button $window 'Restart to update' 120
+    # Downloaded, and still not installed while the window is open: only the button installs it.
+    Start-Sleep 10
+    if (-not $restart.Current.IsEnabled) { Fail 'Restart to update is disabled' }
+    if ((Version) -ne $current) { Fail "updated to $(Version) before Restart to update was pressed" }
+    try { Press $restart } catch { Write-Host "(the app ended while pressing: $($_.Exception.Message))" }
+    Wait-Installed 'Restart to update'
+    $v = Version
+    if ($v -ne $next) { Fail "after Restart to update: $v, expected $next" }
+    for ($i = 0; $i -lt 30 -and -not (Get-Process ($gui.BaseName) -ErrorAction SilentlyContinue | Where-Object Id -ne $running.Id); $i++) { Start-Sleep 1 }
+    if (-not (Get-Process ($gui.BaseName) -ErrorAction SilentlyContinue | Where-Object Id -ne $running.Id)) { Fail "the installer didn't start the desktop app again" }
+    Write-Host "✓ $current -> $v after Restart to update, and the app runs again"
     Get-Process ($gui.BaseName) | Stop-Process -Force
 
     Write-Host "== furnish self-update, with the furnish service running"

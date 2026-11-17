@@ -376,7 +376,6 @@ export const en = {
   'settings.methodHomebrew': 'Homebrew',
   'settings.methodDeb': 'Package repository (APT)',
   'settings.methodRpm': 'Package repository (DNF or Zypper)',
-  'settings.methodPacman': 'Package repository (pacman)',
   'settings.methodNix': 'Nix',
   'settings.selfUpdate': 'New versions of {brand}',
   'settings.selfUpdateAuto': 'Install automatically',
