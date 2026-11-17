@@ -150,6 +150,53 @@
           "type": "string",
           "readOnly": true,
           "description": "Where the program was found, when the package was installed outside furnish (managedBy: other)"
+        },
+        "reportVersions": {
+          "type": "string",
+          "writeOnly": true,
+          "enum": [
+            "latest",
+            "all"
+          ],
+          "description": "Set by furnish for required versions: also report versionScheme, via, latestVersion and, with all, availableVersions"
+        },
+        "targetVersion": {
+          "type": "string",
+          "writeOnly": true,
+          "pattern": "^[A-Za-z0-9.+~:_^][A-Za-z0-9.+~:_^-]*$",
+          "description": "Set by furnish for required versions: install or update to exactly this version"
+        },
+        "latestVersion": {
+          "type": "string",
+          "readOnly": true,
+          "description": "With reportVersions: the newest version on offer, installed or not (for an installer: the version in the file), if known"
+        },
+        "availableVersions": {
+          "type": "array",
+          "readOnly": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "With reportVersions all: every version that can be installed"
+        },
+        "versionScheme": {
+          "type": "string",
+          "readOnly": true,
+          "enum": [
+            "pacman",
+            "dpkg",
+            "rpm",
+            "brew",
+            "nix",
+            "winget",
+            "generic"
+          ],
+          "description": "With reportVersions: how versions compare"
+        },
+        "via": {
+          "type": "string",
+          "readOnly": true,
+          "description": "With reportVersions: what installs it"
         }
       }
     }

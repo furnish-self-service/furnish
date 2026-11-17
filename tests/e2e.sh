@@ -25,6 +25,9 @@ for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of op
 case "\$1" in
   -Q) [ -f "$tmp/pkgs/\$2" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2")" ;;
   -Qu) [ -f "$tmp/pkgs/\$2.new" ] && echo "\$2 \$(cat "$tmp/pkgs/\$2") -> \$(cat "$tmp/pkgs/\$2.new")" ;;
+  # The sync database's version: "<name>.new" (tests set it), else the installed one, else 1.0.
+  -Si) v=1.0; for f in "$tmp/pkgs/\$2" "$tmp/pkgs/\$2.new"; do [ -f "\$f" ] && v=\$(cat "\$f"); done
+       printf 'Repository      : extra\nName            : %s\nVersion         : %s\n' "\$2" "\$v" ;;
   -S) if [ -f "$tmp/pkgs/\$4.new" ]; then mv "$tmp/pkgs/\$4.new" "$tmp/pkgs/\$4"; else echo 1.0 > "$tmp/pkgs/\$4"; fi; if [ "\$4" = brew ]; then cp "$tmp/fake-brew" "$tmp/bin/brew"; fi ;;
   -R) rm "$tmp/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$tmp/bin/brew"; fi ;;
 esac
@@ -100,6 +103,63 @@ while IFS='|' read -r file props; do
       printf '  - name: demo installer\n    type: Furnish/Installer\n    properties:\n      file: installers/%s\n' "$file"
       [ -n "$props" ] && printf '%s\n' "$props"; } > "$tmp/repo/apps/installer-$n.dsc.yaml"
 done < "$tmp/installers"
+
+# Required versions (properties.versions). No package version meets "unmet" (hyperfine >= 999),
+# on every system. "required" (fake pacman) needs 2.0, which tests offer later. "pinned" (real
+# apt, dnf, zypper) needs an older version than the newest one on offer, if there is one.
+cat > "$tmp/repo/apps/unmet.dsc.yaml" <<'YAML'
+metadata:
+  furnish:
+    description: A version nobody offers
+    categories: [Test]
+resources:
+  - name: hyperfine (winget)
+    type: Furnish/Package
+    condition: "[equals(context().os.family, 'Windows')]"
+    properties: { name: sharkdp.hyperfine, versions: [">=999"] }
+  - name: hyperfine
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties: { name: hyperfine, versions: [">=999"] }
+YAML
+if ! $real; then
+    cat > "$tmp/repo/apps/required.dsc.yaml" <<'YAML'
+metadata:
+  furnish:
+    description: Needs version 2.0 or later
+    categories: [Test]
+resources:
+  - name: required-tool
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties: { name: required-tool, versions: [">=2.0"] }
+YAML
+fi
+# Pinning: a package with two versions on offer, asked from the resource itself.
+pin_pkg= pin_version=
+if $real && [ "$(id -u)" = 0 ] && { command -v apt-get || command -v dnf || command -v zypper; } >/dev/null 2>&1; then
+    res="$(dirname "$0")/../resources/unix/furnish-package.dsc.resource.sh"
+    for p in tzdata hyperfine; do
+        state=$(name=$p reportVersions=all sh "$res" get 2>/dev/null) || continue
+        latest=$(printf '%s' "$state" | sed -n 's/.*"latestVersion":"\([^"]*\)".*/\1/p')
+        for v in $(printf '%s' "$state" | sed -n 's/.*"availableVersions":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' ' '); do
+            [ "$v" != "$latest" ] && { pin_pkg=$p pin_version=$v; break 2; }
+        done
+    done
+    if [ -n "$pin_pkg" ]; then
+        cat > "$tmp/repo/apps/pinned.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: An older version than the newest
+    categories: [Test]
+resources:
+  - name: $pin_pkg
+    type: Furnish/Package
+    condition: "[equals(context().os.family, 'Linux')]"
+    properties: { name: $pin_pkg, versions: ["$pin_version"] }
+YAML
+    fi
+fi
 
 # DSC's own resources, when they are beside furnish (scripts/fetch-dsc.mjs; the installers ship them).
 dsc=false
@@ -404,6 +464,51 @@ if ! $real; then
     expect "$(step uninstall starter --only extras)" "Uninstalled extras"
     expect "$(step uninstall starter)" "Uninstalled hyperfine"
     expect "$(step list)" "·  starter"
+fi
+
+# Required versions. The expected texts, in one place.
+needs_unmet="needs 999 or later"
+if ! $real; then
+    # Nothing acceptable on offer: "!" and why; install fails, the preview says why.
+    expect "$(step list)" "!  unmet"
+    expect "$(step list)" "$needs_unmet; pacman offers 1.0"
+    out=$("$furnish" install unmet 2>&1) && { echo "FAIL: unmet installed: $out" >&2; exit 1; }
+    echo "$out" >&2
+    expect "$out" "$needs_unmet; pacman offers 1.0"
+    [ ! -f "$tmp/pkgs/hyperfine" ] || { echo "FAIL: unmet installed something" >&2; exit 1; }
+    expect "$("$furnish" install unmet --dry-run 2>&1 || true)" "No acceptable version: $needs_unmet"
+
+    # Installed 1.0, needs 2.0, nothing newer yet: installed but needs a version nobody offers.
+    expect "$(step install required --dry-run 2>&1 || true)" "No acceptable version: needs 2.0 or later; pacman offers 1.0"
+    echo 1.0 > "$tmp/pkgs/required-tool"
+    expect "$(step list)" "(needs 2.0 or later; pacman offers 1.0)"
+    # 2.0 on offer: a required update, installed by upgrade even with automatic updates off.
+    echo 2.0 > "$tmp/pkgs/required-tool.new"
+    expect "$(step list)" "↑  required"
+    expect "$(step list)" "(security update required: 2.0 or later; pacman offers 2.0)"
+    expect "$(step install required --dry-run)" "Update required-tool from 1.0 to 2.0 with pacman"
+    step settings --no-auto-update required >/dev/null
+    expect "$(step upgrade)" "Installed required"
+    [ "$(cat "$tmp/pkgs/required-tool")" = 2.0 ] || { echo "FAIL: required update not applied" >&2; exit 1; }
+    expect "$(step list)" "✓  required"
+    step settings --auto-update required >/dev/null
+    expect "$(step uninstall required)" "Uninstalled required"
+else
+    # Real package managers: hyperfine >= 999 exists nowhere; the error names what is offered.
+    out=$("$furnish" install unmet 2>&1) && { echo "FAIL: unmet installed: $out" >&2; exit 1; }
+    echo "$out" >&2
+    expect "$out" "$needs_unmet"
+    expect "$out" "offers"
+    if [ -n "$pin_pkg" ]; then
+        echo "--- pinning $pin_pkg $pin_version" >&2
+        expect "$(step install pinned --dry-run)" "$pin_version"
+        step install pinned >/dev/null
+        got=$(name=$pin_pkg sh "$res" get 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        [ "$got" = "$pin_version" ] || { echo "FAIL: $pin_pkg is $got, not $pin_version" >&2; exit 1; }
+        expect "$(step list)" "✓  pinned"
+    elif [ "$(id -u)" = 0 ]; then
+        echo "(pinning skipped: no apt, dnf or zypper, or no package with two versions on offer)" >&2
+    fi
 fi
 
 for i in $(seq 1 "$n"); do

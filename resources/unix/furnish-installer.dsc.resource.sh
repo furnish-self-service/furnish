@@ -1,7 +1,9 @@
 #!/bin/sh
 # Furnish/Installer: install an installer file shipped in the collection (Linux: .deb, .rpm;
 # macOS: .pkg, .dmg). furnish passes `file` as an absolute path inside the collection.
-# DSC passes the resource properties as env vars: $file, $packageId (.pkg), $app (.dmg), $_exist.
+# DSC passes the resource properties as env vars: $file, $packageId (.pkg), $app (.dmg), $_exist,
+# and from furnish's required versions $reportVersions and $targetVersion (see furnish-common.sh):
+# the only version an installer can install is the one in the file.
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
@@ -11,6 +13,11 @@ identity=$(json_member file "$file")
 [ -n "${packageId:-}" ] && identity="$identity,$(json_member packageId "$packageId")"
 [ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
 subject=$(basename "$file")
+case "$file" in
+*.deb) scheme=dpkg ;;
+*.rpm) scheme=rpm ;;
+*) scheme=generic ;;
+esac
 
 # A link could point anywhere outside the collection; test -L also holds for a dangling one.
 [ -L "$file" ] && fail 10 "installer is a symbolic link: $file"
@@ -28,7 +35,9 @@ if head -c 64 "$file" | grep -q '^version https://git-lfs'; then
     missing "git-lfs to download $subject (install it, then update the collection)"
 fi
 
-rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' -- "$1" 2>/dev/null) && echo "$v"; }
+# The epoch only when it isn't 0, as dnf and zypper show versions.
+rpm_qf='%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}'
+rpm_version() { v=$(rpm -q --qf "$rpm_qf" -- "$1" 2>/dev/null) && echo "$v"; }
 
 admin=true
 case "$file" in
@@ -41,13 +50,15 @@ case "$file" in
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$id"; }
     install_desc="apt-get install -y $file" remove_desc="apt-get remove -y $id"
     # A different version in the collection's file is an update: installing the file brings it.
-    newer_version() { v=$(dpkg-deb -f -- "$file" Version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
+    latest_version() { dpkg-deb -f -- "$file" Version; }
+    newer_version() { v=$(latest_version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     ;;
 *.rpm)
     command -v rpm >/dev/null 2>&1 || missing "rpm (Fedora, openSUSE, RHEL) for .rpm installers"
     id=$(rpm -qp --qf '%{NAME}' -- "$file" 2>/dev/null)
     installed_version() { rpm_version "$id"; }
-    newer_version() { v=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' -- "$file" 2>/dev/null) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
+    latest_version() { rpm -qp --qf "$rpm_qf" -- "$file" 2>/dev/null; }
+    newer_version() { v=$(latest_version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     if command -v dnf >/dev/null 2>&1; then
         via=dnf
         do_install() { run_step dnf install -y -- "$file"; }

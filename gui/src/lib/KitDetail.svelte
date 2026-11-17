@@ -18,6 +18,7 @@
     kitDescription,
     categoryName,
     externalStatus,
+    requiredUpdate,
   } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
@@ -50,6 +51,7 @@
     if (store.busy[key]) return store.busy[key] === 'uninstall' ? t('common.uninstalling') : t('common.installing');
     if (store.queue.some((q) => q.key === key)) return t('common.queued');
     if (unavailable(key)) return t('common.notForThisSystem');
+    if (requiredUpdate(key)) return t('common.securityUpdate');
     if (store.status[key] === 'needsUpdate') return t('common.updateAvailable');
     if (isInstalled(key)) return t('common.installed');
     if (item.required) return t('common.required');

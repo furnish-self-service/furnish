@@ -1,6 +1,7 @@
 // Typed wrappers around the Rust commands in src-tauri/src/main.rs.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import type { Required } from './required.ts';
 
 export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable' | 'blocked';
 
@@ -187,14 +188,16 @@ export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
 /** `removable`: furnish can uninstall it here (no resource that can't remove, or removal steps). */
+/** `required`: the collection's required versions aren't met here, or no acceptable version is offered (see required.ts). */
 /** `external`: installed outside furnish (NixOS, Home Manager, another tool); furnish leaves it alone. */
 export const appStatus = (key: string) =>
-  invoke<{ status: Status; reason: string | null; removable: boolean; external: External | null }>('app_status', { key });
+  invoke<{ status: Status; reason: string | null; removable: boolean; external: External | null; required: Required | null }>('app_status', { key });
 /**
  * A package installed outside furnish: by the NixOS or Home Manager configuration (`package` is its
  * nixpkgs attribute), or with another tool (`other`, e.g. npm; `path` is where its program is).
  */
 export type External = { by: 'nixos' | 'home-manager' | 'other'; package: string; configuration: string | null; path: string | null };
+export type { Required };
 /** How furnish found a NixOS or Home Manager configuration, or the flake attribute. */
 export type NixosSource = 'setting' | 'module' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';
 export type NixosProblem = 'notFound' | 'noNixosConfigurations' | 'noAttribute';

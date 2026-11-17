@@ -15,6 +15,15 @@
 #   extra_state         optional function printing more state members (",\"x\":..."); $1 is the
 #                       installed version as for `state`
 #   cant_remove         optional: why removing isn't possible here; set then refuses with exit 14
+#   scheme              how its versions compare (versionScheme): pacman, dpkg, rpm, brew, nix,
+#                       winget or generic
+#   latest_version      optional function printing the newest version on offer, installed or not,
+#                       or nothing if unknown (only called with reportVersions or targetVersion)
+#   available_versions  optional function printing each version it can install, one per line
+#                       (default: latest_version; only called with reportVersions=all)
+#   pin                 true if it can install a given version: then do_install_version and
+#                       version_desc (functions) install exactly $targetVersion and describe that
+#                       command. Else only the version on offer (latest_version) can be the target
 #
 # and then calls `furnish_main "$@"`:
 #
@@ -23,6 +32,14 @@
 #                       up to date, so an available update counts as not in desired state
 #   set [--what-if]     converge to the desired state (install, update or remove); with
 #                       --what-if only describe the steps (in _metadata.whatIf)
+#
+# Two write-only properties come from furnish's required versions (furnish compares, the resource
+# reports and obeys):
+#
+#   reportVersions      latest or all: every state also has versionScheme, via, latestVersion (if
+#                       known) and, with all, availableVersions
+#   targetVersion       install or update to exactly this version; test is in desired state iff
+#                       the installed version is this one
 #
 # Exit codes: 10 invalid input, 11 a needed tool is missing (see `missing`), 12 administrator rights
 # not granted, 13 stopped by the user, 14 removing isn't possible here (see `cant_remove`). Tool
@@ -98,16 +115,81 @@ state() {
     *) printf '{%s,"_exist":true,"version":%s' "$identity" "$(json "$1")" ;;
     esac
     extra_state "$1"
+    version_state
+}
+
+# The versions on offer, once per run (the lookups can be slow, e.g. nix eval): sets offered and
+# offered_all (one per line, without duplicates).
+versions_loaded=false offered= offered_all=
+load_versions() {
+    $versions_loaded && return 0
+    versions_loaded=true
+    offered=$(latest_version || true)
+    [ "$reportVersions" = all ] || return 0
+    offered_all=
+    for _v in $(available_versions || true); do
+        case "
+$offered_all
+" in *"
+$_v
+"*) ;; *) offered_all="${offered_all:+$offered_all
+}$_v" ;; esac
+    done
+}
+# The members reportVersions asks for.
+version_state() {
+    [ -n "$reportVersions" ] || return 0
+    load_versions
+    printf ',"versionScheme":%s,"via":%s' "$(json "$scheme")" "$(json "$via")"
+    [ -z "$offered" ] || printf ',"latestVersion":%s' "$(json "$offered")"
+    [ "$reportVersions" = all ] || return 0
+    _list= _sep=
+    for _v in $offered_all; do _list="$_list$_sep$(json "$_v")" _sep=,; done
+    printf ',"availableVersions":[%s]' "$_list"
 }
 
 prepare() { :; }
 extra_state() { :; }
+scheme=generic
+latest_version() { :; }
+available_versions() { latest_version; }
+pin=false
 cant_remove=
 newer_version() { :; }
 upgrade_desc=
 do_upgrade() { do_install; }
 
+reportVersions=${reportVersions:-} targetVersion=${targetVersion:-}
+
+# set with targetVersion (and _exist true): sets action, step, desc and after like furnish_main.
+target_step() {
+    t=$targetVersion
+    if [ "$version" = "$t" ]; then
+        step="$subject $t is installed, the required version" after=$t
+        return
+    fi
+    if $pin; then
+        action=install_version desc=$(version_desc)
+    else
+        # Only the version on offer: a plain install or update brings it.
+        load_versions
+        [ "$offered" = "$t" ] || fail 10 "$via can't install a specific version ($t)"
+        if [ -z "$version" ]; then action=install desc=$install_desc
+        else action=upgrade desc=${upgrade_desc:-$install_desc}; fi
+    fi
+    if [ -z "$version" ]; then step="Install $subject $t with $via"
+    elif [ "$version" = '?' ]; then step="Update $subject to $t with $via"
+    else step="Update $subject from $version to $t with $via"; fi
+    after=$t
+}
+
 furnish_main() {
+    case $reportVersions in '' | latest | all) ;; *) fail 10 "reportVersions must be latest or all: $reportVersions" ;; esac
+    # Not an option to the package manager (the schema says so too; this holds without it).
+    case $targetVersion in
+    -*) fail 10 "targetVersion starts with '-': $targetVersion" ;;
+    *[!A-Za-z0-9.+~:_^-]*) fail 10 "targetVersion has characters a version can't have: $targetVersion" ;;
+    esac
     prepare
     case "${1:-}" in
     get)
@@ -116,7 +198,10 @@ furnish_main() {
         ;;
     test)
         version=$(installed_version || true)
-        if [ "${_exist:-true}" = true ]; then
+        if [ "${_exist:-true}" = true ] && [ -n "$targetVersion" ]; then
+            ok=false
+            [ "$version" = "$targetVersion" ] && ok=true
+        elif [ "${_exist:-true}" = true ]; then
             ok=false
             [ -n "$version" ] && [ -z "$(newer_version || true)" ] && ok=true
         else
@@ -129,10 +214,12 @@ furnish_main() {
     set)
         version=$(installed_version || true)
         newer=
-        [ -n "$version" ] && [ "${_exist:-true}" = true ] && newer=$(newer_version || true)
+        [ -n "$version" ] && [ "${_exist:-true}" = true ] && [ -z "$targetVersion" ] && newer=$(newer_version || true)
         shown=$subject; [ -n "$version" ] && [ "$version" != '?' ] && shown="$subject $version"
         action=
-        if [ "${_exist:-true}" = true ] && [ -z "$version" ]; then
+        if [ "${_exist:-true}" = true ] && [ -n "$targetVersion" ]; then
+            target_step
+        elif [ "${_exist:-true}" = true ] && [ -z "$version" ]; then
             action=install step="Install $subject with $via" desc=$install_desc after='?'
         elif [ -n "$newer" ]; then
             action=upgrade step="Update $subject from $version to $newer with $via" desc=${upgrade_desc:-$install_desc} after=$newer

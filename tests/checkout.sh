@@ -108,6 +108,16 @@ furnish install fresh >/dev/null 2>&1 || fail "automatic fallback failed"
 [ -f "$FURNISH_DATA_DIR/versions/org/$(git -C /tmp/org rev-parse HEAD~1)/installers/fresh1.deb" ] || fail "earlier installer not kept"
 [ ! -e "$c/installers/fresh1.deb" ] || fail "the earlier installer was checked out into the collection"
 
+echo "== no fallback to a version the required versions don't accept"
+deb 1.0 secure secure1.deb; app installers/secure1.deb secure; commit "secure 1"
+deb 2.0 secure secure2.deb broken; app installers/secure2.deb secure
+sed -i 's/{ file: \(.*\) }/{ file: \1, versions: [">=2"] }/' /tmp/org/apps/secure.dsc.yaml; commit "secure 2 requires 2.0, broken"
+furnish collection update org >/dev/null
+out=$(furnish install secure 2>&1) && fail "a broken or unacceptable version installed: $out"
+[ "$(dpkg-query -W -f '${Version}' furnish-test-secure 2>/dev/null)" = 1.0 ] && fail "fell back to 1.0, which versions don't accept: $out"
+out=$(furnish install secure --previous 2>&1) && fail "installed the previous version: $out"
+echo "$out" | grep -q "has no acceptable version: needs 2 or later; the collection's file has 1.0" || fail "unexpected message: $out"
+
 echo "== maximum age"
 deb 1.0 aged aged1.deb; app installers/aged1.deb aged
 cd /tmp/org && git add -A && GIT_COMMITTER_DATE="$(date -d '10 days ago' -R)" git commit -qm "aged 1" && cd /

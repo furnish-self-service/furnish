@@ -39,10 +39,14 @@ for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of op
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
+  # The sync database's version: what -S installs (the update if there is one, else 1.0).
+  -Si) v=1.0; [ -f "$work/pkgs/\$2.new" ] && v=\$(cat "$work/pkgs/\$2.new")
+       printf 'Repository      : extra\nName            : %s\nVersion         : %s\nDescription     : fake\n' "\$2" "\$v" ;;
   -S) sleep 2  # slow enough to observe live progress
-      [ "\$4" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
-      if [ -f "$work/pkgs/\$4.new" ]; then mv "$work/pkgs/\$4.new" "$work/pkgs/\$4"; else echo 1.0 > "$work/pkgs/\$4"; fi
-      if [ "\$4" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
+      for p do :; done  # the package: the last argument
+      [ "\$p" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
+      if [ -f "$work/pkgs/\$p.new" ]; then mv "$work/pkgs/\$p.new" "$work/pkgs/\$p"; else echo 1.0 > "$work/pkgs/\$p"; fi
+      if [ "\$p" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
   -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
 esac
 SH
@@ -61,7 +65,7 @@ for tool in sudo pkexec; do
     printf '#!/bin/sh\necho "$*" >> %s/%s.log\nexec "$@"\n' "$work" "$tool" > "$work/bin/$tool"
 done
 # Like a refused polkit dialog while the test has created $work/deny.
-sed -i '2i [ -e '"$work"'/deny ] && { echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
+sed -i '2i [ -e '"$work"'/deny ] && { echo "$*" >> '"$work"'/denied.log; echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
 # Like a real sudo without cached credentials: `sudo -n` fails, so only the terminal prompt is left.
 sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work/bin/sudo"
 # The elsewhere app's program, as npm or a vendor's installer would leave it: installed outside furnish.
@@ -83,6 +87,15 @@ flaky() {
     git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "flaky: $1"
 }
 flaky flaky; flaky broken
+# Required versions: "secure" is installed at 1.0, which its collection accepts for now (the test
+# raises the requirement later); "outdated" needs a version pacman doesn't offer (it offers 1.0).
+required() {
+    printf 'metadata: { furnish: { description: %s, categories: [Test] } }\nresources:\n  - name: %s\n    type: Furnish/Package\n    properties: { name: %s, versions: [%s] }\n' "$3" "$1" "$1" "$2" > "$work/origin-src/apps/$1.dsc.yaml"
+}
+required secure "'>=1.0'" 'Its collection requires recent versions'
+required outdated "'>=2.0'" 'Needs a version nobody offers'
+git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"
+echo 1.0 > "$work/pkgs/secure"
 git clone -q --bare "$work/origin-src" "$work/origin.git"
 git clone -q "$work/origin.git" "$work/data/collections/fixture"
 # The origin moves on after the app's clone: updating on launch must bring in this app.

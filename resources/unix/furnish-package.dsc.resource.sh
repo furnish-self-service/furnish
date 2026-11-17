@@ -3,7 +3,8 @@
 # DSC passes the resource properties as env vars: $name, $packageManager (optional: pacman, apt,
 # dnf, zypper, brew, nix; default: the first one found), $<manager>Name (optional: the package's
 # name for that package manager, e.g. nixName), $nixpkgs (optional flake reference), $command
-# (optional: a program the package provides) and $_exist.
+# (optional: a program the package provides), $_exist, and from furnish's required versions
+# $reportVersions and $targetVersion (see furnish-common.sh).
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
@@ -12,9 +13,19 @@ identity=$(json_member name "$name")
 [ -n "${packageManager:-}" ] && identity="$identity,$(json_member packageManager "$packageManager")"
 subject=$name
 
-# rpm -q prints "package X is not installed" on stdout, so only print on success.
-rpm_version() { v=$(rpm -q --qf '%{VERSION}-%{RELEASE}' -- "$name" 2>/dev/null) && echo "$v"; }
+# rpm -q prints "package X is not installed" on stdout, so only print on success. The epoch only
+# when it isn't 0, as dnf and zypper show versions.
+rpm_version() { v=$(rpm -q --qf '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}' -- "$name" 2>/dev/null) && echo "$v"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# The version lookups parse the tools' output: in English.
+english() { LC_ALL=C "$@"; }
+# Each word on stdin once, in order (some systems have no awk).
+uniq_words() {
+    seen=
+    for w in $(cat); do
+        case " $seen " in *" $w "*) ;; *) seen="$seen $w"; echo "$w" ;; esac
+    done
+}
 
 # Each backend: returns 1 if its tool is missing, else sets via, admin, the commands and
 # installed_version. $name is restricted to [A-Za-z0-9@._+-] by the schema and can't start with
@@ -28,6 +39,9 @@ use_pacman() {
     install_desc="pacman -S --noconfirm --needed $name" remove_desc="pacman -R --noconfirm $name"
     # Local sync database only ("name 1.0-1 -> 1.1-1").
     newer_version() { pacman -Qu -- "$name" 2>/dev/null | cut -d' ' -f4; }
+    # pacman installs only the sync database's version.
+    scheme=pacman
+    latest_version() { english pacman -Si -- "$name" 2>/dev/null | sed -n 's/^Version *: //p' | head -n 1; }
 }
 use_apt() {
     have apt-get || return 1
@@ -40,6 +54,12 @@ use_apt() {
     newer_version() { apt list --upgradable 2>/dev/null | grep "^$name/" | cut -d' ' -f2; }
     do_upgrade() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade -- "$name"; }
     upgrade_desc="apt-get install -y --only-upgrade $name"
+    scheme=dpkg pin=true
+    latest_version() { english apt-cache policy -- "$name" 2>/dev/null | sed -n 's/^ *Candidate: //p' | grep -v '^(none)$' | head -n 1; }
+    # "name | 1.2-1 | http://... Packages", newest first.
+    available_versions() { english apt-cache madison -- "$name" 2>/dev/null | cut -d'|' -f2 | tr -d ' ' | uniq_words; }
+    do_install_version() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades -- "$name=$targetVersion"; }
+    version_desc() { echo "apt-get install -y --allow-downgrades $name=$targetVersion"; }
 }
 use_dnf() {
     have dnf || return 1
@@ -52,6 +72,19 @@ use_dnf() {
     newer_version() { dnf -C -q check-update -- "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
     do_upgrade() { run_step dnf upgrade -y -- "$name"; }
     upgrade_desc="dnf upgrade -y $name"
+    # dnf install takes "name-[epoch:]version-release", also to go to an older one.
+    scheme=rpm pin=true
+    do_install_version() { run_step dnf install -y -- "$name-$targetVersion"; }
+    version_desc() { echo "dnf install -y $name-$targetVersion"; }
+    latest_version() { dnf_versions -C --latest-limit 1 | tail -n 1; }
+    # From the cache; once more with fresh metadata if the cache has none.
+    available_versions() { v=$(dnf_versions -C); [ -n "$v" ] || v=$(dnf_versions); echo "$v"; }
+}
+# Every version of $name in the repositories, oldest first, for this machine's
+# architecture: "[epoch:]version-release" per line. dnf4 ends each line itself, dnf5 doesn't.
+dnf_versions() {
+    english dnf -q repoquery "$@" --arch "$(uname -m),noarch" --qf '%{epoch}:%{version}-%{release}\n' -- "$name" 2>/dev/null |
+        while IFS= read -r l; do [ -n "$l" ] && echo "${l#0:}"; done | uniq_words
 }
 use_zypper() {
     have zypper || return 1
@@ -67,6 +100,16 @@ use_zypper() {
     }
     do_upgrade() { run_step zypper --non-interactive update -- "$name"; }
     upgrade_desc="zypper --non-interactive update $name"
+    scheme=rpm pin=true
+    do_install_version() { run_step zypper --non-interactive install --oldpackage -- "$name=$targetVersion"; }
+    version_desc() { echo "zypper --non-interactive install --oldpackage $name=$targetVersion"; }
+    # The version zypper would install ("Version : 1.2-1.1"; for an installed package the newest).
+    latest_version() { english zypper --no-refresh -q info -- "$name" 2>/dev/null | sed -n 's/^Version *: //p' | head -n 1; }
+    # "S | Name | Type | Version | Arch | Repository", packages only.
+    available_versions() {
+        english zypper --no-refresh -q search -s --match-exact -t package -- "$name" 2>/dev/null |
+            grep '|' | cut -d'|' -f4 | tr -d ' ' | grep -v '^Version$' | uniq_words
+    }
 }
 use_brew() {
     # As root (the furnish service on macOS): brew runs as the account that owns Homebrew, if
@@ -116,6 +159,30 @@ use_brew() {
     newer_version() { line=$(HOMEBREW_NO_AUTO_UPDATE=1 run_brew command outdated --verbose "$name" 2>/dev/null || true); [ -n "$line" ] && echo "${line##* }"; }
     do_upgrade() { run_brew run_step upgrade "$name"; }
     upgrade_desc="brew upgrade $name"
+    scheme=brew
+    # Installed: the update brew outdated names, else the installed version (brew's form, with a
+    # revision such as 1.0_1). Else the formula's stable version or the cask's version.
+    latest_version() {
+        v=$(installed_version)
+        if [ -n "$v" ] && [ "$v" != '?' ]; then
+            n=$(newer_version) || n=
+            echo "${n:-$v}"
+            return
+        fi
+        info=$(HOMEBREW_NO_AUTO_UPDATE=1 run_brew command info --json=v2 "$name" 2>/dev/null | tr -d ' \n') || return 0
+        case $info in
+        *'"formulae":[{'*)
+            v=${info#*'"versions":{"stable":"'} v=${v%%'"'*}
+            r=${info#*'"revision":'} r=${r%%[!0-9]*}
+            [ -z "$r" ] || [ "$r" = 0 ] || v="${v}_$r"
+            [ -n "$v" ] && [ "${v#\{}" = "$v" ] && echo "$v"
+            ;;
+        *'"casks":[{'*)
+            v=${info#*'"casks":[{'} v=${v#*'"version":"'} v=${v%%'"'*}
+            [ -n "$v" ] && echo "$v"
+            ;;
+        esac
+    }
 }
 use_nix() {
     # Nix profiles, no root needed: the user's own profile. As root (the furnish service), the
@@ -174,6 +241,14 @@ use_nix() {
     # declared package: it moves with the configuration's inputs.
     newer_version() {
         [ -z "$declared_by" ] || return 0
+        available=$(nix_available) || return 0
+        [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
+    }
+    # A declared package's version moves with the configuration, which furnish doesn't change.
+    scheme=nix
+    latest_version() { [ -n "$declared_by" ] || nix_available; }
+    # The version in the referenced nixpkgs.
+    nix_available() {
         # Offline, say, the check fails: the app counts as up to date, and the activity log says why.
         # Errors go to a private file (mktemp: random name, only ours), warnings on success are dropped.
         err=$(mktemp) || return 0
@@ -183,7 +258,7 @@ use_nix() {
             return 0
         fi
         rm -f "$err"
-        [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
+        echo "$available"
     }
 }
 

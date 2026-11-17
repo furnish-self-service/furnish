@@ -61,6 +61,9 @@ const button = (label) => `//button[normalize-space()='${label}']`;
 // A sidebar entry; Collections may carry a count after its name.
 const nav = (label) => `//nav//button[starts-with(normalize-space(), '${label}')]`;
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
+// Extra screenshots of states worth seeing, next to the final one.
+const snap = async (name) =>
+  writeFileSync(screenshot.replace(/\.png$/, `-${name}.png`), Buffer.from(await wd('GET', s('/screenshot')), 'base64'));
 const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDir}/${file}`, 'utf8') : '');
 // The sign-in entry furnish writes (HOME=/tmp in the container).
 const AUTOSTART = '/tmp/.config/autostart/furnish.desktop';
@@ -127,6 +130,17 @@ const steps = [
     await click(`${card('elsewhere')}//button[@aria-label='Open elsewhere']`);
     await waitFor('where its program is', async () => (await text('//section')).includes('/bin/elsewhere-tool'));
     if ((await findAll(button('Uninstall'))).length) throw new Error('offers Uninstall');
+    await click(button('Discover'));
+  }],
+  ['no acceptable version offered: the card and the app page say what is needed and what pacman offers', async () => {
+    const needs = 'Needs 2.0 or later; pacman offers 1.0';
+    await waitFor('outdated shows what it needs', async () => (await text(card('outdated'))).includes(needs), 30000);
+    if ((await findAll(`${card('outdated')}${button('Install')}`)).length) throw new Error('offers Install without an acceptable version');
+    await wd('POST', s('/execute/sync'), { script: "arguments[0].scrollIntoView({ block: 'center' });", args: [{ [ELEMENT]: await find(card('outdated')) }] });
+    await snap('required-unmet-card');
+    await click(`${card('outdated')}//button[@aria-label='Open outdated']`);
+    await waitFor('status line', async () => (await text("//p[contains(@class,'status')]")) === needs);
+    await snap('required-unmet-page');
     await click(button('Discover'));
   }],
   ['install from the card finishes and shows Installed', async () => {
@@ -309,6 +323,50 @@ const steps = [
     await click("//label[contains(., 'Wait while this computer is busy')]//input");
     await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
+  }],
+  ['a security update the collection requires installs right away, also with automatic updates off', async () => {
+    await click(button('Discover'));
+    await click(`${card('secure')}//button[@aria-label='Open secure']`);
+    await click("//label[contains(., 'Update automatically')]/input");
+    await waitFor('opt-out saved', () => log('data/settings.json').includes('fixture/secure'));
+    writeFileSync(`${workDir}/pkgs/secure.new`, '1.6\n');
+    // The collection raises its requirement above the installed 1.0 (e.g. after a security advisory).
+    const git = (...args) => {
+      const r = spawnSync('git', ['-C', `${workDir}/origin-src`, ...args], { encoding: 'utf8' });
+      if (r.status) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    };
+    const yaml = `${workDir}/origin-src/apps/secure.dsc.yaml`;
+    writeFileSync(yaml, readFileSync(yaml, 'utf8').replace("'>=1.0'", "'>=1.5'"));
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'secure: 1.5 or later');
+    git('push', '-q', `${workDir}/origin.git`, 'HEAD');
+    // The first attempt is refused (password dialog): it must not try again on its own.
+    writeFileSync(`${workDir}/deny`, '');
+    try {
+      await click("//nav//button[starts-with(normalize-space(), 'Updates')]");
+      await click(button('Check for updates'));
+      await waitFor('started without a click', () => find("//div[contains(@class,'toast') and contains(., 'Installing a required security update for secure')]"), 30000);
+      await waitFor('first attempt refused', () => log('denied.log').includes('secure'), 30000);
+      await waitFor('marked on the card', async () => (await text(card('secure'))).includes('Security update required'), 30000);
+      await sleep(5000);
+      const attempts = log('denied.log').split('\n').filter((l) => l.includes('secure')).length;
+      if (attempts !== 1) throw new Error(`${attempts} attempts after a refused one, expected no retry until the next check`);
+      await snap('required-update-card');
+      await click(`${card('secure')}//button[@aria-label='Open secure']`);
+      await waitFor('status line', async () => (await text("//p[contains(@class,'status')]")) === 'Installed, security update required');
+      const page = await text("//section[contains(@class,'detail')]");
+      if (!page.includes('fixture requires 1.5 or later. Version 1.0 is installed, so 1.6 installs right away.')) throw new Error(`detail: ${page}`);
+      if (!page.includes('fixture requires this update, so it installs even with automatic updates off.')) throw new Error(`toggle note: ${page}`);
+      await snap('required-update-page');
+    } finally {
+      rmSync(`${workDir}/deny`);
+    }
+    if (log('pkgs/secure').trim() !== '1.0') throw new Error('installed while refused');
+    // The next check tries again, although automatic updates are off and the last attempt was declined.
+    await click("//nav//button[starts-with(normalize-space(), 'Updates')]");
+    await click(button('Check for updates'));
+    await waitFor('secure updated to 1.6', () => log('pkgs/secure').trim() === '1.6', 30000);
+    await click(button('Discover'));
+    await waitFor('secure installed', () => find(`${card('secure')}//*[normalize-space()='Installed']`), 30000);
   }],
   ['options change how an app installs; changing them later offers a reinstall', async () => {
     const select = "//select[@data-option='userInstall']";

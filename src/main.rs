@@ -683,6 +683,7 @@ fn list() -> Result<()> {
             description = if description.is_empty() { name } else { format!("{name}: {description}") };
         }
         let external = check.as_ref().ok().and_then(|c| c.external.clone());
+        let required = check.as_ref().ok().and_then(|c| c.required.clone()).filter(|_| check.as_ref().is_ok_and(|c| c.status != Status::Blocked));
         let symbol = match check {
             Ok(c) => match c.status {
                 Status::Installed => "✓",
@@ -706,6 +707,11 @@ fn list() -> Result<()> {
                 "?"
             }
         };
+        match required {
+            Some(r) if !r.acceptable && r.target.is_some() => description = format!("{description} (security update required: {})", r.summary),
+            Some(r) => description = format!("{description} (needs {})", r.summary),
+            None => {}
+        }
         if let Some(commit) = &app.held {
             description = format!("{description} (held at an earlier version, {}: furnish install {} --current)", &commit[..7.min(commit.len())], app.id);
         }
@@ -1040,11 +1046,14 @@ fn upgrade(all: bool) -> Result<()> {
     let settings = furnish::settings::load();
     let (mut updated, mut skipped) = (0, Vec::new());
     for app in catalog::all_apps()? {
-        if app.status().ok() != Some(Status::NeedsUpdate) {
+        let Ok(check) = app.check() else { continue };
+        if check.status != Status::NeedsUpdate {
             continue;
         }
         let key = format!("{}/{}", app.collection, app.id);
-        if !all && settings.no_auto_update.contains(&key) {
+        // A version the collection requires installs whatever the person chose.
+        let required = check.required.is_some_and(|r| !r.acceptable && r.target.is_some());
+        if !all && !required && settings.no_auto_update.contains(&key) {
             skipped.push(key);
             continue;
         }
@@ -1165,6 +1174,9 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
     };
     match check.status {
         Status::Installed => {
+            if let Some(r) = check.required.as_ref().filter(|r| !r.acceptable) {
+                anyhow::bail!("{} {} is installed and isn't acceptable: needs {}", app.id, r.installed.as_deref().unwrap_or_default(), r.summary);
+            }
             match &check.external {
                 Some(e) => println!("✓ {} is already installed: {}", app.id, e.reason()),
                 None => println!("✓ {} is already installed and up to date", app.id),

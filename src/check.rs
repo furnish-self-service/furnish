@@ -346,6 +346,9 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         if kind == "Furnish/NixOS" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/NixOS needs properties.name")));
         }
+        for (is_error, message) in crate::required::check(&name, kind, &r["properties"]) {
+            findings.push(if is_error { error(message) } else { warning(message) });
+        }
         if kind == "Furnish/File"
             && let Some(source) = r["properties"]["source"].as_str()
         {

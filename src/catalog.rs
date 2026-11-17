@@ -855,7 +855,8 @@ impl Collection {
         let version = version_dir(dir, &self.name, &held.commit);
         let earlier = Collection { name: self.name.clone(), dir: version.clone(), managed: self.managed };
         match earlier.load_app(&version.join(&relative)) {
-            Ok(earlier) => {
+            Ok(mut earlier) => {
+                crate::required::carry(&app.doc, &mut earlier.doc);
                 app.doc = earlier.doc;
                 app.dependencies = earlier.dependencies;
                 app.held = Some(held.commit);
@@ -994,6 +995,7 @@ impl Collection {
         }
         let id = path.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".dsc.yaml").to_string();
         self.check_resources(&mut doc["resources"], allowed, &id)?;
+        crate::required::validate(&doc["resources"])?;
         // Removal steps are resources too: the same policy and installer checks.
         if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {
             if !steps.as_array().is_some_and(|s| !s.is_empty() && s.iter().all(Value::is_object)) {
@@ -1092,7 +1094,7 @@ pub(crate) fn allowed_resource_types() -> Option<Vec<String>> {
 
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
 pub const RESOURCE_TYPES: [&str; 9] = [
-    "Furnish/Package",
+    PACKAGE_TYPE,
     INSTALLER_TYPE,
     "Furnish/NixOS",
     "Furnish/Directory",
@@ -1104,7 +1106,8 @@ pub const RESOURCE_TYPES: [&str; 9] = [
 ];
 const FILE_TYPE: &str = "Furnish/File";
 const BLOCK_TYPE: &str = "Furnish/Block";
-const INSTALLER_TYPE: &str = "Furnish/Installer";
+pub const INSTALLER_TYPE: &str = "Furnish/Installer";
+pub const PACKAGE_TYPE: &str = "Furnish/Package";
 
 /// Whether two resolved paths are the same (Windows: ignoring case, like its file systems).
 fn same_path(a: Option<PathBuf>, b: Option<PathBuf>) -> bool {
@@ -1301,7 +1304,13 @@ impl App {
     }
 
     pub fn check(&self) -> Result<crate::engine::Check> {
-        crate::engine::check(&self.doc_for(&self.installed_values()))
+        let mut check = crate::engine::check(&self.doc_for(&self.installed_values()))?;
+        // Held at an earlier version that offers nothing acceptable: the current version may.
+        if self.held.is_some() && check.required.as_ref().is_some_and(|r| r.target.is_none()) {
+            check = self.current()?.check()?;
+        }
+        crate::reports::requirement(self, check.required.as_ref());
+        Ok(check)
     }
 
     pub fn status(&self) -> Result<crate::engine::Status> {
@@ -1527,7 +1536,36 @@ impl App {
             bail!("the previous version of {} is from {date}, more than {days} days older than the current one", self.id);
         }
         collection.verify(&commit)?;
-        Ok(Version { commit, date })
+        let version = Version { commit, date };
+        // Never back to a version the collection's required versions no longer accept.
+        let current = self.current()?;
+        let values = self.installed_values();
+        if current.resources_here().iter().any(|r| r["properties"].get(crate::required::PROPERTY).is_some()) {
+            let earlier = self.earlier(&version, &values)?;
+            if let Some(required) = crate::engine::check(&earlier.doc_for(&values))?.required.filter(|r| r.target.is_none()) {
+                bail!("the previous version of {} from {} has no acceptable version: needs {}", self.id, version.date, required.summary);
+            }
+        }
+        Ok(version)
+    }
+
+    /// The app at an earlier version, with the versions the collection requires now (see
+    /// `required::carry`). Its files come from that commit, kept until no app is held there.
+    fn earlier(&self, version: &Version, values: &serde_json::Map<String, Value>) -> Result<App> {
+        let collection = self.collection_handle();
+        let relative = self.relative_path();
+        let dir = version_dir(&self.state_dir(values), &self.collection, &version.commit);
+        if !dir.join(&relative).exists() {
+            let _ = fs::remove_dir_all(&dir);
+            if let Err(err) = collection.extract(&version.commit, &relative, values, &dir) {
+                let _ = fs::remove_dir_all(&dir);
+                return Err(err.context(format!("getting the version from {}", version.date)));
+            }
+        }
+        let file = dir.join(&relative);
+        let mut earlier = Collection { name: self.collection.clone(), dir, managed: self.managed }.load_app(&file)?;
+        crate::required::carry(&self.current()?.doc, &mut earlier.doc);
+        Ok(earlier)
     }
 
     /// Install the previous version (see `previous_version`) and hold the app there.
@@ -1542,15 +1580,7 @@ impl App {
         if !crate::versions::get(&state, &self.key()).has_failed(&current) {
             bail!("{} goes back to an earlier version only after installing its current version failed", self.id);
         }
-        let dir = version_dir(&state, &self.collection, &version.commit);
-        if !dir.join(&relative).exists() {
-            let _ = fs::remove_dir_all(&dir);
-            if let Err(err) = collection.extract(&version.commit, &relative, values, &dir) {
-                let _ = fs::remove_dir_all(&dir);
-                return Err(err.context(format!("getting the version from {}", version.date)));
-            }
-        }
-        let earlier = Collection { name: self.collection.clone(), dir: dir.clone(), managed: self.managed }.load_app(&dir.join(&relative))?;
+        let earlier = self.earlier(&version, values)?;
         let doc = earlier.doc_for(values);
         crate::engine::run(&doc, false, report)?;
         earlier.require_installed(&doc)?;

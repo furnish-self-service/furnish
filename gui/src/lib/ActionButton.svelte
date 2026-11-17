@@ -54,6 +54,8 @@
 {:else if app.unanswered.length && !busy && !queued && status !== 'installed' && status !== 'needsUpdate'}
   <!-- The collection asks something first (e.g. your role); installing waits for the answer. -->
   <button class="action" class:large onclick={(e) => { e.stopPropagation(); askQuestions(true); }}>{t('action.answerFirst')}</button>
+{:else if status === 'blocked' && store.required[app.key] && !busy && !queued}
+  <!-- No acceptable version is offered: the card and the app page say what is needed. -->
 {:else if status === 'blocked' && !app.dependencies.some((d) => d.required || d.selected) && !busy && !queued}
   <!-- A tool this app needs is missing and the collection doesn't provide it. -->
   <span class="checking needs" class:large title={t('action.needs', { what: store.reasons[app.key] ?? t('common.missingTool') })}>

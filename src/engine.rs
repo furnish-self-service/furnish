@@ -17,12 +17,14 @@ use dsc_lib::{
     dscerror::DscError,
     dscresources::{
         dscresource::Capability,
-        invoke_result::{SetResult, TestResult},
+        invoke_result::{GetResult, SetResult, TestResult},
     },
     progress::ProgressFormat,
     types::{FullyQualifiedTypeName, TypeNameFilter},
 };
 use serde_json::Value;
+
+use crate::required::Decision;
 
 /// Resources shipped inside the furnish binary: (file name, contents).
 /// Same resource types on every OS, with OS-specific implementations.
@@ -201,6 +203,8 @@ pub struct Check {
     pub removable: bool,
     /// Installed outside furnish (see [`External`]).
     pub external: Option<External>,
+    /// A required version isn't met here (see [`crate::required`]).
+    pub required: Option<crate::required::Required>,
 }
 
 /// A package installed outside furnish. furnish shows it as installed and leaves it to what
@@ -531,18 +535,44 @@ pub fn check(doc: &Value) -> Result<Check> {
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { status: Status::Unavailable, reason: None, removable, external: None });
+        return Ok(Check { status: Status::Unavailable, reason: None, removable, external: None, required: None });
     };
-    let tested = match test(&doc) {
+    let mut tested = match test(&doc) {
         Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external: None });
+            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external: None, required: None });
         }
     };
     let external = external(&tested);
+    let (mut required, mut blocked) = (None::<crate::required::Required>, None);
+    for t in &mut tested {
+        let Some(judged) = &t.judged else { continue };
+        let installed = exists(&t.actual);
+        match &judged.decision {
+            // Held at (or going to) one version: up to date when it is installed.
+            Decision::Exactly(v) if installed => t.ok = judged.installed.as_deref() == Some(v.as_str()),
+            // Nothing acceptable to install: the app shows what it needs, without an update to offer.
+            Decision::NoneOffered if installed => t.ok = true,
+            Decision::NoneOffered => blocked = judged.shown.as_ref().map(|r| r.summary.clone()),
+            _ => {}
+        }
+        if let Some(shown) = &judged.shown {
+            // An acceptable version is offered: a required update.
+            if !shown.acceptable && shown.target.is_some() {
+                t.ok = false;
+            }
+            if required.as_ref().is_none_or(|r| r.acceptable && !shown.acceptable) {
+                required = Some(shown.clone());
+            }
+        }
+    }
+    let removable = removable && external.is_none();
+    if let Some(reason) = blocked {
+        return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external, required });
+    }
     let states: Vec<(bool, Value)> = tested.into_iter().map(|t| (t.ok, t.actual)).collect();
-    Ok(Check { status: classify(&states), reason: None, removable: removable && external.is_none(), external })
+    Ok(Check { status: classify(&states), reason: None, removable, external, required })
 }
 
 /// The resources (those that apply here) that aren't in their desired state, e.g. "'profile'
@@ -552,15 +582,116 @@ pub fn differing(doc: &Value) -> Result<Vec<String>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity();
     let Some(doc) = applicable(doc) else { return Ok(vec![]) };
-    Ok(test(&doc)?.into_iter().filter(|t| !t.ok).map(|t| format!("'{}' ({})", t.name, t.kind)).collect())
+    Ok(test(&doc)?.into_iter().filter(|t| !t.installed_as_required()).map(|t| format!("'{}' ({})", t.name, t.kind)).collect())
 }
 
-/// DSC's test of every resource of the document. The caller holds the engine lock.
+/// DSC's test of every resource of the document, with the required versions of those that have
+/// them judged (see [`crate::required`]). The caller holds the engine lock.
 fn test(doc: &Value) -> Result<Vec<Tested>> {
-    let result = configurator(doc)?.invoke_test()?;
+    let mut doc = doc.clone();
+    let mut wanted = Vec::new();
+    for resource in doc["resources"].as_array_mut().into_iter().flatten() {
+        if let Some(entries) = crate::required::of(resource)? {
+            if let Some(properties) = resource["properties"].as_object_mut() {
+                properties.remove(crate::required::PROPERTY);
+                properties.insert("reportVersions".into(), "latest".into());
+            }
+            wanted.push((resource.clone(), entries));
+        }
+    }
+    let result = configurator(&doc)?.invoke_test()?;
     let mut states = Vec::new();
     flatten(&result.results, &mut states);
+    for t in &mut states {
+        if let Some((resource, entries)) = wanted.iter().find(|(r, _)| r["name"] == t.name.as_str()) {
+            t.judged = Some(judge(&doc, resource, entries, &t.actual)?);
+        }
+    }
     Ok(states)
+}
+
+/// A resource's required versions, judged by what it reports.
+struct Judged {
+    decision: Decision,
+    /// What the app shows (see [`crate::required::assess`]).
+    shown: Option<crate::required::Required>,
+    /// The installed version as reported; `Some("?")`: installed, version unknown.
+    installed: Option<String>,
+}
+
+/// Judge a resource's versions from its state (with `reportVersions: latest`). Asks it for every
+/// version it can install if the decision depends on them.
+fn judge(doc: &Value, resource: &Value, entries: &[crate::required::Entry], state: &Value) -> Result<Judged> {
+    let kind = resource["type"].as_str().unwrap_or_default();
+    let mut facts = crate::required::Facts::from_state(kind, state);
+    if facts.need_list(entries) {
+        let all = get_state(doc, resource, "all")?;
+        facts.available = Some(crate::required::Facts::from_state(kind, &all).available.unwrap_or_default());
+    }
+    let (decision, shown) = crate::required::assess(resource["name"].as_str().unwrap_or_default(), entries, &facts);
+    Ok(Judged { decision, shown, installed: facts.installed })
+}
+
+/// One resource's state from DSC's get, with `reportVersions` (`latest` or `all`).
+fn get_state(doc: &Value, resource: &Value, report: &str) -> Result<Value> {
+    let mut resource = resource.clone();
+    if let Some(r) = resource.as_object_mut() {
+        r.remove("dependsOn");
+    }
+    if let Some(properties) = resource["properties"].as_object_mut() {
+        properties.remove(crate::required::PROPERTY);
+        properties.insert("reportVersions".into(), report.into());
+    }
+    let mut single = doc.clone();
+    single["resources"] = Value::Array(vec![resource]);
+    let result = configurator(&single)?.invoke_get()?;
+    match result.results.first().map(|r| &r.result) {
+        Some(GetResult::Resource(r)) => Ok(r.actual_state.clone()),
+        _ => anyhow::bail!("no state from the resource"),
+    }
+}
+
+/// A single-resource step document ready to run: without `versions`, and with `targetVersion`
+/// where the required versions call for one. The second value is set when no acceptable version
+/// is offered: the step must not run. The caller holds the engine lock.
+fn resolve(step_doc: &Value) -> Result<(Value, Option<crate::required::Required>)> {
+    let mut doc = step_doc.clone();
+    let resource = &doc["resources"][0];
+    let entries = match crate::required::of(resource)? {
+        Some(entries) if applies_here(resource, step_doc) && exists(&resource["properties"]) => entries,
+        _ => {
+            crate::required::strip(&mut doc["resources"]);
+            return Ok((doc, None));
+        }
+    };
+    crate::required::strip(&mut doc["resources"]);
+    let state = get_state(&doc, &doc["resources"][0], "latest")?;
+    let judged = judge(&doc, &doc["resources"][0].clone(), &entries, &state)?;
+    match judged.decision {
+        Decision::Exactly(version) => doc["resources"][0]["properties"]["targetVersion"] = version.into(),
+        Decision::NoneOffered => return Ok((doc, judged.shown)),
+        Decision::Free => {}
+    }
+    Ok((doc, None))
+}
+
+/// The preview of a step, with its required version resolved where furnish can tell.
+fn preview_resolved(step_doc: &Value) -> Result<Step> {
+    match resolve(step_doc) {
+        Ok((doc, None)) => preview(&doc),
+        Ok((doc, Some(required))) => {
+            let mut step = preview(&doc)?;
+            (step.action, step.changes) = (Action::Nothing, vec![]);
+            step.details = vec![format!("No acceptable version: needs {}", required.summary)];
+            Ok(step)
+        }
+        // Found out when the step runs (a tool an earlier step installs, say).
+        Err(_) => {
+            let mut doc = step_doc.clone();
+            crate::required::strip(&mut doc["resources"]);
+            preview(&doc)
+        }
+    }
 }
 
 /// The app's own removal steps (`metadata.furnish.uninstall`): DSC resources in the format of
@@ -766,7 +897,7 @@ pub struct Outcome {
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
-    step_docs(doc, uninstall)?.iter().map(preview).collect()
+    step_docs(doc, uninstall)?.iter().map(preview_resolved).collect()
 }
 
 /// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
@@ -780,7 +911,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let _ = fs::remove_file(file);
     }
     let docs = step_docs(doc, uninstall)?;
-    let steps = docs.iter().map(preview).collect::<Result<Vec<_>>>()?;
+    let steps = docs.iter().map(preview_resolved).collect::<Result<Vec<_>>>()?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
         if ABORT.load(Ordering::SeqCst) {
@@ -793,7 +924,11 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
             continue;
         }
         report(Progress::Started { index, at_ms: started });
-        let result = configurator(step_doc).and_then(|mut c| Ok(c.invoke_set(false)?));
+        // The required version, decided right before the step: earlier steps may have changed it.
+        let result = resolve(step_doc).and_then(|(step_doc, none_offered)| match none_offered {
+            Some(required) => Err(anyhow::anyhow!("'{}' ({}): needs {}", step.name, step.kind, required.summary)),
+            None => configurator(&step_doc).and_then(|mut c| Ok(c.invoke_set(false)?)),
+        });
         let finished = now_ms();
         let outcome = match &result {
             Ok(r) => match r.results.first().map(|r| &r.result) {
@@ -1046,6 +1181,8 @@ fn configurator(doc: &Value) -> Result<Configurator> {
     // A setting changed in the app applies to the next step.
     crate::resource_env::refresh();
     let mut doc = doc.clone();
+    // furnish's own property for required versions (see `crate::required`); DSC doesn't know it.
+    crate::required::strip(&mut doc["resources"]);
     // DSC would discover resources again while running, after `ensure_own_resources` checked
     // them; furnish skips resources by their condition itself (see `applicable`).
     if let Some(directives) = doc["directives"].as_object_mut() {
@@ -1064,6 +1201,19 @@ struct Tested {
     ok: bool,
     actual: Value,
     desired: Value,
+    /// Its required versions, if it has any.
+    judged: Option<Judged>,
+}
+
+impl Tested {
+    /// After an install: in the desired state, at the version the required versions call for.
+    fn installed_as_required(&self) -> bool {
+        match &self.judged {
+            None => self.ok,
+            Some(Judged { decision: Decision::Exactly(v), installed, .. }) => installed.as_deref() == Some(v.as_str()),
+            Some(j) => self.ok && j.shown.as_ref().is_none_or(|r| r.acceptable),
+        }
+    }
 }
 
 /// Collect the test result of every resource, descending into groups.
@@ -1076,6 +1226,7 @@ fn flatten(results: &[ResourceTestResult], out: &mut Vec<Tested>) {
                 ok: r.in_desired_state,
                 actual: r.actual_state.clone(),
                 desired: r.desired_state.clone(),
+                judged: None,
             }),
             TestResult::Group(group) => flatten(group, out),
         }
@@ -1118,7 +1269,7 @@ mod tests {
     }
 
     fn tested(desired: Value, actual: Value) -> Tested {
-        Tested { name: "pkg".into(), kind: "Furnish/Package".into(), ok: true, actual, desired }
+        Tested { name: "pkg".into(), kind: "Furnish/Package".into(), ok: true, actual, desired, judged: None }
     }
 
     #[test]

@@ -42,6 +42,7 @@ The time range at the top applies to every panel. The default is the last 30 day
 | Fallbacks: apps installed at an earlier version | After a failed install or update, furnish can install the app from an earlier commit of its collection. The table lists the app, that commit and the number of devices. |
 | furnish versions in use | Devices per furnish version, from each device's latest report. |
 | Devices without inventory for 7d | Devices that sent an inventory in the time range but none in the last 7 days, with the time of their last one. Choose 1 to 30 days at the top. |
+| Devices on a version that isn't acceptable | Devices whose installed version of an app isn't one its collection lists (`versions`), from each device's latest report about that app: user, device, app, the problem (not acceptable, or no acceptable version offered), installed and offered version, and since when. furnish reports only changes, so a device that has been in this state since before the time range doesn't appear. |
 | Recent failures | Every failed operation and collection update with user, device, app (or collection) and error message, newest first. Open a line for all fields of the report. |
 
 With `reporting: errors` furnish sends only failures and fallbacks, so the failure rate is 100%

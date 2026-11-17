@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store, appName, appDescription, categoryName, externalStatus } from './state.svelte';
+  import { store, appName, appDescription, categoryName, externalStatus, requiredUpdate } from './state.svelte';
+  import { describeRequired, unmet } from './required';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
-  import { t } from './i18n.svelte';
+  import { t, lang } from './i18n.svelte';
 
   let { app, onopen }: { app: AppInfo; onopen: () => void } = $props();
   const status = $derived(store.status[app.key]);
+  // No acceptable version is offered: what the collection needs and what there is.
+  const needs = $derived(unmet(store.required[app.key]) ? describeRequired(lang(), store.required[app.key]) : null);
 </script>
 
 <article class="card">
@@ -22,8 +25,12 @@
   </header>
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
-    {#if status === 'installed'}
+    {#if needs && (status === 'installed' || status === 'blocked')}
+      <span class="state update needs" title={needs}>{needs}</span>
+    {:else if status === 'installed'}
       <span class="state installed">{store.external[app.key] ? externalStatus(store.external[app.key]) : t('common.installed')}</span>
+    {:else if status === 'needsUpdate' && requiredUpdate(app.key)}
+      <span class="state required">{t('common.securityUpdate')}</span>
     {:else if status === 'needsUpdate'}
       <span class="state update">{t('common.updateAvailable')}</span>
     {:else}
@@ -134,6 +141,19 @@
   }
   .update {
     color: var(--highlight-ink);
+  }
+  .required {
+    color: var(--danger);
+  }
+  /* Can be long ("Needs 128.0.3 or later; winget offers 128.0.1"): wraps instead of widening. */
+  .needs {
+    align-items: flex-start;
+    font-size: 0.78rem;
+    line-height: 1.3;
+  }
+  .needs::before {
+    flex: none;
+    margin-top: 0.3rem;
   }
   .recommended {
     font-size: 0.72rem;

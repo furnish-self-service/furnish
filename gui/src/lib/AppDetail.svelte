@@ -1,14 +1,15 @@
 <script lang="ts">
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus } from './state.svelte';
+  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
+  import { describeNeeds, describeRequired, unmet } from './required';
   import Options from './Options.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import { highlightYaml } from './highlight';
   import Plan from './Plan.svelte';
-  import { t, formatDate } from './i18n.svelte';
+  import { t, formatDate, lang } from './i18n.svelte';
   import External from './External.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
@@ -32,16 +33,24 @@
 
   const status = $derived(store.status[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
+  const required = $derived(store.required[app.key]);
+  // A security update the collection requires: installs right away, automatic updates or not.
+  const securityUpdate = $derived(requiredUpdate(app.key));
+  // No acceptable version is offered: what the collection needs and what there is.
+  const needs = $derived(unmet(required) ? describeRequired(lang(), required) : null);
   const statusText = $derived.by(() => {
     const what = store.reasons[app.key] ?? t('common.missingTool');
     switch (status) {
       case 'installed':
         if (store.external[app.key]) return externalStatus(store.external[app.key]);
+        if (needs && required.installed) return t('app.status.unacceptable', { installed: required.installed, needs });
         return t('app.status.installed');
-      case 'needsUpdate': return t('app.status.needsUpdate');
+      case 'needsUpdate': return securityUpdate ? t('app.status.securityUpdate') : t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
       case 'unavailable': return t('app.status.unavailable');
-      case 'blocked': return app.dependencies.length ? t('app.status.blockedDeps', { what, app: appName(app) }) : t('app.status.blocked', { what });
+      case 'blocked':
+        if (needs) return needs;
+        return app.dependencies.length ? t('app.status.blockedDeps', { what, app: appName(app) }) : t('app.status.blocked', { what });
       case 'error': return t('app.status.error');
       default: return t('app.status.checking');
     }
@@ -56,7 +65,10 @@
     <div class="heading">
       <h1>{appName(app)}</h1>
       <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ')}{app.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
-      <p class="status" class:installed={status === 'installed'} class:update={status === 'needsUpdate' || status === 'blocked'}>{statusText}</p>
+      <p class="status" class:installed={status === 'installed' && !needs} class:update={status === 'needsUpdate' || status === 'blocked' || !!needs} class:required={securityUpdate}>{statusText}</p>
+      {#if securityUpdate && required.installed}
+        <p class="required-detail">{t('app.requiredUpdate', { collection: app.collection, needs: describeNeeds(lang(), required.needs), installed: required.installed, target: required.target ?? '' })}</p>
+      {/if}
     </div>
     <div class="cta">
       {#if status === 'installed' && confirming}
@@ -88,6 +100,7 @@
           />
           {isLocked('noAutoUpdate') ? t('app.autoUpdateLocked') : t('app.autoUpdate')}
         </label>
+        {#if securityUpdate}<p class="auto-note">{t('app.autoUpdateRequired', { collection: app.collection })}</p>{/if}
       {/if}
     </div>
   </header>
@@ -220,6 +233,21 @@
   }
   .status.update {
     color: var(--highlight-ink);
+  }
+  .status.required {
+    color: var(--danger);
+  }
+  .required-detail {
+    margin: 0.3rem 0 0;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+  .auto-note {
+    max-width: 16rem;
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: right;
   }
   .cta {
     display: grid;

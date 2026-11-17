@@ -5,7 +5,7 @@
     "furnish"
   ],
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "graphTooltip": 1,
   "refresh": "1m",
@@ -456,12 +456,134 @@
       }
     },
     {
+      "type": "table",
+      "title": "Devices on a version that isn't acceptable",
+      "description": "Devices whose installed version of an app isn't one of the versions its collection lists, from each device's latest requirement report per app in the time range. notAcceptable: furnish installs an acceptable version with the next update. noneOffered: the package manager offers no acceptable version. Since: when the device reported it; furnish reports only changes, so widen the time range to see devices that have been on such a version for longer.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Since"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Problem"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "notAcceptable": {
+                        "text": "not acceptable",
+                        "color": "orange",
+                        "index": 0
+                      },
+                      "noneOffered": {
+                        "text": "none offered",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Since",
+            "desc": false
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "furnish-loki"
+          },
+          "expr": "max by (device_id, user_email, host_name, furnish_app, outcome, furnish_installed_version, furnish_offered_version) (max_over_time({service_name=\"furnish\", event=\"requirement\", outcome=~\"notAcceptable|noneOffered\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range])) == on (device_id, furnish_app) group_left max by (device_id, furnish_app) (max_over_time({service_name=\"furnish\", event=\"requirement\"} | label_format ts=`{{ __timestamp__ | unixEpochMillis }}` | unwrap ts [$__range]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "device_id": "Device",
+              "user_email": "User",
+              "host_name": "Host",
+              "furnish_app": "App",
+              "outcome": "Problem",
+              "furnish_installed_version": "Installed",
+              "furnish_offered_version": "Offered",
+              "Value": "Since",
+              "Value #A": "Since"
+            },
+            "indexByName": {
+              "device_id": 0,
+              "user_email": 1,
+              "host_name": 2,
+              "furnish_app": 3,
+              "outcome": 4,
+              "furnish_installed_version": 5,
+              "furnish_offered_version": 6,
+              "Value": 7,
+              "Value #A": 7
+            }
+          }
+        }
+      ],
+      "id": 7,
+      "datasource": {
+        "type": "loki",
+        "uid": "furnish-loki"
+      }
+    },
+    {
       "type": "logs",
       "title": "Recent failures",
       "description": "Failed operations and collection updates, newest first.",
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 35,
         "w": 24,
         "h": 12
       },

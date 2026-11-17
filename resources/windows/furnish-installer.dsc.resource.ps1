@@ -1,9 +1,14 @@
 # Furnish/Installer on Windows: install an .msi or .exe shipped in the collection.
 # furnish passes `file` as an absolute path inside the collection. DSC passes the resource
 # properties as env vars: file, productCode (.msi, optional), displayName and installArgs
-# (.exe), uninstallArgs (.exe, optional), _exist.
+# (.exe), uninstallArgs (.exe, optional), _exist, and from furnish's required versions:
+#   reportVersions     latest or all: every state also has versionScheme (generic), via,
+#                      latestVersion (.msi: the file's ProductVersion) and, with all,
+#                      availableVersions
+#   targetVersion      the version to have; an installer can only install the one in its file
 #
 #   get                print the current state
+#   test               current state with _inDesiredState (with targetVersion: installed is that one)
 #   set [what-if]      converge; with what-if only describe the steps (_metadata.whatIf)
 #
 # Exit codes: 10 invalid input, 11 missing tool or file, 12 cancelled (UAC prompt declined).
@@ -15,7 +20,14 @@ function Fail([int]$Code, [string]$Message) {
 
 $file = $env:file
 if (-not $file) { Fail 10 'property file is required' }
-function Write-State([string]$Version, [string[]]$WhatIf) {
+$report = $env:reportVersions
+$target = $env:targetVersion
+if ($report -and $report -cnotin 'latest', 'all') { Fail 10 "reportVersions must be latest or all: $report" }
+if ($target -and $target.StartsWith('-')) { Fail 10 "targetVersion starts with '-': $target" }
+if ($target -and $target -cnotmatch '^[A-Za-z0-9.+~:_^-]+$') { Fail 10 "targetVersion has characters a version can't have: $target" }
+$manager = 'its installer'
+$fileVersion = $null
+function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     # Echo back every identifying property: DSC's test compares each desired property with the state.
     $state = [ordered]@{ file = $file }
     foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
@@ -24,7 +36,14 @@ function Write-State([string]$Version, [string[]]$WhatIf) {
     }
     $state._exist = [bool]$Version
     if ($Version -and $Version -ne '?') { $state.version = $Version }
+    if ($report) {
+        $state.versionScheme = 'generic'
+        $state.via = $manager
+        if ($fileVersion) { $state.latestVersion = $fileVersion }
+        if ($report -eq 'all' -and $fileVersion) { $state.availableVersions = @($fileVersion) }
+    }
     if ($WhatIf) { $state._metadata = @{ whatIf = $WhatIf } }
+    if ($null -ne $InDesiredState) { $state._inDesiredState = [bool]$InDesiredState }
     [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
 }
 
@@ -39,8 +58,10 @@ if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
     if ($Operation -eq 'get') { Write-State ''; exit 0 }
+    if ($Operation -eq 'test') { Write-State '' $null ($env:_exist -eq 'false'); exit 0 }
     if ($Operation -eq 'set' -and $Mode -eq 'what-if') {
         # The state after the step: installed, like the Unix resource's what-if reports.
+        if ($env:_exist -ne 'false' -and $target) { Fail 10 "its installer can't install a specific version ($target)" }
         if ($env:_exist -ne 'false') { Write-State '?' @("Download $subject from the collection, then install it as administrator") }
         else { Write-State '' @("$subject is not installed") }
         exit 0
@@ -63,14 +84,19 @@ function Find-Installed([scriptblock]$Match) {
 switch -Wildcard ($file) {
     '*.msi' {
         $code = $env:productCode
-        if (-not $code) {
-            # Read the ProductCode from the package itself.
+        if (-not $code -or $report -or $target) {
+            # Read the ProductCode (and ProductVersion) from the package itself.
             $wi = New-Object -ComObject WindowsInstaller.Installer
             $db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($file, 0))
-            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT Value FROM Property WHERE Property='ProductCode'"))
-            $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
-            $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-            $code = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
+            function Get-MsiProperty([string]$Property) {
+                $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT Value FROM Property WHERE Property='$Property'"))
+                $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+                $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+                if ($null -eq $record) { return $null }
+                $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
+            }
+            if (-not $code) { $code = Get-MsiProperty 'ProductCode' }
+            if ($report -or $target) { $fileVersion = Get-MsiProperty 'ProductVersion' }
         }
         $installed = Find-Installed { $_.PSChildName -eq $code }
         $installCmd = @('msiexec.exe', "/i `"$file`" /qn /norestart")
@@ -87,7 +113,6 @@ switch -Wildcard ($file) {
             $uninstall = if ($installed.QuietUninstallString) { $installed.QuietUninstallString } else { "$($installed.UninstallString) $($env:uninstallArgs)" }
             $removeCmd = @('cmd.exe', "/c `"$uninstall`"")
         }
-        $manager = 'its installer'
     }
     default { Fail 10 "unsupported installer: $subject (Windows: .msi, .exe)" }
 }
@@ -117,11 +142,26 @@ function Invoke-Elevated([string[]]$Command) {
 
 switch ($Operation) {
     'get' { Write-State $version }
+    'test' {
+        $ok = if ($env:_exist -eq 'false') { -not $version } elseif ($target) { $version -eq $target } else { [bool]$version }
+        Write-State $version $null $ok
+    }
     'set' {
         $want = $env:_exist -ne 'false'
         $shown = if ($version -and $version -ne '?') { "$subject $version" } else { $subject }
         $cmd = $null
-        if ($want -and -not $version) { $step = "Install $subject with $manager"; $cmd = $installCmd; $after = '?' }
+        if ($want -and $target) {
+            # Only the version in the file can be the target: installing the file brings it.
+            $after = $target
+            if ($version -eq $target) { $step = "$subject $target is installed, the required version" }
+            elseif ($fileVersion -ne $target) { Fail 10 "$manager can't install a specific version ($target)" }
+            elseif (-not $version) { $step = "Install $subject $target with $manager"; $cmd = $installCmd }
+            else {
+                $step = if ($version -eq '?') { "Update $subject to $target with $manager" } else { "Update $subject from $version to $target with $manager" }
+                $cmd = $installCmd
+            }
+        }
+        elseif ($want -and -not $version) { $step = "Install $subject with $manager"; $cmd = $installCmd; $after = '?' }
         elseif (-not $want -and $version) {
             if (-not $removeCmd) { Fail 10 "no uninstall command registered for $subject" }
             $step = "Remove $shown with $manager"; $cmd = $removeCmd; $after = ''

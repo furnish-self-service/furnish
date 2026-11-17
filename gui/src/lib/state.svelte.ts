@@ -5,6 +5,7 @@ import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, formatDate, lang } from './i18n.svelte';
 import { serverLooks } from './schedule';
 import { contentLanguage, lookup, matches, searchTexts, valueKey } from './content';
+import { urgent, urgentAction } from './required';
 
 export type View =
   | { page: 'discover' }
@@ -65,6 +66,8 @@ export const store = $state({
   unremovable: {} as Record<string, true>,
   /** Apps installed outside furnish (NixOS, Home Manager, another tool): shown as installed, left alone. */
   external: {} as Record<string, api.External>,
+  /** Apps whose collection lists required versions that aren't met here (see required.ts). */
+  required: {} as Record<string, api.Required>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
@@ -168,6 +171,7 @@ export function dismiss(id: number) {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export async function loadAll() {
+  if (!store.autoUpdate.running) checkRound++; // inside a check for updates, part of its round
   store.loading = true;
   // Loaded independently: a problem with one must not hide the other.
   const [apps, collections, kits] = await Promise.allSettled([api.listApps(), api.listCollections(), api.listKits()]);
@@ -188,6 +192,8 @@ export async function loadAll() {
   }
 }
 
+/** Ask for an app's status. A security update its collection requires is queued right away,
+ *  whatever the automatic-update settings say. */
 export async function checkStatus(key: string) {
   try {
     const check = await api.appStatus(key);
@@ -198,10 +204,36 @@ export async function checkStatus(key: string) {
     else store.unremovable[key] = true;
     if (check.external) store.external[key] = check.external;
     else delete store.external[key];
+    if (check.required) store.required[key] = check.required;
+    else delete store.required[key];
+    installRequiredUpdate(key);
   } catch {
     store.status[key] = 'error';
   }
 }
+
+/** Rounds of status checks: each check for updates (and each reload of the catalog outside one)
+ *  is one. A required update is tried once per round, so one that fails or is refused waits for
+ *  the next check instead of starting again from the status check after it. */
+let checkRound = 0;
+const requiredTried = new Map<string, number>();
+
+/** Queue the security update an app's collection requires, if it has one: right away, also with
+ *  automatic updates off for the app, after a declined update and while the computer is busy.
+ *  It waits for the install that is running (one at a time). */
+function installRequiredUpdate(key: string) {
+  const app = appByKey(key);
+  if (!app) return;
+  const tried = requiredTried.get(key) === checkRound;
+  const action = urgentAction(app, store.required[key], { pending: isPending(key), declared: !!store.external[key], tried });
+  if (!action) return;
+  requiredTried.set(key, checkRound);
+  enqueue(key, action, true);
+  toast('info', t('toast.requiredUpdate', { app: appName(app) }));
+}
+
+/** The app has a security update its collection requires. */
+export const requiredUpdate = (key: string) => store.status[key] === 'needsUpdate' && urgent(store.required[key]);
 
 
 /** Run one queued operation; resolves to whether it succeeded. */
@@ -254,7 +286,7 @@ export async function collectionAction(work: () => Promise<string>, failure: str
 
 export function visibleApps(view: View, query: string): AppInfo[] {
   const languages = wanted();
-  return store.apps.filter((app) => {
+  const apps = store.apps.filter((app) => {
     const status = store.status[app.key];
     if (status === 'unavailable') return false;
     if (view.page === 'installed' && status !== 'installed' && status !== 'needsUpdate') return false;
@@ -263,6 +295,9 @@ export function visibleApps(view: View, query: string): AppInfo[] {
     if (!query.trim()) return true;
     return matches(query, searchTexts('apps', app, textsOf(app.collection), languages));
   });
+  // Updates: required security updates first.
+  if (view.page === 'updates') apps.sort((a, b) => Number(requiredUpdate(b.key)) - Number(requiredUpdate(a.key)));
+  return apps;
 }
 
 /**
@@ -331,6 +366,7 @@ async function updateApps() {
 export async function checkForUpdates() {
   if (store.autoUpdate.running) return;
   store.autoUpdate.running = true;
+  checkRound++;
   try {
     const changed = await updateCollections();
     store.autoUpdate.error = null;

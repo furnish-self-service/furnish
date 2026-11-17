@@ -3,17 +3,19 @@
 //! organization's furnish address (see `endpoint`). Its proxy names the signed-in user to the
 //! admins' OTLP receiver, which adds it to each record; furnish never sends a user name itself.
 //!
-//! The setting `reporting` decides what is recorded: `off` (default), `errors` (failures and
-//! fallbacks) or `all` (also successes and a daily inventory). Events wait in
+//! The setting `reporting` decides what is recorded: `off` (default), `errors` (failures,
+//! fallbacks and required versions that aren't met) or `all` (also successes and a daily
+//! inventory). Events wait in
 //! `reports/queue.ndjson` in the data directory until an endpoint accepts them, so offline
 //! computers report later. Users can read that file; `furnish reports` shows it. Each endpoint gets
 //! only the reports about its own collections (see `policy::speaking_for_own`).
 
 use std::{
     cell::Cell,
+    collections::BTreeMap,
     fs,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -37,9 +39,10 @@ pub enum Level {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
-    /// install, update, uninstall, reinstall, fallback, collectionUpdate or inventory.
+    /// install, update, uninstall, reinstall, fallback, collectionUpdate, inventory or requirement.
     pub event: &'static str,
-    /// succeeded, failed or cancelled; `reported` for inventory.
+    /// succeeded, failed or cancelled; `reported` for inventory; notAcceptable, noneOffered or
+    /// acceptable for requirement (see [`requirement`]).
     pub outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
@@ -55,6 +58,12 @@ pub struct Event {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Requirement: the installed version of the app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
+    /// Requirement: the newest version the package manager offers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offered_version: Option<String>,
     /// Inventory: every app of the catalog that is installed, with its status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub apps: Option<Vec<Installed>>,
@@ -148,17 +157,95 @@ pub fn operation<T>(event: &'static str, app: &crate::catalog::App, version: Opt
 
 /// Queue an event if the setting `reporting` asks for it.
 pub fn record(event: Event) {
-    let important = event.outcome == "failed" || event.event == "fallback";
+    queue(event);
+}
+
+/// Queue an event if the setting `reporting` asks for it; whether it was queued.
+fn queue(event: Event) -> bool {
+    let important = event.outcome == "failed" || event.event == "fallback" || event.event == "requirement";
     let wanted = match level() {
         Level::Off => false,
         Level::Errors => important,
         Level::All => true,
     };
     if !wanted || IN_SERVICE.load(Ordering::Relaxed) {
+        return false;
+    }
+    match append(&event) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("warning: couldn't queue a report: {err:#}");
+            false
+        }
+    }
+}
+
+/// An app's unmet requirement as last recorded (kept in `reports/requirements.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Unmet {
+    /// notAcceptable or noneOffered.
+    outcome: String,
+    installed: Option<String>,
+    offered: Option<String>,
+}
+
+impl Unmet {
+    /// What a status check found: `None` if the installed version is acceptable, or nothing is
+    /// installed (installing fails then, and that is reported).
+    fn of(required: Option<&crate::required::Required>) -> Option<Unmet> {
+        let r = required?;
+        if r.installed.is_none() || r.acceptable {
+            return None;
+        }
+        let outcome = if r.target.is_none() { "noneOffered" } else { "notAcceptable" };
+        Some(Unmet { outcome: outcome.into(), installed: r.installed.clone(), offered: r.offered.clone() })
+    }
+}
+
+/// Record when an app's installed version stops or starts being acceptable (see `required`).
+pub fn requirement(app: &crate::catalog::App, required: Option<&crate::required::Required>) {
+    if IN_SERVICE.load(Ordering::Relaxed) {
         return;
     }
-    if let Err(err) = append(&event) {
-        eprintln!("warning: couldn't queue a report: {err:#}");
+    requirement_in(&dir().join("requirements.json"), &app.key(), &app.collection, Unmet::of(required), queue);
+}
+
+/// Only changes are recorded: an unmet requirement (again with another outcome or installed
+/// version; a newer offered version alone isn't a change), and `acceptable` after one. The state file changes only when the event was queued,
+/// so a change with `reporting: off` is recorded once reporting is on.
+fn requirement_in(state: &Path, app: &str, collection: &str, now: Option<Unmet>, queue: impl FnOnce(Event) -> bool) {
+    let mut last: BTreeMap<String, Unmet> = fs::read(state).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let same = |a: &Unmet, b: &Unmet| (&a.outcome, &a.installed) == (&b.outcome, &b.installed);
+    match (last.get(app), &now) {
+        (None, None) => return,
+        (Some(a), Some(b)) if same(a, b) => return,
+        _ => {}
+    }
+    let event = Event {
+        event: "requirement",
+        outcome: match &now {
+            Some(u) if u.outcome == "noneOffered" => "noneOffered",
+            Some(_) => "notAcceptable",
+            None => "acceptable",
+        },
+        app: Some(app.into()),
+        collection: Some(collection.into()),
+        installed_version: now.as_ref().and_then(|u| u.installed.clone()),
+        offered_version: now.as_ref().and_then(|u| u.offered.clone()),
+        ..Default::default()
+    };
+    if !queue(event) {
+        return;
+    }
+    match now {
+        Some(u) => last.insert(app.into(), u),
+        None => last.remove(app),
+    };
+    let written = state.parent().map_or(Ok(()), fs::create_dir_all).and_then(|()| {
+        crate::auth::write_private(state, serde_json::to_string(&last).unwrap_or_default().as_bytes())
+    });
+    if let Err(err) = written {
+        eprintln!("warning: couldn't keep the reported versions in {}: {err}", state.display());
     }
 }
 
@@ -405,6 +492,8 @@ const ATTRIBUTES: &[(&str, &str)] = &[
     ("trigger", "furnish.trigger"),
     ("error", "error.message"),
     ("durationMs", "furnish.duration_ms"),
+    ("installedVersion", "furnish.installed_version"),
+    ("offeredVersion", "furnish.offered_version"),
     ("apps", "furnish.apps"),
 ];
 
@@ -452,8 +541,8 @@ fn otlp_resource(report: &serde_json::Value) -> serde_json::Value {
 fn otlp_record(report: &serde_json::Value) -> serde_json::Value {
     let text = |key: &str| report[key].as_str().unwrap_or_default();
     let (number, severity) = match (text("event"), text("outcome")) {
-        (_, "failed") => (17, "ERROR"),
-        ("fallback", _) => (13, "WARN"),
+        (_, "failed") | ("requirement", "noneOffered") => (17, "ERROR"),
+        ("fallback", _) | ("requirement", "notAcceptable") => (13, "WARN"),
         _ => (9, "INFO"),
     };
     let body = match report["apps"].as_array() {
@@ -678,6 +767,94 @@ mod tests {
         );
         assert_eq!(resources[1]["scopeLogs"][0]["logRecords"][0]["severityText"], "WARN");
         assert!(!otlp(lines).contains("\"user."), "only the endpoint names the user");
+    }
+
+    #[test]
+    fn requirement_reports_become_otlp_log_records() {
+        let lines = concat!(
+            r#"{"time":"2026-11-15T08:03:06Z","device":"7f3a","os":"windows","osVersion":"10","furnish":"0.10.0","event":"requirement","outcome":"notAcceptable","app":"acme/firefox","collection":"acme","installedVersion":"115.15.0","offeredVersion":"128.0.3"}"#, "\n",
+            r#"{"time":"2026-11-15T08:03:07Z","device":"7f3a","os":"windows","osVersion":"10","furnish":"0.10.0","event":"requirement","outcome":"noneOffered","app":"acme/zoom","collection":"acme","installedVersion":"5.0","offeredVersion":"5.1"}"#, "\n",
+            r#"{"time":"2026-11-15T08:03:08Z","device":"7f3a","os":"windows","osVersion":"10","furnish":"0.10.0","event":"requirement","outcome":"acceptable","app":"acme/firefox","collection":"acme"}"#, "\n",
+        );
+        let request: serde_json::Value = serde_json::from_str(&otlp(lines)).unwrap();
+        let records = request["resourceLogs"][0]["scopeLogs"][0]["logRecords"].as_array().unwrap();
+        let severity = |r: &serde_json::Value| (r["severityNumber"].as_u64().unwrap(), r["severityText"].as_str().unwrap().to_string());
+        assert_eq!(records.iter().map(severity).collect::<Vec<_>>(), [(13, "WARN".into()), (17, "ERROR".into()), (9, "INFO".into())]);
+        assert_eq!(records[0]["body"]["stringValue"], "requirement acme/firefox notAcceptable");
+        let s = |v: &str| serde_json::json!({"stringValue": v});
+        let attributes: Vec<(String, serde_json::Value)> =
+            records[0]["attributes"].as_array().unwrap().iter().map(|a| (a["key"].as_str().unwrap().to_string(), a["value"].clone())).collect();
+        assert_eq!(
+            attributes,
+            [
+                ("furnish.event", s("requirement")),
+                ("furnish.outcome", s("notAcceptable")),
+                ("furnish.app", s("acme/firefox")),
+                ("furnish.collection", s("acme")),
+                ("furnish.installed_version", s("115.15.0")),
+                ("furnish.offered_version", s("128.0.3")),
+            ]
+            .map(|(k, v)| (k.to_string(), v))
+        );
+        assert_eq!(records[2]["attributes"].as_array().unwrap().len(), 4);
+    }
+
+    fn required(installed: Option<&str>, acceptable: bool, offered: &str, target: Option<&str>) -> crate::required::Required {
+        crate::required::Required {
+            resource: "app".into(),
+            installed: installed.map(Into::into),
+            acceptable,
+            offered: Some(offered.into()),
+            via: "winget".into(),
+            installer: false,
+            target: target.map(Into::into),
+            needs: vec![],
+            summary: String::new(),
+        }
+    }
+
+    #[test]
+    fn only_requirement_changes_are_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("reports/requirements.json");
+        // Each status check, and what it records: (outcome, installed, offered).
+        let check = |app: &str, r: Option<crate::required::Required>, queued: bool| {
+            let mut got = None;
+            requirement_in(&state, app, "acme", Unmet::of(r.as_ref()), |e| {
+                assert_eq!((e.event, e.app.as_deref(), e.collection.as_deref()), ("requirement", Some(app), Some("acme")));
+                got = Some((e.outcome, e.installed_version, e.offered_version));
+                queued
+            });
+            got
+        };
+        let some = |o: &'static str, i: &str, f: &str| Some((o, Some(i.to_string()), Some(f.to_string())));
+        let old = || Some(required(Some("115.0"), false, "128.0.3", Some("128.0.3")));
+        // No requirement, or met: nothing to record.
+        assert_eq!(check("acme/firefox", None, true), None);
+        assert_eq!(check("acme/firefox", Some(required(Some("128.0.3"), true, "128.0.3", Some("128.0.3"))), true), None);
+        // Not installed: installing reports its own failure.
+        assert_eq!(check("acme/firefox", Some(required(None, true, "127.0", None)), true), None);
+        // Unacceptable: recorded once, again when the outcome or the installed version changes.
+        assert_eq!(check("acme/firefox", old(), true), some("notAcceptable", "115.0", "128.0.3"));
+        assert_eq!(check("acme/firefox", old(), true), None);
+        assert_eq!(check("acme/firefox", Some(required(Some("115.0"), false, "128.0.4", Some("128.0.4"))), true), None);
+        assert_eq!(check("acme/firefox", Some(required(Some("116.0"), false, "128.0.4", Some("128.0.4"))), true), some("notAcceptable", "116.0", "128.0.4"));
+        assert_eq!(check("acme/firefox", Some(required(Some("116.0"), false, "128.0.4", None)), true), some("noneOffered", "116.0", "128.0.4"));
+        // Another app has its own state.
+        assert_eq!(check("acme/zoom", Some(required(Some("5.0"), false, "5.1", None)), true), some("noneOffered", "5.0", "5.1"));
+        assert_eq!(check("acme/zoom", Some(required(Some("5.0"), false, "5.1", None)), true), None);
+        // Acceptable again: once.
+        assert_eq!(check("acme/firefox", None, true), Some(("acceptable", None, None)));
+        assert_eq!(check("acme/firefox", None, true), None);
+        // Uninstalled while unacceptable: no longer on that version.
+        assert_eq!(check("acme/zoom", Some(required(None, true, "5.1", None)), true), Some(("acceptable", None, None)));
+        // Not queued (reporting off): tried again at the next check.
+        assert_eq!(check("acme/firefox", old(), false), some("notAcceptable", "115.0", "128.0.3"));
+        assert_eq!(check("acme/firefox", old(), true), some("notAcceptable", "115.0", "128.0.3"));
+        assert_eq!(check("acme/firefox", old(), true), None);
+        // A damaged state file counts as nothing recorded.
+        fs::write(&state, "{").unwrap();
+        assert_eq!(check("acme/firefox", old(), true), some("notAcceptable", "115.0", "128.0.3"));
     }
 
     #[test]
