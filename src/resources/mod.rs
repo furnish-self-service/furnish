@@ -9,6 +9,7 @@
 
 mod command;
 mod common;
+pub mod diff;
 mod note;
 pub mod text;
 pub mod value;
@@ -369,6 +370,13 @@ fn write_options(mode: Option<u32>, private: Option<bool>, backup: Option<bool>,
     WriteOptions { mode, private: private.unwrap_or(false), backup: backup.unwrap_or(false), validate: validate.clone() }
 }
 
+/// Whether a preview shows only how many lines change, not which: the file may hold secrets.
+/// It is `private`, gets a `mode` without read access for group and others (e.g. 600), or has
+/// such a mode or (Windows) an access list for the user only already.
+fn hidden(file: &Managed, options: &WriteOptions) -> bool {
+    options.private || options.mode.is_some_and(|m| m & 0o044 == 0) || (file.bytes.is_some() && common::owner_only(&file.real))
+}
+
 /// The preview lines for writing a file.
 fn write_steps(file: &Managed, options: &WriteOptions, what: Vec<Note>) -> Vec<Note> {
     let mut steps = what;
@@ -395,7 +403,9 @@ fn file(props: &Value) -> Result<Plan> {
     if !exist(p.exist) {
         plan.observe("_exist", Some(found.into()), Some(false.into()));
         if found {
-            let steps = vec![note("file.delete", json!({ "path": file.shown }))];
+            let mut delete = note("file.delete", json!({ "path": file.shown }));
+            delete.add_diff(diff::bytes(file.bytes.as_deref(), b""), hidden(&file, &options));
+            let steps = vec![delete];
             plan.change(steps, move || common::delete(&file, &options));
         }
         return Ok(plan);
@@ -409,7 +419,7 @@ fn file(props: &Value) -> Result<Plan> {
         (Some(content), _) => {
             let old = current.as_ref().map(|t| t.text.as_str()).filter(|_| found);
             if old != Some(content.as_str()) {
-                what = Some(note::text_change(&file.shown, old, content, options.private));
+                what = Some(note::text_change(&file.shown, old, content, hidden(&file, &options)));
             }
             match &current {
                 Some(t) if t.text == *content => None,
@@ -422,7 +432,9 @@ fn file(props: &Value) -> Result<Plan> {
             let same = file.bytes.as_deref() == Some(bytes.as_slice());
             if !same {
                 let name = Path::new(source).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                what = Some(note("file.copy", json!({ "path": file.shown, "source": name })));
+                let mut copy = note("file.copy", json!({ "path": file.shown, "source": name }));
+                copy.add_diff(diff::bytes(file.bytes.as_deref(), &bytes), hidden(&file, &options));
+                what = Some(copy);
             }
             (!same).then_some(bytes)
         }
@@ -450,18 +462,12 @@ fn file(props: &Value) -> Result<Plan> {
     Ok(plan)
 }
 
-/// The change of a text-editing resource: write `new` if it differs from the file's text.
-/// `diff`: the first note also gets the lines added and removed and the changed lines (Block;
-/// Line and Value show their line or value, which says it all).
-fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, mut what: Vec<Note>, diff: bool) {
+/// The change of a text-editing resource: write `new` if it differs from the file's text. The
+/// first note also gets the diff (see [`Note::add_diff`]).
+fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, mut what: Vec<Note>) {
     if new != text.text {
-        if diff && let Some(first) = what.first_mut() {
-            let counts = note::text_change(&file.shown, Some(text.text.as_str()), &new, false);
-            for key in ["added", "removed", "diff"] {
-                if let Some(v) = counts.params.get(key) {
-                    first.params.insert(key.into(), v.clone());
-                }
-            }
+        if let Some(first) = what.first_mut() {
+            first.add_diff(Some(diff::lines(&text.text, &new)), hidden(&file, &options));
         }
         let steps = write_steps(&file, &options, what);
         plan.change(steps, move || common::write(&file, &text.encode(&new), &options));
@@ -530,7 +536,7 @@ fn block(props: &Value) -> Result<Plan> {
     };
     let what = vec![note(code, json!({ "path": file.shown }))];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what, true);
+    text_change(&mut plan, file, text, new, options, what);
     Ok(plan)
 }
 
@@ -591,7 +597,7 @@ fn line(props: &Value) -> Result<Plan> {
         (Some(_), true) => note("line.move", json!({ "path": path, "line": p.line })),
     }];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what, false);
+    text_change(&mut plan, file, text, new, options, what);
     Ok(plan)
 }
 
@@ -662,7 +668,7 @@ fn value(props: &Value) -> Result<Plan> {
     };
     let what = vec![note(code, json!({ "path": file.shown, "location": p.location }))];
     let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what, false);
+    text_change(&mut plan, file, text, new, options, what);
     Ok(plan)
 }
 
@@ -731,7 +737,9 @@ mod tests {
         fs::write(&p, "hosts:\n  gitlab.com:\n    token: abc\n").unwrap();
         fs::set_permissions(&p, fs::Permissions::from_mode(0o600)).unwrap();
         let props = json!({"path": p, "location": "$.hosts['git.example.org'].git_protocol", "value": "ssh"});
-        converge("value", props);
+        let steps = converge("value", props);
+        assert_eq!(steps[0].params["hidden"], true, "a file only its owner may read shows no lines");
+        assert!(steps[0].params.get("diff").is_none());
         assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
         assert!(fs::read_to_string(&p).unwrap().contains("git.example.org"));
     }
@@ -789,6 +797,32 @@ mod tests {
         fs::remove_file(Path::new(&p).join("profile.ovpn")).unwrap();
         converge("directory", json!({"path": p, "_exist": false}));
         assert!(!Path::new(&p).exists());
+    }
+
+    #[test]
+    fn line_value_and_source_changes_carry_a_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let lines = |n: &Note| n.params["diff"]["hunks"][0]["lines"].clone();
+        let p = path(&dir, "config");
+        fs::write(&p, "Host a\n").unwrap();
+        let steps = converge("line", json!({"path": p, "line": "Include x", "before": "^Host\\s"}));
+        assert_eq!(lines(&steps[0]), json!(["+Include x", " Host a"]));
+        let p = path(&dir, "settings.json");
+        fs::write(&p, "{\n  // mine\n  \"a\": 1\n}\n").unwrap();
+        let steps = converge("value", json!({"path": p, "format": "jsonc", "location": "$.a", "value": 2}));
+        assert_eq!(lines(&steps[0]), json!([" {", "   // mine", "-  \"a\": 1", "+  \"a\": 2", " }"]));
+        let source = path(&dir, "source.conf");
+        fs::write(&source, "x\ny\n").unwrap();
+        let p = path(&dir, "copy.conf");
+        fs::write(&p, "x\n").unwrap();
+        let steps = converge("file", json!({"path": p, "source": source}));
+        assert_eq!(lines(&steps[0]), json!([" x", "+y"]));
+        fs::write(&source, b"\x00\x01").unwrap();
+        assert_eq!(converge("file", json!({"path": p, "source": source}))[0].params["binary"], true);
+        let steps = converge("file", json!({"path": p, "content": "a\n", "mode": "640"}));
+        assert!(steps[0].params.get("diff").is_some(), "group may read it: the lines are shown");
+        let steps = converge("file", json!({"path": p, "content": "b\n", "mode": "600"}));
+        assert_eq!(steps[0].params["hidden"], true);
     }
 
     #[test]

@@ -296,7 +296,10 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.note.test.present': "<code>{command}</code> trova l’impostazione: c’è, ma non è aggiornata",
   'plan.note.test.exitCode': "Il test <code>{command}</code> è terminato con il codice {got}, atteso {expected}",
   'plan.note.test.json': "Il test <code>{command}</code> ha <code>{got}</code> in <code>{path}</code>, atteso <code>{expected}</code>",
-  'plan.note.lines': "Righe modificate",
+  'plan.diff.counts': "{added} aggiunte, {removed} rimosse",
+  'plan.diff.more': { one: "Altra {n} riga non mostrata", other: "Altre {n} righe non mostrate" },
+  'plan.diff.binary': "File binario, non mostrato",
+  'plan.diff.hidden': "Righe non mostrate: solo il proprietario può leggere il file",
 
   // Collections.svelte
   'collections.title': 'Raccolte',

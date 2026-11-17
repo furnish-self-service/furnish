@@ -296,7 +296,10 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.note.test.present': "<code>{command}</code> encuentra el ajuste: existe, pero está desactualizado",
   'plan.note.test.exitCode': "La prueba <code>{command}</code> terminó con el código {got}, se esperaba {expected}",
   'plan.note.test.json': "La prueba <code>{command}</code> tiene <code>{got}</code> en <code>{path}</code>, se esperaba <code>{expected}</code>",
-  'plan.note.lines': "Líneas cambiadas",
+  'plan.diff.counts': "{added} añadidas, {removed} eliminadas",
+  'plan.diff.more': { one: "{n} línea más sin mostrar", other: "{n} líneas más sin mostrar" },
+  'plan.diff.binary': "Archivo binario, no se muestra",
+  'plan.diff.hidden': "Líneas no mostradas: solo el propietario puede leer el archivo",
 
   // Collections.svelte
   'collections.title': 'Colecciones',

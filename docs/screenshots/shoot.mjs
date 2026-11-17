@@ -118,7 +118,7 @@ async function stepsShots(prefix) {
       await sleep(1500);
       await js(`document.evaluate("//details[@open][.//li]", document, null, 9, null).singleNodeValue.scrollIntoView({block: "start"})`);
       // The changed lines, where a step has them.
-      for (const id of await findAll("//details[contains(@class,'lines')]/summary")) await wd('POST', s(`/element/${id}/click`), {});
+      for (const id of await findAll("//details[contains(@class,'filediff')]/summary")) await wd('POST', s(`/element/${id}/click`), {});
       await shot(`steps-${name}-${prefix}-${lang}`);
     }
   }

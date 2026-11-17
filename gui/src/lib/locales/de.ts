@@ -294,7 +294,10 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.note.test.present': "<code>{command}</code> findet die Einstellung: Sie ist vorhanden, aber veraltet",
   'plan.note.test.exitCode': "Test <code>{command}</code> endete mit Code {got}, erwartet {expected}",
   'plan.note.test.json': "Test <code>{command}</code> hat <code>{got}</code> bei <code>{path}</code>, erwartet <code>{expected}</code>",
-  'plan.note.lines': "Geänderte Zeilen",
+  'plan.diff.counts': "{added} hinzugefügt, {removed} entfernt",
+  'plan.diff.more': { one: "{n} weitere Zeile nicht angezeigt", other: "{n} weitere Zeilen nicht angezeigt" },
+  'plan.diff.binary': "Binärdatei, nicht angezeigt",
+  'plan.diff.hidden': "Zeilen nicht angezeigt: Nur der Besitzer darf die Datei lesen",
 
   // Collections.svelte
   'collections.title': 'Sammlungen',

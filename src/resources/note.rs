@@ -4,9 +4,7 @@
 
 use serde_json::{Map, Value, json};
 
-/// Lines a diff shows at most, and characters per line.
-const DIFF_LINES: usize = 12;
-const DIFF_WIDTH: usize = 120;
+use super::diff::{self, Diff};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Note {
@@ -66,65 +64,33 @@ impl Note {
     }
 }
 
-/// The notes for writing a file whose text changes from `old` (`None`: no file) to `new`, with
-/// a short line diff unless `secret`.
-pub fn text_change(path: &str, old: Option<&str>, new: &str, secret: bool) -> Note {
-    let lines = |t: &str| if t.is_empty() { 0 } else { t.lines().count() };
-    let Some(old) = old else {
-        return note("file.create", json!({ "path": path, "lines": lines(new) }));
+/// The note for writing a file whose text changes from `old` (`None`: no file) to `new`, with
+/// the lines added and removed and a line diff unless `hidden`.
+pub fn text_change(path: &str, old: Option<&str>, new: &str, hidden: bool) -> Note {
+    let mut n = match old {
+        None => note("file.create", json!({ "path": path, "lines": if new.is_empty() { 0 } else { new.lines().count() } })),
+        Some(_) => note("file.write", json!({ "path": path })),
     };
-    let (added, removed, diff) = diff(old, new);
-    let mut params = json!({ "path": path, "added": added, "removed": removed });
-    if !secret && !diff.is_empty() {
-        params["diff"] = diff.into();
-    }
-    note("file.write", params)
+    n.add_diff(Some(diff::lines(old.unwrap_or(""), new)), hidden);
+    n
 }
 
-/// Lines added and removed, and the first changed lines as `+ line` / `- line`.
-fn diff(old: &str, new: &str) -> (usize, usize, Vec<String>) {
-    let (a, b): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
-    // Common start and end, then the longest common subsequence of what is between (small files).
-    let start = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let end = a[start..].iter().rev().zip(b[start..].iter().rev()).take_while(|(x, y)| x == y).count();
-    let (a, b) = (&a[start..a.len() - end], &b[start..b.len() - end]);
-    let mut out = Vec::new();
-    let mut push = |sign: char, line: &str| {
-        if out.len() < DIFF_LINES {
-            let mut shown: String = line.chars().take(DIFF_WIDTH).collect();
-            if line.chars().count() > DIFF_WIDTH {
-                shown.push('…');
-            }
-            out.push(format!("{sign} {shown}"));
-        }
-    };
-    if a.len() * b.len() > 1_000_000 {
-        a.iter().for_each(|l| push('-', l));
-        b.iter().for_each(|l| push('+', l));
-        return (b.len(), a.len(), out);
-    }
-    let mut lcs = vec![vec![0u32; b.len() + 1]; a.len() + 1];
-    for i in (0..a.len()).rev() {
-        for j in (0..b.len()).rev() {
-            lcs[i][j] = if a[i] == b[j] { lcs[i + 1][j + 1] + 1 } else { lcs[i + 1][j].max(lcs[i][j + 1]) };
+impl Note {
+    /// Add what a step changes in a file: `added`, `removed` and `diff`; only the counts if
+    /// `hidden` (the file may hold secrets), `binary` if the file isn't text (`None`).
+    pub fn add_diff(&mut self, diff: Option<Diff>, hidden: bool) {
+        let Some(diff) = diff else {
+            self.params.insert("binary".into(), true.into());
+            return;
+        };
+        self.params.insert("added".into(), diff.added.into());
+        self.params.insert("removed".into(), diff.removed.into());
+        if hidden {
+            self.params.insert("hidden".into(), true.into());
+        } else if !diff.hunks.is_empty() {
+            self.params.insert("diff".into(), diff.to_json());
         }
     }
-    let (mut i, mut j, mut added, mut removed) = (0, 0, 0, 0);
-    while i < a.len() || j < b.len() {
-        if i < a.len() && j < b.len() && a[i] == b[j] {
-            i += 1;
-            j += 1;
-        } else if i < a.len() && (j == b.len() || lcs[i + 1][j] >= lcs[i][j + 1]) {
-            push('-', a[i]);
-            removed += 1;
-            i += 1;
-        } else {
-            push('+', b[j]);
-            added += 1;
-            j += 1;
-        }
-    }
-    (added, removed, out)
 }
 
 #[cfg(test)]
@@ -132,25 +98,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_change_shows_counts_and_the_changed_lines_only() {
+    fn a_change_shows_counts_and_a_diff_unless_hidden() {
         let n = text_change("~/.ssh/config", Some("a\nb\nc\n"), "a\nB\nc\nd\n", false);
         assert_eq!(n.code, "file.write");
         assert_eq!((n.params["added"].as_u64(), n.params["removed"].as_u64()), (Some(2), Some(1)));
-        assert_eq!(n.params["diff"], json!(["- b", "+ B", "+ d"]));
+        assert_eq!(n.params["diff"]["hunks"][0]["lines"], json!([" a", "-b", "+B", " c", "+d"]));
         assert_eq!(n.english(), "Change ~/.ssh/config (2 lines added, 1 removed)");
         let secret = text_change("~/vpn.ovpn", Some("key 1\n"), "key 2\n", true);
         assert!(secret.params.get("diff").is_none(), "a private file's lines aren't shown");
+        assert_eq!((secret.params["added"].as_u64(), secret.params["hidden"].as_bool()), (Some(1), Some(true)));
         let created = text_change("~/x", None, "1\n2\n", false);
         assert_eq!(created.english(), "Create ~/x (2 lines)");
-    }
-
-    #[test]
-    fn a_long_diff_is_capped() {
-        let new: String = (0..100).map(|i| format!("{}{i}\n", "x".repeat(200))).collect();
-        let n = text_change("f", Some(""), &new, false);
-        let diff = n.params["diff"].as_array().unwrap();
-        assert_eq!(diff.len(), DIFF_LINES);
-        assert!(diff[0].as_str().unwrap().chars().count() <= DIFF_WIDTH + 3);
-        assert_eq!(n.params["added"], 100);
+        assert_eq!(created.params["diff"]["hunks"][0]["lines"], json!(["+1", "+2"]));
+        let mut binary = note("file.copy", json!({ "path": "~/x", "source": "x.bin" }));
+        binary.add_diff(None, false);
+        assert_eq!(binary.params["binary"], true);
     }
 }

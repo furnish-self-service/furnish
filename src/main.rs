@@ -1314,6 +1314,7 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
 fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
     use engine::Action;
     let steps = app.plan(uninstall)?;
+    let color = std::io::IsTerminal::is_terminal(&std::io::stdout());
     println!("{} {} would:", if uninstall { "Uninstalling" } else { "Installing" }, app.id);
     for step in &steps {
         let label = match step.action {
@@ -1326,6 +1327,19 @@ fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
         println!("\n  {label:<16} {}  ({})", step.name, step.kind);
         for detail in &step.details {
             println!("  {:<16} {detail}", "");
+        }
+        // The lines a file step changes (see resources/diff.rs).
+        for params in step.notes.iter().map(|n| &n["params"]) {
+            let shown = if params["binary"] == true {
+                vec!["binary file, not shown".to_string()]
+            } else if params["hidden"] == true {
+                vec!["lines not shown: only the file's owner may read it".to_string()]
+            } else {
+                furnish::resources::diff::plain(&params["diff"], color)
+            };
+            for line in shown {
+                println!("  {:<16} {line}", "");
+            }
         }
         for c in &step.changes {
             println!("  {:<16} {}: {} → {}", "", c.property, c.before, c.after);

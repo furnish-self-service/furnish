@@ -399,6 +399,19 @@ pub fn is_private(path: &Path, folder: bool) -> Result<bool> {
     }
 }
 
+/// Whether only the owner may read the file: a mode without read access for group and others
+/// (e.g. 600), or on Windows an access list for the user only.
+pub fn owner_only(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        mode(path).is_some_and(|m| m & 0o044 == 0)
+    }
+    #[cfg(windows)]
+    {
+        windows::is_private(path).unwrap_or(false)
+    }
+}
+
 /// The Unix mode of a file or folder (Windows: `None`).
 pub fn mode(path: &Path) -> Option<u32> {
     #[cfg(unix)]

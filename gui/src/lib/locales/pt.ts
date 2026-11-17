@@ -296,7 +296,10 @@ export const pt: Record<keyof typeof en, Entry> = {
   'plan.note.test.present': "<code>{command}</code> encontra a configuração: ela existe, mas está desatualizada",
   'plan.note.test.exitCode': "O teste <code>{command}</code> terminou com o código {got}, esperado {expected}",
   'plan.note.test.json': "O teste <code>{command}</code> tem <code>{got}</code> em <code>{path}</code>, esperado <code>{expected}</code>",
-  'plan.note.lines': "Linhas alteradas",
+  'plan.diff.counts': "{added} adicionadas, {removed} removidas",
+  'plan.diff.more': { one: "Mais {n} linha não mostrada", other: "Mais {n} linhas não mostradas" },
+  'plan.diff.binary': "Ficheiro binário, não mostrado",
+  'plan.diff.hidden': "Linhas não mostradas: só o proprietário pode ler o ficheiro",
 
   // Collections.svelte
   'collections.title': 'Coleções',

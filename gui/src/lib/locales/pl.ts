@@ -313,7 +313,10 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.note.test.present': "<code>{command}</code> znajduje ustawienie: istnieje, ale jest nieaktualne",
   'plan.note.test.exitCode': "Test <code>{command}</code> zakończył się kodem {got}, oczekiwano {expected}",
   'plan.note.test.json': "Test <code>{command}</code> ma <code>{got}</code> w <code>{path}</code>, oczekiwano <code>{expected}</code>",
-  'plan.note.lines': "Zmienione wiersze",
+  'plan.diff.counts': "dodane: {added}, usunięte: {removed}",
+  'plan.diff.more': { one: "Nie pokazano {n} kolejnego wiersza", few: "Nie pokazano {n} kolejnych wierszy", many: "Nie pokazano {n} kolejnych wierszy", other: "Nie pokazano {n} kolejnego wiersza" },
+  'plan.diff.binary': "Plik binarny, nie jest pokazany",
+  'plan.diff.hidden': "Wiersze nie są pokazane: tylko właściciel może czytać ten plik",
 
   // Collections.svelte
   'collections.title': 'Kolekcje',

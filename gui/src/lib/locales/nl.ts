@@ -296,7 +296,10 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.note.test.present': "<code>{command}</code> vindt de instelling: die bestaat, maar is verouderd",
   'plan.note.test.exitCode': "Test <code>{command}</code> eindigde met code {got}, verwacht {expected}",
   'plan.note.test.json': "Test <code>{command}</code> heeft <code>{got}</code> bij <code>{path}</code>, verwacht <code>{expected}</code>",
-  'plan.note.lines': "Gewijzigde regels",
+  'plan.diff.counts': "{added} toegevoegd, {removed} verwijderd",
+  'plan.diff.more': { one: "Nog {n} regel niet getoond", other: "Nog {n} regels niet getoond" },
+  'plan.diff.binary': "Binair bestand, niet getoond",
+  'plan.diff.hidden': "Regels niet getoond: alleen de eigenaar mag het bestand lezen",
 
   // Collections.svelte
   'collections.title': 'Collecties',

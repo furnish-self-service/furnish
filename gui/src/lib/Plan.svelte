@@ -93,7 +93,28 @@
     const p = n.params as Record<string, string | number>;
     return tparts(`plan.note.${n.code}` as Key, n.code === 'file.create' ? { ...p, n: p.lines } : p);
   }
-  const diffLines = (n: Note) => (Array.isArray(n.params.diff) ? (n.params.diff as string[]) : []);
+  /** A file step's diff (resources/diff.rs): hunks of ' kept', '-removed', '+added' lines. */
+  type Diff = { hunks: { old: number; new: number; lines: string[] }[]; more: number };
+  type DiffRow = { old: number | null; new: number | null; sign: ' ' | '+' | '-'; text: string };
+  /** Whether a note says what a step does to a file's lines. */
+  const touchesLines = (n: Note) => !!n.params.diff || !!n.params.binary || !!n.params.hidden;
+  /** The hunks as rows with their line numbers in the old and the new file. */
+  function diffHunks(n: Note): DiffRow[][] {
+    const d = n.params.diff as Diff | undefined;
+    return (d?.hunks ?? []).map((h) => {
+      let [o, nw] = [h.old, h.new];
+      return h.lines.map((l) => {
+        const sign = l[0] === '+' || l[0] === '-' ? l[0] : ' ';
+        const row = { old: sign === '+' ? null : o, new: sign === '-' ? null : nw, sign, text: l.slice(1) } as DiffRow;
+        if (sign !== '+') o++;
+        if (sign !== '-') nw++;
+        return row;
+      });
+    });
+  }
+  const diffMore = (n: Note) => (n.params.diff as Diff | undefined)?.more ?? 0;
+  /** "+3 −1", unless the note's sentence already has the counts. */
+  const showCounts = (n: Note) => typeof n.params.added === 'number' && n.code !== 'file.write' && n.code !== 'file.create';
   const show = (v: unknown) => (v === null || v === undefined ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
   const seconds = formatDuration;
   const clock = (ms: number) => formatTime(ms, true);
@@ -108,6 +129,25 @@
 </script>
 
 {#snippet marked(text: string, strongClass = '')}{#each parts(text) as p}{#if p.tag}<strong class={strongClass}>{p.text}</strong>{:else}{p.text}{/if}{/each}{/snippet}
+
+{#snippet sentence(n: Note)}{#each noteParts(n) as part}{#if part.tag}<code class="inline">{part.text}</code>{:else}{part.text}{/if}{/each}{#if showCounts(n)}<span class="counts" title={t('plan.diff.counts', { added: n.params.added as number, removed: n.params.removed as number })}>{#if n.params.added}<span class="plus">+{n.params.added}</span>{/if}{#if n.params.added && n.params.removed}{' '}{/if}{#if n.params.removed}<span class="minus">−{n.params.removed}</span>{/if}</span>{/if}{/snippet}
+
+{#snippet diffTable(n: Note)}
+  <div class="difftable">
+    {#each diffHunks(n) as hunk, h}
+      {#if h > 0}<div class="sep" aria-hidden="true"><span>⋯</span></div>{/if}
+      {#each hunk as r}
+        <div class="row" class:add={r.sign === '+'} class:del={r.sign === '-'}>
+          <span class="num" aria-hidden="true">{r.old ?? ''}</span>
+          <span class="num" aria-hidden="true">{r.new ?? ''}</span>
+          <span class="sign">{r.sign === '-' ? '−' : r.sign}</span>
+          <span class="text">{r.text}</span>
+        </div>
+      {/each}
+    {/each}
+    {#if diffMore(n)}<div class="more">{t('plan.diff.more', { n: diffMore(n) })}</div>{/if}
+  </div>
+{/snippet}
 
 <div class="plan">
   <div class="switch" role="radiogroup" aria-label={t('plan.show')}>
@@ -199,12 +239,15 @@
                   <code>{n.params.command}</code>
                 </div>
               {:else}
-                <p class="detail">{#each noteParts(n) as part}{#if part.tag}<code class="inline">{part.text}</code>{:else}{part.text}{/if}{/each}</p>
-                {#if diffLines(n).length}
-                  <details class="lines">
-                    <summary>{t('plan.note.lines')}</summary>
-                    <pre>{#each diffLines(n) as l}<span class:add={l.startsWith('+')} class:del={l.startsWith('-')}>{l}</span>{'\n'}{/each}</pre>
+                {#if n.params.diff}
+                  <details class="filediff">
+                    <summary class="detail">{@render sentence(n)}</summary>
+                    {@render diffTable(n)}
                   </details>
+                {:else}
+                  <p class="detail">{@render sentence(n)}</p>
+                  {#if n.params.binary}<p class="lines-note">{t('plan.diff.binary')}</p>
+                  {:else if n.params.hidden}<p class="lines-note">{t('plan.diff.hidden')}</p>{/if}
                 {/if}
               {/if}
             {/each}
@@ -467,25 +510,98 @@
     color: var(--ink);
     word-break: break-all;
   }
-  .lines summary {
-    font-size: 0.8rem;
-    color: var(--muted);
+  /* A file step's diff: collapsed under the step's sentence. */
+  .filediff summary {
     cursor: pointer;
+    list-style: none;
   }
-  .lines pre {
-    margin: 0.3rem 0 0;
-    padding: 0.4rem 0.6rem;
-    border-radius: 8px;
-    background: var(--hover);
-    font: 0.78rem/1.4 var(--font-mono);
-    white-space: pre-wrap;
-    word-break: break-all;
+  .filediff summary::-webkit-details-marker {
+    display: none;
   }
-  .lines .add {
+  .filediff summary::before {
+    content: '▸';
+    display: inline-block;
+    width: 1em;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .filediff[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .filediff summary:hover {
+    color: var(--ink);
+  }
+  .counts {
+    margin-left: 0.5rem;
+    font: 600 0.78rem var(--font-mono);
+    white-space: nowrap;
+  }
+  .plus {
     color: var(--accent-ink);
   }
-  .lines .del {
+  .minus {
     color: var(--danger);
+  }
+  .lines-note {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .difftable {
+    margin: 0.4rem 0 0;
+    padding: 0.3rem 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--canvas);
+    font: 0.76rem/1.45 var(--font-mono);
+    overflow: hidden;
+  }
+  .difftable .row {
+    display: grid;
+    grid-template-columns: 3.2em 3.2em 1.4em 1fr;
+  }
+  .difftable .num {
+    padding-right: 0.6em;
+    text-align: right;
+    color: var(--muted);
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .difftable .sign {
+    text-align: center;
+    user-select: none;
+    color: var(--muted);
+  }
+  .difftable .text {
+    padding-right: 0.6rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--ink-soft);
+  }
+  .difftable .add {
+    background: var(--accent-soft);
+  }
+  .difftable .add .sign,
+  .difftable .add .text {
+    color: var(--accent-ink);
+  }
+  .difftable .del {
+    background: var(--danger-soft);
+  }
+  .difftable .del .sign,
+  .difftable .del .text {
+    color: var(--danger);
+  }
+  .difftable .sep {
+    padding: 0.1rem 0 0.1rem 7.2em;
+    color: var(--muted);
+    border-block: 1px dashed var(--line);
+    margin: 0.2rem 0;
+  }
+  .difftable .more {
+    padding: 0.3rem 0.6rem 0.1rem 7.8em;
+    font-family: var(--font-body);
+    color: var(--muted);
   }
   .diff {
     margin: 0;

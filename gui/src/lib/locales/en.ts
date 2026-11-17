@@ -293,7 +293,10 @@ export const en = {
   'plan.note.test.present': "<code>{command}</code> finds the setting: it is there but outdated",
   'plan.note.test.exitCode': "Test <code>{command}</code> exited with code {got}, expected {expected}",
   'plan.note.test.json': "Test <code>{command}</code> has <code>{got}</code> at <code>{path}</code>, expected <code>{expected}</code>",
-  'plan.note.lines': "Changed lines",
+  'plan.diff.counts': "{added} added, {removed} removed",
+  'plan.diff.more': { one: "{n} more line not shown", other: "{n} more lines not shown" },
+  'plan.diff.binary': "Binary file, not shown",
+  'plan.diff.hidden': "Lines not shown: only the file’s owner may read it",
 
   // Collections.svelte
   'collections.title': 'Collections',
