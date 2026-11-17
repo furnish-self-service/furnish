@@ -116,7 +116,8 @@ health=$(gf "$grafana/api/datasources/uid/furnish-loki/health" | jq -r .status)
 # pixels wide: 30-minute steps). Points of range queries must fall inside the range, or Grafana
 # shows "Data outside time range" (Loki aligns points to the step, which can lie after "to").
 stale=$(( $(date +%s) - batch2_at + 2 ))s
-to=$(( $(date +%s) * 1000 )); from=$(( to - 30 * 86400000 ))
+# One second ahead: reports from the current second count too (date +%s rounds down).
+to=$(( ($(date +%s) + 1) * 1000 )); from=$(( to - 30 * 86400000 ))
 queries=$(jq -c --arg stale "$stale" '.panels[] | .title as $t | .targets[] | {title: $t, query: (.expr |= gsub("\\$stale"; $stale))}' "$dashboard")
 while read -r q; do
     title=$(printf '%s\n' "$q" | jq -r '"\(.title) (\(.query.refId))"')
