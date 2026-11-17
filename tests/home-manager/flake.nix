@@ -13,6 +13,8 @@
   outputs = { nixpkgs, home-manager, furnish, ... }: {
     homeConfigurations.alice = home-manager.lib.homeManagerConfiguration {
       pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      # For home.extraDependencies (home.nix).
+      extraSpecialArgs = { inherit nixpkgs home-manager; };
       modules = [ furnish.homeManagerModules.default ./home.nix ];
     };
   };

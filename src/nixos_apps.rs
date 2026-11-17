@@ -342,16 +342,30 @@ fn home_facts(person: &Account) -> Option<crate::nixos::HomeFacts> {
     serde_json::from_str(&read_as(person, &person.home.join(crate::nixos::HOME_FACTS))?).ok()
 }
 
-/// The person's `osSpecific.nixos.installInto`, or the policy's. The service reads the person's
-/// own settings for this one: it only chooses between places they may install into anyway.
-fn install_into_for(person: &Account, module: bool) -> &'static str {
-    let choices = if in_service() {
-        let data = if cfg!(target_os = "macos") { "Library/Application Support/furnish" } else { ".local/share/furnish" };
-        read_as(person, &person.home.join(data).join("settings.json")).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+/// `osSpecific.nixos.installInto` as this user's settings and the policy give it, for a request
+/// to the service (`service::Request::Install`).
+pub fn own_install_into() -> Option<String> {
+    let leaf = crate::nixos::chosen(&crate::policy::load(), &crate::settings::user_choices()).install_into?;
+    leaf.value.as_str().map(str::to_string)
+}
+
+/// The person's `osSpecific.nixos.installInto`, or the policy's. In the service, the caller sent
+/// theirs with the request (`service::REQUESTER_INSTALL_INTO`): their settings may be anywhere.
+/// It only chooses between places they may install into anyway.
+fn install_into_for(_person: &Account, module: bool) -> &'static str {
+    let policy = crate::policy::load();
+    let leaf = if in_service() {
+        let theirs = std::env::var(crate::service::REQUESTER_INSTALL_INTO).ok().filter(|v| !v.is_empty());
+        let mut choices = serde_json::Map::new();
+        if let Some(v) = theirs {
+            choices.insert("osSpecific".into(), json!({ "nixos": { "installInto": v } }));
+        }
+        // The policy's lock still wins, as for settings people make themselves.
+        crate::nixos::chosen(&policy, &choices).install_into
     } else {
-        crate::settings::user_choices()
+        crate::nixos::chosen(&policy, &crate::settings::user_choices()).install_into
     };
-    install_into(crate::nixos::chosen(&crate::policy::load(), &choices).install_into.as_ref(), module)
+    install_into(leaf.as_ref(), module)
 }
 
 impl HomeTarget {

@@ -59,9 +59,19 @@ pub enum Request {
         values: Map<String, Value>,
         #[serde(default)]
         which: crate::catalog::Which,
+        /// The caller's `osSpecific.nixos.installInto`: the service can't read their settings,
+        /// which may be anywhere (`$XDG_DATA_HOME`). It only chooses between places the caller
+        /// may install into anyway (src/nixos_apps.rs).
+        #[serde(default)]
+        install_into: Option<String>,
     },
     Uninstall { app: String },
-    Reinstall { app: String, values: Map<String, Value> },
+    Reinstall {
+        app: String,
+        values: Map<String, Value>,
+        #[serde(default)]
+        install_into: Option<String>,
+    },
     /// Stop the running operation after its step, or (force) now.
     Stop { force: bool },
     /// `headers`: the user's credentials for the collections' servers (URL prefix →
@@ -284,15 +294,25 @@ where
 /// start, so later changes replace its value in place (as `resource_env::refresh`), under `RUNNING`.
 const REQUESTER: &str = "FURNISH_REQUESTER_UID";
 
+/// The caller's `installInto` for the running operation (`Request::Install`), for Furnish/NixOS.
+pub const REQUESTER_INSTALL_INTO: &str = "FURNISH_REQUESTER_INSTALL_INTO";
+
 fn set_requester(uid: Option<u32>) {
     // SAFETY: the name exists since `start`; only the operation holding RUNNING changes it.
     unsafe { std::env::set_var(REQUESTER, uid.map(|u| u.to_string()).unwrap_or_default()) };
+}
+
+fn set_install_into(value: Option<&str>) {
+    let value = value.filter(|v| matches!(*v, "system" | "home")).unwrap_or_default();
+    // SAFETY: as `set_requester`.
+    unsafe { std::env::set_var(REQUESTER_INSTALL_INTO, value) };
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn start() {
     IN_SERVICE.store(true, Ordering::Relaxed);
     set_requester(None);
+    set_install_into(None);
     engine::capture_logs(|line| {
         if let Some(out) = CURRENT.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             send(out, &Reply::Log { level: line.level.into(), message: line.message });
@@ -333,12 +353,14 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
         Ok(values)
     };
     type Work<'a> = &'a dyn Fn(&mut dyn FnMut(Progress)) -> Result<()>;
-    let operation = |work: Work| -> Result<Reply> {
+    let operation = |work: Work, install_into: Option<&str>| -> Result<Reply> {
         let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
         set_requester(caller);
+        set_install_into(install_into);
         let result = work(&mut |p| send(out, &Reply::Progress(p)));
         set_requester(None);
+        set_install_into(None);
         *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         result.map(|()| Reply::Done)
     };
@@ -374,19 +396,19 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
         _ => authorize(true)?,
     }
     match request {
-        Request::Install { app: key, values, which } => {
+        Request::Install { app: key, values, which, install_into } => {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
-            operation(&|report| app.install_here(&values, which, report))
+            operation(&|report| app.install_here(&values, which, report), install_into.as_deref())
         }
         Request::Uninstall { app: key } => {
             let app = app(&key)?;
-            operation(&|report| app.uninstall(report))
+            operation(&|report| app.uninstall(report), None)
         }
-        Request::Reinstall { app: key, values } => {
+        Request::Reinstall { app: key, values, install_into } => {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
-            operation(&|report| app.reinstall_with(&values, report))
+            operation(&|report| app.reinstall_with(&values, report), install_into.as_deref())
         }
         Request::Stop { force } => {
             if force { engine::force_stop() } else { engine::abort() }

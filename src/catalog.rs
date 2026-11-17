@@ -1399,7 +1399,8 @@ impl App {
     fn install_values(&self, values: serde_json::Map<String, Value>, which: Which, report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.require_answers()?;
         if self.remote(&values) {
-            return crate::service::run(&crate::service::Request::Install { app: self.key(), values, which }, report);
+            let install_into = crate::nixos_apps::own_install_into();
+            return crate::service::run(&crate::service::Request::Install { app: self.key(), values, which, install_into }, report);
         }
         self.install_here(&values, which, report)
     }
@@ -1618,7 +1619,8 @@ impl App {
         self.require_answers()?;
         let (old, new) = (self.installed_values(), self.current_values());
         if self.remote(&old) && self.remote(&new) {
-            return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new }, report);
+            let install_into = crate::nixos_apps::own_install_into();
+            return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new, install_into }, report);
         }
         if self.remote(&old) || self.remote(&new) {
             self.uninstall_unreported(&mut report)?;

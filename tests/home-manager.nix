@@ -9,14 +9,17 @@
 # uncommitted. The owner's example from #8, an app for each person (perUser): an ssh Include
 # through a Furnish/NixOS step (onlyIfSetUp) before a Furnish/Line step. For alice, Home Manager
 # writes it into one Include line with her own include, and the Line step accepts that line; for
-# bob, without Home Manager, the first step isn't needed and the Line step writes it. The VM is
-# offline. Run:
+# bob, without Home Manager, the first step isn't needed and the Line step writes it. With
+# installInto set to system in alice's settings (in ~/data), the service installs into the NixOS
+# configuration instead. After a garbage collection, the configuration still builds offline,
+# because it keeps nixpkgs and Home Manager (home.extraDependencies). The VM is offline. Run:
 #   nix build -L .#checks.x86_64-linux.home-manager
 { pkgs, nixpkgs, homeManagerModule, furnish, module }:
 let
   h = import ./home-manager/homes.nix { inherit pkgs nixpkgs homeManagerModule furnish; };
   before = h.home { };
   htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
+  hello = app "hello" { packages = [ "hello" ]; };
   after = h.home { inherit htop; };
   include = "config.d/acme.conf";
   ssh = h.home { acme-ssh = { packages = [ ]; options."programs.ssh.includes" = [ include ]; }; };
@@ -65,7 +68,7 @@ pkgs.testers.runNixOSTest {
       substituters = lib.mkForce [ ];
     };
     # Building takes nothing. Evaluating needs nixpkgs, Home Manager, furnish and crane.
-    virtualisation.additionalPaths = [ before after ssh nixpkgs.outPath h.homeManager furnish.outPath furnish.inputs.crane.outPath ];
+    virtualisation.additionalPaths = [ before after ssh nixpkgs.outPath h.homeManager.outPath furnish.outPath furnish.inputs.crane.outPath ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''
@@ -98,6 +101,7 @@ pkgs.testers.runNixOSTest {
         "cp ${app "git" { homeOptions."programs.git.enable" = true; }} /srv/org/apps/git.dsc.yaml",
         "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
         "cp ${acme-ssh} /srv/org/apps/acme-ssh.dsc.yaml",
+        "cp ${hello} /srv/org/apps/hello.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
     )
     alice("echo export XDG_DATA_HOME=/home/alice/data > .profile && mkdir -p .config/home-manager", dir=".")
@@ -176,5 +180,24 @@ pkgs.testers.runNixOSTest {
     machine.fail("test -e /home/bob/.local/share/furnish/home-apps/apps.json")
     listed = machine.succeed("su - bob -c 'furnish list'")
     assert any(l.startswith("✓  acme-ssh") for l in listed.splitlines()), listed
+
+    # alice wants apps in the NixOS configuration: her setting is in ~/data, which the service
+    # can't see; furnish sends it with the request. A packages-only app then goes there, which
+    # isn't set up on this computer.
+    furnish("settings --nixos-install-into system")
+    machine.succeed("grep -q installInto /home/alice/data/furnish/settings.json")
+    out = furnish("settings")
+    assert "Apps go into:        the NixOS configuration (set by you)" in out, out
+    out = furnish("install hello", ok=False)
+    assert "NixOS configuration" in out and "Home Manager" not in out, out
+    assert "hello" not in apps() and generation() == "${ssh}"
+    furnish("settings --nixos-reset")
+
+    # After a garbage collection, alice's configuration still builds offline: the generation
+    # keeps furnish's, crane's, nixpkgs' and Home Manager's sources.
+    machine.succeed("nix-collect-garbage >&2")
+    machine.succeed("nix-store --check-validity ${nixpkgs.outPath} ${h.homeManager.outPath} ${furnish.outPath}")
+    alice("nix build .#homeConfigurations.alice.activationPackage >&2")
+    assert alice("readlink result").strip() == "${ssh}"
   '';
 }

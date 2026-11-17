@@ -38,7 +38,7 @@ pkgs.testers.runNixOSTest {
       experimental-features = [ "nix-command" "flakes" ];
       substituters = lib.mkForce [ ];
     };
-    virtualisation.additionalPaths = [ before after h.homeManager ];
+    virtualisation.additionalPaths = [ before after h.homeManager.outPath ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''

@@ -40,7 +40,7 @@ jobs:
           BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           # What the macOS CLI jobs build (src/ embeds packaging/ and resources/ files) and run.
-          macos='^(src/|Cargo\.(toml|lock)$|\.cargo/|vendor/|resources/|scripts/|packaging/(dsc\.json$|macos/|linux/furnish\.service$|linux/io\.github\.furnish\.policy$)|tests/(e2e\.sh|vpn\.sh|service-macos\.sh|fixtures/)|\.github/workflows/ci\.yml$)'
+          macos='^(src/|Cargo\.(toml|lock)$|\.cargo/|vendor/|resources/|scripts/|packaging/(dsc\.json$|macos/|linux/furnish\.service$|linux/io\.github\.furnish\.policy$)|tests/(e2e\.sh|vpn\.sh|service-macos\.sh|home-manager\.sh|fixtures/)|flake\.(nix|lock)$|nix/|\.github/workflows/ci\.yml$)'
           # The desktop app and its installers on top (GUI macos-latest, Homebrew cask).
           gui='^(gui/|THIRD-PARTY-LICENSES\.html$|tests/self-update-macos\.sh$)'
           if [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_REF" = refs/heads/main ]; then
@@ -436,6 +436,23 @@ jobs:
       - run: cargo build --release
       - run: tests/service-macos.sh target/release/furnish
 
+  home-manager-macos:
+    name: Home Manager macos-latest (standalone, with Nix)
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The same Nix installer as the Linux jobs; it supports macOS.
+      - uses: cachix/install-nix-action@v31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - run: cargo build --release
+      - run: tests/home-manager.sh --here target/release/furnish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   service-windows:
     name: service windows-latest
     runs-on: windows-latest
@@ -497,7 +514,7 @@ jobs:
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, home-manager-macos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write

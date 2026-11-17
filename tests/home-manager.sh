@@ -1,15 +1,26 @@
 #!/bin/sh
-# Standalone Home Manager on a Linux system that isn't NixOS (the nixos/nix image): furnish shows
-# a Home Manager section in `furnish settings` and creates its local flake; then it installs an app
-# into the configuration (build and activation), an ssh Include through Home Manager that a
-# Furnish/Line step accepts, and uninstalls the app again. As root, without the service.
+# Standalone Home Manager on a system that isn't NixOS: furnish shows a Home Manager section in
+# `furnish settings` and creates its local flake; then it installs an app into the configuration
+# (build and activation), an ssh Include through Home Manager that a Furnish/Line step accepts,
+# and uninstalls the app again. Without the service.
 #
-#   tests/home-manager.sh <path/to/static/furnish>
+#   tests/home-manager.sh <path/to/static/furnish>         Linux: as root in the nixos/nix image
+#   tests/home-manager.sh --here <path/to/furnish>         here, as you, with Nix installed (macOS CI)
 # With GITHUB_TOKEN set (CI), Nix uses it for github: flake references.
 set -eu
-if [ "${1:-}" != --inside ]; then
+root=$(cd "$(dirname "$0")/.." && pwd)
+case "${1:-}" in
+--inside) src=/src ;;
+--here)
+    furnish=$(realpath "${2:?usage: $0 --here <furnish-binary>}")
+    src=$(mktemp -d)
+    (cd "$root" && git ls-files -z --cached --others --exclude-standard | xargs -0 tar -cf -) | tar -xf - -C "$src"
+    mkdir -p "$src/.bin" && ln -s "$furnish" "$src/.bin/furnish"
+    export PATH="$src/.bin:$PATH"
+    [ -z "${GITHUB_TOKEN:-}" ] || export NIX_CONFIG="access-tokens = github.com=$GITHUB_TOKEN"
+    ;;
+*)
     binary=$(realpath "${1:?usage: $0 <furnish-binary>}")
-    root=$(cd "$(dirname "$0")/.." && pwd)
     # furnish's flake as a checkout has it, without build output.
     src=$(mktemp -d)
     trap 'rm -rf "$src"' EXIT
@@ -18,33 +29,40 @@ if [ "${1:-}" != --inside ]; then
         -v "$binary:/usr/local/bin/furnish:ro" -v "$src:/src:ro" -v "$root/tests/home-manager.sh:/t.sh:ro" \
         nixos/nix sh /t.sh --inside
     exit
-fi
+    ;;
+esac
+user=$(id -un)
+export USER="$user" PATH="/usr/local/bin:$PATH"
+data="$HOME/.local/share/furnish/home-apps"
+cfg="$HOME/.config/home-manager"
 fail() {
     echo "FAIL: $*" >&2
-    echo "-- furnish's Home Manager facts, the generation, furnish's flake:" >&2
-    ls -la /root/.config/furnish /root/.local/share/furnish/home-apps 2>&1 | head -20 >&2
-    cat /root/.config/furnish/home-manager.json /root/.local/share/furnish/home-apps/apps.json 2>&1 | head -20 >&2
-    readlink -f /root/.local/state/home-manager/gcroots/current-home >&2 || true
+    echo "-- furnish's Home Manager facts, its flake, the generation:" >&2
+    ls -la "$HOME/.config/furnish" "$data" 2>&1 | head -20 >&2
+    cat "$HOME/.config/furnish/home-manager.json" "$data/apps.json" 2>&1 | head -20 >&2
+    readlink "$HOME/.local/state/home-manager/gcroots/current-home" >&2 || true
     exit 1
 }
-export PATH="/usr/local/bin:$PATH" USER=root HOME=/root
 nix() { command nix --extra-experimental-features "nix-command flakes" "$@"; }
 [ ! -e /etc/NIXOS ] || fail "this is NixOS"
 command -v git >/dev/null || nix-env -iA nixpkgs.git >/dev/null 2>&1
 git config --global user.name t; git config --global user.email t@t; git config --global init.defaultBranch main
+system=$(nix eval --impure --raw --expr builtins.currentSystem)
 # The active generation, wherever Home Manager keeps its profile.
-generation() { readlink -f /root/.local/state/home-manager/gcroots/current-home; }
+generation() { readlink "$HOME/.local/state/home-manager/gcroots/current-home"; }
+echo "== $system, as $user"
 
 echo "== the organization's apps"
-mkdir -p /tmp/org/apps
-cat > /tmp/org/apps/htop.dsc.yaml <<'EOF'
+org=$(mktemp -d)
+mkdir -p "$org/apps"
+cat > "$org/apps/htop.dsc.yaml" <<'EOF'
 metadata: { furnish: { description: htop, categories: [Test] } }
 resources:
   - name: htop
     type: Furnish/NixOS
     properties: { name: htop, packages: [hello], homeOptions: { programs.htop.enable: true } }
 EOF
-cat > /tmp/org/apps/acme-ssh.dsc.yaml <<'EOF'
+cat > "$org/apps/acme-ssh.dsc.yaml" <<'EOF'
 metadata: { furnish: { description: acme-ssh, categories: [Test] } }
 resources:
   - name: SSH include through Home Manager
@@ -58,63 +76,59 @@ resources:
       before: '^\s*(Host|Match)\s'
       accept: '^\s*Include\s(.*\s)?config\.d/acme\.conf(\s|$)'
 EOF
-(cd /tmp/org && git init -q && git add -A && git commit -qm apps)
-furnish collection add /tmp/org --name org >/dev/null
+(cd "$org" && git init -q && git add -A && git commit -qm apps)
+furnish collection add "$org" --name org >/dev/null
 
 echo "== a Home Manager configuration without furnish's module: Settings shows the lines"
-cfg=/root/.config/home-manager
 mkdir -p "$cfg"
-cat > "$cfg/flake.nix" <<'EOF'
+cat > "$cfg/flake.nix" <<EOF
 {
-  inputs.furnish.url = "path:/src";
-  inputs.furnish.inputs.home-apps.url = "path:/root/.local/share/furnish/home-apps";
+  inputs.furnish.url = "path:$src";
+  inputs.furnish.inputs.home-apps.url = "path:$data";
   inputs.home-manager.url = "github:nix-community/home-manager/3ee51fbdac8c8bdfe1e7e1fcaba6520a563f394f";
   inputs.home-manager.inputs.nixpkgs.follows = "furnish/nixpkgs";
 
   outputs = { furnish, home-manager, ... }: {
-    homeConfigurations.root = home-manager.lib.homeManagerConfiguration {
-      pkgs = furnish.inputs.nixpkgs.legacyPackages.x86_64-linux;
+    homeConfigurations."$user" = home-manager.lib.homeManagerConfiguration {
+      pkgs = furnish.inputs.nixpkgs.legacyPackages.$system;
       modules = [ furnish.homeManagerModules.default ./home.nix ];
     };
   };
 }
 EOF
-cat > "$cfg/home.nix" <<'EOF'
+home() {
+    cat > "$cfg/home.nix" <<EOF
 {
-  home.username = "root";
-  home.homeDirectory = "/root";
+  home.username = "$user";
+  home.homeDirectory = "$HOME";
   home.stateVersion = "25.11";
   manual.manpages.enable = false;
   programs.ssh.enable = true;
   programs.ssh.includes = [ "~/.ssh/own.conf" ];
+  $1
 }
 EOF
+}
+home ""
 out=$(furnish settings)
-echo "$out" | grep -q '^Home Manager: *'"$cfg" || { echo "$out"; fail "no Home Manager line"; }
+echo "$out" | grep -q "^Home Manager: *$cfg" || { echo "$out"; fail "no Home Manager line"; }
 echo "$out" | grep -q 'NixOS configuration' && { echo "$out"; fail "a NixOS line without NixOS"; }
-[ -f /root/.local/share/furnish/home-apps/apps.json ] || fail "furnish didn't create its local flake"
+echo "$out" | grep -q "home-apps.url = \"path:$data\"" || { echo "$out"; fail "no input line"; }
+[ -f "$data/apps.json" ] || fail "furnish didn't create its local flake"
 
 echo "== the module on"
-cat > "$cfg/home.nix" <<'EOF'
-{
-  home.username = "root";
-  home.homeDirectory = "/root";
-  home.stateVersion = "25.11";
-  manual.manpages.enable = false;
-  programs.ssh.enable = true;
-  programs.ssh.includes = [ "~/.ssh/own.conf" ];
-  services.furnish.enable = true;
-  services.furnish.nix.allowedOptions = [ "programs.htop.enable" "programs.ssh.includes" ];
-}
-EOF
+home 'services.furnish.enable = true;
+  services.furnish.nix.allowedOptions = [ "programs.htop.enable" "programs.ssh.includes" ];'
 cd "$cfg"
 git init -q && git add -A
 nix flake lock 2>&1 | tail -3
 git add -A && git commit -qm config
-nix build -L .#homeConfigurations.root.activationPackage 2>&1 | tail -3
+nix build -L ".#homeConfigurations.\"$user\".activationPackage" 2>&1 | tail -3
 # The image's root profile is its whole base system; a person's profile holds only their own
 # packages, so Home Manager starts with its own (the base system stays on PATH).
-rm /root/.nix-profile
+[ "${1:-}" != --inside ] || rm /root/.nix-profile
+# Someone's own ssh config would be in Home Manager's way.
+[ ! -e "$HOME/.ssh/config" ] || mv "$HOME/.ssh/config" "$HOME/.ssh/config.before-test"
 ./result/activate > /tmp/activate.log 2>&1 || { tail -30 /tmp/activate.log; fail "activation failed"; }
 rm result
 out=$(furnish settings)
@@ -130,8 +144,8 @@ furnish list | grep -q "✓  htop" || fail "htop not shown as installed"
 
 echo "== the ssh Include through Home Manager, in one line with our own include"
 furnish install acme-ssh || fail "install failed"
-[ -L /root/.ssh/config ] || fail "Home Manager doesn't manage ~/.ssh/config"
-grep -E '^Include .*config\.d/acme\.conf' /root/.ssh/config | grep -q own.conf || { cat /root/.ssh/config; fail "no combined Include"; }
+[ -L "$HOME/.ssh/config" ] || fail "Home Manager doesn't manage ~/.ssh/config"
+grep -E '^Include .*config\.d/acme\.conf' "$HOME/.ssh/config" | grep -q own.conf || { cat "$HOME/.ssh/config"; fail "no combined Include"; }
 furnish list | grep -q "✓  acme-ssh" || fail "acme-ssh not shown as installed"
 
 echo "== uninstall"
