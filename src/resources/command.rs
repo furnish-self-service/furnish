@@ -3,7 +3,8 @@
 //! fails, and `remove` (optional) on uninstall, or `remove: keep` to leave the setting in place
 //! on uninstall. `present` (optional, the same shape as `test`)
 //! tells an outdated setting from a missing one: the step then counts as there, so the app shows
-//! an update instead of "not installed".
+//! an update instead of "not installed". A leading `~/` in the commands' arguments is the home
+//! folder, as in the paths of the file resources.
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -89,7 +90,7 @@ pub fn check(v: &Value) -> Result<()> {
 /// Whether the test passes, and a note with what it expected and got (the check that failed,
 /// else the most telling one).
 fn passes(test: &Test) -> Result<(bool, Note)> {
-    let out = common::run(&test.command)?;
+    let out = exec(&test.command)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let command = test.command.join(" ");
     let code = out.status.code();
@@ -152,8 +153,15 @@ fn passes_check(test: &Test) -> Result<bool> {
     }
 }
 
+/// Run a command as written in the app, a leading `~/` in its arguments expanded (see
+/// [`common::expand_arg`]). Notes and messages show it as written.
+fn exec(command: &[String]) -> Result<std::process::Output> {
+    let args = command.iter().map(|a| common::expand_arg(a)).collect::<Result<Vec<_>>>()?;
+    common::run(&args)
+}
+
 fn run(command: &[String]) -> Result<()> {
-    let out = common::run(command)?;
+    let out = exec(command)?;
     if !out.status.success() {
         bail!("`{}` exited with code {}{}", command.join(" "), out.status.code().unwrap_or(-1), common::output_text(&out));
     }
@@ -313,6 +321,30 @@ mod tests {
         assert!(check(&props).is_ok());
         assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": "leave"})).is_err());
         assert!(check(&json!({"test": {"command": ["x"]}, "set": ["x"], "remove": []})).is_err());
+    }
+
+    #[test]
+    fn a_leading_tilde_in_arguments_is_the_home_folder() {
+        let home = dirs::home_dir().unwrap();
+        let name = format!(".furnish-command-test-{}", std::process::id());
+        let file = home.join(&name);
+        let props = json!({
+            "test": {"command": ["test", "-f", format!("~/{name}")]},
+            "set": ["touch", format!("~/{name}")],
+            "remove": ["rm", "-f", format!("~/{name}"), "~~/not-expanded"],
+        });
+        let plan = evaluate(&props).unwrap();
+        assert_eq!(plan.steps.last().map(Note::english), Some(format!("Run: touch ~/{name}")), "the preview shows ~/");
+        (plan.apply.unwrap())().unwrap();
+        assert!(file.exists());
+        assert!(evaluate(&props).unwrap().apply.is_none());
+        let mut gone = props.clone();
+        gone["_exist"] = false.into();
+        (evaluate(&gone).unwrap().apply.unwrap())().unwrap();
+        assert!(!file.exists());
+        // Only at the start: `a~/b` is passed as it is.
+        let literal = json!({"test": {"command": ["echo", "a~/b", "~"], "output": format!("a~/b {}", home.display())}, "set": ["false"]});
+        assert!(evaluate(&literal).unwrap().apply.is_none());
     }
 
     #[test]

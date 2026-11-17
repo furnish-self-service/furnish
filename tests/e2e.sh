@@ -262,6 +262,7 @@ fi
 mkdir -p "$tmp/repo/files" "$tmp/conf-seed"
 printf 'remote vpn.fixture.example 1194\n' > "$tmp/repo/files/profile.conf"
 home_file=".furnish-e2e-$$"
+trap 'rm -rf "$tmp" ~/"$home_file".gitconfig' EXIT
 cat > "$tmp/repo/apps/config.dsc.yaml" <<YAML
 metadata:
   furnish:
@@ -303,6 +304,12 @@ resources:
       test: { command: [git, config, --file, "$tmp/conf/gitconfig", fixture.marketplace], output: acme }
       set: [git, config, --file, "$tmp/conf/gitconfig", fixture.marketplace, acme]
       remove: keep  # other apps use it too
+  - name: home setting
+    type: Furnish/Command
+    properties:
+      test: { command: [git, config, --file, "~/$home_file.gitconfig", fixture.home], output: home }
+      set: [git, config, --file, "~/$home_file.gitconfig", fixture.home, home]
+      remove: [git, config, --file, "~/$home_file.gitconfig", fixture.home, ""]
 YAML
 
 git -C "$tmp/repo" init -q
@@ -577,6 +584,7 @@ printf 'current-context: fixture-prod\n' > "$tmp/conf/kube.yaml"
 expect "$(step list)" "·  config "
 plan=$(step install config --dry-run)
 expect "$plan" "Add 'Include config.d/fixture.conf' to $tmp/conf/ssh_config"
+expect "$plan" "Run: git config --file ~/$home_file.gitconfig fixture.home home"
 expect "$plan" "Set \$.enabledPlugins\['fixture@market'\] in $tmp/conf/settings.json"
 expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
@@ -587,6 +595,7 @@ grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAI
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
 [ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
+[ "$(git config --file ~/"$home_file".gitconfig fixture.home)" = home ] || { echo "FAIL: ~/ in a command wasn't expanded" >&2; exit 1; }
 # removeIf: installing leaves the value as it is, there or not, and the app stays installed.
 grep -q '^current-context: fixture-prod$' "$tmp/conf/kube.yaml" || { echo "FAIL: install changed current-context" >&2; exit 1; }
 printf 'kind: Config\n' > "$tmp/conf/kube.yaml"
@@ -623,6 +632,7 @@ MINGW* | MSYS*) ;;
 *) [ "$(stat -c %a "$tmp/conf/settings.json" 2>/dev/null || stat -f %Lp "$tmp/conf/settings.json")" = 600 ] || { echo "FAIL: uninstall changed the mode of settings.json" >&2; exit 1; } ;;
 esac
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.marketplace)" = acme ] || { echo "FAIL: remove: keep didn't keep the setting" >&2; exit 1; }
+[ -z "$(git config --file ~/"$home_file".gitconfig fixture.home)" ] || { echo "FAIL: remove with ~/ didn't run" >&2; exit 1; }
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

@@ -351,6 +351,16 @@ resources:
 
 A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. `remove: keep` leaves the setting in place on uninstall (see below). Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
 
+An argument that starts with `~/`, or is just `~`, stands for the home folder, the same way as in paths, so one step covers every system. A `~` elsewhere in an argument, as in `--config=~/x`, is passed on as it is. For an argument that must start with `~/` itself, write `~~/`; furnish passes it on with one `~`. The steps preview shows the arguments with `~/`:
+
+```yaml
+- name: VPN connection
+  type: Furnish/Command
+  properties:
+    test: { command: [acme-vpn, list], output: Acme }
+    set: [acme-vpn, import, ~/.config/acme/acme.ovpn]
+```
+
 ```yaml
 - name: Vault server
   type: Furnish/Command
