@@ -38,7 +38,9 @@
 //! owner, not as root: then no root process opens a git repository another account controls
 //! (git's hooks and config would run as root; libgit2 in Nix refuses such a repository), and
 //! furnish reads and writes the owner's files only with the owner's rights. Only the switch runs
-//! as root.
+//! as root. A folder of root's whose git folder belongs to a member of a trusted group (an
+//! admin's clone in a shared /etc/nixos) is the exception: root runs git and Nix in it, allowed
+//! with `safe.directory` for just that repository (`GitTrust`, `may_trust_git`).
 
 use std::{
     collections::BTreeMap,
@@ -629,15 +631,15 @@ fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<
     // What `home-manager switch` does after building.
     info(&format!("Activating {generation}"));
     run(as_owner(person, format!("{generation}/activate")), "activating the Home Manager generation")?;
-    commit(person, dir, clean, desired);
+    commit(as_owner(person, "git"), dir, clean, desired);
     Ok(())
 }
 
-/// Commits flake.lock as the configuration's owner if the repository had no other changes.
-fn commit(owner: &Account, dir: &Path, clean: bool, desired: &Desired) {
+/// Commits flake.lock if the repository had no other changes, with `git` as the configuration's
+/// owner.
+fn commit(mut commit: Command, dir: &Path, clean: bool, desired: &Desired) {
     if clean {
         let verb = if desired.exist { "install" } else { "uninstall" };
-        let mut commit = as_owner(owner, "git");
         commit.arg("-C").arg(dir).args(["commit", "-q", "-m", &format!("furnish: {verb} {}", desired.name), "--", "flake.lock"]);
         match run(commit, "git commit") {
             Ok(_) => info(&format!("Committed flake.lock in {}", dir.display())),
@@ -764,6 +766,156 @@ pub fn may_rebuild(chain: &Chain, requester: u32, trusted: &[String], group: imp
         bail!("the NixOS configuration in {} belongs to another user: furnish rebuilds it only when that user asks", dir.display());
     }
     Ok(*owner)
+}
+
+/// Whether root may run git and Nix in a repository whose git folder belongs to another account
+/// (`git`: path, owner, group, mode), as in a configuration the admins share (/etc/nixos as
+/// root:wheel 2775, its git folder an admin's). Git and Nix's libgit2 refuse such a repository
+/// unless `safe.directory` allows it, because its hooks and settings would run as root. furnish
+/// allows it only when the owner is in a group of `trusted` (`services.furnish.nix.trustedGroups`),
+/// whose members may become root anyway, and nobody else can change the git folder: not others,
+/// and its group only if trusted. `member` says whether a uid is in a named group (`None` for the
+/// owner: no such account).
+pub fn may_trust_git(
+    git: &(PathBuf, u32, u32, u32),
+    trusted: &[String],
+    group: impl Fn(u32) -> Option<String>,
+    member: impl Fn(u32, &str) -> Option<bool>,
+) -> Result<()> {
+    let (path, uid, gid, mode) = git;
+    if *uid != 0 {
+        let groups = trusted.iter().map(|g| member(*uid, g)).collect::<Option<Vec<bool>>>();
+        match groups {
+            None => bail!("{} belongs to the id {uid}, which has no account, so furnish doesn't run git in it as root", path.display()),
+            Some(g) if !g.contains(&true) => bail!(
+                "{} belongs to {}, who isn't in a group in services.furnish.nix.trustedGroups, so furnish doesn't run git in it as root",
+                path.display(),
+                lookup(*uid).map_or_else(|| uid.to_string(), |a| a.name)
+            ),
+            Some(_) => {}
+        }
+    }
+    if mode & 0o002 != 0 {
+        bail!("others can change {}, so furnish doesn't run git in it as root", path.display());
+    }
+    if mode & 0o020 != 0 && !group(*gid).is_some_and(|n| trusted.contains(&n)) {
+        let name = group(*gid).unwrap_or_else(|| gid.to_string());
+        bail!("the group {name} can change {}, so furnish doesn't run git in it as root", path.display());
+    }
+    Ok(())
+}
+
+/// Whether an account is in a group: as its primary group or as a listed member.
+#[cfg(unix)]
+fn in_group(account: &Account, name: &str) -> bool {
+    let Ok(cname) = std::ffi::CString::new(name) else { return false };
+    let mut buf = vec![0 as libc::c_char; 64 * 1024];
+    // SAFETY: zeroed group is a valid out-parameter; getgrnam_r fills it with pointers into buf.
+    let mut gr: libc::group = unsafe { std::mem::zeroed() };
+    let mut found: *mut libc::group = std::ptr::null_mut();
+    let rc = unsafe { libc::getgrnam_r(cname.as_ptr(), &mut gr, buf.as_mut_ptr(), buf.len(), &mut found) };
+    if rc != 0 || found.is_null() {
+        return false;
+    }
+    if gr.gr_gid == account.gid {
+        return true;
+    }
+    let mut p = gr.gr_mem;
+    // SAFETY: gr_mem is a NULL-terminated array of NUL-terminated strings in buf.
+    while !p.is_null() && !unsafe { *p }.is_null() {
+        if unsafe { std::ffi::CStr::from_ptr(*p) }.to_bytes() == account.name.as_bytes() {
+            return true;
+        }
+        p = unsafe { p.add(1) };
+    }
+    false
+}
+
+#[cfg(not(unix))]
+fn in_group(_: &Account, _: &str) -> bool {
+    false
+}
+
+/// A git setting file that lets root's git and Nix use a repository whose git folder belongs to
+/// a trusted admin (`may_trust_git`), for the commands of one install. git and libgit2 read
+/// `safe.directory` only from the user's and the system's settings, not from the repository or
+/// (libgit2) from GIT_CONFIG_* variables, so this is root's git settings folder for these
+/// commands: XDG_CONFIG_HOME points at a folder of furnish's whose git/config includes root's
+/// own settings and allows just this repository. Its nix entry points at root's own Nix settings.
+/// It also sets `core.sharedRepository = group` unless the repository says otherwise, so what
+/// root's commit adds to the git folder stays changeable for the group.
+struct GitTrust {
+    dir: PathBuf,
+}
+
+impl GitTrust {
+    /// `None` when root's git needs no help: the configuration isn't root's, it isn't in a git
+    /// repository, or the git folder is root's.
+    fn new(dir: &Path, owner: &Account, trusted: &[String]) -> Result<Option<GitTrust>> {
+        if owner.uid != 0 {
+            return Ok(None);
+        }
+        let Some(top) = dir.ancestors().find(|d| d.join(".git").exists()) else { return Ok(None) };
+        let git = top.join(".git");
+        #[cfg(unix)]
+        let facts = {
+            use std::os::unix::fs::MetadataExt;
+            let m = std::fs::symlink_metadata(&git).with_context(|| format!("reading {}", git.display()))?;
+            (git.clone(), m.uid(), m.gid(), m.mode())
+        };
+        #[cfg(not(unix))]
+        let facts = (git.clone(), 0, 0, 0);
+        if facts.1 == 0 {
+            return Ok(None);
+        }
+        may_trust_git(&facts, trusted, group_name, |uid, g| lookup(uid).map(|a| in_group(&a, g)))?;
+
+        let original = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| owner.home.join(".config"));
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+        let tmp = std::env::temp_dir().join(format!("furnish-git-{}-{nanos}", std::process::id()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        // Fails if anything is there already, so nobody can have prepared it.
+        builder.create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        let trust = GitTrust { dir: tmp };
+        std::fs::create_dir(trust.dir.join("git"))?;
+        let mut tops = vec![top.to_path_buf()];
+        if let Ok(real) = top.canonicalize()
+            && real != top
+        {
+            tops.push(real);
+        }
+        std::fs::write(trust.dir.join("git/config"), git_config(&original.join("git/config"), &tops))?;
+        #[cfg(unix)]
+        if original.join("nix").exists() {
+            std::os::unix::fs::symlink(original.join("nix"), trust.dir.join("nix"))?;
+        }
+        Ok(Some(trust))
+    }
+
+    fn apply(&self, c: &mut Command) {
+        c.env("XDG_CONFIG_HOME", &self.dir);
+    }
+}
+
+impl Drop for GitTrust {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// The git settings of `GitTrust`: root's own (`include`), safe.directory for `tops`.
+fn git_config(include: &Path, tops: &[PathBuf]) -> String {
+    let quote = |p: &Path| format!("\"{}\"", p.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""));
+    let mut text = format!("[include]\n\tpath = {}\n[safe]\n", quote(include));
+    for top in tops {
+        text += &format!("\tdirectory = {}\n", quote(top));
+    }
+    text + "[core]\n\tsharedRepository = group\n"
 }
 
 /// Why furnish runs an app's steps itself instead of the furnish service, as `catalog` decides
@@ -922,6 +1074,16 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     let requester: u32 = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
     let uid = may_rebuild(&chain(&target.dir)?, requester, &target.facts.nix.trusted_groups, group_name)?;
     let owner = lookup(uid).with_context(|| format!("no account with the id {uid}"))?;
+    let trust = GitTrust::new(&target.dir, &owner, &target.facts.nix.trusted_groups)?;
+    // git and Nix in the configuration's repository, as its owner.
+    let trusting = |mut c: Command| {
+        if let Some(t) = &trust {
+            t.apply(&mut c);
+        }
+        c
+    };
+    let git = || trusting(as_owner(&owner, "git"));
+    let nix = || trusting(nix(&owner));
 
     let apps_dir = Path::new(APPS_DIR);
     let before = read_apps(apps_dir)?;
@@ -939,7 +1101,7 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     let dir = &target.dir;
     let lock = dir.join("flake.lock");
     // Committed afterwards only if nothing else changed (and it is a git repository).
-    let mut status = as_owner(&owner, "git");
+    let mut status = git();
     status.arg("-C").arg(dir).args(["status", "--porcelain"]);
     let clean = run(status, "git status").is_ok_and(|s| s.is_empty());
     let old_lock = owner_read(&owner, &lock)?;
@@ -958,12 +1120,12 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     };
 
     info(&format!("Updating furnish/apps in {} as {}", lock.display(), owner.name));
-    let mut update = nix(&owner);
+    let mut update = nix();
     update.args(["flake", "update", "furnish/apps", "--flake"]).arg(dir);
     run(update, "nix flake update furnish/apps").map_err(&undo)?;
 
     info(&format!("Building the system from {dir} as {}", owner.name, dir = dir.display()));
-    let mut build = nix(&owner);
+    let mut build = nix();
     build.args(["build", "--no-link", "--print-out-paths"]).arg(format!(
         "{}#nixosConfigurations.\"{}\".config.system.build.toplevel",
         dir.display(),
@@ -988,7 +1150,7 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
         .arg(format!("{system}/bin/switch-to-configuration"))
         .arg(mode);
     run(switch, "switch-to-configuration")?;
-    commit(&owner, dir, clean, desired);
+    commit(git(), dir, clean, desired);
     Ok(())
 }
 
@@ -1194,6 +1356,70 @@ mod tests {
         let alice: Chain = vec![("/home/alice/cfg".into(), 1000, 1, 0o2775), ("/home/alice".into(), 1000, 100, 0o700), ("/".into(), 0, 0, 0o755)];
         assert_eq!(may_rebuild(&alice, 1000, &wheel, name).unwrap(), 1000);
         assert!(may_rebuild(&alice, 1001, &wheel, name).unwrap_err().to_string().contains("another user"));
+    }
+
+    #[test]
+    fn root_runs_git_only_in_a_git_folder_of_a_trusted_admin() {
+        // gid 1: wheel, 100: users; uid 1000 (alice) is in wheel, 1001 (bob) isn't, 1002 has no account.
+        let name = |gid: u32| match gid {
+            1 => Some("wheel".to_string()),
+            100 => Some("users".to_string()),
+            _ => None,
+        };
+        let member = |uid: u32, group: &str| match uid {
+            0 | 1000 => Some(true),
+            1001 => Some(group == "users"),
+            _ => None,
+        };
+        let wheel = ["wheel".to_string()];
+        let git = |uid, gid, mode| (PathBuf::from("/etc/nixos/.git"), uid, gid, mode);
+        // The shared /etc/nixos of #24: the git folder alice:wheel, the group can change it.
+        may_trust_git(&git(1000, 1, 0o2775), &wheel, name, member).unwrap();
+        may_trust_git(&git(1000, 100, 0o755), &wheel, name, member).unwrap();
+        let err = may_trust_git(&git(1001, 1, 0o2775), &wheel, name, member).unwrap_err().to_string();
+        assert!(err.contains("/etc/nixos/.git belongs to") && err.contains("trustedGroups"), "{err}");
+        let err = may_trust_git(&git(1002, 1, 0o755), &wheel, name, member).unwrap_err().to_string();
+        assert!(err.contains("has no account"), "{err}");
+        let err = may_trust_git(&git(1000, 1, 0o2775), &[], name, member).unwrap_err().to_string();
+        assert!(err.contains("trustedGroups"), "no trusted group: {err}");
+        let err = may_trust_git(&git(1000, 100, 0o2775), &wheel, name, member).unwrap_err().to_string();
+        assert!(err.contains("the group users can change /etc/nixos/.git"), "{err}");
+        let err = may_trust_git(&git(1000, 1, 0o777), &wheel, name, member).unwrap_err().to_string();
+        assert!(err.contains("others can change"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_account_is_in_its_primary_group() {
+        let me = lookup(current_uid()).unwrap();
+        assert!(in_group(&me, &group_name(me.gid).unwrap()));
+        assert!(!in_group(&me, "furnish-no-such-group"));
+    }
+
+    #[test]
+    fn git_reads_the_trust_settings_with_the_own_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let own = tmp.path().join("own");
+        std::fs::create_dir_all(own.join("git")).unwrap();
+        std::fs::write(own.join("git/config"), "[user]\n\tname = Root\n").unwrap();
+        let trust = tmp.path().join("trust");
+        std::fs::create_dir_all(trust.join("git")).unwrap();
+        let tops = [PathBuf::from("/etc/nixos"), PathBuf::from("/srv/a \"b\"")];
+        std::fs::write(trust.join("git/config"), git_config(&own.join("git/config"), &tops)).unwrap();
+        let get = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .env("XDG_CONFIG_HOME", &trust)
+                .env("HOME", tmp.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert_eq!(get(&["config", "--global", "--get-all", "safe.directory"]), "/etc/nixos\n/srv/a \"b\"\n");
+        assert_eq!(get(&["config", "--global", "--includes", "user.name"]), "Root\n");
+        assert_eq!(get(&["config", "--global", "core.sharedRepository"]), "group\n");
     }
 
     #[test]
