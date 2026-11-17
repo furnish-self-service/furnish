@@ -349,17 +349,7 @@ resources:
 
 #### Furnish/Command
 
-A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, ignoring spaces and line breaks at the start and end), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. `remove: keep` leaves the setting in place on uninstall (see below). Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
-
-An argument that starts with `~/`, or is just `~`, stands for the home folder, the same way as in paths, so one step covers every system. A `~` elsewhere in an argument, as in `--config=~/x`, is passed on as it is. For an argument that must start with `~/` itself, write `~~/`; furnish passes it on with one `~`. The steps preview shows the arguments with `~/`:
-
-```yaml
-- name: VPN connection
-  type: Furnish/Command
-  properties:
-    test: { command: [acme-vpn, list], output: Acme }
-    set: [acme-vpn, import, ~/.config/acme/acme.ovpn]
-```
+A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, or `file` for a file's content, see below), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. `remove: keep` leaves the setting in place on uninstall (see below). Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
 
 ```yaml
 - name: Vault server
@@ -385,6 +375,16 @@ An argument that starts with `~/`, or is just `~`, stands for the home folder, t
     set: [openvpn3, config-import, --config, /etc/acme/acme.ovpn, --name, Acme, --persistent]
 ```
 
+An argument that starts with `~/`, or is just `~`, stands for the home folder, the same way as in paths, so one step covers every system. A `~` elsewhere in an argument, as in `--config=~/x`, is passed on as it is. For an argument that must start with `~/` itself, write `~~/`; furnish passes it on with one `~`. The steps preview shows the arguments with `~/`:
+
+```yaml
+- name: VPN connection
+  type: Furnish/Command
+  properties:
+    test: { command: [acme-vpn, list], output: Acme }
+    set: [acme-vpn, import, ~/.config/acme/acme.ovpn]
+```
+
 Some steps set up something that other apps or programs use too, which uninstalling must not take away. With `remove: keep`, uninstalling leaves the setting as it is, the app can still be uninstalled, and the uninstall preview says the step is kept. A plugin app for a coding assistant is an example: uninstalling removes the plugin and keeps the vendor's marketplace, which other plugins come from:
 
 ```yaml
@@ -406,6 +406,24 @@ Some steps set up something that other apps or programs use too, which uninstall
 ```
 
 An app whose steps are all kept still tests as installed after uninstalling, so uninstalling it fails. Give such an app at least one step that uninstalling removes.
+
+Many tools keep their own copy of a file the app writes, and the test is whether that copy still matches the file. `file` compares the output with the file's content instead of a fixed text. The path is absolute or starts with `~/`. `ignoreLines`, a regular expression, leaves out the lines it matches, in the output and in the file (or in `output`). furnish also ignores Windows line ends, spaces at the end of a line, and blank lines at the start and end, so this works the same on Windows, macOS and Linux, without a shell. The steps preview names the command and the file, and if they differ, it shows the differing lines as for a file change, or only how many if only the file's owner may read it. A file that the account checking the app's status may not read counts as matching, as with the file resources.
+
+openvpn3, for example, keeps its own copy of an imported profile. Its dump of that copy leaves out the profile's comment lines and adds blank lines:
+
+```yaml
+- name: VPN profile in openvpn3
+  type: Furnish/Command
+  properties:
+    test:
+      command: [openvpn3, config-dump, --config, Acme]
+      file: ~/.config/acme/acme.ovpn
+      ignoreLines: '^(#|$)'
+    present: { command: [openvpn3, config-manage, --config, Acme, --show] }
+    set: [openvpn3, config-import, --config, ~/.config/acme/acme.ovpn, --name, Acme, --persistent]
+```
+
+Other tools that keep their own copy work the same way, for example `nmcli connection export`, `kubectl config view --minify` and `security find-certificate -p`.
 
 A failing test can mean that the setting is missing or that it is there but outdated. `present`, with the same properties as `test`, tells the two apart: if `test` fails and `present` passes, the app shows an update instead of "not installed", and it can be uninstalled. Without `present`, a failing test counts as missing.
 

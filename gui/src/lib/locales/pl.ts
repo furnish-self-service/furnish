@@ -325,6 +325,9 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineBefore': "Przed zmianą brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineAfter': "Po zmianie brak znaku nowego wiersza na końcu pliku",
+  'plan.note.test.file': "Porównuje wynik <code>{command}</code> z <code>{path}</code>",
+  'plan.note.test.fileDiffers': "Wynik <code>{command}</code> różni się od <code>{path}</code>",
+  'plan.note.test.noFile': "Nie można porównać wyniku <code>{command}</code> z <code>{path}</code>: plik nie istnieje",
   'plan.note.command.keep': "Zostawia to, co ustawiło <code>{command}</code>",
 
   // Collections.svelte

@@ -305,6 +305,9 @@ export const en = {
   'plan.diff.noNewline': "No line break at the end of the file",
   'plan.diff.noNewlineBefore': "No line break at the end of the file before the change",
   'plan.diff.noNewlineAfter': "No line break at the end of the file after the change",
+  'plan.note.test.file': "Compares the output of <code>{command}</code> with <code>{path}</code>",
+  'plan.note.test.fileDiffers': "The output of <code>{command}</code> differs from <code>{path}</code>",
+  'plan.note.test.noFile': "Can’t compare the output of <code>{command}</code> with <code>{path}</code>: the file doesn’t exist",
   'plan.note.command.keep': "Leaves what <code>{command}</code> set up in place",
 
   // Collections.svelte

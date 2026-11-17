@@ -308,6 +308,9 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Geen regeleinde aan het einde van het bestand",
   'plan.diff.noNewlineBefore': "Geen regeleinde aan het einde van het bestand vóór de wijziging",
   'plan.diff.noNewlineAfter': "Geen regeleinde aan het einde van het bestand na de wijziging",
+  'plan.note.test.file': "Vergelijkt de uitvoer van <code>{command}</code> met <code>{path}</code>",
+  'plan.note.test.fileDiffers': "De uitvoer van <code>{command}</code> wijkt af van <code>{path}</code>",
+  'plan.note.test.noFile': "Kan de uitvoer van <code>{command}</code> niet vergelijken met <code>{path}</code>: het bestand bestaat niet",
   'plan.note.command.keep': "Laat staan wat <code>{command}</code> heeft ingesteld",
 
   // Collections.svelte

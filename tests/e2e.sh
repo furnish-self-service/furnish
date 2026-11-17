@@ -262,7 +262,7 @@ fi
 mkdir -p "$tmp/repo/files" "$tmp/conf-seed"
 printf 'remote vpn.fixture.example 1194\n' > "$tmp/repo/files/profile.conf"
 home_file=".furnish-e2e-$$"
-trap 'rm -rf "$tmp" ~/"$home_file".gitconfig' EXIT
+trap 'rm -rf "$tmp" ~/"$home_file".gitconfig ~/"$home_file".ovpn ~/"$home_file".imported' EXIT
 cat > "$tmp/repo/apps/config.dsc.yaml" <<YAML
 metadata:
   furnish:
@@ -310,6 +310,17 @@ resources:
       test: { command: [git, config, --file, "~/$home_file.gitconfig", fixture.home], output: home }
       set: [git, config, --file, "~/$home_file.gitconfig", fixture.home, home]
       remove: [git, config, --file, "~/$home_file.gitconfig", fixture.home, ""]
+  # A tool's own copy of a file the app writes (cat and cp stand in for the tool; on Windows,
+  # Git's): the output is compared with the file, without its comment and blank lines.
+  - name: vpn file
+    type: Furnish/File
+    properties: { path: "~/$home_file.ovpn", content: "# Fixture VPN\nremote vpn.fixture.example 1194\n" }
+  - name: vpn import
+    type: Furnish/Command
+    properties:
+      test: { command: [cat, "~/$home_file.imported"], file: "~/$home_file.ovpn", ignoreLines: '^(#|$)' }
+      set: [cp, "~/$home_file.ovpn", "~/$home_file.imported"]
+      remove: [rm, -f, "~/$home_file.imported"]
 YAML
 
 git -C "$tmp/repo" init -q
@@ -616,6 +627,13 @@ settings=$(cat "$tmp/conf/settings.json") && printf '%s\n' "${settings//true/fal
 if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't drift" >&2; exit 1; fi
 expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
+# The tool's copy without comment lines, with blank lines and Windows line ends: still the same.
+printf 'remote vpn.fixture.example 1194\r\n\r\n' > ~/"$home_file".imported
+expect "$(step list)" "✓  config "
+printf 'remote vpn.other.example 1194\r\n' > ~/"$home_file".imported
+expect "$(step install config --dry-run)" "Test: the output of cat ~/$home_file.imported differs from ~/$home_file.ovpn"
+expect "$(step install config)" "Installed config"
+expect "$(step list)" "✓  config "
 # An outdated setting (test fails, present passes) is an update, and uninstalling removes it.
 git config --file "$tmp/conf/gitconfig" fixture.server https://old.fixture.example
 expect "$(step list)" "↑  config "
@@ -633,6 +651,7 @@ MINGW* | MSYS*) ;;
 esac
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.marketplace)" = acme ] || { echo "FAIL: remove: keep didn't keep the setting" >&2; exit 1; }
 [ -z "$(git config --file ~/"$home_file".gitconfig fixture.home)" ] || { echo "FAIL: remove with ~/ didn't run" >&2; exit 1; }
+[ ! -e ~/"$home_file".imported ] && [ ! -e ~/"$home_file".ovpn ] || { echo "FAIL: the VPN files were left behind" >&2; exit 1; }
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

@@ -71,6 +71,14 @@
               "type": "string",
               "description": "The expected output"
             },
+            "file": {
+              "type": "string",
+              "description": "A file whose content the output must equal (absolute or starting with ~/)"
+            },
+            "ignoreLines": {
+              "type": "string",
+              "description": "A regular expression for lines of the output and of output or file that the comparison leaves out"
+            },
             "jsonPath": {
               "type": "string",
               "description": "A place in the command's JSON output that must exist"
@@ -102,6 +110,14 @@
             "output": {
               "type": "string",
               "description": "The expected output"
+            },
+            "file": {
+              "type": "string",
+              "description": "A file whose content the output must equal (absolute or starting with ~/)"
+            },
+            "ignoreLines": {
+              "type": "string",
+              "description": "A regular expression for lines of the output and of output or file that the comparison leaves out"
             },
             "jsonPath": {
               "type": "string",

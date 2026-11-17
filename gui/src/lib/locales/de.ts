@@ -306,6 +306,9 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.diff.noNewline': "Kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineBefore': "Vor der Änderung kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineAfter': "Nach der Änderung kein Zeilenumbruch am Ende der Datei",
+  'plan.note.test.file': "Vergleicht die Ausgabe von <code>{command}</code> mit <code>{path}</code>",
+  'plan.note.test.fileDiffers': "Die Ausgabe von <code>{command}</code> weicht von <code>{path}</code> ab",
+  'plan.note.test.noFile': "Die Ausgabe von <code>{command}</code> lässt sich nicht mit <code>{path}</code> vergleichen: Die Datei gibt es nicht",
   'plan.note.command.keep': "Lässt bestehen, was <code>{command}</code> eingerichtet hat",
 
   // Collections.svelte

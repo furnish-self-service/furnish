@@ -308,6 +308,9 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Nessun a capo alla fine del file",
   'plan.diff.noNewlineBefore': "Nessun a capo alla fine del file prima della modifica",
   'plan.diff.noNewlineAfter': "Nessun a capo alla fine del file dopo la modifica",
+  'plan.note.test.file': "Confronta l’output di <code>{command}</code> con <code>{path}</code>",
+  'plan.note.test.fileDiffers': "L’output di <code>{command}</code> è diverso da <code>{path}</code>",
+  'plan.note.test.noFile': "Impossibile confrontare l’output di <code>{command}</code> con <code>{path}</code>: il file non esiste",
   'plan.note.command.keep': "Lascia al suo posto ciò che ha configurato <code>{command}</code>",
 
   // Collections.svelte

@@ -308,6 +308,9 @@ export const pt: Record<keyof typeof en, Entry> = {
   'plan.diff.noNewline': "Sem quebra de linha no fim do ficheiro",
   'plan.diff.noNewlineBefore': "Sem quebra de linha no fim do ficheiro antes da alteração",
   'plan.diff.noNewlineAfter': "Sem quebra de linha no fim do ficheiro depois da alteração",
+  'plan.note.test.file': "Compara a saída de <code>{command}</code> com <code>{path}</code>",
+  'plan.note.test.fileDiffers': "A saída de <code>{command}</code> é diferente de <code>{path}</code>",
+  'plan.note.test.noFile': "Não é possível comparar a saída de <code>{command}</code> com <code>{path}</code>: o arquivo não existe",
   'plan.note.command.keep': "Mantém o que <code>{command}</code> configurou",
 
   // Collections.svelte
