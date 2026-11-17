@@ -186,6 +186,9 @@ struct Desired {
     options: BTreeMap<String, Value>,
     #[serde(default)]
     home_options: BTreeMap<String, Value>,
+    /// `ONLY_IF_SET_UP`, which the engine handles.
+    #[serde(default, rename = "onlyIfSetUp")]
+    _only_if_set_up: bool,
     #[serde(rename = "_exist", default = "yes")]
     exist: bool,
 }
@@ -444,12 +447,52 @@ fn ready(place: Place, person: &Account) -> Result<()> {
 /// Where to install an app: `install_into`, unless the app has options only for the other place,
 /// then there.
 fn choose(desired: &Desired, person: &Account) -> Result<Place> {
+    let place = place_for(desired, person);
+    ready(place, person)?;
+    Ok(place)
+}
+
+fn place_for(desired: &Desired, person: &Account) -> Place {
     let facts = home_facts(person);
     let home = if facts.as_ref().is_some_and(|f| f.nixos_module) { Place::HomeNixos } else { Place::HomeStandalone };
     let wanted = if install_into_for(person, facts.is_some()) == "home" { home } else { Place::System };
-    let place = pick(wanted, home, desired);
-    ready(place, person)?;
-    Ok(place)
+    pick(wanted, home, desired)
+}
+
+/// The property that makes a Furnish/NixOS step apply only where furnish can install it: where
+/// its place isn't set up, furnish skips the step, as for a false `condition` (`not_needed_here`).
+pub const ONLY_IF_SET_UP: &str = "onlyIfSetUp";
+
+/// Why a step is skipped for `ONLY_IF_SET_UP`, as the preview shows it ("Not needed here: …").
+pub const NOT_NIXOS: &str = "this computer doesn't run NixOS";
+pub const NO_HOME: &str = "Home Manager isn't set up for you";
+pub const NO_SYSTEM: &str = "the NixOS configuration isn't set up for furnish";
+
+/// For a Furnish/NixOS step with `onlyIfSetUp: true`: why it doesn't apply on this computer, or
+/// `None` when it applies. Decided before DSC runs, because elsewhere the resource may not exist.
+/// A step whose app is already in a local flake applies, so it can be removed.
+pub fn not_needed_here(resource: &Value) -> Option<&'static str> {
+    not_needed(resource, Path::new("/etc/NIXOS").exists(), |desired| {
+        let person = person().ok()?;
+        if find(&desired.name, &person).ok().flatten().is_some() {
+            return None;
+        }
+        let place = place_for(desired, &person);
+        ready(place, &person).err().filter(|e| e.is::<Missing>()).map(|_| place)
+    })
+}
+
+/// `not_needed_here` without the computer: `unready` gives the place the app would go to if that
+/// isn't set up.
+fn not_needed(resource: &Value, nixos: bool, unready: impl FnOnce(&Desired) -> Option<Place>) -> Option<&'static str> {
+    if resource["type"] != "Furnish/NixOS" || resource["properties"][ONLY_IF_SET_UP] != true {
+        return None;
+    }
+    if !nixos {
+        return Some(NOT_NIXOS);
+    }
+    let desired: Desired = serde_json::from_value(resource["properties"].clone()).ok()?;
+    unready(&desired).map(|place| if place == Place::System { NO_SYSTEM } else { NO_HOME })
 }
 
 /// The place an app goes: the wanted one, unless the app sets options only for the other.
@@ -955,6 +998,29 @@ mod tests {
         let d = app(&["services.x.enable"], &["programs.x.enable"]);
         assert_eq!(d.entry(Place::System).options.keys().collect::<Vec<_>>(), ["services.x.enable"]);
         assert_eq!(d.entry(h).options.keys().collect::<Vec<_>>(), ["programs.x.enable"]);
+    }
+
+    #[test]
+    fn a_step_only_where_set_up_is_skipped_elsewhere() {
+        // The owner's example (#8): Home Manager writes the Include, Furnish/Line finds it.
+        let ssh = json!({"name": "SSH include through Home Manager", "type": "Furnish/NixOS",
+            "properties": {"name": "acme-ssh", "onlyIfSetUp": true, "homeOptions": {"programs.ssh.includes": ["config.d/acme.conf"]}}});
+        let ready = |_: &Desired| None;
+        assert_eq!(not_needed(&ssh, false, ready), Some(NOT_NIXOS), "Windows, macOS, other Linux");
+        assert_eq!(not_needed(&ssh, true, |_| Some(Place::HomeStandalone)), Some(NO_HOME));
+        assert_eq!(not_needed(&ssh, true, |_| Some(Place::HomeNixos)), Some(NO_HOME));
+        assert_eq!(not_needed(&ssh, true, |_| Some(Place::System)), Some(NO_SYSTEM));
+        assert_eq!(not_needed(&ssh, true, ready), None, "set up: the step applies");
+        let mut plain = ssh.clone();
+        plain["properties"].as_object_mut().unwrap().remove("onlyIfSetUp");
+        assert_eq!(not_needed(&plain, false, ready), None, "without the property, nothing changes");
+        plain["properties"]["onlyIfSetUp"] = json!(false);
+        assert_eq!(not_needed(&plain, false, ready), None);
+        let line = json!({"name": "SSH include", "type": "Furnish/Line", "properties": {"onlyIfSetUp": true}});
+        assert_eq!(not_needed(&line, false, ready), None, "only Furnish/NixOS has it");
+        // The resource reads its properties with it.
+        let d: Desired = serde_json::from_value(ssh["properties"].clone()).unwrap();
+        assert_eq!(d.entry(Place::HomeStandalone).options["programs.ssh.includes"], json!(["config.d/acme.conf"]));
     }
 
     #[test]

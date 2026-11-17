@@ -7,7 +7,9 @@
   services.furnish.enable = true;
   services.furnish.nix = {
     configuration = "/home/alice/.config/home-manager";
-    allowedOptions = [ "programs.htop.enable" ];
+    allowedOptions = [ "programs.htop.enable" "programs.ssh.includes" ];
   };
+  # Home Manager writes ~/.ssh/config, for the app that adds an Include (tests/home-manager.nix).
+  programs.ssh.enable = true;
   manual.manpages.enable = false;
 }

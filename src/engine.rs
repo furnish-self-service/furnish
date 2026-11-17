@@ -805,8 +805,12 @@ fn applicable(doc: &Value) -> Option<Value> {
 }
 
 /// Whether a resource's `condition` holds on this computer with the document's parameter values.
-/// A condition furnish can't evaluate is left to DSC.
+/// A condition furnish can't evaluate is left to DSC. A Furnish/NixOS step with `onlyIfSetUp`
+/// doesn't apply where its place isn't set up (`nixos_apps::not_needed_here`).
 pub fn applies_here(resource: &Value, doc: &Value) -> bool {
+    if crate::nixos_apps::not_needed_here(resource).is_some() {
+        return false;
+    }
     let Some(condition) = resource["condition"].as_str() else { return true };
     let values: serde_json::Map<String, Value> = doc["parameters"]
         .as_object()
@@ -861,7 +865,7 @@ pub enum Action {
     Remove,
     Change,
     Nothing,
-    /// Its `condition` excludes it on this machine.
+    /// Its `condition` excludes it on this machine, or it isn't needed here (`onlyIfSetUp`).
     Skipped,
 }
 
@@ -1080,7 +1084,10 @@ fn preview(doc: &Value) -> Result<Step> {
     let name = resource["name"].as_str().unwrap_or_default().to_string();
     let kind = resource["type"].as_str().unwrap_or_default().to_string();
     let skipped = || {
-        let details = resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect();
+        let details = match crate::nixos_apps::not_needed_here(resource) {
+            Some(why) => vec![format!("Not needed here: {why}")],
+            None => resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect(),
+        };
         Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, notes: vec![], changes: vec![] }
     };
     if !applies_here(resource, doc) {
@@ -1544,6 +1551,31 @@ mod tests {
         assert_eq!(kept["resources"][1]["dependsOn"], json!(["[resourceId('Furnish/Package', 'client')]"]));
         let none = json!({"resources": [{"name": "x", "type": "T/X", "condition": format!("[equals(context().os.family, '{other}')]")}]});
         assert!(applicable(&none).is_none());
+    }
+
+    #[test]
+    fn a_nixos_step_only_where_set_up_is_dropped_off_nixos_and_its_preview_says_why() {
+        if Path::new("/etc/NIXOS").exists() {
+            return; // On NixOS, whether it applies depends on how the computer is set up.
+        }
+        // The owner's example (#8): on a computer without NixOS, only the Line step is left.
+        let doc = json!({"resources": [
+            {"name": "SSH include through Home Manager", "type": "Furnish/NixOS",
+             "properties": {"name": "acme-ssh", "onlyIfSetUp": true, "homeOptions": {"programs.ssh.includes": ["config.d/acme.conf"]}}},
+            {"name": "SSH include", "type": "Furnish/Line", "dependsOn": ["[resourceId('Furnish/NixOS', 'SSH include through Home Manager')]"],
+             "properties": {"path": "~/.ssh/config", "line": "Include config.d/acme.conf", "before": "^\\s*(Host|Match)\\s"}},
+        ]});
+        let kept = applicable(&doc).unwrap();
+        assert_eq!(kept["resources"].as_array().unwrap().len(), 1);
+        assert_eq!(kept["resources"][0]["name"], "SSH include");
+        assert_eq!(kept["resources"][0]["dependsOn"], json!([]));
+        let step = json!({"resources": [doc["resources"][0].clone()]});
+        let p = preview(&step).unwrap();
+        assert_eq!((p.action, p.details), (Action::Skipped, vec!["Not needed here: this computer doesn't run NixOS".to_string()]));
+        // Without the property, the step stays: the resource then says what it needs.
+        let mut plain = doc.clone();
+        plain["resources"][0]["properties"].as_object_mut().unwrap().remove("onlyIfSetUp");
+        assert_eq!(applicable(&plain).unwrap()["resources"].as_array().unwrap().len(), 2);
     }
 
     #[test]

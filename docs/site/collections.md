@@ -85,8 +85,6 @@ Adds packages and options to the computer's NixOS configuration and rebuilds the
     packages: [htop]
     options:
       programs.htop.enable: true
-    homeOptions:
-      programs.htop.enable: true
 ```
 
 | Property | Meaning |
@@ -95,10 +93,33 @@ Adds packages and options to the computer's NixOS configuration and rebuilds the
 | `packages` | Attribute names in the configuration's nixpkgs, such as `htop` or `kdePackages.kdenlive`, added to `environment.systemPackages` or `home.packages` |
 | `options` | NixOS options by name and value. Each needs an entry in the computer's `services.furnish.nix.allowedOptions` |
 | `homeOptions` | Home Manager options by name and value, used instead of `options` when the app goes into Home Manager. Each needs an entry in `services.furnish.nix.allowedOptions` of the Home Manager configuration |
+| `onlyIfSetUp` | `true`: the step applies only where the configuration it goes into is set up for furnish. Elsewhere furnish skips it, as for a false `condition` |
 
 Whether the app goes into the NixOS configuration or Home Manager is up to the computer: Home Manager when furnish's Home Manager module is set up for the person, unless the setting `osSpecific.nixos.installInto` says otherwise. `packages` work in both. An app that sets options should give `options`, `homeOptions` or both. An app with options for only one of them goes there, if that is set up.
 
 Each install or uninstall rebuilds the system or the Home Manager generation once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
+
+Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. A `condition` can't do this, because it doesn't see whether furnish's modules are set up. An app that is already in a configuration counts as set up, so it can still be removed.
+
+This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. After the generation is activated, the `Line` step finds the line and changes nothing. Everywhere else, only the `Line` step runs:
+
+```yaml
+- name: SSH include through Home Manager
+  type: Furnish/NixOS
+  properties:
+    name: acme-ssh
+    onlyIfSetUp: true
+    homeOptions:
+      programs.ssh.includes: [config.d/acme.conf]
+- name: SSH include
+  type: Furnish/Line
+  properties:
+    path: ~/.ssh/config
+    line: Include config.d/acme.conf
+    before: '^\s*(Host|Match)\s'
+```
+
+`programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself. Home Manager writes all includes into one `Include` line, before the first `Host`. If the configuration has includes of its own, that line also names them, the `Line` step doesn't find its exact line, and it fails on the link. The computer's `allowedOptions` needs `programs.ssh.includes`.
 
 ### Required versions
 

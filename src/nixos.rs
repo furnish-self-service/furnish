@@ -913,7 +913,7 @@ mod tests {
         let hint = s.home_hint.unwrap();
         assert_eq!(hint.kind, HomeHintKind::Input);
         let line = s.home_apps_line.unwrap();
-        assert_eq!(hint.lines, [line.clone()]);
+        assert_eq!(hint.lines, std::slice::from_ref(&line));
         f.flake("/home/alice/hm", &format!("{{ {line} }}"));
         let s = detect(&ctx).unwrap();
         assert!(s.home_apps_input && s.home_hint.is_none(), "{:?}", s.home_hint);

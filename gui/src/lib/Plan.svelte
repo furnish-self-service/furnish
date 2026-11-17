@@ -85,6 +85,17 @@
     const condition = detail.match(/^Not on this system: (.+)$/)?.[1];
     return condition ? { text: describeCondition(condition) ?? t('plan.conditionFalse'), condition } : null;
   }
+  /** A Furnish/NixOS step with onlyIfSetUp where its configuration isn't set up:
+   *  "Not needed here: <reason>", with the reasons of src/nixos_apps.rs. */
+  const notNeededReasons: Record<string, Key> = {
+    "this computer doesn't run NixOS": 'plan.notNeeded.nixos',
+    "Home Manager isn't set up for you": 'plan.notNeeded.home',
+    "the NixOS configuration isn't set up for furnish": 'plan.notNeeded.system',
+  };
+  function notNeeded(detail: string) {
+    const reason = detail.match(/^Not needed here: (.+)$/)?.[1];
+    return reason ? (notNeededReasons[reason] ? t(notNeededReasons[reason]) : reason) : null;
+  }
   type Note = NonNullable<Step['notes']>[number];
   /** furnish's configuration resources describe their steps as notes to translate; a note of a
    *  newer furnish that this interface doesn't know shows the English details instead. */
@@ -270,8 +281,11 @@
           {#each step.details as detail}
             {@const c = command(detail)}
             {@const skip = skipReason(detail)}
+            {@const unneeded = notNeeded(detail)}
             {#if skip}
               <p class="detail">{t('plan.notForSystem', { reason: skip.text })} <span class="type">{skip.condition}</span></p>
+            {:else if unneeded}
+              <p class="detail">{t('plan.notNeeded', { reason: unneeded })}</p>
             {:else if c}
               <div class="command">
                 <span class="who">{c.who}</span>

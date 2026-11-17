@@ -66,6 +66,10 @@
           "type": "object",
           "description": "Home Manager options by name, used instead of options when the app goes into Home Manager; each must be in services.furnish.nix.allowedOptions of the Home Manager configuration"
         },
+        "onlyIfSetUp": {
+          "type": "boolean",
+          "description": "Apply the step only where its configuration is set up for furnish; elsewhere furnish skips it, as for a false condition"
+        },
         "installedInto": {
           "type": "string",
           "enum": [

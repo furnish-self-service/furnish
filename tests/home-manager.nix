@@ -5,7 +5,10 @@
 # and activates the generation the test built beforehand with the same apps, and commits
 # flake.lock. An option outside her allowlist is refused, an app with only NixOS options needs the
 # NixOS configuration, and an uninstall with other changes in the repository leaves flake.lock
-# uncommitted. Everything runs as alice. The VM is offline. Run:
+# uncommitted. Everything runs as alice. The owner's example from #8: an app adds an ssh Include
+# with a Furnish/NixOS step (onlyIfSetUp) before a Furnish/Line step. For alice, Home Manager
+# writes the line and the Line step finds it; for bob, without Home Manager, the first step isn't
+# needed and the Line step writes it. The VM is offline. Run:
 #   nix build -L .#checks.x86_64-linux.home-manager
 { pkgs, nixpkgs, homeManagerModule, furnish, module }:
 let
@@ -13,6 +16,23 @@ let
   before = h.home { };
   htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
   after = h.home { inherit htop; };
+  include = "config.d/acme.conf";
+  ssh = h.home { acme-ssh = { packages = [ ]; options."programs.ssh.includes" = [ include ]; }; };
+  acme-ssh = pkgs.writeText "acme-ssh.dsc.yaml" (builtins.toJSON {
+    metadata.furnish = { description = "acme-ssh"; categories = [ "Test" ]; };
+    resources = [
+      {
+        name = "SSH include through Home Manager";
+        type = "Furnish/NixOS";
+        properties = { name = "acme-ssh"; onlyIfSetUp = true; homeOptions."programs.ssh.includes" = [ include ]; };
+      }
+      {
+        name = "SSH include";
+        type = "Furnish/Line";
+        properties = { path = "~/.ssh/config"; line = "Include ${include}"; before = "^\\s*(Host|Match)\\s"; };
+      }
+    ];
+  });
   app = name: properties: pkgs.writeText "${name}.dsc.yaml" (builtins.toJSON {
     metadata.furnish = { description = name; categories = [ "Test" ]; };
     resources = [{ inherit name; type = "Furnish/NixOS"; properties = { inherit name; } // properties; }];
@@ -28,13 +48,14 @@ pkgs.testers.runNixOSTest {
       policy.collections.preset = [{ name = "org"; url = "/srv/org"; }];
     };
     users.users.alice.isNormalUser = true;
+    users.users.bob.isNormalUser = true;
     environment.systemPackages = [ pkgs.git ];
     nix.settings = {
       experimental-features = [ "nix-command" "flakes" ];
       substituters = lib.mkForce [ ];
     };
     # Building takes nothing. Evaluating needs nixpkgs, Home Manager, furnish and crane.
-    virtualisation.additionalPaths = [ before after nixpkgs.outPath h.homeManager furnish.outPath furnish.inputs.crane.outPath ];
+    virtualisation.additionalPaths = [ before after ssh nixpkgs.outPath h.homeManager furnish.outPath furnish.inputs.crane.outPath ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''
@@ -66,6 +87,7 @@ pkgs.testers.runNixOSTest {
         "cp ${app "htop" { inherit (htop) packages; homeOptions = htop.options; }} /srv/org/apps/htop.dsc.yaml",
         "cp ${app "git" { homeOptions."programs.git.enable" = true; }} /srv/org/apps/git.dsc.yaml",
         "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
+        "cp ${acme-ssh} /srv/org/apps/acme-ssh.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
         # Without the service, alice clones the collection herself.
         "chown -R alice /srv/org",
@@ -122,5 +144,24 @@ pkgs.testers.runNixOSTest {
     assert alice("git log -1 --format=%s").strip() == "furnish: install htop"
     status = alice("git status --porcelain")
     assert sorted(status.split()) == ["M", "M", "flake.lock", "home.nix"], status
+
+    # The ssh Include: Home Manager writes it into ~/.ssh/config (a link into the store), and the
+    # Line step, which runs after the activation, finds it there.
+    furnish("install acme-ssh")
+    assert generation() == "${ssh}", generation()
+    machine.succeed("test -L /home/alice/.ssh/config", "grep -qx 'Include ${include}' /home/alice/.ssh/config")
+    listed = furnish("list")
+    assert any(l.startswith("✓  acme-ssh") for l in listed.splitlines()), listed
+
+    # bob has no Home Manager: the first step isn't needed, the Line step writes the file.
+    machine.succeed("su - bob -c 'git config --global --add safe.directory /srv/org/.git'")
+    out = machine.succeed("su - bob -c 'furnish install acme-ssh --dry-run' 2>&1")
+    print(out)
+    assert "Not needed here: Home Manager isn't set up for you" in out, out
+    print(machine.succeed("su - bob -c 'furnish install acme-ssh' 2>&1"))
+    machine.succeed("test ! -L /home/bob/.ssh/config", "grep -qx 'Include ${include}' /home/bob/.ssh/config")
+    machine.fail("test -e /home/bob/.local/share/furnish/home-apps/apps.json")
+    listed = machine.succeed("su - bob -c 'furnish list'")
+    assert any(l.startswith("✓  acme-ssh") for l in listed.splitlines()), listed
   '';
 }
