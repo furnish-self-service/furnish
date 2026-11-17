@@ -216,7 +216,7 @@ fn listen() -> Result<()> {
                 Ok(())
             },
         };
-        super::spawn_connection(input, PipeRef(pipe), finish, move |_| authorize(authorizing.handle));
+        super::spawn_connection(input, PipeRef(pipe), finish, None, move |_| authorize(authorizing.handle));
     }
 }
 

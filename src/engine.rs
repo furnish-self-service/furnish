@@ -35,6 +35,8 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
     ("furnish-installer.dsc.resource.json", include_str!("../resources/unix/furnish-installer.dsc.resource.json")),
     ("furnish-installer.dsc.resource.sh", include_str!("../resources/unix/furnish-installer.dsc.resource.sh")),
+    ("furnish-nixos.dsc.resource.json", include_str!("../resources/unix/furnish-nixos.dsc.resource.json")),
+    ("furnish-nixos.dsc.resource.sh", include_str!("../resources/unix/furnish-nixos.dsc.resource.sh")),
 ];
 #[cfg(windows)]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
@@ -279,6 +281,11 @@ pub fn init(dir: &Path) -> Result<()> {
         env::set_var("FURNISH_STOP_FILE", stop_file);
         // Resources keep what is slow to find out here, e.g. the names nixpkgs gives packages.
         env::set_var("FURNISH_CACHE_DIR", dir.parent().unwrap_or(dir).join("cache"));
+        // Furnish/NixOS runs furnish itself (`nixos-resource`); only the service may rebuild.
+        if let Ok(exe) = env::current_exe() {
+            env::set_var("FURNISH_EXE", exe);
+        }
+        env::set_var("FURNISH_SERVICE", if in_service { "1" } else { "" });
         // The settings in effect and what furnish detected (FURNISH_CONFIG__*, FURNISH_DETECTED__*).
         crate::resource_env::init();
     }

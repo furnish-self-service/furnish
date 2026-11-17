@@ -337,6 +337,8 @@ export const en = {
   'nixos.from.module': "Set in your NixOS configuration",
   'nixos.keep': "Keep it in your configuration",
   'nixos.keepText': "furnish found this folder on its own. With this line in your NixOS configuration, it doesn't have to search.",
+  'nixos.apps': "Install apps into it",
+  'nixos.appsText': "With these lines in its flake.nix, furnish can install apps into the configuration and rebuild it.",
   'nixos.from.policy': "Set by your organization",
   'nixos.from.etc-nixos': "From /etc/nixos",
   'nixos.from.nh': "From nh ({variable})",

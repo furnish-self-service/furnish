@@ -131,6 +131,13 @@ enum Command {
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
     },
+    /// The DSC resource Furnish/NixOS (DSC runs it; see src/nixos_apps.rs)
+    #[command(hide = true)]
+    NixosResource {
+        action: String,
+        #[arg(long)]
+        what_if: bool,
+    },
 }
 
 /// Where the NixOS configuration is (`furnish settings`, NixOS only).
@@ -204,6 +211,12 @@ fn print_nixos(s: &furnish::nixos::Setup) {
             }
             if let Some(p) = f.problem {
                 println!("                     note: {}", p.text(&s.flake_attribute.value));
+            }
+            if f.kind == furnish::nixos::Kind::Flake && !s.apps_input {
+                println!("                     to let furnish install apps into it, add to its flake.nix:");
+                for line in furnish::nixos_apps::SETUP_LINES {
+                    println!("                       {line}");
+                }
             }
             if f.kind == furnish::nixos::Kind::Flake {
                 let from = match s.flake_attribute.source {
@@ -351,6 +364,9 @@ enum CollectionCommand {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Command::NixosResource { action, what_if } = &cli.command {
+        return furnish::nixos_apps::resource(action, *what_if);
+    }
     if matches!(cli.command, Command::Service { action: None }) {
         // The service keeps its collections, resources and records in the system directory.
         // SAFETY: still single-threaded.
@@ -404,6 +420,7 @@ fn run(command: Command) -> Result<()> {
             println!("✓ Removed the furnish service");
             Ok(())
         }
+        Command::NixosResource { .. } => unreachable!("run before anything else"),
         Command::List => list(),
         Command::Login { endpoint } => {
             let origin = endpoint_origin(&endpoint)?;

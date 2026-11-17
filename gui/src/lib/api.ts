@@ -217,7 +217,9 @@ export type NixosSetup = {
   rejected: [string, NixosProblem] | null;
   chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf };
   /** Set up with furnish's NixOS module: its `services.furnish.nix` values. */
-  module: { nix: { configuration: string | null; flakeAttribute: string | null } } | null;
+  module: { nix: { configuration: string | null; flakeAttribute: string | null; allowedOptions: string[]; rebuild: string | null } } | null;
+  /** Its flake.nix points furnish/apps at furnish's local flake: furnish can install apps into it. */
+  appsInput: boolean;
 };
 export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 /** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */

@@ -43,13 +43,15 @@
       })
       .catch(() => {});
   loadNixos();
-  // The line to add to the NixOS configuration, copied.
-  let copied = $state(false);
+  // The lines to add to the NixOS configuration: which of them was just copied.
+  let copied = $state<string | null>(null);
   async function copySnippet(text: string) {
     await navigator.clipboard.writeText(text);
-    copied = true;
-    setTimeout(() => (copied = false), 1500);
+    copied = text;
+    setTimeout(() => (copied = null), 1500);
   }
+  // furnish installs apps into the configuration once its flake.nix has these (src/nixos_apps.rs).
+  const appsLines = 'inputs.furnish.inputs.nixpkgs.follows = "nixpkgs";\ninputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";';
   // Set (or with null, forget) a NixOS setting, then show what furnish finds with it.
   async function saveNixos(name: 'configuration' | 'flakeAttribute', value: string | null) {
     try {
@@ -368,10 +370,22 @@
             </span>
             <span class="control">
               <code class="path">{snippet}</code>
-              <button class="secondary" onclick={() => copySnippet(snippet)}>{copied ? t('common.copied') : t('common.copy')}</button>
+              <button class="secondary" onclick={() => copySnippet(snippet)}>{copied === snippet ? t('common.copied') : t('common.copy')}</button>
               {#if config.source !== 'setting'}
                 <button class="secondary" onclick={() => saveNixos('configuration', config.path)}>{t('nixos.useThis')}</button>
               {/if}
+            </span>
+          </li>
+        {/if}
+        {#if config?.kind === 'flake' && !nixos.appsInput}
+          <li class="row">
+            <span class="text">
+              <span class="label">{t('nixos.apps')}</span>
+              <span class="desc">{t('nixos.appsText')}</span>
+            </span>
+            <span class="control">
+              <code class="path snippet">{appsLines}</code>
+              <button class="secondary" onclick={() => copySnippet(appsLines)}>{copied === appsLines ? t('common.copied') : t('common.copy')}</button>
             </span>
           </li>
         {/if}
@@ -656,6 +670,9 @@
   .value {
     color: var(--ink-soft);
     font-size: 0.92rem;
+  }
+  .snippet {
+    white-space: pre-wrap;
   }
   .path {
     font: 0.8rem var(--font-mono);

@@ -340,6 +340,9 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         if kind == "Furnish/Package" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/Package needs properties.name")));
         }
+        if kind == "Furnish/NixOS" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
+            findings.push(error(format!("{name}: Furnish/NixOS needs properties.name")));
+        }
         if kind == "Furnish/Installer" {
             match r["properties"]["file"].as_str() {
                 None => findings.push(error(format!("{name}: Furnish/Installer needs properties.file"))),

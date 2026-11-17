@@ -340,6 +340,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'nixos.from.module': "Ingesteld in uw NixOS-configuratie",
   'nixos.keep': "Vastleggen in de configuratie",
   'nixos.keepText': "furnish heeft deze map zelf gevonden. Met deze regel in uw NixOS-configuratie hoeft het niet te zoeken.",
+  'nixos.apps': "Er apps in installeren",
+  'nixos.appsText': "Met deze regels in de flake.nix kan furnish apps in de configuratie installeren en die opnieuw bouwen.",
   'nixos.from.policy': "Ingesteld door uw organisatie",
   'nixos.from.etc-nixos': "Uit /etc/nixos",
   'nixos.from.nh': "Van nh ({variable})",

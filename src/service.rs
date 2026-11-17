@@ -237,7 +237,7 @@ impl<R: Read> Read for Deadline<R> {
 /// can be started. `authorize(interactive)`: may the caller install (`interactive`: ask for a
 /// password if the OS's rules say so)?
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
-fn spawn_connection<R, W>(input: R, mut output: W, finish: fn(W), authorize: impl Fn(bool) -> Result<()> + Send + 'static)
+fn spawn_connection<R, W>(input: R, mut output: W, finish: fn(W), caller: Option<u32>, authorize: impl Fn(bool) -> Result<()> + Send + 'static)
 where
     R: Read + Send + 'static,
     W: Write + Send + 'static,
@@ -272,16 +272,27 @@ where
     let out: Out = Arc::new(Mutex::new(Some(queue)));
     let handler = std::thread::Builder::new().name("furnish-request".into()).spawn(move || {
         let _slot = slot;
-        handle(input, out, &authorize);
+        handle(input, out, caller, &authorize);
     });
     if let Err(err) = handler {
         eprintln!("warning: can't answer a connection: {err}");
     }
 }
 
+/// Who asked for the running operation (uid), for Furnish/NixOS: it rebuilds a configuration that
+/// belongs to a user only when that user asks (src/nixos_apps.rs). The variable is set from the
+/// start, so later changes replace its value in place (as `resource_env::refresh`), under `RUNNING`.
+const REQUESTER: &str = "FURNISH_REQUESTER_UID";
+
+fn set_requester(uid: Option<u32>) {
+    // SAFETY: the name exists since `start`; only the operation holding RUNNING changes it.
+    unsafe { std::env::set_var(REQUESTER, uid.map(|u| u.to_string()).unwrap_or_default()) };
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn start() {
     IN_SERVICE.store(true, Ordering::Relaxed);
+    set_requester(None);
     engine::capture_logs(|line| {
         if let Some(out) = CURRENT.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             send(out, &Reply::Log { level: line.level.into(), message: line.message });
@@ -293,12 +304,12 @@ fn start() {
 }
 
 /// Answer one connection: read the request, check it, run it, send the result.
-fn handle(input: impl Read, out: Out, authorize: &dyn Fn(bool) -> Result<()>) {
+fn handle(input: impl Read, out: Out, caller: Option<u32>, authorize: &dyn Fn(bool) -> Result<()>) {
     let mut line = String::new();
     let reply = match BufReader::new(input.take(64 * 1024)).read_line(&mut line).context("reading the request").and_then(|_| {
         serde_json::from_str::<Request>(&line).context("invalid request")
     }) {
-        Ok(request) => answer(request, &out, authorize).unwrap_or_else(|e| {
+        Ok(request) => answer(request, &out, caller, authorize).unwrap_or_else(|e| {
             Reply::Error(if e.is::<engine::Cancelled>() { engine::CANCELLED.into() } else { format!("{e:#}") })
         }),
         Err(e) => Reply::Error(format!("{e:#}")),
@@ -306,7 +317,7 @@ fn handle(input: impl Read, out: Out, authorize: &dyn Fn(bool) -> Result<()>) {
     send(&out, &reply);
 }
 
-fn answer(request: Request, out: &Out, authorize: &dyn Fn(bool) -> Result<()>) -> Result<Reply> {
+fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(bool) -> Result<()>) -> Result<Reply> {
     let app = |key: &str| -> Result<crate::catalog::App> {
         let app = crate::catalog::find_app(key)?;
         if !app.managed {
@@ -325,7 +336,9 @@ fn answer(request: Request, out: &Out, authorize: &dyn Fn(bool) -> Result<()>) -
     let operation = |work: Work| -> Result<Reply> {
         let _one_at_a_time = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
         *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(out.clone());
+        set_requester(caller);
         let result = work(&mut |p| send(out, &Reply::Progress(p)));
+        set_requester(None);
         *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = None;
         result.map(|()| Reply::Done)
     };
@@ -476,7 +489,8 @@ pub fn serve() -> Result<()> {
             }
         };
         let input = Deadline { inner: stream, until: Instant::now() + IO_TIMEOUT, set: |s, left| s.set_read_timeout(Some(left)) };
-        spawn_connection(input, output, drop, move |interactive| {
+        let caller = peer.as_ref().ok().map(|p| p.uid);
+        spawn_connection(input, output, drop, caller, move |interactive| {
             authorize(peer.as_ref().map_err(|e| anyhow::anyhow!("{e:#}"))?, interactive)
         });
     }

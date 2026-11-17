@@ -340,6 +340,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'nixos.from.module': "Impostato nella tua configurazione NixOS",
   'nixos.keep': "Fissala nella configurazione",
   'nixos.keepText': "furnish ha trovato questa cartella da solo. Con questa riga nella tua configurazione NixOS non deve cercarla.",
+  'nixos.apps': "Installarvi app",
+  'nixos.appsText': "Con queste righe nel suo flake.nix, furnish può installare app nella configurazione e ricostruirla.",
   'nixos.from.policy': "Impostato dalla tua organizzazione",
   'nixos.from.etc-nixos': "Da /etc/nixos",
   'nixos.from.nh': "Da nh ({variable})",

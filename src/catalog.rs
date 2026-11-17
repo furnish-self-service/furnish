@@ -1077,7 +1077,7 @@ pub(crate) fn allowed_resource_types() -> Option<Vec<String>> {
 }
 
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
-pub const RESOURCE_TYPES: [&str; 2] = ["Furnish/Package", INSTALLER_TYPE];
+pub const RESOURCE_TYPES: [&str; 3] = ["Furnish/Package", INSTALLER_TYPE, "Furnish/NixOS"];
 const INSTALLER_TYPE: &str = "Furnish/Installer";
 
 /// Whether two resolved paths are the same (Windows: ignoring case, like its file systems).

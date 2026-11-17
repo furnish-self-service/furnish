@@ -40,7 +40,7 @@ resources:
       name: GIMP.GIMP.3
 ```
 
-furnish ships two resources, `Furnish/Package` and `Furnish/Installer`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
+furnish ships three resources, `Furnish/Package`, `Furnish/Installer` and `Furnish/NixOS`, and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
@@ -67,6 +67,29 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 ```
 
 `file` is a path inside the collection. furnish refuses a path that leads outside it, also through a symbolic link, and the resource refuses to install a symbolic link.
+
+### Furnish/NixOS
+
+Adds packages and NixOS options to the computer's NixOS configuration and rebuilds the system, through the furnish service. The configuration has to be a flake set up for it (see [NixOS](admins.md#installing-apps-into-the-configuration)); otherwise the app shows "Needs ...".
+
+```yaml
+- name: htop
+  type: Furnish/NixOS
+  condition: "[equals(context().os.family, 'Linux')]"
+  properties:
+    name: htop
+    packages: [htop]
+    options:
+      programs.htop.enable: true
+```
+
+| Property | Meaning |
+|---|---|
+| `name` | The app's name in furnish's list on the computer; unique among your apps (letters, digits, `_` and `-`) |
+| `packages` | Attribute names in the system's nixpkgs, such as `htop` or `kdePackages.kdenlive`, added to `environment.systemPackages` |
+| `options` | NixOS options by name and value. Each needs an entry in the computer's `services.furnish.nix.allowedOptions` |
+
+Each install or uninstall rebuilds the system once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
 ### Other DSC resources
 
@@ -98,7 +121,7 @@ furnish uses `test` to tell whether an app is installed. A resource that is not 
 
 For `--dry-run` and the steps preview, furnish's own resources show their exact commands. Other resources show their type and properties.
 
-No other resource may declare `Furnish/Package` or `Furnish/Installer`. furnish refuses to run when DSC finds one, whatever its version.
+No other resource may declare `Furnish/Package`, `Furnish/Installer` or `Furnish/NixOS`. furnish refuses to run when DSC finds one, whatever its version.
 
 Your organization can limit which resource types apps may use (see [For admins](admins.md#the-policy)).
 

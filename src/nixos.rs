@@ -177,6 +177,10 @@ pub struct ModuleFacts {
 pub struct ModuleNix {
     pub configuration: Option<String>,
     pub flake_attribute: Option<String>,
+    /// NixOS options apps may set (Furnish/NixOS, see `nixos_apps`).
+    pub allowed_options: Vec<String>,
+    /// After installing into the configuration: `switch` or `boot`.
+    pub rebuild: Option<String>,
 }
 
 /// How this NixOS computer is set up.
@@ -195,6 +199,9 @@ pub struct Setup {
     pub chosen: Chosen,
     /// Set up with furnish's NixOS module: what it knows.
     pub module: Option<ModuleFacts>,
+    /// The configuration's flake.nix points furnish/apps at furnish's local flake, so furnish can
+    /// install apps into it (`nixos_apps::SETUP_LINES`).
+    pub apps_input: bool,
 }
 
 /// What `detect` looks at; the real computer, or fakes in tests.
@@ -216,7 +223,11 @@ impl Context {
     /// This computer, as this process sees it. In the service, only the admin policy's values
     /// count: a root rebuild must never follow a path an ordinary user put in their settings.
     pub fn here() -> Context {
-        let in_service = crate::service::in_service();
+        Context::new(crate::service::in_service())
+    }
+
+    /// As the furnish service sees this computer (also from a process the service started).
+    pub fn new(in_service: bool) -> Context {
         let policy = crate::policy::load();
         let choices = if in_service { Map::new() } else { crate::settings::user_choices() };
         Context {
@@ -356,7 +367,9 @@ pub fn detect(ctx: &Context) -> Option<Setup> {
             .collect(),
         _ => Vec::new(),
     };
+    let apps_input = configuration.as_ref().is_some_and(|f| f.kind == Kind::Flake && crate::nixos_apps::has_input(&ctx.fs(&f.path)));
     Some(Setup {
+        apps_input,
         configuration,
         home_manager_configuration: home_manager(ctx),
         home_manager: has_home_manager(ctx) || module.as_ref().is_some_and(|m| m.home_manager_module),

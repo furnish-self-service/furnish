@@ -6,9 +6,9 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   # Builds the Rust dependencies once for both packages (cargoArtifacts below).
   inputs.crane.url = "github:ipetkov/crane/v0.23.4";
-  # Apps furnish installs into the NixOS configuration. Empty here; on a computer, the
-  # configuration points it at furnish's local flake (docs/site/admins.md):
-  #   inputs.furnish.inputs.apps.url = "git+file:///var/lib/furnish/apps";
+  # Apps furnish installs into the NixOS configuration (Furnish/NixOS). Empty here; on a computer,
+  # the configuration points it at furnish's local flake (docs/site/admins.md):
+  #   inputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";
   inputs.apps.url = "path:./nix/no-apps";
 
   # Builds of main, so admins download furnish instead of compiling it. Nix asks once whether to
@@ -105,9 +105,19 @@
         let
           cfg = config.services.furnish;
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          # The local flake lists attribute names in the system's nixpkgs (nix/no-apps/flake.nix).
+          # The apps furnish installed (Furnish/NixOS), from its local flake: apps.json, as
+          # src/nixos_apps.rs writes it. Packages are names in the system's nixpkgs.
+          installed = lib.attrValues ((apps.furnish or { }).apps or { });
           appPackages = map (name: lib.attrByPath (lib.splitString "." name)
-            (throw "furnish: nixpkgs has no package ${name}") pkgs) apps.furnish.systemPackages;
+            (throw "furnish: nixpkgs has no package ${name}") pkgs) (lib.concatMap (a: a.packages or [ ]) installed);
+          appSettings = lib.concatMap (a: lib.mapAttrsToList (name: value: { inherit name value; }) (a.options or { })) installed;
+          # An entry of allowedOptions: an option's name, where `*` stands for one part.
+          matches = pattern: name:
+            let p = lib.splitString "." pattern; n = lib.splitString "." name; in
+            lib.length p == lib.length n && lib.all lib.id (lib.zipListsWith (a: b: a == "*" || a == b) p n);
+          allowed = name: lib.any (p: matches p name) cfg.nix.allowedOptions;
+          # The local flake furnish keeps its apps in; also written by src/nixos_apps.rs.
+          appsFlake = "{ outputs = _: { furnish = builtins.fromJSON (builtins.readFile ./apps.json); }; }";
           # Module first: what the configuration says wins over people's own setting.
           entry = value: { inherit value; locked = true; };
           nixos = lib.filterAttrs (_: v: v.value != null) {
@@ -123,7 +133,7 @@
             configurationRevision = config.system.configurationRevision;
             homeManagerModule = options ? home-manager;
             moduleVersion = packages.furnish.version;
-            nix = { inherit (cfg.nix) configuration flakeAttribute; };
+            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions rebuild; };
           };
         in {
           options.services.furnish = {
@@ -152,21 +162,46 @@
                 description = "Name in the flake's nixosConfigurations.";
                 example = "alex-laptop";
               };
+              allowedOptions = lib.mkOption {
+                type = lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*");
+                default = [ ];
+                description = "NixOS options that apps (Furnish/NixOS) may set; `*` stands for one part of the name. Packages need no entry.";
+                example = [ "programs.*.enable" "services.flatpak.enable" ];
+              };
+              rebuild = lib.mkOption {
+                type = lib.types.enum [ "switch" "boot" ];
+                default = "switch";
+                description = "After installing an app into the configuration, the furnish service switches to the new system now, or makes it the one the computer starts next (boot).";
+              };
             };
           };
-          config = lib.mkIf cfg.enable {
+          config = lib.mkIf cfg.enable (lib.mkMerge ([{
             environment.systemPackages = [ packages.furnish packages.furnish-gui ] ++ appPackages;
             # Nix packages the furnish service installs for everyone (Furnish/Package as root).
             environment.profiles = lib.mkIf cfg.service.enable [ "/nix/var/nix/profiles/furnish" ];
             environment.etc."furnish/policy.json" = lib.mkIf (policy != { }) { text = builtins.toJSON policy; };
             environment.etc."furnish/nixos.json".text = builtins.toJSON facts;
             security.polkit.enable = true;
+            # furnish's source and crane's stay in the store as long as this system does, so the
+            # configuration still evaluates offline after a garbage collection.
+            system.extraDependencies = [ self.outPath crane.outPath ];
+            # The local flake the configuration's furnish/apps input points at; furnish fills it.
+            systemd.tmpfiles.settings.furnish-apps = {
+              "/var/lib/furnish/apps".d = { mode = "0755"; user = "root"; group = "root"; };
+              "/var/lib/furnish/apps/flake.nix".f = { mode = "0644"; user = "root"; group = "root"; argument = appsFlake; };
+              "/var/lib/furnish/apps/apps.json".f = { mode = "0644"; user = "root"; group = "root"; argument = ''{"version":1,"apps":{}}''; };
+            };
+            assertions = map (s: {
+              assertion = allowed s.name;
+              message = "furnish: an app sets ${s.name}, which isn't in services.furnish.nix.allowedOptions";
+            }) appSettings;
             systemd.services.furnish = lib.mkIf cfg.service.enable {
               description = "furnish service: installs apps your organization provides";
               wantedBy = [ "multi-user.target" ];
               wants = [ "network-online.target" ];
               after = [ "network-online.target" ];
-              path = with pkgs; [ bash coreutils git git-lfs nix ];
+              # systemd-run: switching to a new system runs outside the service, which it may restart.
+              path = with pkgs; [ bash coreutils git git-lfs nix config.systemd.package ];
               # It reads the policy once for its resources (FURNISH_CONFIG__*): restart on changes.
               restartTriggers = [ (builtins.toJSON policy) ];
               serviceConfig = {
@@ -176,7 +211,7 @@
                 StateDirectory = "furnish";
               };
             };
-          };
+          }] ++ map (s: lib.mkIf (allowed s.name) (lib.setAttrByPath (lib.splitString "." s.name) s.value)) appSettings));
         };
     in {
       packages = forAll (pkgs: let r = rust pkgs; in rec {
@@ -256,6 +291,12 @@
         nixos-declared = import ./tests/nixos-declared.nix { inherit pkgs; module = self.nixosModules.default; };
         # NixOS VM: apps from furnish's local flake, a nested input, end up in the system.
         nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
+        # NixOS VM: installing such an app through the furnish service.
+        nixos-install = import ./tests/nixos-install.nix {
+          inherit pkgs nixpkgs nixosModule;
+          furnish = self;
+          module = self.nixosModules.default;
+        };
       });
     };
 }

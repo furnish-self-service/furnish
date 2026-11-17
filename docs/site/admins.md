@@ -308,7 +308,41 @@ The check reads the file and evaluates nothing. A `flake.nix` must mention `nixo
 
 The Home Manager configuration comes from `osSpecific.nixos.homeManagerConfiguration`, `HOME_MANAGER_CONFIG` or `~/.config/home-manager`.
 
-The furnish service ignores people's own settings for this. It takes the location from the policy or from places only root can change, such as `/etc/nixos`. The folder there can still belong to a person, for example when `/etc/nixos/flake.nix` links into a home folder. furnish passes the folder's owner to its resources (see [Settings available to resources](collections.md#settings-available-to-resources)), so a later rebuild as root can refuse a configuration that isn't root's.
+The furnish service ignores people's own settings for this. It takes the location from the policy or from places only root can change, such as `/etc/nixos`. The folder there can still belong to a person, for example when `/etc/nixos/flake.nix` links into a home folder. furnish passes the folder's owner to its resources (see [Settings available to resources](collections.md#settings-available-to-resources)), so a rebuild as root can refuse a configuration that isn't root's (see [Installing apps into the configuration](#installing-apps-into-the-configuration)).
+
+### Installing apps into the configuration
+
+Apps with a `Furnish/NixOS` resource (see [Writing a collection](collections.md#furnishnixos)) go into the NixOS configuration instead of a profile. furnish doesn't edit the configuration's files. Add these lines to its `flake.nix` once, next to the furnish input:
+
+```nix
+inputs.furnish.url = "github:furnish-self-service/furnish";
+inputs.furnish.inputs.nixpkgs.follows = "nixpkgs";
+inputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";
+```
+
+`/var/lib/furnish/apps` is a small flake that furnish keeps, with the apps it installed in `apps.json`. The module creates it and adds its packages and options to the system, with no further imports. With `follows`, furnish builds against your nixpkgs, and the apps' packages always come from it. `furnish settings` and the Settings page show the lines when they are missing.
+
+An install needs the furnish service (`services.furnish.service.enable`) and `services.furnish.nix.configuration`. The service:
+
+1. writes the app into `apps.json`;
+2. runs `nix flake update furnish/apps`, which changes only that entry of `flake.lock`;
+3. builds the system and switches to it;
+4. commits `flake.lock` if the repository had no other changes. Otherwise it leaves committing to you.
+
+If the build fails, furnish puts `apps.json` and `flake.lock` back. Steps 2 to 4 run as the account that owns the configuration's folder, so no process running as root opens a git repository someone else controls; only the switch runs as root. A folder that belongs to a person is rebuilt only when that person or root asks. furnish refuses if anyone else can change the folder or a folder above it.
+
+Apps may set only the NixOS options you allow. Packages need no entry:
+
+```nix
+services.furnish.nix = {
+  allowedOptions = [ "programs.*.enable" "services.flatpak.enable" ];  # * stands for one part of the name
+  rebuild = "boot";  # default "switch": switch now; "boot": when the computer starts next
+};
+```
+
+furnish refuses an app with another option before it changes anything, and the module refuses to build such a configuration.
+
+The module keeps furnish's own source in the system, so the configuration still evaluates offline after a garbage collection. You can also run `nix flake update` yourself: the `furnish/apps` input stays where it points.
 
 Builds of the `main` branch are in the binary cache `furnish.cachix.org`, which the flake offers. Nix asks once whether to trust the flake's settings. Or add the cache to your configuration:
 

@@ -338,6 +338,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'nixos.from.module': "In Ihrer NixOS-Konfiguration festgelegt",
   'nixos.keep': "In der Konfiguration festhalten",
   'nixos.keepText': "furnish hat diesen Ordner selbst gefunden. Mit dieser Zeile in Ihrer NixOS-Konfiguration muss es nicht suchen.",
+  'nixos.apps': "Apps darin installieren",
+  'nixos.appsText': "Mit diesen Zeilen in der flake.nix kann furnish Apps in die Konfiguration installieren und sie neu bauen.",
   'nixos.from.policy': "Von Ihrer Organisation festgelegt",
   'nixos.from.etc-nixos': "Aus /etc/nixos",
   'nixos.from.nh': "Von nh ({variable})",

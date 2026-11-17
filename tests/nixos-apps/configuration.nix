@@ -1,9 +1,13 @@
-# The NixOS configuration the test VM builds from its flake, and the test builds beforehand to
+# The NixOS configuration the test VMs build from their flake, and the tests build beforehand to
 # compare. Only building, not switching: no boot loader or real file systems needed.
 { lib, ... }:
 {
   services.furnish.enable = true;
-  services.furnish.nix.configuration = "/home/alice/cfg";
+  services.furnish.nix = {
+    configuration = "/home/alice/cfg";
+    allowedOptions = [ "programs.htop.enable" ];
+    rebuild = "boot";
+  };
   nixpkgs.hostPlatform = "x86_64-linux";
   boot.loader.grub.enable = false;
   fileSystems."/".device = "/dev/vda";
