@@ -27,6 +27,17 @@
         "type": "github"
       }
     },
+    "home-apps": {
+      "locked": {
+        "path": "./nix/no-apps",
+        "type": "path"
+      },
+      "original": {
+        "path": "./nix/no-apps",
+        "type": "path"
+      },
+      "parent": []
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1782847189,
@@ -47,6 +58,7 @@
       "inputs": {
         "apps": "apps",
         "crane": "crane",
+        "home-apps": "home-apps",
         "nixpkgs": "nixpkgs"
       }
     }

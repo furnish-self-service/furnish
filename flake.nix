@@ -10,6 +10,10 @@
   # the configuration points it at furnish's local flake (docs/site/admins.md):
   #   inputs.furnish.inputs.apps.url = "path:/var/lib/furnish/apps";
   inputs.apps.url = "path:./nix/no-apps";
+  # Apps furnish installs into a person's standalone Home Manager configuration. Empty here; the
+  # configuration points it at furnish's local flake in that person's data folder:
+  #   inputs.furnish.inputs.home-apps.url = "path:/home/alice/.local/share/furnish/home-apps";
+  inputs.home-apps.url = "path:./nix/no-apps";
 
   # Builds of main, so admins download furnish instead of compiling it. Nix asks once whether to
   # trust these settings; alternatively add both to nix.settings (docs/site/admins.md).
@@ -18,7 +22,7 @@
     extra-trusted-public-keys = [ "furnish.cachix.org-1:2kYBYAHpsUEykPAKjJ9a6IlwDPwjnq565I6cPtASA6k=" ];
   };
 
-  outputs = { self, nixpkgs, crane, apps }:
+  outputs = { self, nixpkgs, crane, apps, home-apps }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -100,22 +104,29 @@
           buildPhaseCargoCommand = "${cargoBuildCli}\n${cargoBuildGui}";
         });
       };
+      # Shared by both modules: what the installed apps (`apps` of an apps.json, as
+      # src/nixos_apps.rs writes it) add, and whether the allowlist permits an option. Packages are
+      # names in the configuration's nixpkgs.
+      appsOf = lib: pkgs: allowedOptions: byName:
+        let
+          installed = lib.attrValues byName;
+          # An entry of allowedOptions: an option's name, where `*` stands for one part.
+          matches = pattern: name:
+            let p = lib.splitString "." pattern; n = lib.splitString "." name; in
+            lib.length p == lib.length n && lib.all lib.id (lib.zipListsWith (a: b: a == "*" || a == b) p n);
+        in {
+          appPackages = map (name: lib.attrByPath (lib.splitString "." name)
+            (throw "furnish: nixpkgs has no package ${name}") pkgs) (lib.concatMap (a: a.packages or [ ]) installed);
+          appSettings = lib.concatMap (a: lib.mapAttrsToList (name: value: { inherit name value; }) (a.options or { })) installed;
+          allowed = name: lib.any (p: matches p name) allowedOptions;
+        };
       # The NixOS module, with the apps from furnish's local flake (the `apps` input).
       nixosModule = apps: { config, options, lib, pkgs, ... }:
         let
           cfg = config.services.furnish;
           packages = self.packages.${pkgs.stdenv.hostPlatform.system};
-          # The apps furnish installed (Furnish/NixOS), from its local flake: apps.json, as
-          # src/nixos_apps.rs writes it. Packages are names in the system's nixpkgs.
-          installed = lib.attrValues ((apps.furnish or { }).apps or { });
-          appPackages = map (name: lib.attrByPath (lib.splitString "." name)
-            (throw "furnish: nixpkgs has no package ${name}") pkgs) (lib.concatMap (a: a.packages or [ ]) installed);
-          appSettings = lib.concatMap (a: lib.mapAttrsToList (name: value: { inherit name value; }) (a.options or { })) installed;
-          # An entry of allowedOptions: an option's name, where `*` stands for one part.
-          matches = pattern: name:
-            let p = lib.splitString "." pattern; n = lib.splitString "." name; in
-            lib.length p == lib.length n && lib.all lib.id (lib.zipListsWith (a: b: a == "*" || a == b) p n);
-          allowed = name: lib.any (p: matches p name) cfg.nix.allowedOptions;
+          # The apps furnish installed into the system (Furnish/NixOS), from its local flake.
+          inherit (appsOf lib pkgs cfg.nix.allowedOptions ((apps.furnish or { }).apps or { })) appPackages appSettings allowed;
           # The local flake furnish keeps its apps in; also written by src/nixos_apps.rs.
           appsFlake = "{ outputs = _: { furnish = builtins.fromJSON (builtins.readFile ./apps.json); }; }";
           # Module first: what the configuration says wins over people's own setting.
@@ -213,6 +224,65 @@
             };
           }] ++ map (s: lib.mkIf (allowed s.name) (lib.setAttrByPath (lib.splitString "." s.name) s.value)) appSettings));
         };
+      # The Home Manager module, with the apps from furnish's local flakes: the person's own
+      # (`home-apps`, standalone Home Manager) and the system's (`apps`, under homes.<user>, for
+      # Home Manager as a NixOS module, where the furnish service installs them).
+      homeManagerModule = { apps, home-apps }: args@{ config, lib, pkgs, ... }:
+        let
+          cfg = config.services.furnish;
+          user = config.home.username;
+          own = (home-apps.furnish or { }).apps or { };
+          homes = (apps.furnish or { }).homes or { };
+          inherit (appsOf lib pkgs cfg.nix.allowedOptions (((homes.${user} or { }).apps or { }) // own))
+            appPackages appSettings allowed;
+          # Which options the module defines can't depend on config (home.username): every home's
+          # settings, each only for its own user.
+          settingsOf = mine: byName: map (s: s // { inherit mine; }) (appsOf lib pkgs [ ] byName).appSettings;
+          definitions = settingsOf true own
+            ++ lib.concatLists (lib.mapAttrsToList (name: h: settingsOf (name == user) (h.apps or { })) homes);
+          # What the module knows when the generation is built, for furnish (src/nixos.rs).
+          facts = {
+            moduleVersion = version;
+            nixosModule = args ? osConfig;
+            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions; };
+          };
+        in {
+          options.services.furnish = {
+            enable = lib.mkEnableOption "the apps furnish installs into this Home Manager configuration";
+            nix = {
+              configuration = lib.mkOption {
+                type = lib.types.nullOr (lib.types.strMatching "/.*");
+                default = null;
+                description = "Folder of the Home Manager configuration (with flake.nix), as a string.";
+                example = "/home/alex/.config/home-manager";
+              };
+              flakeAttribute = lib.mkOption {
+                type = lib.types.str;
+                default = user;
+                defaultText = lib.literalExpression "config.home.username";
+                description = "Name in the flake's homeConfigurations (standalone Home Manager).";
+                example = "alex@laptop";
+              };
+              allowedOptions = lib.mkOption {
+                type = lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*");
+                default = [ ];
+                description = "Home Manager options that apps may set; `*` stands for one part of the name. Packages need no entry.";
+                example = [ "programs.*.enable" ];
+              };
+            };
+          };
+          config = lib.mkIf cfg.enable (lib.mkMerge ([{
+            home.packages = appPackages;
+            xdg.configFile."furnish/home-manager.json".text = builtins.toJSON facts;
+            # As system.extraDependencies in the NixOS module: the configuration still evaluates
+            # offline after a garbage collection.
+            home.extraDependencies = [ self.outPath crane.outPath ];
+            assertions = map (s: {
+              assertion = allowed s.name;
+              message = "furnish: an app sets ${s.name}, which isn't in services.furnish.nix.allowedOptions";
+            }) appSettings;
+          }] ++ map (s: lib.mkIf (s.mine && allowed s.name) (lib.setAttrByPath (lib.splitString "." s.name) s.value)) definitions));
+        };
     in {
       packages = forAll (pkgs: let r = rust pkgs; in rec {
         dsc-resources = dscResources pkgs;
@@ -279,6 +349,9 @@
       # administrator rights). `furnish service install` doesn't work on NixOS: use this instead.
       nixosModules.default = nixosModule apps;
 
+      # Home Manager: services.furnish.enable adds the apps furnish installed for this person.
+      homeManagerModules.default = homeManagerModule { inherit apps home-apps; };
+
       # `nix flake check`: the packages and furnish's library tests (`nix build` runs no tests).
       checks = forAll (pkgs: let r = rust pkgs; in {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) furnish furnish-gui;
@@ -297,6 +370,11 @@
           furnish = self;
           module = self.nixosModules.default;
         };
+        # NixOS VM: apps from furnish's local flake in a person's data folder end up in their
+        # standalone Home Manager configuration.
+        home-manager = import ./tests/home-manager.nix { inherit pkgs nixpkgs homeManagerModule; furnish = self; };
+        # Evaluation: Home Manager as a NixOS module gets each person's apps from the system's flake.
+        home-manager-nixos = import ./tests/home-manager-nixos.nix { inherit pkgs nixpkgs nixosModule homeManagerModule; furnish = self; };
       });
     };
 }
