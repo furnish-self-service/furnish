@@ -392,7 +392,7 @@ jobs:
       - shell: bash
         run: tests/e2e.sh --real target/release/furnish${{ runner.os == 'Windows' && '.exe' || '' }}
 
-  # The example collection's VPN apps (configuration files, removal steps) on each OS.
+  # The example collection's VPN app (configuration resources, a newer profile, uninstalling) on each OS.
   vpn:
     name: example VPN app ${{ matrix.os }}
     needs: changes
@@ -404,7 +404,7 @@ jobs:
     env:
       # The commit of github.com/furnish-self-service/self-service-example to test. To bump it,
       # set the commit you want (git ls-remote <url> main) and check that this job passes.
-      EXAMPLE_REF: 0ff5e1a533f6cc476157f7952cfaab8ba82174a6
+      EXAMPLE_REF: 7820ce1f86b6094e718456adff0d4f4ea28daa4e
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
