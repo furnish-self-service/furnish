@@ -1,11 +1,13 @@
 <script lang="ts">
-  // An app the NixOS or Home Manager configuration installs: furnish leaves it to that
-  // configuration, so instead of Uninstall it shows the package to remove there.
-  import type { Declared } from './api';
+  // An app installed outside furnish: furnish leaves it to what installed it, so instead of
+  // Uninstall it shows the package to remove from the NixOS or Home Manager configuration, or
+  // where the program is.
+  import type { External } from './api';
+  import { externalNote } from './state.svelte';
   import { t } from './i18n.svelte';
 
-  let { declared }: { declared: Declared } = $props();
-  const snippet = $derived(`pkgs.${declared.package}`);
+  let { external }: { external: External } = $props();
+  const snippet = $derived(external.by === 'other' ? (external.path ?? external.package) : `pkgs.${external.package}`);
   let copied = $state(false);
 
   async function copy() {
@@ -15,8 +17,8 @@
   }
 </script>
 
-<div class="declared">
-  <p>{t(declared.by === 'nixos' ? 'app.declaredNixos' : 'app.declaredHomeManager')}</p>
+<div class="external">
+  <p>{externalNote(external)}</p>
   <div class="snippet">
     <code>{snippet}</code>
     <button class="secondary" onclick={copy}>{copied ? t('common.copied') : t('common.copy')}</button>
@@ -24,7 +26,7 @@
 </div>
 
 <style>
-  .declared {
+  .external {
     display: grid;
     gap: 0.4rem;
     justify-items: end;

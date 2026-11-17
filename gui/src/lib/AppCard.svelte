@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AppInfo } from './api';
-  import { store, appName, appDescription, categoryName } from './state.svelte';
+  import { store, appName, appDescription, categoryName, externalStatus } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
@@ -23,7 +23,7 @@
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
     {#if status === 'installed'}
-      <span class="state installed">{store.declared[app.key] ? t(store.declared[app.key].by === 'nixos' ? 'app.status.nixos' : 'app.status.homeManager') : t('common.installed')}</span>
+      <span class="state installed">{store.external[app.key] ? externalStatus(store.external[app.key]) : t('common.installed')}</span>
     {:else if status === 'needsUpdate'}
       <span class="state update">{t('common.updateAvailable')}</span>
     {:else}

@@ -682,7 +682,7 @@ fn list() -> Result<()> {
         if name != app.id {
             description = if description.is_empty() { name } else { format!("{name}: {description}") };
         }
-        let declared = check.as_ref().ok().and_then(|c| c.declared.clone());
+        let external = check.as_ref().ok().and_then(|c| c.external.clone());
         let symbol = match check {
             Ok(c) => match c.status {
                 Status::Installed => "✓",
@@ -712,8 +712,8 @@ fn list() -> Result<()> {
         if app.options_differ() {
             description = format!("{description} (installed with other options: furnish reinstall {})", app.id);
         }
-        if let Some(d) = &declared {
-            description = format!("{description} (in {})", d.place());
+        if let Some(e) = &external {
+            description = format!("{description} ({})", e.summary());
         }
         if app.recommended() {
             description = format!("★ {description}");
@@ -1165,8 +1165,8 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
     };
     match check.status {
         Status::Installed => {
-            match &check.declared {
-                Some(d) => println!("✓ {} is already installed: it is in {}", app.id, d.place()),
+            match &check.external {
+                Some(e) => println!("✓ {} is already installed: {}", app.id, e.reason()),
                 None => println!("✓ {} is already installed and up to date", app.id),
             }
             return Ok(());
@@ -1217,8 +1217,8 @@ fn uninstall_app(app: &catalog::App) -> Result<()> {
         println!("✓ {} is not installed", app.id);
         return Ok(());
     }
-    if let Some(d) = &check.declared {
-        anyhow::bail!("{} is in {}: remove {} there", app.id, d.place(), d.package);
+    if let Some(e) = &check.external {
+        anyhow::bail!("{}", e.refusal(&app.id));
     }
     println!("⟳ Uninstalling {}…", app.id);
     app.uninstall(print_progress())?;
@@ -1288,9 +1288,9 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
             continue;
         }
         if only.is_empty()
-            && let Some(d) = app.check()?.declared
+            && let Some(e) = app.check()?.external
         {
-            println!("– {} (it is in {})", app.id, d.place());
+            println!("– {} ({})", app.id, e.reason());
             continue;
         }
         if dry_run { print_plan(app, true)?; } else { uninstall_app(app)?; }

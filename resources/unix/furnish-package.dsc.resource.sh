@@ -2,7 +2,8 @@
 # Furnish/Package: manage a package with the system package manager.
 # DSC passes the resource properties as env vars: $name, $packageManager (optional: pacman, apt,
 # dnf, zypper, brew, nix; default: the first one found), $<manager>Name (optional: the package's
-# name for that package manager, e.g. nixName), $nixpkgs (optional flake reference) and $_exist.
+# name for that package manager, e.g. nixName), $nixpkgs (optional flake reference), $command
+# (optional: a program the package provides) and $_exist.
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
@@ -20,7 +21,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # `-` (checked again below); `--` before it where the tool takes that.
 use_pacman() {
     have pacman || return 1
-    via=pacman admin=true
+    via=pacman manager=pacman admin=true
     installed_version() { pacman -Q -- "$name" 2>/dev/null | cut -d' ' -f2; }
     do_install() { run_step pacman -S --noconfirm --needed -- "$name"; }
     do_remove() { run_step pacman -R --noconfirm -- "$name"; }
@@ -30,7 +31,7 @@ use_pacman() {
 }
 use_apt() {
     have apt-get || return 1
-    via=apt admin=true
+    via=apt manager=apt admin=true
     installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' -- "$name" 2>/dev/null | sed -n 's/^installed //p'; }
     do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y -- "$name"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$name"; }
@@ -42,7 +43,7 @@ use_apt() {
 }
 use_dnf() {
     have dnf || return 1
-    via=dnf admin=true
+    via=dnf manager=dnf admin=true
     installed_version() { rpm_version; }
     do_install() { run_step dnf install -y -- "$name"; }
     do_remove() { run_step dnf remove -y -- "$name"; }
@@ -54,7 +55,7 @@ use_dnf() {
 }
 use_zypper() {
     have zypper || return 1
-    via=zypper admin=true
+    via=zypper manager=zypper admin=true
     installed_version() { rpm_version; }
     do_install() { run_step zypper --non-interactive install -- "$name"; }
     do_remove() { run_step zypper --non-interactive remove -- "$name"; }
@@ -91,7 +92,7 @@ use_brew() {
             have brew || return 1
         fi
     fi
-    via=Homebrew admin=false # Homebrew refuses to run as root
+    via=Homebrew manager=brew admin=false # Homebrew refuses to run as root
     # A cask (an app such as tunnelblick) is listed only with --cask when it is named.
     installed_version() {
         { run_brew command list --versions "$name" || run_brew command list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
@@ -123,7 +124,7 @@ use_nix() {
     # neither installs it again nor removes or updates it (see furnish-nix.sh).
     have nix || return 1
     . "$(dirname "$0")/furnish-nix.sh"
-    via=nix admin=false declared_in=
+    via=nix manager=nix admin=false declared_in=
     # Add to the user's settings rather than replacing them.
     export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
 }extra-experimental-features = nix-command flakes"
@@ -186,27 +187,65 @@ use_nix() {
     }
 }
 
+# The program $command, where people's installers put programs: PATH, then the folders an app
+# started from the Finder or a desktop menu lacks on its PATH (~/.local/bin for vendors'
+# installers, Homebrew's, where npm and pip put programs with Homebrew's Node and Python). Only
+# looks: never runs it, so a folder others can write to is harmless.
+find_program() {
+    rest=$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin
+    while [ -n "$rest" ]; do
+        d=${rest%%:*}
+        case $rest in *:*) rest=${rest#*:} ;; *) rest= ;; esac
+        case $d in /*) ;; *) continue ;; esac # not relative to wherever DSC runs it
+        [ -f "$d/$1" ] && [ -x "$d/$1" ] && { echo "$d/$1"; return 0; }
+    done
+    return 1
+}
+case ${command:-} in */*|-*) fail 10 "command must be a program's name, without a folder: $command" ;; esac
+
+need=
 case "${packageManager:-}" in
-pacman) use_pacman || missing "pacman" ;;
-apt) use_apt || missing "apt (Debian, Ubuntu)" ;;
-dnf) use_dnf || missing "dnf (Fedora, RHEL)" ;;
-zypper) use_zypper || missing "zypper (openSUSE)" ;;
-brew) use_brew || missing "Homebrew (brew)" ;;
-nix) use_nix || missing "Nix" ;;
+pacman) use_pacman || need="pacman" ;;
+apt) use_apt || need="apt (Debian, Ubuntu)" ;;
+dnf) use_dnf || need="dnf (Fedora, RHEL)" ;;
+zypper) use_zypper || need="zypper (openSUSE)" ;;
+brew) use_brew || need="Homebrew (brew)" ;;
+nix) use_nix || need="Nix" ;;
 '')
     use_pacman || use_apt || use_dnf || use_zypper || use_brew || use_nix || {
-        if [ "$(uname -s)" = Darwin ]; then missing "Homebrew (brew)"
-        else missing "a package manager (pacman, apt, dnf, zypper or nix)"; fi
+        if [ "$(uname -s)" = Darwin ]; then need="Homebrew (brew)"
+        else need="a package manager (pacman, apt, dnf, zypper or nix)"; fi
     }
     ;;
 *) fail 10 "unknown packageManager '$packageManager' (pacman, apt, dnf, zypper, brew, nix)" ;;
 esac
 
-# A package can have another name per package manager (e.g. code / vscode).
-eval "override=\${${via}Name:-}"
-if [ -n "$override" ]; then name=$override subject=$override; fi
+if [ -n "$need" ]; then
+    # Without the package manager the program alone tells whether it is installed (see below).
+    if [ -z "${command:-}" ] || ! find_program "$command" >/dev/null; then missing "$need"; fi
+    via=$need admin=false
+    installed_version() { :; }
+    install_desc="(needs $need)" remove_desc=$install_desc
+else
+    # A package can have another name per package manager (e.g. code / vscode).
+    eval "override=\${${manager}Name:-}"
+    if [ -n "$override" ]; then name=$override subject=$override; fi
+fi
 # Not an option to the package manager (the schema says so too; this holds without it).
 case $name in -*) fail 10 "package name starts with '-': $name" ;; esac
 case ${nixpkgs:-} in -*) fail 10 "nixpkgs starts with '-': $nixpkgs" ;; esac
+
+# Installed some other way (npm, the vendor's installer, another package manager): the program is
+# there although the package manager doesn't have the package. It counts as installed, not by
+# furnish, which neither installs it again nor updates or removes it.
+if [ -n "${command:-}" ]; then
+    prepare; prepare() { :; } # the package manager's own lookup (Nix), once
+    if [ -z "$(installed_version || true)" ] && outside=$(find_program "$command"); then
+        installed_version() { echo '?'; }
+        newer_version() { :; }
+        extra_state() { printf ',"managedBy":"other",%s' "$(json_member path "$outside")"; }
+        cant_remove="$subject was installed outside furnish ($outside): uninstall it the way it was installed"
+    fi
+fi
 
 furnish_main "$@"

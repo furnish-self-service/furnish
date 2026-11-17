@@ -187,11 +187,14 @@ export const listApps = () => invoke<AppInfo[]>('list_apps');
 export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** Status; for 'blocked', `reason` says what is missing, e.g. "Homebrew (brew)". */
 /** `removable`: furnish can uninstall it here (no resource that can't remove, or removal steps). */
-/** `declared`: the system's configuration installs it (NixOS, Home Manager); furnish leaves it alone. */
+/** `external`: installed outside furnish (NixOS, Home Manager, another tool); furnish leaves it alone. */
 export const appStatus = (key: string) =>
-  invoke<{ status: Status; reason: string | null; removable: boolean; declared: Declared | null }>('app_status', { key });
-/** A package the NixOS or Home Manager configuration installs; `package` is its nixpkgs attribute. */
-export type Declared = { by: 'nixos' | 'home-manager'; package: string; configuration: string | null };
+  invoke<{ status: Status; reason: string | null; removable: boolean; external: External | null }>('app_status', { key });
+/**
+ * A package installed outside furnish: by the NixOS or Home Manager configuration (`package` is its
+ * nixpkgs attribute), or with another tool (`other`, e.g. npm; `path` is where its program is).
+ */
+export type External = { by: 'nixos' | 'home-manager' | 'other'; package: string; configuration: string | null; path: string | null };
 /** How furnish found a NixOS or Home Manager configuration, or the flake attribute. */
 export type NixosSource = 'setting' | 'module' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';
 export type NixosProblem = 'notFound' | 'noNixosConfigurations' | 'noAttribute';

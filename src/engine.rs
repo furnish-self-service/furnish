@@ -197,47 +197,87 @@ pub struct Check {
     pub status: Status,
     /// For `Blocked`: what is missing, e.g. "Homebrew (brew)".
     pub reason: Option<String>,
-    /// furnish can uninstall it here (see [`unremovable`]); not if it is [`Check::declared`].
+    /// furnish can uninstall it here (see [`unremovable`]); not if it is [`Check::external`].
     pub removable: bool,
-    /// Installed by the system's configuration, not by furnish (see [`Declared`]).
-    pub declared: Option<Declared>,
+    /// Installed outside furnish (see [`External`]).
+    pub external: Option<External>,
 }
 
-/// A package the system's own configuration installs: NixOS (`environment.systemPackages`,
-/// `users.users.<name>.packages`) or Home Manager. furnish shows it as installed and leaves it to
-/// that configuration: it doesn't install it again, remove it or update it.
+/// A package installed outside furnish. furnish shows it as installed and leaves it to what
+/// installed it: it doesn't install it again, remove it or update it. Either the system's own
+/// configuration installs it, NixOS (`environment.systemPackages`, `users.users.<name>.packages`)
+/// or Home Manager, or its program is there although the package manager doesn't have the package
+/// (Furnish/Package's `command`), e.g. installed with npm or the vendor's installer.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Declared {
-    /// `nixos` or `home-manager` (the resource's `managedBy`).
+pub struct External {
+    /// `nixos`, `home-manager` or `other` (the resource's `managedBy`).
     pub by: String,
-    /// The nixpkgs attribute, e.g. `jq` or `kdePackages.kdenlive`.
+    /// The nixpkgs attribute, e.g. `jq` or `kdePackages.kdenlive`; for `other` the package's name.
     pub package: String,
     /// The configuration's folder, if known (the resource's `declaredIn`).
     pub configuration: Option<String>,
+    /// For `other`: where the program is, e.g. `/opt/homebrew/bin/claude` (the resource's `path`).
+    pub path: Option<String>,
 }
 
-impl Declared {
-    /// Where it is declared, for messages: "your NixOS configuration (/home/alex/cfg)".
-    pub fn place(&self) -> String {
-        let what = if self.by == "home-manager" { "your Home Manager configuration" } else { "your NixOS configuration" };
+impl External {
+    /// Where it comes from, for the list: "in your NixOS configuration (/home/alex/cfg)",
+    /// "installed outside furnish: /opt/homebrew/bin/claude".
+    pub fn summary(&self) -> String {
+        match self.configuration_name() {
+            Some(what) => format!("in {}", self.within(what)),
+            None => format!("installed outside furnish: {}", self.path.as_deref().unwrap_or(&self.package)),
+        }
+    }
+
+    /// Why furnish doesn't install it: "it is in your NixOS configuration".
+    pub fn reason(&self) -> String {
+        match self.configuration_name() {
+            Some(what) => format!("it is in {}", self.within(what)),
+            None => format!("it was installed outside furnish{}", self.at()),
+        }
+    }
+
+    /// Why furnish doesn't uninstall app `id`, and what to do instead.
+    pub fn refusal(&self, id: &str) -> String {
+        match self.configuration_name() {
+            Some(what) => format!("{id} is in {}: remove {} there", self.within(what), self.package),
+            None => format!("{id} was installed outside furnish{}: uninstall it the way it was installed", self.at()),
+        }
+    }
+
+    fn configuration_name(&self) -> Option<&'static str> {
+        match self.by.as_str() {
+            "nixos" => Some("your NixOS configuration"),
+            "home-manager" => Some("your Home Manager configuration"),
+            _ => None,
+        }
+    }
+
+    fn within(&self, what: &str) -> String {
         match &self.configuration {
             Some(c) => format!("{what} ({c})"),
             None => what.to_string(),
         }
     }
+
+    fn at(&self) -> String {
+        self.path.as_ref().map(|p| format!(" ({p})")).unwrap_or_default()
+    }
 }
 
-/// The first resource whose package the system's configuration installs.
-fn declared(states: &[Tested]) -> Option<Declared> {
+/// The first resource whose package was installed outside furnish.
+fn external(states: &[Tested]) -> Option<External> {
     states.iter().find_map(|t| {
-        let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager"))?;
-        // DSC's desired state holds the resource's properties.
-        let package = [&t.desired["nixName"], &t.desired["name"], &t.actual["name"]]
+        let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager" | "other"))?;
+        // DSC's desired state holds the resource's properties; the Nix name only if Nix installed it.
+        let nix_name = if by == "other" { &Value::Null } else { &t.desired["nixName"] };
+        let package = [nix_name, &t.desired["name"], &t.actual["name"]]
             .into_iter()
             .find_map(|v| v.as_str().filter(|s| !s.is_empty()))?;
-        let configuration = t.actual["declaredIn"].as_str().map(String::from);
-        Some(Declared { by: by.to_string(), package: package.to_string(), configuration })
+        let text = |key: &str| t.actual[key].as_str().map(String::from);
+        Some(External { by: by.to_string(), package: package.to_string(), configuration: text("declaredIn"), path: text("path") })
     })
 }
 
@@ -491,18 +531,18 @@ pub fn check(doc: &Value) -> Result<Check> {
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { status: Status::Unavailable, reason: None, removable, declared: None });
+        return Ok(Check { status: Status::Unavailable, reason: None, removable, external: None });
     };
     let tested = match test(&doc) {
         Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, declared: None });
+            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external: None });
         }
     };
-    let declared = declared(&tested);
+    let external = external(&tested);
     let states: Vec<(bool, Value)> = tested.into_iter().map(|t| (t.ok, t.actual)).collect();
-    Ok(Check { status: classify(&states), reason: None, removable: removable && declared.is_none(), declared })
+    Ok(Check { status: classify(&states), reason: None, removable: removable && external.is_none(), external })
 }
 
 /// The resources (those that apply here) that aren't in their desired state, e.g. "'profile'
@@ -1075,6 +1115,38 @@ mod tests {
         // Resources without `_exist`, e.g. a script resource whose test failed: not installed yet.
         assert_eq!(classify(&[(false, json!({"name": "Acme VPN"}))]), Status::NotInstalled);
         assert_eq!(classify(&[]), Status::Unavailable);
+    }
+
+    fn tested(desired: Value, actual: Value) -> Tested {
+        Tested { name: "pkg".into(), kind: "Furnish/Package".into(), ok: true, actual, desired }
+    }
+
+    #[test]
+    fn packages_installed_outside_furnish_say_where_from() {
+        let nixos = external(&[tested(
+            json!({"name": "node", "nixName": "nodejs_22"}),
+            json!({"name": "node", "_exist": true, "managedBy": "nixos", "declaredIn": "/etc/nixos"}),
+        )])
+        .unwrap();
+        assert_eq!(nixos.summary(), "in your NixOS configuration (/etc/nixos)");
+        assert_eq!(nixos.reason(), "it is in your NixOS configuration (/etc/nixos)");
+        assert_eq!(nixos.refusal("node"), "node is in your NixOS configuration (/etc/nixos): remove nodejs_22 there");
+
+        let other = external(&[tested(
+            json!({"name": "claude-code", "nixName": "claude-code-bin", "command": "claude"}),
+            json!({"name": "claude-code", "_exist": true, "managedBy": "other", "path": "/opt/homebrew/bin/claude"}),
+        )])
+        .unwrap();
+        assert_eq!(other.package, "claude-code", "not the Nix name: Nix didn't install it");
+        assert_eq!(other.summary(), "installed outside furnish: /opt/homebrew/bin/claude");
+        assert_eq!(other.reason(), "it was installed outside furnish (/opt/homebrew/bin/claude)");
+        assert_eq!(
+            other.refusal("claude-code"),
+            "claude-code was installed outside furnish (/opt/homebrew/bin/claude): uninstall it the way it was installed"
+        );
+
+        // A package in a nix profile is furnish's (or the user's) own, not external.
+        assert_eq!(external(&[tested(json!({"name": "jq"}), json!({"name": "jq", "_exist": true, "managedBy": "profile"}))]), None);
     }
 
     #[test]

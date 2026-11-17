@@ -1,0 +1,13 @@
+# Needs Homebrew, unless its program is already on the computer without it.
+metadata:
+  furnish:
+    description: A Homebrew tool that may be installed without Homebrew
+    categories: [Test]
+resources:
+  - name: brew-elsewhere tool
+    type: Furnish/Package
+    condition: "[not(equals(context().os.family, 'Windows'))]"
+    properties:
+      name: brew-elsewhere-tool
+      packageManager: brew
+      command: brew-elsewhere-tool

@@ -1,0 +1,12 @@
+# Its program may already be on the computer, installed some other way (with npm, say, or the
+# vendor's installer): then the app counts as installed, but not by furnish.
+metadata:
+  furnish:
+    description: A tool that may be installed without furnish
+    categories: [Test]
+resources:
+  - name: elsewhere tool
+    type: Furnish/Package
+    properties:
+      name: elsewhere-tool
+      command: elsewhere-tool

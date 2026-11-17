@@ -122,6 +122,13 @@ const steps = [
     await waitFor('brewed installed', () => find(`${card('brewed')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('brew-only installable now', () => find(`${card('brew-only')}${button('Install')}`));
   }],
+  ['a program installed outside furnish shows as installed there, without Uninstall', async () => {
+    await waitFor('elsewhere marked', () => find(`${card('elsewhere')}//*[normalize-space()='Installed outside furnish']`));
+    await click(`${card('elsewhere')}//button[@aria-label='Open elsewhere']`);
+    await waitFor('where its program is', async () => (await text('//section')).includes('/bin/elsewhere-tool'));
+    if ((await findAll(button('Uninstall'))).length) throw new Error('offers Uninstall');
+    await click(button('Discover'));
+  }],
   ['install from the card finishes and shows Installed', async () => {
     await click(`${card('hyperfine')}${button('Install')}`);
     await waitFor('Installed state', () => find(`${card('hyperfine')}//*[normalize-space()='Installed']`), 30000);

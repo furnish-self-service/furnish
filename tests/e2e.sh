@@ -283,10 +283,56 @@ if ! $real; then
     out=$(step install brewed)
     expect "$out" "brewed needs homebrew first"
     expect "$out" "Installed brewed"
+    [ -f "$tmp/brew-pkgs/brewed-tool" ] && [ ! -f "$tmp/brew-pkgs/brewed-generic" ] || { echo "FAIL: brewName not used" >&2; exit 1; }
     expect "$(step list)" "✓  brewed"
     expect "$(step list)" "·  brew-only"   # brew is there now
     step uninstall brewed >/dev/null && step uninstall homebrew >/dev/null
     expect "$(step list)" "!  brew-only"
+fi
+
+# A package's program installed without furnish (Furnish/Package's command), e.g. with npm or the
+# vendor's installer: installed, but furnish neither installs it again nor removes it.
+expect "$(step list)" "·  elsewhere "
+mkdir -p "$tmp/elsewhere"
+if command -v cygpath >/dev/null; then
+    printf '@echo off\r\n' > "$tmp/elsewhere/elsewhere-tool.cmd"
+else
+    printf '#!/bin/sh\n' > "$tmp/elsewhere/elsewhere-tool" && chmod +x "$tmp/elsewhere/elsewhere-tool"
+fi
+elsewhere=$tmp/elsewhere
+if command -v cygpath >/dev/null; then elsewhere=$(cygpath -u "$elsewhere"); fi  # PATH separates with ':'
+PATH="$elsewhere:$PATH"
+list=$(step list)
+expect "$list" "✓  elsewhere "
+expect "$list" "installed outside furnish: .*elsewhere-tool"
+expect "$(step install elsewhere)" "elsewhere is already installed: it was installed outside furnish"
+if ! $real; then [ ! -f "$tmp/pkgs/elsewhere-tool" ] || { echo "FAIL: installed a second copy" >&2; exit 1; }; fi
+out=$("$furnish" uninstall elsewhere 2>&1) && { echo "FAIL: uninstalled a program furnish didn't install: $out" >&2; exit 1; }
+expect "$out" "elsewhere was installed outside furnish (.*elsewhere-tool.*): uninstall it the way it was installed"
+expect "$(step list)" "✓  elsewhere "
+rm -f "$tmp"/elsewhere/elsewhere-tool*
+expect "$(step list)" "·  elsewhere "
+if ! $real; then
+    # Without Homebrew, the program alone makes it installed; without both it needs Homebrew.
+    expect "$(step list)" "!  brew-elsewhere "
+    printf '#!/bin/sh\n' > "$tmp/elsewhere/brew-elsewhere-tool" && chmod +x "$tmp/elsewhere/brew-elsewhere-tool"
+    expect "$(step list)" "✓  brew-elsewhere "
+    rm -f "$tmp/elsewhere/brew-elsewhere-tool"
+    # Not only on PATH: in the folders installers use, e.g. ~/.local/bin, which an app started
+    # from the Finder doesn't have on its PATH.
+    mkdir -p "$tmp/home/.local/bin"
+    printf '#!/bin/sh\n' > "$tmp/home/.local/bin/elsewhere-tool" && chmod +x "$tmp/home/.local/bin/elsewhere-tool"
+    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
+    expect "$out" "\"_exist\":true,\"managedBy\":\"other\",\"path\":\"$tmp/home/.local/bin/elsewhere-tool\""
+    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" test)
+    expect "$out" '"_inDesiredState":true'
+    # Not something else that happens to carry the name.
+    rm "$tmp/home/.local/bin/elsewhere-tool" && mkdir "$tmp/home/.local/bin/elsewhere-tool"
+    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
+    expect "$out" '"_exist":false'
+    if (name=x command=../x sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get) >/dev/null 2>&1; then
+        echo "FAIL: a command with a path was accepted" >&2; exit 1
+    fi
 fi
 
 # Dependencies and updates (fake package manager only).

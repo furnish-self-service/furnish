@@ -3,7 +3,7 @@
   // nothing) or, during and after a run, live progress of those same steps.
   import * as api from './api';
   import type { AppInfo, Step } from './api';
-  import { store, appName, type RunStep } from './state.svelte';
+  import { store, appName, externalNote, type RunStep } from './state.svelte';
   import { describeCondition } from './conditions';
   import { t, tparts, parts, formatTime, formatDuration } from './i18n.svelte';
   import { dictionaries, type Key } from './i18n.ts';
@@ -152,8 +152,8 @@
     </p>
   {:else if mode === 'uninstall' && unremovable}
     <p class="muted">
-      {store.declared[app.key]
-        ? t(store.declared[app.key].by === 'nixos' ? 'app.declaredNixos' : 'app.declaredHomeManager')
+      {store.external[app.key]
+        ? externalNote(store.external[app.key])
         : t('app.cantUninstall', { collection: app.collection })}
     </p>
   {:else if error}

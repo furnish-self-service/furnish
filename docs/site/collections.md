@@ -54,6 +54,9 @@ Installs a package with the system's package manager: winget on Windows; on macO
 | `packageManager` | Use this package manager, not the first one found |
 | `pacmanName`, `aptName`, `dnfName`, `zypperName`, `brewName`, `nixName` | The package's name with that package manager, if it differs, for example `pacmanName: libreoffice-fresh` |
 | `nixpkgs` | The flake to install Nix packages from (default: the registry's `nixpkgs`) |
+| `command` | A program the package provides, for example `claude`. If the package manager doesn't have the package but the program is there, the app shows as installed outside furnish |
+
+Many tools are also installed some other way: with npm or pip, with the vendor's own installer, or with another package manager. With `command`, such an app shows as installed outside furnish, and furnish neither installs it a second time nor updates or removes it. furnish looks for the program on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (on Windows, in `~\.local\bin` and npm's folder in `%APPDATA%`), and never runs it. If the package manager is missing, the app shows as installed when the program is there, and as needing the package manager when it isn't.
 
 ### Furnish/Installer
 

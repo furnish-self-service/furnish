@@ -64,6 +64,8 @@ done
 sed -i '2i [ -e '"$work"'/deny ] && { echo "Error executing command as another user: Not authorized" >&2; exit 127; }' "$work/bin/pkexec"
 # Like a real sudo without cached credentials: `sudo -n` fails, so only the terminal prompt is left.
 sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work/bin/sudo"
+# The elsewhere app's program, as npm or a vendor's installer would leave it: installed outside furnish.
+printf '#!/bin/sh\n' > "$work/bin/elsewhere-tool"
 # The browser: records what furnish opens.
 printf '#!/bin/sh\necho "$1" >> %s/browser.log\n' "$work" > "$work/bin/browser"
 chmod +x "$work/bin/"*
