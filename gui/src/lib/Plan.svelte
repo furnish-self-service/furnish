@@ -93,17 +93,21 @@
     const p = n.params as Record<string, string | number>;
     return tparts(`plan.note.${n.code}` as Key, n.code === 'file.create' ? { ...p, n: p.lines } : p);
   }
-  /** A file step's diff (resources/diff.rs): hunks of ' kept', '-removed', '+added' lines. */
+  /** A file step's diff (resources/diff.rs): hunks of ' kept', '-removed', '+added' lines, and
+   *  '\\' marks after a line that ends its text without a line break. */
   type Diff = { hunks: { old: number; new: number; lines: string[] }[]; more: number };
-  type DiffRow = { old: number | null; new: number | null; sign: ' ' | '+' | '-'; text: string };
-  /** Whether a note says what a step does to a file's lines. */
-  const touchesLines = (n: Note) => !!n.params.diff || !!n.params.binary || !!n.params.hidden;
+  type DiffRow = { old: number | null; new: number | null; sign: ' ' | '+' | '-' | 'eol'; text: string };
   /** The hunks as rows with their line numbers in the old and the new file. */
   function diffHunks(n: Note): DiffRow[][] {
     const d = n.params.diff as Diff | undefined;
     return (d?.hunks ?? []).map((h) => {
       let [o, nw] = [h.old, h.new];
       return h.lines.map((l) => {
+        if (l[0] === '\\') {
+          // Which text ends here without a line break: the old one, the new one or both.
+          const text = l[1] === '-' ? t('plan.diff.noNewlineBefore') : l[1] === '+' ? t('plan.diff.noNewlineAfter') : t('plan.diff.noNewline');
+          return { old: null, new: null, sign: 'eol', text } as DiffRow;
+        }
         const sign = l[0] === '+' || l[0] === '-' ? l[0] : ' ';
         const row = { old: sign === '+' ? null : o, new: sign === '-' ? null : nw, sign, text: l.slice(1) } as DiffRow;
         if (sign !== '+') o++;
@@ -115,6 +119,13 @@
   const diffMore = (n: Note) => (n.params.diff as Diff | undefined)?.more ?? 0;
   /** "+3 −1", unless the note's sentence already has the counts. */
   const showCounts = (n: Note) => typeof n.params.added === 'number' && n.code !== 'file.write' && n.code !== 'file.create';
+  /** The properties a step changes, before and after. Furnish/Value's value is left out when the
+   *  diff shows it in the file. */
+  function changes(row: RunStep) {
+    const all = row.outcome?.changes ?? row.step.changes;
+    const diffed = row.step.type === 'Furnish/Value' && row.step.notes?.some((n) => n.params.diff);
+    return diffed ? all.filter((c) => c.property !== 'value') : all;
+  }
   const show = (v: unknown) => (v === null || v === undefined ? '—' : typeof v === 'string' ? v : JSON.stringify(v));
   const seconds = formatDuration;
   const clock = (ms: number) => formatTime(ms, true);
@@ -137,12 +148,16 @@
     {#each diffHunks(n) as hunk, h}
       {#if h > 0}<div class="sep" aria-hidden="true"><span>⋯</span></div>{/if}
       {#each hunk as r}
+        {#if r.sign === 'eol'}
+          <div class="row eol"><span></span><span></span><span></span><span class="text">{r.text}</span></div>
+        {:else}
         <div class="row" class:add={r.sign === '+'} class:del={r.sign === '-'}>
           <span class="num" aria-hidden="true">{r.old ?? ''}</span>
           <span class="num" aria-hidden="true">{r.new ?? ''}</span>
           <span class="sign">{r.sign === '-' ? '−' : r.sign}</span>
           <span class="text">{r.text}</span>
         </div>
+        {/if}
       {/each}
     {/each}
     {#if diffMore(n)}<div class="more">{t('plan.diff.more', { n: diffMore(n) })}</div>{/if}
@@ -241,7 +256,7 @@
               {:else}
                 {#if n.params.diff}
                   <details class="filediff">
-                    <summary class="detail">{@render sentence(n)}</summary>
+                    <summary><span class="detail">{@render sentence(n)}</span></summary>
                     {@render diffTable(n)}
                   </details>
                 {:else}
@@ -267,7 +282,7 @@
             {/if}
           {/each}
           {/if}
-          {#each row.outcome?.changes ?? step.changes as change}
+          {#each changes(row) as change}
             <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
           {/each}
           {#if row.outcome?.error}
@@ -511,25 +526,20 @@
     word-break: break-all;
   }
   /* A file step's diff: collapsed under the step's sentence. */
+  /* The browser's own disclosure triangle, at the size of the app's other ones (AppDetail's
+     summaries: 0.95rem), on the sentence's baseline; the whole row toggles. */
   .filediff summary {
     cursor: pointer;
-    list-style: none;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
   }
-  .filediff summary::-webkit-details-marker {
-    display: none;
-  }
-  .filediff summary::before {
-    content: '▸';
-    display: inline-block;
-    width: 1em;
-    color: var(--muted);
-    transition: transform 0.15s;
-  }
-  .filediff[open] summary::before {
-    transform: rotate(90deg);
-  }
-  .filediff summary:hover {
+  .filediff summary:hover,
+  .filediff summary:hover .detail {
     color: var(--ink);
+  }
+  .difftable .eol .text {
+    font: italic 0.72rem var(--font-body);
+    color: var(--muted);
   }
   .counts {
     margin-left: 0.5rem;

@@ -301,6 +301,9 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.diff.more': { one: "Nog {n} regel niet getoond", other: "Nog {n} regels niet getoond" },
   'plan.diff.binary': "Binair bestand, niet getoond",
   'plan.diff.hidden': "Regels niet getoond: alleen de eigenaar mag het bestand lezen",
+  'plan.diff.noNewline': "Geen regeleinde aan het einde van het bestand",
+  'plan.diff.noNewlineBefore': "Geen regeleinde aan het einde van het bestand vóór de wijziging",
+  'plan.diff.noNewlineAfter': "Geen regeleinde aan het einde van het bestand na de wijziging",
 
   // Collections.svelte
   'collections.title': 'Collecties',

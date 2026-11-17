@@ -1341,7 +1341,9 @@ fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
                 println!("  {:<16} {line}", "");
             }
         }
-        for c in &step.changes {
+        // Furnish/Value's value shows in the diff, if there is one.
+        let diffed = step.kind == "Furnish/Value" && step.notes.iter().any(|n| n["params"]["diff"].is_object());
+        for c in step.changes.iter().filter(|c| !(diffed && c.property == "value")) {
             println!("  {:<16} {}: {} → {}", "", c.property, c.before, c.after);
         }
     }

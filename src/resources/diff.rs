@@ -4,7 +4,9 @@
 //!
 //! JSON: `{"hunks": [{"old": 3, "new": 3, "lines": [" kept", "-removed", "+added"]}], "more": 0}`,
 //! where `old`/`new` are the 1-based numbers of the hunk's first line in the old and new text, and
-//! `more` counts the diff lines left out by the cap.
+//! `more` counts the diff lines left out by the cap. A line `\-`, `\+` or `\ ` after a line says
+//! that the old text, the new text or both end there without a line break, like git's
+//! "\ No newline at end of file"; it isn't a line of the file.
 
 use std::time::Duration;
 
@@ -33,16 +35,30 @@ pub struct Hunk {
     /// 1-based numbers of the first line in the old and the new text.
     pub old: usize,
     pub new: usize,
-    /// Each line starts with ` ` (kept), `-` (removed) or `+` (added).
+    /// Each line starts with ` ` (kept), `-` (removed) or `+` (added), or is a `\` marker.
     pub lines: Vec<String>,
+}
+
+/// Stands for "no line break at the end" as the last line of a text, so that a line differing
+/// only in its line break compares equal and the missing break shows as a change of its own.
+const NO_NEWLINE: &str = "\0furnish: no newline at end of file\n";
+
+/// A text ending in a line break, followed by [`NO_NEWLINE`] if it had none.
+fn ended(text: &str) -> String {
+    match text {
+        "" => String::new(),
+        t if t.ends_with('\n') => t.to_string(),
+        t => format!("{t}\n{NO_NEWLINE}"),
+    }
 }
 
 /// The line diff from `old` to `new`.
 pub fn lines(old: &str, new: &str) -> Diff {
+    let (old, new) = (ended(old), ended(new));
     // A huge file with many changes falls back to a coarser (still correct) diff after a second.
-    let diff = TextDiff::configure().timeout(Duration::from_secs(1)).diff_lines(old, new);
+    let diff = TextDiff::configure().timeout(Duration::from_secs(1)).diff_lines(&old, &new);
     let mut out = Diff::default();
-    for change in diff.iter_all_changes() {
+    for change in diff.iter_all_changes().filter(|c| c.value() != NO_NEWLINE) {
         match change.tag() {
             ChangeTag::Insert => out.added += 1,
             ChangeTag::Delete => out.removed += 1,
@@ -65,6 +81,12 @@ pub fn lines(old: &str, new: &str) -> Diff {
                     ChangeTag::Insert => '+',
                 };
                 let text = change.value();
+                if text == NO_NEWLINE {
+                    // The side that has the marker is the one without the line break.
+                    hunk.lines.push(format!("\\{sign}"));
+                    shown += 1;
+                    continue;
+                }
                 hunk.lines.push(format!("{sign}{}", cut(text.strip_suffix('\n').unwrap_or(text))));
                 shown += 1;
             }
@@ -111,13 +133,18 @@ pub fn plain(diff: &Value, color: bool) -> Vec<String> {
     let mut out = Vec::new();
     for hunk in diff["hunks"].as_array().into_iter().flatten() {
         let lines: Vec<&str> = hunk["lines"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        let count = |skip: char| lines.iter().filter(|l| !l.starts_with(skip)).count();
+        let count = |skip: char| lines.iter().filter(|l| !l.starts_with(skip) && !l.starts_with('\\')).count();
         // An empty side starts at the line before, as in `diff -u` (`-0,0` for a new file).
         let start = |key: &str, n: usize| hunk[key].as_u64().unwrap_or(1) - u64::from(n == 0);
         let (olds, news) = (count('+'), count('-'));
         out.push(paint("36", format!("@@ -{},{olds} +{},{news} @@", start("old", olds), start("new", news))));
         for line in lines {
             out.push(match line.chars().next() {
+                Some('\\') => paint("2", match line {
+                    "\\-" => "\\ No newline at end of file before the change",
+                    "\\+" => "\\ No newline at end of file after the change",
+                    _ => "\\ No newline at end of file",
+                }.to_string()),
                 Some('+') => paint("32", line.to_string()),
                 Some('-') => paint("31", line.to_string()),
                 _ => line.to_string(),
@@ -155,11 +182,30 @@ mod tests {
     }
 
     #[test]
-    fn a_new_file_is_all_added_and_a_missing_last_newline_is_no_extra_line() {
+    fn a_new_file_is_all_added() {
         let d = lines("", "a\nb");
-        assert_eq!(d.hunks[0].lines, vec!["+a", "+b"]);
+        assert_eq!(d.hunks[0].lines, vec!["+a", "+b", "\\+"], "the new text ends without a line break");
         assert_eq!((d.hunks[0].old, d.hunks[0].new, d.added), (1, 1, 2));
         assert_eq!(plain(&d.to_json(), false)[0], "@@ -0,0 +1,2 @@");
+    }
+
+    #[test]
+    fn a_missing_last_line_break_is_a_marker_not_a_changed_line() {
+        let marked = |old: &str, new: &str| {
+            let d = lines(old, new);
+            (d.added, d.removed, d.hunks.into_iter().flat_map(|h| h.lines).collect::<Vec<_>>())
+        };
+        // Only the line break at the end changes: no line is added or removed.
+        assert_eq!(marked("a\nb", "a\nb\n"), (0, 0, vec![" a".into(), " b".into(), "\\-".into()]));
+        assert_eq!(marked("a\nb\n", "a\nb"), (0, 0, vec![" a".into(), " b".into(), "\\+".into()]));
+        // A line after the one without a break: that line is the change, the marker says why.
+        assert_eq!(marked("x\na", "x\na\nb\n"), (1, 0, vec![" x".into(), " a".into(), "\\-".into(), "+b".into()]));
+        // Both without a break: shown with the context, no change.
+        assert_eq!(marked("a\nb", "a\nc"), (1, 1, vec![" a".into(), "-b".into(), "+c".into(), "\\ ".into()]));
+        let d = lines("1\n2\n3\n4\n5", "1\n2\n3\n4\n5\n");
+        assert_eq!((d.hunks[0].old, d.hunks[0].new), (3, 3), "3 lines of context before the end");
+        let plain = plain(&d.to_json(), false);
+        assert_eq!(plain, vec!["@@ -3,3 +3,3 @@", " 3", " 4", " 5", "\\ No newline at end of file before the change"]);
     }
 
     #[test]

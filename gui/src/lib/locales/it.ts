@@ -301,6 +301,9 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.diff.more': { one: "Altra {n} riga non mostrata", other: "Altre {n} righe non mostrate" },
   'plan.diff.binary': "File binario, non mostrato",
   'plan.diff.hidden': "Righe non mostrate: solo il proprietario può leggere il file",
+  'plan.diff.noNewline': "Nessun a capo alla fine del file",
+  'plan.diff.noNewlineBefore': "Nessun a capo alla fine del file prima della modifica",
+  'plan.diff.noNewlineAfter': "Nessun a capo alla fine del file dopo la modifica",
 
   // Collections.svelte
   'collections.title': 'Raccolte',
