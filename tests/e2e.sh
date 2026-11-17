@@ -418,7 +418,7 @@ expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
 [ "$(head -n 1 "$tmp/conf/ssh_config")" = "Include config.d/fixture.conf" ] || { echo "FAIL: the Include line isn't first" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
 grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAIL: no block" >&2; exit 1; }
-cmp -s "$tmp/conf/profile.conf" "$tmp/repo/files/profile.conf" || { echo "FAIL: profile not copied" >&2; exit 1; }
+[ "$(cat "$tmp/conf/profile.conf")" = "$(cat "$tmp/repo/files/profile.conf")" ] || { echo "FAIL: profile not copied" >&2; exit 1; }
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
 [ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
@@ -427,7 +427,7 @@ MINGW* | MSYS*) ;;  # an access list instead of a mode
 *) [ "$(stat -c %a "$tmp/conf/profile.conf" 2>/dev/null || stat -f %Lp "$tmp/conf/profile.conf")" = 600 ] || { echo "FAIL: profile isn't private" >&2; exit 1; } ;;
 esac
 # A value changed by hand shows as drift; installing again fixes it.
-sed 's/true/false/' "$tmp/conf/settings.json" > "$tmp/settings" && cat "$tmp/settings" > "$tmp/conf/settings.json"
+settings=$(cat "$tmp/conf/settings.json") && printf '%s\n' "${settings//true/false}" > "$tmp/conf/settings.json"  # no sed in nixos/nix
 if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't drift" >&2; exit 1; fi
 expect "$(step install config)" "Installed config"
 expect "$(step list)" "✓  config "
