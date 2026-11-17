@@ -272,6 +272,7 @@ export const fr: Record<keyof typeof en, Entry> = {
   'plan.note.value.add': "Ajoute la valeur à la liste <code>{location}</code> dans <code>{path}</code>",
   'plan.note.value.removeMember': "Retire la valeur de la liste <code>{location}</code> dans <code>{path}</code>",
   'plan.note.test.output': "Le test <code>{command}</code> a donné <code>{got}</code>, attendu <code>{expected}</code>",
+  'plan.note.test.noOutput': "Le test <code>{command}</code> n’a rien donné, attendu <code>{expected}</code>",
   'plan.note.test.exitCode': "Le test <code>{command}</code> s’est terminé avec le code {got}, attendu {expected}",
   'plan.note.test.json': "Le test <code>{command}</code> a <code>{got}</code> à <code>{path}</code>, attendu <code>{expected}</code>",
   'plan.note.lines': "Lignes modifiées",

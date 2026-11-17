@@ -272,6 +272,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'plan.note.value.add': "Adiciona o valor à lista <code>{location}</code> em <code>{path}</code>",
   'plan.note.value.removeMember': "Remove o valor da lista <code>{location}</code> em <code>{path}</code>",
   'plan.note.test.output': "O teste <code>{command}</code> retornou <code>{got}</code>, esperado <code>{expected}</code>",
+  'plan.note.test.noOutput': "O teste <code>{command}</code> não retornou nada, esperado <code>{expected}</code>",
   'plan.note.test.exitCode': "O teste <code>{command}</code> terminou com o código {got}, esperado {expected}",
   'plan.note.test.json': "O teste <code>{command}</code> tem <code>{got}</code> em <code>{path}</code>, esperado <code>{expected}</code>",
   'plan.note.lines': "Linhas alteradas",

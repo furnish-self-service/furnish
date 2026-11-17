@@ -55,6 +55,7 @@ impl Note {
             "value.add" => format!("Add the value to the list at {} in {}", s("location"), s("path")),
             "value.removeMember" => format!("Remove the value from the list at {} in {}", s("location"), s("path")),
             "test.output" => format!("Test: {} printed {}, expected {}", s("command"), s("got"), s("expected")),
+            "test.noOutput" => format!("Test: {} printed nothing, expected {}", s("command"), s("expected")),
             "test.exitCode" => format!("Test: {} exited with code {}, expected {}", s("command"), s("got"), s("expected")),
             "test.json" => format!("Test: {} has {} at {}, expected {}", s("command"), s("got"), s("path"), s("expected")),
             // The GUI's existing format for commands.

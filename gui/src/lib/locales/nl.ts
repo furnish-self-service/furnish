@@ -272,6 +272,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.note.value.add': "Voegt de waarde toe aan de lijst <code>{location}</code> in <code>{path}</code>",
   'plan.note.value.removeMember': "Verwijdert de waarde uit de lijst <code>{location}</code> in <code>{path}</code>",
   'plan.note.test.output': "Test <code>{command}</code> gaf <code>{got}</code>, verwacht <code>{expected}</code>",
+  'plan.note.test.noOutput': "Test <code>{command}</code> gaf niets, verwacht <code>{expected}</code>",
   'plan.note.test.exitCode': "Test <code>{command}</code> eindigde met code {got}, verwacht {expected}",
   'plan.note.test.json': "Test <code>{command}</code> heeft <code>{got}</code> bij <code>{path}</code>, verwacht <code>{expected}</code>",
   'plan.note.lines': "Gewijzigde regels",

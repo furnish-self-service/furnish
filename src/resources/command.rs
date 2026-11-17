@@ -64,8 +64,11 @@ fn passes(test: &Test) -> Result<(bool, Note)> {
     let mut result = (code == Some(expected_code), code_note);
     if let Some(expected) = &test.output {
         let ok = stdout.trim() == expected.trim();
-        let got = if stdout.trim().is_empty() { "—".to_string() } else { short(stdout.trim()) };
-        let n = note("test.output", json!({ "command": command, "expected": expected.trim(), "got": got }));
+        let n = if stdout.trim().is_empty() {
+            note("test.noOutput", json!({ "command": command, "expected": expected.trim() }))
+        } else {
+            note("test.output", json!({ "command": command, "expected": expected.trim(), "got": short(stdout.trim()) }))
+        };
         // The output tells more than an exit code nobody asked for.
         if result.0 || test.exit_code.is_none() {
             result = (result.0 && ok, n);
