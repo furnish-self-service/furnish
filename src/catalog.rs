@@ -995,6 +995,7 @@ impl Collection {
         }
         let id = path.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".dsc.yaml").to_string();
         self.check_resources(&mut doc["resources"], allowed, &id)?;
+        crate::resources::check_modes(&doc["resources"])?;
         crate::required::validate(&doc["resources"])?;
         // Removal steps are resources too: the same policy and installer checks.
         if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {

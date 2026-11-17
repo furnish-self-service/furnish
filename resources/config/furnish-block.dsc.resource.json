@@ -99,6 +99,15 @@
           "type": "string",
           "description": "<collection>/<app>, for the markers; furnish sets it"
         },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{3,4}$",
+          "description": "Unix mode of the file, e.g. '600' (ignored on Windows); not changed on uninstall"
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Only the user may access the file: mode 600 on Unix, an access list on Windows; not changed on uninstall"
+        },
         "_exist": {
           "type": "boolean",
           "description": "Whether it should be there"

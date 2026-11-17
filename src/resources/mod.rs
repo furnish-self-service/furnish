@@ -212,6 +212,35 @@ pub fn check(kind: &str, props: &Value) -> Result<()> {
     }
 }
 
+/// Steps that write the same file must agree on its mode: each enforces its own, so two modes would
+/// undo each other on every install. A step without `mode` or `private` leaves the mode alone, so
+/// one `private: true` covers a file that several steps edit.
+pub fn check_modes(resources: &Value) -> Result<()> {
+    let mut seen: Vec<(String, u32, String)> = vec![];
+    for r in resources.as_array().into_iter().flatten() {
+        let kind = r["type"].as_str().unwrap_or_default();
+        if !["Furnish/File", "Furnish/Line", "Furnish/Block", "Furnish/Value"].iter().any(|t| t.eq_ignore_ascii_case(kind)) {
+            continue;
+        }
+        let Some(props) = literal(&r["properties"]) else { continue };
+        let (Some(path), name) = (props["path"].as_str(), r["name"].as_str().unwrap_or("?")) else { continue };
+        let mode = match (&props["mode"], &props["private"]) {
+            (Value::String(m), _) => common::parse_mode(m).with_context(|| format!("resource '{name}'"))?,
+            (_, Value::Bool(true)) => 0o600,
+            _ => continue,
+        };
+        match seen.iter().find(|(p, _, _)| p == path) {
+            Some((_, other, first)) if *other != mode => bail!(
+                "resources '{first}' and '{name}' give {path} different modes ({other:03o} and {mode:03o}), so each would undo the other: \
+                 give it one mode, on one of them or the same on both"
+            ),
+            Some(_) => {}
+            None => seen.push((path.to_string(), mode, name.to_string())),
+        }
+    }
+    Ok(())
+}
+
 /// The properties as the resource will get them: `None` if a value is a DSC expression (`[…]`),
 /// with `[[` (DSC's escape for a leading `[`) unescaped.
 fn literal(v: &Value) -> Option<Value> {
@@ -462,16 +491,58 @@ fn file(props: &Value) -> Result<Plan> {
     Ok(plan)
 }
 
-/// The change of a text-editing resource: write `new` if it differs from the file's text. The
-/// first note also gets the diff (see [`Note::add_diff`]).
-fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, mut what: Vec<Note>) {
-    if new != text.text {
-        if let Some(first) = what.first_mut() {
-            first.add_diff(Some(diff::lines(&text.text, &new)), hidden(&file, &options));
-        }
-        let steps = write_steps(&file, &options, what);
-        plan.change(steps, move || common::write(&file, &text.encode(&new), &options));
+/// `mode` and `private` of a text-editing resource (Line, Block, Value): the write options and,
+/// for an existing file, the notes for fixing its permissions. Part of the desired state, as for
+/// `Furnish/File`; only when the step is to exist, since uninstalling never relaxes a file's
+/// permissions (the file is the user's and stays).
+fn text_permissions(plan: &mut Plan, file: &Managed, mode: &Option<String>, private: Option<bool>, exist: bool, backup: Option<bool>, validate: &Option<Vec<String>>) -> Result<(WriteOptions, Vec<Note>)> {
+    if !exist {
+        return Ok((write_options(None, None, backup, validate), vec![]));
     }
+    let mode = mode.as_deref().map(common::parse_mode).transpose()?;
+    let options = write_options(mode, private, backup, validate);
+    let steps = match file.bytes {
+        Some(_) => permissions(plan, &file.real, &file.shown, mode, options.private, false)?,
+        None => {
+            plan.observe("mode", None, mode.map(|m| format!("{m:03o}").into()));
+            vec![]
+        }
+    };
+    Ok((options, steps))
+}
+
+/// The change of a text-editing resource: write `new` if it differs from the file's text, and fix
+/// the permissions that `perms` names (see [`text_permissions`]). The first note also gets the
+/// diff (see [`Note::add_diff`]).
+fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options: WriteOptions, mut what: Vec<Note>, perms: Vec<Note>) {
+    if new == text.text {
+        if !perms.is_empty() {
+            plan.change(perms, move || {
+                if let Some(mode) = options.mode {
+                    common::set_mode(&file.real, mode)?;
+                }
+                if options.private {
+                    common::set_private(&file.real, false)?;
+                }
+                Ok(())
+            });
+        }
+        return;
+    }
+    // A new file gets its permissions as it is written.
+    if file.bytes.is_none() {
+        if options.private {
+            what.push(note("private", json!({ "path": file.shown })));
+        } else if let Some(mode) = options.mode {
+            what.push(note("mode", json!({ "path": file.shown, "mode": format!("{mode:03o}") })));
+        }
+    }
+    if let Some(first) = what.first_mut() {
+        first.add_diff(Some(diff::lines(&text.text, &new)), hidden(&file, &options));
+    }
+    what.extend(perms);
+    let steps = write_steps(&file, &options, what);
+    plan.change(steps, move || common::write(&file, &text.encode(&new), &options));
 }
 
 #[derive(Deserialize)]
@@ -491,6 +562,8 @@ struct BlockProps {
     insert: Option<InsertProp>,
     /// `<collection>/<app>`, which furnish sets when it loads the app.
     app: Option<String>,
+    mode: Option<String>,
+    private: Option<bool>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
     backup: Option<bool>,
@@ -500,6 +573,7 @@ struct BlockProps {
 impl BlockProps {
     fn check(&self) -> Result<text::Insert> {
         check_validate(&self.validate)?;
+        check_mode(&self.mode, self.private)?;
         if self.comment.as_deref().is_some_and(|c| c.trim().is_empty() || c.contains('\n')) {
             bail!("comment: the characters that start a comment, e.g. '#' or '//'");
         }
@@ -535,8 +609,8 @@ fn block(props: &Value) -> Result<Plan> {
         (Some(_), false) => "block.remove",
     };
     let what = vec![note(code, json!({ "path": file.shown }))];
-    let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    let (options, perms) = text_permissions(&mut plan, &file, &p.mode, p.private, exist, p.backup, &p.validate)?;
+    text_change(&mut plan, file, text, new, options, what, perms);
     Ok(plan)
 }
 
@@ -549,6 +623,8 @@ struct LineProps {
     pattern: Option<String>,
     before: Option<String>,
     after: Option<String>,
+    mode: Option<String>,
+    private: Option<bool>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
     backup: Option<bool>,
@@ -558,6 +634,7 @@ struct LineProps {
 impl LineProps {
     fn check(&self) -> Result<text::Line> {
         check_validate(&self.validate)?;
+        check_mode(&self.mode, self.private)?;
         if self.line.contains('\n') {
             bail!("line: one line, without line breaks");
         }
@@ -596,8 +673,8 @@ fn line(props: &Value) -> Result<Plan> {
         (Some((l, _)), true) if l != p.line => note("line.replace", json!({ "path": path, "line": p.line, "old": l })),
         (Some(_), true) => note("line.move", json!({ "path": path, "line": p.line })),
     }];
-    let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    let (options, perms) = text_permissions(&mut plan, &file, &p.mode, p.private, exist, p.backup, &p.validate)?;
+    text_change(&mut plan, file, text, new, options, what, perms);
     Ok(plan)
 }
 
@@ -612,6 +689,8 @@ struct ValueProps {
     /// Remove the value on uninstall only if it is one of these; install leaves it as it is.
     #[serde(rename = "removeIf")]
     remove_if: Option<Vec<Value>>,
+    mode: Option<String>,
+    private: Option<bool>,
     #[serde(rename = "_exist")]
     exist: Option<bool>,
     backup: Option<bool>,
@@ -621,6 +700,7 @@ struct ValueProps {
 impl ValueProps {
     fn check(&self) -> Result<(value::Format, Vec<value::Seg>)> {
         check_validate(&self.validate)?;
+        check_mode(&self.mode, self.private)?;
         let format = match self.format.or_else(|| value::Format::from_path(&self.path)) {
             Some(f) => f,
             None => bail!("format: json, jsonc, yaml or toml (the file name doesn't tell)"),
@@ -679,6 +759,7 @@ fn value(props: &Value) -> Result<Plan> {
     let (after_exists, after) = observed(&expected)?;
     plan.observe("_exist", Some(now_exists.into()), Some(after_exists.into()));
     plan.observe("value", now.clone(), after);
+    let (options, perms) = text_permissions(&mut plan, &file, &p.mode, p.private, exist, p.backup, &p.validate)?;
     if ops.is_empty() {
         // On uninstall, say why a value stays.
         if p.remove_if.is_some() && !exist && let Some(now) = now {
@@ -688,6 +769,8 @@ fn value(props: &Value) -> Result<Plan> {
             };
             plan.steps = vec![note("value.keep", json!({ "path": file.shown, "location": p.location, "value": shown }))];
         }
+        let same = text.text.clone();
+        text_change(&mut plan, file, text, same, options, vec![], perms);
         return Ok(plan);
     }
     let new = value::edit(format, &text.text, &ops, &expected).with_context(|| file.shown.clone())?;
@@ -698,8 +781,7 @@ fn value(props: &Value) -> Result<Plan> {
         (_, false) => "value.remove",
     };
     let what = vec![note(code, json!({ "path": file.shown, "location": p.location }))];
-    let options = write_options(None, None, p.backup, &p.validate);
-    text_change(&mut plan, file, text, new, options, what);
+    text_change(&mut plan, file, text, new, options, what, perms);
     Ok(plan)
 }
 
@@ -912,6 +994,83 @@ mod tests {
         assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": ["x"], "value": "x"})).is_err());
         assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": []})).is_err());
         assert!(check("Furnish/Value", &json!({"path": "~/x.yaml", "location": "$.a", "removeIf": ["x"]})).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_kubeconfig_that_value_steps_create_is_private_and_stays_so_on_uninstall() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = path(&dir, ".acme/kubeconfig");
+        let mode = || fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        let step = |kind: &str, name: &str, body: Value| {
+            let singular = kind.trim_end_matches('s');
+            json!({"path": p, "format": "yaml", "location": format!("$.{kind}[?@.name=='{name}']"), "merge": "deep", "value": {"name": name, singular: body}})
+        };
+        // One private: true is enough; the steps without it don't reset the mode.
+        let mut cluster = step("clusters", "acme-prod", json!({"server": "https://k8s.acme.example"}));
+        cluster["private"] = true.into();
+        let app = [
+            cluster,
+            step("users", "acme-prod", json!({"exec": {"command": "kubelogin"}})),
+            step("contexts", "acme-prod", json!({"cluster": "acme-prod", "user": "acme-prod"})),
+        ];
+        let notes = converge("value", app[0].clone());
+        assert!(notes.iter().any(|n| n.english() == format!("Make {p} accessible only to you")), "{notes:?}");
+        assert_eq!(notes[0].params["hidden"], true, "a private file shows only the counts of its diff");
+        assert_eq!(mode(), 0o600);
+        for props in &app[1..] {
+            converge("value", props.clone());
+        }
+        assert_eq!(mode(), 0o600);
+        assert!(app.iter().all(|props| evaluate("value", props).unwrap().apply.is_none()), "the steps don't fight");
+        assert!(check_modes(&json!(app.iter().map(|p| json!({"type": "Furnish/Value", "properties": p})).collect::<Vec<_>>())).is_ok());
+
+        // Made group-readable by someone: an update, and installing makes it private again without touching the text.
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        let text = fs::read_to_string(&p).unwrap();
+        let plan = evaluate("value", &app[0]).unwrap();
+        assert_eq!((plan.state["private"].clone(), plan.state["_exist"].clone()), (json!(false), json!(true)), "an update, not missing");
+        assert_eq!(converge("value", app[0].clone()).iter().map(|n| n.code).collect::<Vec<_>>(), vec!["private"]);
+        assert_eq!((mode(), fs::read_to_string(&p).unwrap()), (0o600, text));
+
+        // Uninstall removes the entries and keeps the file and its mode.
+        for props in app.iter().rev() {
+            let mut gone = props.clone();
+            gone["_exist"] = false.into();
+            converge("value", gone);
+        }
+        assert_eq!(mode(), 0o600);
+        let mut gone = app[0].clone();
+        gone["_exist"] = false.into();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(evaluate("value", &gone).unwrap().apply.is_none(), "uninstall leaves the mode alone");
+
+        // Line and Block, and a mode instead of private.
+        let ssh = path(&dir, "ssh/config");
+        converge("line", json!({"path": ssh, "line": "Include acme.conf", "private": true}));
+        assert_eq!(fs::metadata(&ssh).unwrap().permissions().mode() & 0o777, 0o600);
+        let known = path(&dir, "known_hosts");
+        let notes = converge("block", json!({"path": known, "content": "x", "app": "acme/ssh", "mode": "640"}));
+        assert!(notes.iter().any(|n| n.code == "mode"), "{notes:?}");
+        assert_eq!(fs::metadata(&known).unwrap().permissions().mode() & 0o777, 0o640);
+        assert!(check("Furnish/Line", &json!({"path": ssh, "line": "x", "mode": "600", "private": true})).is_err());
+    }
+
+    #[test]
+    fn steps_on_one_file_must_agree_on_its_mode() {
+        let r = |name: &str, kind: &str, props: Value| json!({"name": name, "type": kind, "properties": props});
+        let file = "~/.acme/kubeconfig";
+        let ok = json!([
+            r("a", "Furnish/Value", json!({"path": file, "private": true})),
+            r("b", "Furnish/Value", json!({"path": file})),
+            r("c", "Furnish/Line", json!({"path": file, "mode": "600"})),
+            r("d", "Furnish/File", json!({"path": "~/other", "mode": "644"})),
+        ]);
+        assert!(check_modes(&ok).is_ok());
+        let clash = json!([r("a", "Furnish/Value", json!({"path": file, "private": true})), r("b", "Furnish/Block", json!({"path": file, "mode": "644"}))]);
+        let err = check_modes(&clash).unwrap_err().to_string();
+        assert!(err.contains("'a' and 'b'") && err.contains("600 and 644"), "{err}");
     }
 
     #[test]

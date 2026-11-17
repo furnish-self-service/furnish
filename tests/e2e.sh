@@ -282,7 +282,7 @@ resources:
     properties: { path: "$tmp/conf/ssh_config", content: "Host git.fixture.example\n  User git", backup: true }
   - name: plugin
     type: Furnish/Value
-    properties: { path: "$tmp/conf/settings.json", location: "\$.enabledPlugins['fixture@market']", value: true }
+    properties: { path: "$tmp/conf/settings.json", location: "\$.enabledPlugins['fixture@market']", value: true, private: true }
   - name: home file
     type: Furnish/File
     properties: { path: "~/$home_file", content: "furnish" }
@@ -587,10 +587,15 @@ printf 'kind: Config\n' > "$tmp/conf/kube.yaml"
 expect "$(step list)" "✓  config "
 printf 'current-context: fixture-prod\n' > "$tmp/conf/kube.yaml"
 expect "$(step list)" "✓  config "
-case "$(uname -s)" in
-MINGW* | MSYS*) ;;  # an access list instead of a mode
-*) [ "$(stat -c %a "$tmp/conf/profile.conf" 2>/dev/null || stat -f %Lp "$tmp/conf/profile.conf")" = 600 ] || { echo "FAIL: profile isn't private" >&2; exit 1; } ;;
-esac
+# private: a copied file, and a file that a Furnish/Value step creates.
+for f in profile.conf settings.json; do
+    case "$(uname -s)" in
+    # An access list for the user only, nothing inherited.
+    MINGW* | MSYS*) acl=$(MSYS_NO_PATHCONV=1 icacls "$tmp/conf/$f") && echo "$acl" >&2
+                    ! grep -q '(I)' <<<"$acl" || { echo "FAIL: $f inherits access" >&2; exit 1; } ;;
+    *) [ "$(stat -c %a "$tmp/conf/$f" 2>/dev/null || stat -f %Lp "$tmp/conf/$f")" = 600 ] || { echo "FAIL: $f isn't private" >&2; exit 1; } ;;
+    esac
+done
 # A value changed by hand shows as drift; installing again fixes it.
 settings=$(cat "$tmp/conf/settings.json") && printf '%s\n' "${settings//true/false}" > "$tmp/conf/settings.json"  # no sed in nixos/nix
 if step list | grep -q "✓  config "; then echo "FAIL: a changed value isn't drift" >&2; exit 1; fi
@@ -603,6 +608,12 @@ expect "$(step install config --dry-run)" "finds the setting: it is there but ou
 expect "$(step uninstall config --dry-run)" "Remove \$.current-context from $tmp/conf/kube.yaml"
 expect "$(step uninstall config)" "Uninstalled config"
 if grep -q current-context "$tmp/conf/kube.yaml"; then echo "FAIL: uninstall left the app's current-context" >&2; exit 1; fi
+# A file that a Furnish/Value step edits is the user's: uninstall keeps it, private.
+[ -f "$tmp/conf/settings.json" ] || { echo "FAIL: uninstall deleted settings.json" >&2; exit 1; }
+case "$(uname -s)" in
+MINGW* | MSYS*) ;;
+*) [ "$(stat -c %a "$tmp/conf/settings.json" 2>/dev/null || stat -f %Lp "$tmp/conf/settings.json")" = 600 ] || { echo "FAIL: uninstall changed the mode of settings.json" >&2; exit 1; } ;;
+esac
 if [ -n "$(git config --file "$tmp/conf/gitconfig" fixture.server)" ]; then echo "FAIL: remove didn't run for an outdated setting" >&2; exit 1; fi
 expect "$(step list)" "·  config "
 [ "$(cat "$tmp/conf/ssh_config")" = "$(printf 'Host other.example\n  User me')" ] || { echo "FAIL: removal left lines behind" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }

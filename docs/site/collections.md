@@ -160,6 +160,10 @@ The resources that write files have these properties in common:
 | `_exist` | `false` removes the file, or the resource's part of it |
 | `backup` | `true` keeps a copy of the file before each change, named `<file>.<date and time in UTC>~` |
 | `validate` | A command that checks the new file before it replaces the old one, with `'%s'` for its path, for example `[ssh, -G, -F, '%s', git.acme.example]`. If it exits with another code than 0, the step fails and the file stays as it was |
+| `mode` | The file's mode on macOS and Linux, for example `'640'` |
+| `private` | `true`: only the user may open the file. On Windows, its access list grants only the user access and inherits nothing; on macOS and Linux, its mode is 600 |
+
+`mode` and `private` are part of the desired state: a file that someone made readable for others shows as an available update, and installing again restores them. A step without them leaves the mode as it is, so for a file that several `Furnish/Value`, `Furnish/Line` or `Furnish/Block` steps edit, `private: true` on one of them is enough. Steps that give the same file different modes would undo each other, so furnish refuses such an app when it loads it. Uninstalling never changes the mode, and these three resources never delete the file: it may hold the user's own settings.
 
 A file that the account checking the app's status may not read, such as a root-only file that the furnish service wrote, counts as set up if it exists: furnish can't compare its contents as that account. The steps preview says so.
 
@@ -171,13 +175,11 @@ A value that starts with `[` is a DSC expression. Write `[[` for a pattern or te
 
 #### Furnish/Directory
 
-A folder. `_exist: false` removes it only when it is empty.
+A folder. `_exist: false` removes it only when it is empty. `mode` and `private` work as for files, with mode 700 for a private folder.
 
 | Property | Meaning |
 |---|---|
 | `path` | The folder |
-| `mode` | Its mode on macOS and Linux, for example `'750'` |
-| `private` | `true`: only the user may open it. On Windows, its access list grants only the user access and inherits nothing; on macOS and Linux, its mode is 700 |
 
 ```yaml
 - name: VPN folder
@@ -189,7 +191,7 @@ A folder. `_exist: false` removes it only when it is empty.
 
 #### Furnish/File
 
-A whole file, with the text in `content` or a copy of `source`, a file in the collection. furnish checks `source` like the `file` of `Furnish/Installer`: it must be in the collection, and furnish downloads it when the app is installed. Without either, the file only has to exist. `mode` and `private` work as for folders, with mode 600 for a private file.
+A whole file, with the text in `content` or a copy of `source`, a file in the collection. furnish checks `source` like the `file` of `Furnish/Installer`: it must be in the collection, and furnish downloads it when the app is installed. Without either, the file only has to exist.
 
 ```yaml
 - name: VPN profile
@@ -260,7 +262,7 @@ One value in a JSON, JSONC (JSON with comments), YAML or TOML file. The rest of 
 
 Missing objects on the way to the location are created. Only the value at the location counts for the app's state. `[?@.name=='acme-prod']` selects the element of a list whose `name` is `acme-prod`: the step replaces that element, or adds it at the end if there is none, and `value` must have that `name`. In an object, as some tools write their entries keyed by an ID, the filter selects the member whose value has that `name`: the step replaces that member under its key, and fails if there is none, since a new member needs a key and a filter doesn't give one. To add a member, name its key in `location`. `merge: deep` sets the keys of `value` and keeps the other keys at the location. `merge: member` treats the location as a list that must contain `value` and keeps its other elements. `_exist: false` removes the value at the location, the keys of a deep merge, or the element, the whole element also with `merge: deep`.
 
-A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves the other entries as they are. `merge: deep` keeps what others add to an entry: kubectl writes defaults into the user when it saves the file, such as `env: null`, and people set a context's `namespace`. With `replace`, either would show as a change, and installing would undo it.
+A kubeconfig merge takes one step each for the cluster, the user and the context, and leaves the other entries as they are. kubeconfig holds credentials, and tools such as helm warn about one that others can read, so the first step has `private: true`. `merge: deep` keeps what others add to an entry: kubectl writes defaults into the user when it saves the file, such as `env: null`, and people set a context's `namespace`. With `replace`, either would show as a change, and installing would undo it.
 
 Installing leaves `current-context` alone, so the user's choice stays. If it names the app's context when the app is uninstalled, kubectl fails on every command that doesn't name a context, since that context is gone. A step with `removeIf` removes it in that case and keeps any other value. It has nothing to do when the app is installed, so it never makes the app show as not installed or as having an update, and an uninstall that keeps the value says why in the steps preview. In [removal steps](#removal-steps), such a step needs `_exist: false`.
 
@@ -279,6 +281,7 @@ resources:
       path: ~/.kube/config
       format: yaml
       location: "$.clusters[?@.name=='acme-prod']"
+      private: true
       merge: deep
       value:
         name: acme-prod
