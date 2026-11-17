@@ -2,6 +2,8 @@
 # Add the furnish package repository the way the README says, install furnish and run it.
 #
 #   tests/repo.sh <image> <base url> <channel>    e.g. debian:12 https://furnish-self-service.github.io/furnish alpha
+#
+# KEY_FPR is the signing key's fingerprint pacman trusts (tests/repo-local.sh signs with another key).
 set -eu
 image=${1:?usage: $0 <image> <base url> <channel>}; url=${2:?}; channel=${3:?}
 case "$image" in
@@ -16,6 +18,12 @@ case "$image" in
         dnf install -y -q furnish >/dev/null" ;;
     opensuse*) steps="zypper -n -q --gpg-auto-import-keys addrepo $url/$channel/furnish.repo
         zypper -n -q --gpg-auto-import-keys install furnish >/dev/null" ;;
+    # The image's keyring is empty (pacman-key --init/--populate); an installed system has it already.
+    archlinux*) steps="pacman-key --init >/dev/null 2>&1 && pacman-key --populate >/dev/null 2>&1
+        curl -fsSL $url/gpg-key.asc | pacman-key --add -
+        pacman-key --lsign-key ${KEY_FPR:-3A87437DE7A2B5DE9436AD898C29D9C7FFF4823E}
+        printf '\\n[furnish]\\nSigLevel = Required\\nServer = $url/$channel/arch/\$arch\\n' >> /etc/pacman.conf
+        pacman -Syu --noconfirm furnish >/dev/null" ;;
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac
 docker run --rm --network host "$image" sh -c "set -e

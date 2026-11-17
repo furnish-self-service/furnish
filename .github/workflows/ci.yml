@@ -415,12 +415,17 @@ jobs:
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
             -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" ubuntu:22.04 packaging/linux/build.sh
+          # The Arch Linux package, from the .deb (0.1.0+alpha.42 is pkgver 0.1.0alpha.42).
+          rm -rf target/jammy/release/bundle/arch
+          docker run --rm -v "$PWD:/src" -w /src -e HOST_UID=$(id -u) archlinux:latest \
+            packaging/arch/build.sh "target/jammy/release/bundle/deb/furnish_${version}_amd64.deb"
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-packages
           path: |
             target/jammy/release/bundle/deb/*.deb
             target/jammy/release/bundle/rpm/*.rpm
+            target/jammy/release/bundle/arch/*.pkg.tar.zst
 
   packages:
     name: install on ${{ matrix.image }}
@@ -429,7 +434,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [debian:12, ubuntu:22.04, ubuntu:24.04, fedora:latest, opensuse/leap:15.6, opensuse/tumbleweed, almalinux:10]
+        image: [debian:12, ubuntu:22.04, ubuntu:24.04, fedora:latest, opensuse/leap:15.6, opensuse/tumbleweed, almalinux:10, archlinux:latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -438,11 +443,30 @@ jobs:
           path: bundle
       - run: tests/packages.sh "${{ matrix.image }}" bundle
 
+  # publish.sh on every branch: the repository from this build, signed with a throwaway key and
+  # served locally, installed from the way the docs say (the `repository` job does it for the published one).
+  repository-local:
+    name: install from a locally built repository on ${{ matrix.image }}
+    needs: linux-packages
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12, fedora:latest, archlinux:latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-packages
+          path: bundle
+      - run: sudo apt-get install -y -qq apt-utils createrepo-c
+      - run: tests/repo-local.sh "${{ matrix.image }}" bundle
+
   # The alpha channel of the package repository (GitHub Pages), from main once everything passed.
   publish-alpha:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, repository-local, gui, update-feed, self-update]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -563,7 +587,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10]
+        image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10, archlinux:latest]
     steps:
       - uses: actions/checkout@v4
       - run: tests/repo.sh "${{ matrix.image }}" https://furnish-self-service.github.io/furnish alpha

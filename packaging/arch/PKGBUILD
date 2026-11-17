@@ -1,0 +1,25 @@
+# Packages the furnish .deb as it is, so the Arch package has the same files: the desktop app,
+# the furnish command, DSC's resources, the desktop entry and the icons. Nothing is compiled.
+# packaging/arch/build.sh sets pkgver and the checksum for a build; the .deb comes from the
+# package repository unless it is next to this file already.
+pkgname=furnish
+# The .deb's version without "+": 0.1.0+alpha.42 is 0.1.0alpha.42, which pacman orders after
+# 0.1.0alpha.41 and before 0.1.0.
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Install apps your organization provides"
+arch=(x86_64)
+url="https://furnish-self-service.github.io/"
+license=(MIT)
+# What the .deb depends on (git, libayatana-appindicator3-1, libwebkit2gtk-4.1-0, libgtk-3-0).
+depends=(git libayatana-appindicator webkit2gtk-4.1 gtk3)
+optdepends=('git-lfs: collections that use Git LFS')
+options=(!strip !debug)
+_debver=${pkgver/alpha/+alpha}
+source=("furnish_${_debver}_amd64.deb::https://furnish-self-service.github.io/furnish/alpha/apt/pool/main/furnish_${_debver/+/%2B}_amd64.deb")
+noextract=("furnish_${_debver}_amd64.deb")
+sha256sums=('SKIP')
+
+package() {
+    bsdtar -xOf "furnish_${_debver}_amd64.deb" 'data.tar.*' | bsdtar -xpf - -C "$pkgdir"
+}

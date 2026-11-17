@@ -2,19 +2,20 @@
 # Add packages to a channel of the furnish package repository and regenerate its signed metadata.
 # The repository is a static site (GitHub Pages): fetch.sh first restores what it already serves.
 #
-#   BASE_URL=https://furnish-self-service.github.io/furnish packaging/repo/publish.sh alpha <dir with .deb/.rpm> <site dir>
+#   BASE_URL=https://furnish-self-service.github.io/furnish packaging/repo/publish.sh alpha <dir with .deb/.rpm/.pkg.tar.zst> <site dir>
 #
-# Needs apt-ftparchive (apt-utils), createrepo_c and gpg with the signing key; KEEP versions per
-# channel (default 5) stay available.
+# Needs apt-ftparchive (apt-utils), createrepo_c, gpg with the signing key, and repo-add (pacman)
+# or docker for the Arch Linux repository; KEEP versions per channel (default 5) stay available.
 set -eu
 channel=${1:?usage: $0 <channel> <packages dir> <site dir>}
 packages=${2:?}; site=${3:?}
 : "${BASE_URL:?set BASE_URL to where the site is served}"
 here=$(cd "$(dirname "$0")" && pwd)
-apt="$site/$channel/apt"; rpm="$site/$channel/rpm"; mac="$site/$channel/macos"; win="$site/$channel/windows"
-mkdir -p "$apt/pool/main" "$apt/dists/furnish/main/binary-amd64" "$rpm/x86_64" "$mac" "$win"
+apt="$site/$channel/apt"; rpm="$site/$channel/rpm"; arch="$site/$channel/arch/x86_64"; mac="$site/$channel/macos"; win="$site/$channel/windows"
+mkdir -p "$apt/pool/main" "$apt/dists/furnish/main/binary-amd64" "$rpm/x86_64" "$arch" "$mac" "$win"
 find "$packages" -name '*.deb' -exec cp {} "$apt/pool/main/" \;
 find "$packages" -name '*.rpm' -exec cp {} "$rpm/x86_64/" \;
+find "$packages" -name '*.pkg.tar.zst' -exec cp {} "$arch/" \;
 # The desktop app for macOS and Windows: downloads, no package manager (unsigned for now). For
 # its built-in updater also the macOS app as .app.tar.gz, and the signatures (.sig) of both.
 find "$packages" \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) -exec cp {} "$mac/" \;
@@ -23,6 +24,8 @@ find "$packages" \( -name '*.msi' -o -name '*.msi.sig' \) -exec cp {} "$win/" \;
 # Keep the newest versions only (GitHub Pages sites are limited to 1 GB), per kind of file.
 prune() { ls "$1" | grep -E "${2:-.}" | sort -V | head -n "-${KEEP:-5}" | while read -r f; do rm -f "$1/$f"; done; }
 prune "$apt/pool/main"; prune "$rpm/x86_64"
+prune "$arch" '\.pkg\.tar\.zst$'
+for sig in "$arch"/*.pkg.tar.zst.sig; do [ -f "${sig%.sig}" ] || rm -f "$sig"; done
 prune "$mac" '\.dmg$'; prune "$mac" '\.app\.tar\.gz$'; prune "$mac" '\.app\.tar\.gz\.sig$'
 prune "$win" '\.msi$'; prune "$win" '\.msi\.sig$'
 # The feed furnish's updater reads, for the newest signed version.
@@ -50,6 +53,16 @@ rm -rf "$rpm/repodata"
 createrepo_c --quiet "$rpm"
 gpg --batch --yes --armor --detach-sign -o "$rpm/repodata/repomd.xml.asc" "$rpm/repodata/repomd.xml"
 
+# pacman: one repository for Arch Linux and its derivatives; packages and database are signed.
+if ls "$arch" | grep -q '\.pkg\.tar\.zst$'; then
+    if command -v repo-add >/dev/null; then
+        "$here/../arch/repo.sh" "$arch"
+    else  # e.g. on Ubuntu: in an archlinux container, with the signing key handed over on stdin
+        gpg --batch --export-secret-keys | docker run --rm -i -v "$(cd "$here/.." && pwd):/packaging:ro" -v "$(cd "$arch" && pwd):/repo" \
+            archlinux:latest sh -c "gpg --batch --quiet --import && /packaging/arch/repo.sh /repo && chown -R $(id -u):$(id -g) /repo"
+    fi
+fi
+
 cp "$here/gpg-key.asc" "$site/gpg-key.asc"
 cat > "$site/$channel/furnish.repo" <<REPO
 [furnish-$channel]
@@ -63,5 +76,5 @@ REPO
 echo "deb [signed-by=/etc/apt/keyrings/furnish.asc] $BASE_URL/$channel/apt furnish main" > "$site/$channel/furnish.list"
 
 # What fetch.sh restores next time: the packages of every channel.
-(cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -path '*/macos/*' -o -path '*/windows/*' \) -type f | sed 's|^\./||' | sort) > "$site/packages.txt"
-echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$mac" | grep -c '\.dmg$') .dmg and $(ls "$win" | grep -c '\.msi$') .msi in $channel"
+(cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' -o -name '*.pkg.tar.zst.sig' -o -path '*/macos/*' -o -path '*/windows/*' \) -type f | sed 's|^\./||' | sort) > "$site/packages.txt"
+echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$arch" | grep -c '\.pkg\.tar\.zst$') .pkg.tar.zst, $(ls "$mac" | grep -c '\.dmg$') .dmg and $(ls "$win" | grep -c '\.msi$') .msi in $channel"
