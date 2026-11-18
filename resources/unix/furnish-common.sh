@@ -77,12 +77,12 @@ as_root() {
 }
 
 # pkexec exits 126 (dialog dismissed) or 127 (not authorized) without running anything:
-# that is the user saying no. Report cancellation to DSC from the branch that detected it:
-# package managers can also return 12 or 13 for a failure of their own.
+# that is the user saying no, not a failure. Exit 12 tells furnish the step was cancelled.
 pkexec_or_cancel() {
     rc=0
     pkexec "$@" || rc=$?
     if [ "$rc" = 126 ] || [ "$rc" = 127 ]; then
+        # The same exit code from the package manager itself is a regular failure.
         echo "furnish: Cancelled: administrator rights were not granted" >&2
         exit 12
     fi

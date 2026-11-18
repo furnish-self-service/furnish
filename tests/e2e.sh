@@ -162,9 +162,9 @@ fi
 # Pinning: a package with two versions on offer, asked from the resource itself.
 pin_pkg= pin_version=
 if $real && [ "$(id -u)" = 0 ] && { command -v apt-get || command -v dnf || command -v zypper; } >/dev/null 2>&1; then
-    backend_dir="$(dirname "$0")/../resources/unix"
+    package_state() (cd "$(dirname "$0")/../resources/unix" && "$furnish" dsc-resource package get)
     for p in tzdata hyperfine; do
-        state=$(cd "$backend_dir" && printf '{"name":"%s","reportVersions":"all"}\n' "$p" | "$furnish" dsc-resource package get 2>/dev/null) || continue
+        state=$(printf '{"name":"%s","reportVersions":"all"}\n' "$p" | package_state 2>/dev/null) || continue
         latest=$(printf '%s' "$state" | sed -n 's/.*"latestVersion":"\([^"]*\)".*/\1/p')
         for v in $(printf '%s' "$state" | sed -n 's/.*"availableVersions":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' ' '); do
             [ "$v" != "$latest" ] && { pin_pkg=$p pin_version=$v; break 2; }
@@ -585,7 +585,7 @@ else
         echo "--- pinning $pin_pkg $pin_version" >&2
         expect "$(step install pinned --dry-run)" "$pin_version"
         step install pinned >/dev/null
-        got=$(name=$pin_pkg sh "$res" get 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+        got=$(printf '{"name":"%s"}\n' "$pin_pkg" | package_state | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
         [ "$got" = "$pin_version" ] || { echo "FAIL: $pin_pkg is $got, not $pin_version" >&2; exit 1; }
         expect "$(step list)" "✓  pinned"
     elif [ "$(id -u)" = 0 ]; then
