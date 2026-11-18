@@ -662,8 +662,15 @@ const steps = [
     await click(button('Install 2 apps'));
     await click(nav('Activity'));
     const group = "//li[contains(@class,'kit-history')][.//summary[contains(., 'recovery')]]";
-    await waitFor('one of two installed', async () => (await text(`${group}//summary`)).includes('1 of 2 installed'), 30000);
-    await click(`${group}//summary`);
+    const summary = `${group}/details/summary`;
+    await waitFor('partial kit result names the failed member', async () => {
+      const result = await text(summary);
+      return result.includes('1 of 2 installed') && result.includes("Couldn't install toolbox");
+    }, 30000);
+    await waitFor('expand kit result', async () => {
+      if (!(await prop(`${group}/details`, 'open'))) await click(summary);
+      return prop(`${group}/details`, 'open');
+    });
     const retry = `${group}${button('Retry toolbox')}`;
     await waitFor('toolbox failure is actionable', () => find(retry));
     const freshInstalls = () => log('pkexec.log').split('\n').filter(line => line.includes('pacman -S') && line.endsWith('fresh')).length;
