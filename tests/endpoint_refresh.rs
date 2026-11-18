@@ -44,6 +44,8 @@ fn serve(doc: Arc<Mutex<Option<String>>>, repos: Option<PathBuf>) -> String {
                     Some(body) => ok(body.as_bytes()),
                     None => status("503 Service Unavailable"),
                 }
+            } else if path.starts_with("/limited.git") {
+                status("429 Too Many Requests")
             } else if let (Some(repos), Some(file)) = (&repos, path.strip_prefix("/git/")) {
                 match fs::read(repos.join(file)) {
                     _ if !signed_in || file.contains("..") => status("401 Unauthorized"),
@@ -127,7 +129,11 @@ fn a_user_added_endpoint_is_fetched_again_and_a_bad_setting_spoils_nothing() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stderr(&out).contains("ignoring setting 'updateIntervalMinutes'"), "the ignored setting is named");
-    assert!(stdout.contains("reports:           failures and fallbacks") && stdout.contains("when busy:         update anyway"));
+    assert!(stdout.lines().any(|line| line == "reports:           errors"));
+    assert!(stdout.contains("when busy:         update anyway"));
+    let reports = env.furnish(&["reports"]);
+    assert!(reports.status.success());
+    assert_eq!(String::from_utf8_lossy(&reports.stdout).lines().next(), Some("Reports: errors"));
     assert!(stdout.contains("every 30 minutes"));
 
     // The organization fixes its description; updating all collections fetches it again and keeps
@@ -199,6 +205,37 @@ fn repository(repos: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
     git(repos, &["clone", "--quiet", "--bare", &work.to_string_lossy(), &bare.to_string_lossy()]);
     git(&bare, &["update-server-info"]);
     bare
+}
+
+#[test]
+fn failed_collection_updates_leave_a_private_local_log_with_reporting_off() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let env = Env { root: root.into(), data: root.join("data"), policy: root.join("policy.json") };
+    fs::write(&env.policy, "{}").unwrap();
+    let repo = repository(root, "tools", &[("collection.yaml", "{}\n")]);
+    let log = env.data.join("furnish.log");
+    assert!(env.furnish(&["collection", "add", &repo.to_string_lossy(), "--name", "tools"]).status.success());
+    assert!(env.furnish(&["collection", "update", "tools"]).status.success());
+    assert!(!log.exists());
+
+    let origin = serve(Arc::new(Mutex::new(None)), None);
+    git(&env.data.join("collections/tools"), &["remote", "set-url", "origin", &format!("{origin}/limited.git?token=private-value")]);
+    let update = env.furnish(&["collection", "update", "tools"]);
+    assert!(!update.status.success());
+    let entry = read(&log);
+    assert!(entry["time"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(entry["collection"], "tools");
+    assert_eq!(entry["event"], "collectionUpdate");
+    assert_eq!(entry["outcome"], "failed");
+    assert!(entry["error"].as_str().unwrap().contains("429"));
+    assert!(!entry.to_string().contains("private-value"));
+    assert!(fs::read(env.data.join("reports/queue.ndjson")).unwrap_or_default().is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&log).unwrap().permissions().mode() & 0o777, 0o600);
+    }
 }
 
 #[test]

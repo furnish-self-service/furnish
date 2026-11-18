@@ -35,6 +35,16 @@ pub enum Level {
     All,
 }
 
+impl std::fmt::Display for Level {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Off => "off",
+            Self::Errors => "errors",
+            Self::All => "all",
+        })
+    }
+}
+
 /// One report. `record` adds when, from where, and with which furnish.
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -289,15 +299,17 @@ fn private_dir() -> Result<()> {
 }
 
 /// An error message without secrets: credentials in URLs (`https://user:token@host`, as git
-/// prints them), `Bearer`/`Basic` credentials and anything that looks like a JWT become `***`.
+/// prints them), URL queries and fragments, `Bearer`/`Basic` credentials and JWTs become `***`.
 pub fn redact(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    let mut in_url = false;
+    let url_end = |c: char| c.is_whitespace() || "'\"<>".contains(c);
     while !rest.is_empty() {
-        let lower = rest.to_ascii_lowercase();
         // Userinfo after a scheme: up to the last '@' before the host ends.
         if let Some(after) = rest.strip_prefix("://") {
-            let end = after.find(|c: char| c == '/' || c.is_whitespace() || "'\"<>".contains(c)).unwrap_or(after.len());
+            in_url = true;
+            let end = after.find(|c: char| "/?#".contains(c) || url_end(c)).unwrap_or(after.len());
             out.push_str("://");
             match after[..end].rfind('@') {
                 Some(at) => {
@@ -309,11 +321,18 @@ pub fn redact(text: &str) -> String {
             rest = &after[end..];
             continue;
         }
-        let scheme = ["bearer ", "basic "].into_iter().find(|s| lower.starts_with(s));
+        if in_url && rest.starts_with(['?', '#']) {
+            out.push_str("***");
+            rest = &rest[rest.find(url_end).unwrap_or(rest.len())..];
+            continue;
+        }
+        let scheme = ["bearer", "basic"].into_iter().find(|s| {
+            rest.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)) && rest[s.len()..].starts_with([' ', '\t'])
+        });
         if let Some(scheme) = scheme {
-            let after = &rest[scheme.len()..];
+            let after = rest[scheme.len()..].trim_start_matches([' ', '\t']);
             let end = after.find(|c: char| !(c.is_ascii_alphanumeric() || "-._~+/=".contains(c))).unwrap_or(after.len());
-            out.push_str(&rest[..scheme.len()]);
+            out.push_str(&rest[..rest.len() - after.len()]);
             out.push_str(if end > 0 { "***" } else { "" });
             rest = &after[end..];
             continue;
@@ -327,6 +346,9 @@ pub fn redact(text: &str) -> String {
             }
         }
         let c = rest.chars().next().expect("not empty");
+        if url_end(c) {
+            in_url = false;
+        }
         out.push(c);
         rest = &rest[c.len_utf8()..];
     }
@@ -892,7 +914,10 @@ mod tests {
             "fatal: unable to access 'https://***@git.acme.tld/it/apps.git/': 401"
         );
         assert_eq!(redact("https://ghp_abc@github.com/x"), "https://***@github.com/x");
+        assert_eq!(redact("error at 'https://git.tld/x?access_token=bad#part': 429"), "error at 'https://git.tld/x***': 429");
+        assert_eq!(redact("https://git.tld#token failed"), "https://git.tld*** failed");
         assert_eq!(redact("Authorization: Bearer abc.def-ghi"), "Authorization: Bearer ***");
+        assert_eq!(redact("Authorization: Bearer \tsecret"), "Authorization: Bearer \t***");
         assert_eq!(redact("authorization: basic eDp5== rest"), "authorization: basic *** rest");
         assert_eq!(redact("token eyJhbGciOi.eyJzdWIi.c2ln was rejected"), "token *** was rejected");
         assert_eq!(redact("https://git.acme.tld/x.git: not found"), "https://git.acme.tld/x.git: not found");

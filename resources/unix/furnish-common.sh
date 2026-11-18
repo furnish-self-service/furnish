@@ -149,6 +149,7 @@ version_state() {
 }
 
 prepare() { :; }
+check_external_install() { :; }
 extra_state() { :; }
 scheme=generic
 latest_version() { :; }
@@ -191,13 +192,14 @@ furnish_main() {
     *[!A-Za-z0-9.+~:_^-]*) fail 10 "targetVersion has characters a version can't have: $targetVersion" ;;
     esac
     prepare
+    version=$(installed_version || true)
+    check_external_install
     case "${1:-}" in
     get)
-        state "$(installed_version || true)"
+        state "$version"
         echo '}'
         ;;
     test)
-        version=$(installed_version || true)
         if [ "${_exist:-true}" = true ] && [ -n "$targetVersion" ]; then
             ok=false
             [ "$version" = "$targetVersion" ] && ok=true
@@ -212,7 +214,6 @@ furnish_main() {
         printf ',"_inDesiredState":%s}\n' "$ok"
         ;;
     set)
-        version=$(installed_version || true)
         newer=
         [ -n "$version" ] && [ "${_exist:-true}" = true ] && [ -z "$targetVersion" ] && newer=$(newer_version || true)
         shown=$subject; [ -n "$version" ] && [ "$version" != '?' ] && shown="$subject $version"

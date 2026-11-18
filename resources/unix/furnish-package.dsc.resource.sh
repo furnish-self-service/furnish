@@ -184,6 +184,36 @@ use_brew() {
         esac
     }
 }
+# Homebrew's cask token can differ entirely from the installed .app's name. Get the
+# app artifacts for the package brew would install (a formula can share a cask's token).
+# Read the bundle in place. Do not execute its contents or any path from the metadata.
+brew_external_bundle() {
+    HOMEBREW_NO_AUTO_UPDATE=1 run_brew command info --json=v2 "$name" 2>/dev/null |
+        /usr/bin/perl -MJSON::PP -0777 -e '
+            my $info = eval { decode_json(<STDIN>) } or exit 1;
+            exit 1 if @{$info->{formulae} // []};
+            for my $artifact (@{$info->{casks}[0]{artifacts} // []}) {
+                my $app = $artifact->{app} or next;
+                # Older brew releases include a renamed target in the app arguments.
+                my $renamed = ref($app->[1]) eq "HASH" ? $app->[1]{target} : undef;
+                my $bundle = $artifact->{target} // $renamed;
+                if (defined $bundle) {
+                    # Keep subdirectories of Applications when the cask names one.
+                    $bundle =~ s{\A(?:\Q$ENV{HOME}\E)?/Applications/}{};
+                } else {
+                    ($bundle) = $app->[0] =~ m{([^/]+)\z};
+                }
+                next unless defined $bundle && $bundle =~ /\.app\z/;
+                next if $bundle =~ m{\A/|(?:\A|/)\.\.?(?:/|\z)|[\x00-\x1f]};
+                utf8::encode($bundle);
+                for my $dir ("/Applications", "$ENV{HOME}/Applications") {
+                    my $path = "$dir/$bundle";
+                    if (-f "$path/Contents/Info.plist") { print $path; exit 0 }
+                }
+            }
+            exit 1;
+        '
+}
 use_nix() {
     # Nix profiles, no root needed: the user's own profile. As root (the furnish service), the
     # shared profile /nix/var/nix/profiles/furnish, which the NixOS module puts on everyone's PATH.
@@ -313,14 +343,17 @@ case ${nixpkgs:-} in -*) fail 10 "nixpkgs starts with '-': $nixpkgs" ;; esac
 # Installed some other way (npm, the vendor's installer, another package manager): the program is
 # there although the package manager doesn't have the package. It counts as installed, not by
 # furnish, which neither installs it again nor updates or removes it.
-if [ -n "${command:-}" ]; then
-    prepare; prepare() { :; } # the package manager's own lookup (Nix), once
-    if [ -z "$(installed_version || true)" ] && outside=$(find_program "$command"); then
-        installed_version() { echo '?'; }
-        newer_version() { :; }
-        extra_state() { printf ',"managedBy":"other",%s' "$(json_member path "$outside")"; }
-        cant_remove="$subject was installed outside furnish ($outside): uninstall it the way it was installed"
+check_external_install() {
+    [ -z "$version" ] || return 0
+    if [ -n "${command:-}" ] && outside=$(find_program "$command"); then :
+    elif [ "${manager:-}" = brew ] && [ "$(uname -s)" = Darwin ] && outside=$(brew_external_bundle); then :
+    else return 0
     fi
-fi
+    version='?'
+    installed_version() { echo '?'; }
+    newer_version() { :; }
+    extra_state() { printf ',"managedBy":"other",%s' "$(json_member path "$outside")"; }
+    cant_remove="$subject was installed outside furnish ($outside): uninstall it the way it was installed"
+}
 
 furnish_main "$@"

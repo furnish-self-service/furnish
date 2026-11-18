@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod catalog;
 pub mod check;
+mod diagnostics;
 pub mod endpoint;
 pub mod engine;
 pub mod load;

@@ -439,6 +439,31 @@ fn self_update_status() -> selfupdate::Status {
     selfupdate::status()
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn cli_link_installed() -> bool {
+    let link = Path::new("/usr/local/bin/furnish");
+    link.is_symlink() && link.canonicalize().is_ok_and(|target| target == Path::new("/Applications/furnish.app/Contents/MacOS/furnish"))
+}
+
+/// Make the CLI in the installed macOS app available to Terminal, on explicit request.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn install_cli_link() -> CmdResult<()> {
+    blocking(|| {
+        let bundle = Path::new("/Applications/furnish.app");
+        let exe = std::env::current_exe()?.canonicalize()?;
+        anyhow::ensure!(
+            furnish::selfupdate::app_bundle(&exe).as_deref() == Some(bundle),
+            "Move furnish.app to /Applications and open it there."
+        );
+        let output = std::process::Command::new("/bin/sh").arg(bundle.join("Contents/Resources/install-cli.sh")).output()?;
+        anyhow::ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr).trim());
+        Ok(())
+    })
+    .await
+}
+
 /// Ask the feed for a newer version of furnish; `download`: fetch it even if `selfUpdate` is
 /// `notify` (someone chose Update now).
 #[tauri::command]
@@ -845,6 +870,10 @@ fn main() -> std::process::ExitCode {
             set_collection_setting,
             version,
             self_update_status,
+            #[cfg(target_os = "macos")]
+            cli_link_installed,
+            #[cfg(target_os = "macos")]
+            install_cli_link,
             check_self_update,
             apply_self_update,
             open_licenses,

@@ -656,12 +656,7 @@ fn run(command: Command) -> Result<()> {
                 [] => println!("app updates:       automatic for all apps{}", org("noAutoUpdate")),
                 apps => println!("app updates:       automatic, except {}{}", apps.join(", "), org("noAutoUpdate")),
             }
-            let level = match s.reporting {
-                furnish::reports::Level::Off => "off",
-                furnish::reports::Level::Errors => "failures and fallbacks",
-                furnish::reports::Level::All => "everything, and the installed apps once a day",
-            };
-            println!("reports:           {level}{}{}", if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
+            println!("reports:           {}{}{}", s.reporting, if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
             println!("fallback language: {} (for collection texts not in the app's language){}", s.fallback_language, org("fallbackLanguage"));
             print_self_update(s.self_update, org("selfUpdate"));
             let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
@@ -1222,9 +1217,8 @@ fn check(dir: &std::path::Path) -> Result<()> {
 /// What furnish reports to the organization and what is waiting to be sent.
 fn reports() -> Result<()> {
     let s = furnish::settings::effective();
-    let level = serde_json::to_value(s.settings.reporting)?;
     let locked = if s.locked.iter().any(|k| k == "reporting") { " (set by your organization)" } else { "" };
-    println!("Reports: {}{locked}", level.as_str().unwrap_or_default());
+    println!("Reports: {}{locked}", s.settings.reporting);
     match furnish::reports::destination_names().as_slice() {
         [] => println!("No furnish address of your organization takes reports; nothing is sent."),
         names => println!("Sent to: {}. Their proxy adds who you are signed in as.", names.join(", ")),
