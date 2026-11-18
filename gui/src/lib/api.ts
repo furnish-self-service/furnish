@@ -204,8 +204,14 @@ export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** `removable`: furnish can uninstall it here (no resource that can't remove, or removal steps). */
 /** `required`: the collection's required versions aren't met here, or no acceptable version is offered (see required.ts). */
 /** `external`: installed outside furnish (NixOS, Home Manager, another tool); furnish leaves it alone. */
-export const appStatus = (key: string) =>
-  invoke<{ status: Status; reason: string | null; removable: boolean; external: External | null; required: Required | null }>('app_status', { key });
+export interface AppCheck {
+  status: Status;
+  reason: string | null;
+  removable: boolean;
+  external: External | null;
+  required: Required | null;
+}
+export const appStatus = (key: string) => invoke<AppCheck>('app_status', { key });
 /**
  * A package installed outside furnish: by the NixOS or Home Manager configuration (`package` is its
  * nixpkgs attribute), or with another tool (`other`, e.g. npm; `path` is where its program is).
