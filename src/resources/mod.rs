@@ -80,6 +80,9 @@ pub fn dispatch() -> Option<u8> {
 }
 
 fn run(args: &[String]) -> Result<String> {
+    if let [kind, op] = args && kind == "installer-download" {
+        return crate::installer_download::command(op);
+    }
     let (kind, op, what_if) = match args {
         [kind, op] => (kind, op.as_str(), false),
         [kind, op, flag] if flag == "--what-if" => (kind, op.as_str(), true),

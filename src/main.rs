@@ -1332,7 +1332,7 @@ fn install_previous(app: &catalog::App, version: &catalog::Version) -> Result<()
 }
 
 fn uninstall_app(app: &catalog::App) -> Result<()> {
-    let check = app.check()?;
+    let check = app.check_for_uninstall()?;
     if matches!(check.status, Status::NotInstalled | Status::Unavailable) {
         println!("✓ {} is not installed", app.id);
         return Ok(());

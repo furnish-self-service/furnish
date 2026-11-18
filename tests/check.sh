@@ -63,6 +63,19 @@ resources:
     properties: { file: installers/lower.msi }'
 # Configuration resources: a line that doesn't match its pattern, a source file that isn't there,
 # and a command that can't be removed.
+# The checker validates vendor download sources offline, including Windows property casing.
+pin=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+vendor_app() {
+    app "$1" "metadata: { furnish: { description: Vendor package, categories: [Test] } }
+resources:
+  - name: setup
+    type: Furnish/Installer
+    properties: { $2 }"
+}
+vendor_app download "url: https://example.invalid/vendor.pkg, sha256: '$pin', packageId: org.example.vendor"
+vendor_app unpinned "url: https://example.invalid/vendor.pkg"
+vendor_app mixed "file: vendor.pkg, url: https://example.invalid/vendor.pkg, sha256: '$pin'"
+vendor_app wrongcase "URL: https://example.invalid/vendor.pkg, sha256: '$pin'"
 app line 'metadata: { furnish: { description: Line, categories: [Test] } }
 resources:
   - name: editor
@@ -108,6 +121,10 @@ expect() { # expect <app> <text>: the app's block names the mistake
 echo "$out" | grep -q '^✓ good ' && ok "good: no findings" || bad "good: $(echo "$out" | grep -A2 ' good ')"
 expect yaml "error:"
 expect installer "installers/missing.msi is not in the collection"
+echo "$out" | grep -q '^✓ download ' && ok "valid pinned download checks offline" || bad "download: $(echo "$out" | grep -A3 ' download ')"
+expect unpinned "either file or both url and sha256"
+expect mixed "either file or both url and sha256"
+expect wrongcase "did you mean 'url'"
 expect noname "needs properties.name"
 expect depends "depends on ghost, which is not an app"
 expect cycle-a "dependencies form a cycle"
