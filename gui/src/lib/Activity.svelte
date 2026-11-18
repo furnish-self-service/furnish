@@ -1,18 +1,18 @@
 <script lang="ts">
   // Current, queued and recently completed operations.
-  import { store, dequeue, clearQueue, queueBlocker, retryPrerequisite, isPending, appByKey, appName } from './state.svelte';
+  import { store, dequeue, clearQueue, queueBlocker, retryPrerequisite, isPending, retryActivity, appByKey, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import Plan from './Plan.svelte';
-  import KitActivityRow from './KitActivityRow.svelte';
-  import { isKit } from './activity-history';
+  import ActivityGroupRow from './ActivityGroupRow.svelte';
+  import { isGroup } from './activity-history';
+  import ActivityAttempt from './ActivityAttempt.svelte';
   import RunLog from './RunLog.svelte';
   import { t, lang, formatDate } from './i18n.svelte';
 
   let { onopen }: { onopen: (key: string) => void } = $props();
 
   let showSteps = $state(false);
-  let expanded = $state<string | null>(null);
   const runningKey = $derived(Object.keys(store.busy)[0]);
   const running = $derived(store.apps.find((a) => a.key === runningKey));
   const run = $derived(runningKey ? store.runs[runningKey] : undefined);
@@ -93,9 +93,9 @@
   {#if store.recent.length}
     <h2>{t('activity.recent')}</h2>
     <ol class="queue">
-      {#each store.recent as entry (isKit(entry) ? entry.id : entry.summary.id)}
-        {#if isKit(entry)}
-          <KitActivityRow group={entry} />
+      {#each store.recent as entry (isGroup(entry) ? entry.id : entry.summary.id)}
+        {#if isGroup(entry)}
+          <ActivityGroupRow group={entry} />
         {:else}
           {@const item = entry.summary}
           <li class="history">
@@ -110,13 +110,13 @@
               </time>
               · {t(`activity.trigger.${item.trigger}`)} · {item.key}
             </div>
-            {#if item.failedStep}<div class="failed">{t('activity.failedStep', { step: item.failedStep })}</div>{/if}
-            {#if entry.details}
-              <button class="secondary reveal" aria-expanded={expanded === item.id}
-                onclick={() => expanded = expanded === item.id ? null : item.id}>{t('app.steps')}</button>
-              {#if expanded === item.id}
-                <Plan operation={entry.details.run} />
-                <RunLog lines={entry.details.logs} />
+            <ActivityAttempt {entry} />
+            {#if item.result === 'failed'}
+              {#if appByKey(item.key) && store.status[item.key] !== 'unavailable'}
+                <button class="secondary" disabled={isPending(item.key) || store.retrying[item.key]}
+                  onclick={() => retryActivity(item)}>{t('queue.retry', { app: item.name })}</button>
+              {:else}
+                <span class="meta">{t('activity.kitUnavailable')}</span>
               {/if}
             {/if}
           </li>
@@ -184,7 +184,6 @@
   .steps summary { cursor: pointer; font-weight: 650; }
   .history .meta { margin: 0.25rem 0; overflow-wrap: anywhere; }
   .failed { color: var(--danger); }
-  .reveal { margin-top: 0.45rem; }
   .position {
     flex: none;
     width: 1.5rem;

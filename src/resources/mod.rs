@@ -10,7 +10,7 @@
 mod command;
 pub(crate) mod common;
 pub mod diff;
-mod note;
+pub(crate) mod note;
 pub mod text;
 pub mod value;
 

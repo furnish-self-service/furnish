@@ -513,7 +513,10 @@ fi
 
 # The resolved name reaches both the preview and the actual package manager.
 if ! $real; then
-    expect "$(step install renamed --dry-run)" "pacman -S --noconfirm --needed renamed$"
+    plan=$(step install renamed --dry-run)
+    expect "$plan" "pacman is the first available system package manager"
+    expect "$plan" "Package name renamed comes from the mapping for pacman"
+    expect "$plan" "pacman -S --noconfirm --needed renamed$"
     expect "$(step install renamed)" "Installed renamed"
     [ -f "$tmp/pkgs/renamed" ] && [ ! -f "$tmp/pkgs/renamed-generic" ] || { echo "FAIL: wrong pacman package name" >&2; exit 1; }
     expect "$(step list)" "✓  renamed"
@@ -523,7 +526,10 @@ if ! $real; then
 fi
 
 if [ -n "$distro" ]; then
-    expect "$(step install distro-package --dry-run)" "pacman -S --noconfirm --needed native-distro-tool$"
+    plan=$(step install distro-package --dry-run)
+    expect "$plan" "The app selects the pacman package manager"
+    expect "$plan" "Package name native-distro-tool matches distribution $distro"
+    expect "$plan" "pacman -S --noconfirm --needed native-distro-tool$"
     expect "$(step install distro-package)" "Installed distro-package"
     [ -f "$tmp/pkgs/native-distro-tool" ] || { echo "FAIL: wrong distribution package" >&2; exit 1; }
     echo 2.0 > "$tmp/pkgs/native-distro-tool.new"

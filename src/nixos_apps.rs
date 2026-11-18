@@ -540,6 +540,10 @@ pub const NO_NIX: &str = "Nix isn't installed on this computer";
 pub const NO_HOME: &str = "Home Manager isn't set up for you";
 pub const NO_SYSTEM: &str = "the NixOS configuration isn't set up for furnish";
 
+pub(crate) fn only_if_set_up(resource: &Value) -> bool {
+    resource["type"] == "Furnish/NixOS" && resource["properties"][ONLY_IF_SET_UP] == true
+}
+
 /// For a Furnish/NixOS step with `onlyIfSetUp: true`: why it doesn't apply on this computer, or
 /// `None` when it applies. Decided before DSC runs, because elsewhere the resource may not exist.
 /// A step whose app is already in a local flake applies, so it can be removed.
@@ -557,7 +561,7 @@ pub fn not_needed_here(resource: &Value) -> Option<&'static str> {
 /// `not_needed_here` without the computer: `unready` gives the place the app would go to if that
 /// isn't set up.
 fn not_needed(resource: &Value, nix: bool, unready: impl FnOnce(&Desired) -> Option<Place>) -> Option<&'static str> {
-    if resource["type"] != "Furnish/NixOS" || resource["properties"][ONLY_IF_SET_UP] != true {
+    if !only_if_set_up(resource) {
         return None;
     }
     if !nix {
@@ -876,11 +880,15 @@ impl GitTrust {
             .unwrap_or_else(|| owner.home.join(".config"));
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
         let tmp = std::env::temp_dir().join(format!("furnish-git-{}-{nanos}", std::process::id()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         // Fails if anything is there already, so nobody can have prepared it.
-        builder.create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        #[cfg(unix)]
+        let created = {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new().mode(0o700).create(&tmp)
+        };
+        #[cfg(not(unix))]
+        let created = std::fs::create_dir(&tmp);
+        created.with_context(|| format!("creating {}", tmp.display()))?;
         let trust = GitTrust { dir: tmp };
         std::fs::create_dir(trust.dir.join("git"))?;
         let mut tops = vec![top.to_path_buf()];

@@ -15,8 +15,7 @@ case "$image" in
     opensuse*) install='zypper -n -q --no-gpg-checks install --allow-unsigned-rpm /p/rpm/*.rpm >/dev/null' ;;
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac
-docker run --rm -v "$dir:/p:ro" "$image" sh -c "
-    set -e
+sh "$(dirname "$0")/distro-container.sh" "$image" "
     $install
     furnish --version
     git --version >/dev/null || { echo 'the package did not bring git' >&2; exit 1; }
@@ -28,4 +27,4 @@ docker run --rm -v "$dir:/p:ro" "$image" sh -c "
     furnish collection add /tmp/c --name c >/dev/null && furnish install file
     [ \"\$(cat /etc/furnish-test)\" = furnish ] || { echo 'File/Content from /usr/lib/furnish/dsc did not run' >&2; exit 1; }
     echo 'packages OK on $image'
-"
+" -v "$dir:/p:ro"

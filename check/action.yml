@@ -11,6 +11,9 @@ inputs:
   path:
     description: The collection's directory
     default: .
+  profiles:
+    description: Optional target profiles YAML file, relative to the workflow working directory
+    default: ""
   channel:
     description: Which furnish build to use
     default: alpha
@@ -23,6 +26,7 @@ runs:
     - shell: bash
       env:
         COLLECTION: ${{ inputs.path }}
+        PROFILES: ${{ inputs.profiles }}
         CHANNEL: ${{ inputs.channel }}
         FURNISH: ${{ inputs.furnish }}
       run: |
@@ -31,4 +35,8 @@ runs:
           curl -fsSL "https://furnish-self-service.github.io/furnish/$CHANNEL/furnish-linux-x86_64" -o "$FURNISH"
           chmod +x "$FURNISH"
         fi
-        "$FURNISH" check "$COLLECTION"
+        args=(check "$COLLECTION")
+        if [ -n "$PROFILES" ]; then
+          args+=(--profiles "$PROFILES")
+        fi
+        "$FURNISH" "${args[@]}"

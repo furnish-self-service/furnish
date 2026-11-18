@@ -89,6 +89,7 @@ jobs:
         with:
           path: tests/fixtures/collection
           furnish: target/fast/furnish
+          profiles: docs/examples/target-profiles.yaml
       # With DSC's resources beside furnish, as the installers ship them (e2e installs an app with File/Content).
       - run: cargo b && node scripts/fetch-dsc.mjs target/fast/dsc && tests/e2e.sh
 

@@ -14,6 +14,8 @@ use serde_json::{Map, Value};
 
 use crate::catalog::{App, Collection, RESOURCE_TYPES};
 
+mod profiles;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
     Warning,
@@ -34,6 +36,8 @@ pub struct Item {
     /// Kit, app or the collection's options.
     pub kind: &'static str,
     pub findings: Vec<Finding>,
+    /// Decisions for a concrete target profile.
+    pub details: Vec<String>,
     /// For apps: the resources that run per system, e.g. ("Windows", ["GIMP (winget)"]).
     pub systems: Vec<(&'static str, Vec<String>)>,
     /// For translations: how much they cover, e.g. "17 of 19 apps, 3 of 3 kits".
@@ -59,12 +63,16 @@ fn missing_icon(key: &str, path: &str) -> Finding {
 
 /// Check the collection in `dir` (a checkout of its repository).
 pub fn collection(dir: &Path) -> Result<Vec<Item>> {
+    collection_with_profiles(dir, None)
+}
+
+pub fn collection_with_profiles(dir: &Path, profiles: Option<&Path>) -> Result<Vec<Item>> {
     let dir = dir.canonicalize()?;
     let name = dir.file_name().map_or_else(|| "collection".into(), |n| n.to_string_lossy().into_owned());
     let collection = Collection { name: name.clone(), dir: dir.clone(), managed: false };
     let mut items = Vec::new();
 
-    let mut options = Item { name: "collection.yaml".into(), kind: "options", findings: vec![], systems: vec![], coverage: None };
+    let mut options = Item { name: "collection.yaml".into(), kind: "options", findings: vec![], details: vec![], systems: vec![], coverage: None };
     if let Err(err) = crate::script_managers::check_files(&dir) {
         options.findings.push(error(format!("{err:#}")));
     }
@@ -94,9 +102,9 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
 
     // Values to evaluate expressions with: defaults, and the first choice for open questions.
     let mut values = Map::new();
-    for r in crate::options::resolve_collection(&name, &shared) {
-        if let Some(v) = r.value.clone().or_else(|| r.choices.first().map(|c| c.value.clone())) {
-            values.insert(r.name, v);
+    for (name, option) in &shared {
+        if let Some(v) = option.default.clone().or_else(|| option.choices().into_iter().next().map(|c| c.value)) {
+            values.insert(name.clone(), v);
         }
     }
 
@@ -106,20 +114,32 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
         let id = file_stem(&path, ".dsc.yaml");
         match collection.load_app(&path) {
             Ok(app) => apps.push(app),
-            Err(err) => items.push(Item { name: id, kind: "app", findings: vec![error(format!("{err:#}"))], systems: vec![], coverage: None }),
+            Err(err) => items.push(Item { name: id, kind: "app", findings: vec![error(format!("{err:#}"))], details: vec![], systems: vec![], coverage: None }),
         }
     }
     if apps.is_empty() && items.iter().all(|i| i.kind != "app") {
-        items.push(Item { name: name.clone(), kind: "collection", findings: vec![error("no apps (apps/<name>.dsc.yaml)")], systems: vec![], coverage: None });
+        items.push(Item { name: name.clone(), kind: "collection", findings: vec![error("no apps (apps/<name>.dsc.yaml)")], details: vec![], systems: vec![], coverage: None });
     }
     let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
-    for app in &apps {
-        items.push(check_app(app, &dir, &values, &apps));
+    let mut graphs = SYSTEMS.map(|system| (system, Graph::default()));
+    let mut checked: Vec<_> = apps.iter().map(|app| check_app(app, &dir, &values, &shared, &apps, &mut graphs)).collect();
+    for item in &mut checked {
+        // Report a proven cycle first, even if a possible cycle on another OS was seen earlier.
+        for possible in [false, true] {
+            if let Some(finding) = graphs.iter().find_map(|(system, graph)| graph.finding(&item.name, system, possible)) {
+                item.findings.push(finding);
+                break;
+            }
+        }
+    }
+    items.extend(checked);
+    if let Some(path) = profiles {
+        items.extend(profiles::check(path, &dir, &apps, &shared)?);
     }
 
     for path in files(&dir.join("kits"), ".yaml") {
         let id = file_stem(&path, ".yaml");
-        let mut item = Item { name: id, kind: "kit", findings: vec![], systems: vec![], coverage: None };
+        let mut item = Item { name: id, kind: "kit", findings: vec![], details: vec![], systems: vec![], coverage: None };
         match collection.load_kit(&path, &ids) {
             Err(err) => item.findings.push(error(format!("{err:#}"))),
             // load_kit drops an icon it can't find.
@@ -147,14 +167,14 @@ fn check_locales(dir: &Path, apps: &[App], kits: &[crate::catalog::Kit], shared:
     categories.dedup();
     // Options and their allowed values (as `allowedValues` keys write them).
     let mut parameters: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let declarations = shared.iter().map(|(n, d)| (n.clone(), d.clone())).chain(apps.iter().flat_map(|a| crate::options::app_declarations(&a.doc)));
+    let declarations = shared.iter().map(|(n, d)| (n.clone(), d.clone())).chain(apps.iter().flat_map(|a| crate::options::raw_app_declarations(&a.doc)));
     for (name, decl) in declarations {
         let values = parameters.entry(name).or_default();
         values.extend(decl.choices().iter().map(|c| crate::locale::value_key(&c.value)));
     }
     let mut items = Vec::new();
     for (tag, path) in crate::locale::locale_paths(dir) {
-        let mut item = Item { name: format!("locales/{tag}.yaml"), kind: "translation", findings: vec![], systems: vec![], coverage: None };
+        let mut item = Item { name: format!("locales/{tag}.yaml"), kind: "translation", findings: vec![], details: vec![], systems: vec![], coverage: None };
         if !crate::locale::valid_tag(&tag) {
             item.findings.push(error(format!("'{tag}' is not a language tag such as de or pt-BR; name the file after the language")));
         }
@@ -209,7 +229,7 @@ fn check_locales(dir: &Path, apps: &[App], kits: &[crate::catalog::Kit], shared:
     items
 }
 
-fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps: &[App]) -> Item {
+fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, shared: &BTreeMap<String, crate::options::Declaration>, apps: &[App], graphs: &mut [(&str, Graph)]) -> Item {
     let mut findings = Vec::new();
     let meta = &app.doc["metadata"]["furnish"];
     if app.description.is_empty() {
@@ -226,25 +246,21 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         }
     }
 
-    let mut values = collection_values.clone();
-    let options = app.options();
-    values.extend(crate::options::values(&options));
     let previews = SYSTEMS.map(|system| {
-        let mut preview = crate::conditions::Preview::new(system, &values);
-        for option in &options {
-            if option.source == crate::options::Source::Default && !collection_values.contains_key(&option.name)
-                && let Some(expr) = app.doc["parameters"][&option.name]["defaultValue"].as_str().filter(|s| s.starts_with('['))
-            {
-                preview.default(&option.name, expr);
+        let mut preview = crate::conditions::Preview::new(system, collection_values);
+        let validation = (|| {
+            let doc = preview.document(&app.doc, shared)?;
+            crate::engine::validate(&doc)?;
+            if let Some(removal) = crate::engine::removal_doc(&doc) {
+                crate::engine::validate(&removal).map_err(|e| anyhow::anyhow!("removal steps: {e:#}"))?;
             }
+            Ok::<_, anyhow::Error>(())
+        })();
+        if let Err(err) = validation {
+            findings.push(error(format!("not a valid DSC document on {system}: {err:#}")));
         }
         (system, preview)
     });
-
-    // DSC reads the document as furnish would run it.
-    if let Err(err) = crate::engine::validate(&app.doc_for(&values)) {
-        findings.push(error(format!("not a valid DSC document: {err:#}")));
-    }
 
     let resources = app.doc["resources"].as_array().cloned().unwrap_or_default();
     if resources.is_empty() {
@@ -254,11 +270,6 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     let steps = crate::engine::removal_steps(&app.doc).cloned();
     match &steps {
         Some(steps) => {
-            if let Some(removal) = crate::engine::removal_doc(&app.doc_for(&values))
-                && let Err(err) = crate::engine::validate(&removal)
-            {
-                findings.push(error(format!("removal steps: not valid as a DSC document: {err:#}")));
-            }
             check_resources(steps, "removal step ", dir, &mut findings);
             for r in steps {
                 if let Some(condition) = r["condition"].as_str() {
@@ -298,18 +309,21 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         let mut runs = Vec::new();
         for r in &resources {
             let name = r["name"].as_str().unwrap_or("?").to_string();
-            match r["condition"].as_str() {
-                None => runs.push(name),
+            let setup = crate::nixos_apps::only_if_set_up(r);
+            let applies = match r["condition"].as_str() {
                 Some(condition) => match preview.condition(condition) {
-                    Ok(Some(true)) => runs.push(name),
-                    Ok(Some(false)) => {}
-                    Ok(None) => runs.push(format!("{name} (depends on host)")),
+                    Ok(applies) => applies,
                     Err(err) => {
                         findings.push(error(format!("{name}: condition {condition}: {err:#}")));
                         break;
                     }
                 },
+                None => Some(true),
+            };
+            if applies == Some(false) || (setup && *system == "Windows") {
+                continue;
             }
+            runs.push(if applies.is_none() || setup { format!("{name} (depends on host)") } else { name });
         }
         systems.push((*system, runs));
     }
@@ -317,27 +331,35 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
         findings.push(warning("no resource applies on Windows, macOS or Linux: furnish hides the app everywhere"));
     }
 
-    if let Value::String(expr) = &meta["recommended"]
-        && let Err(err) = crate::conditions::holds_for(&app.doc, expr, &values)
-    {
-        findings.push(error(format!("recommended: {expr}: {err:#}")));
+    if let Value::String(expr) = &meta["recommended"] {
+        for (system, preview) in &previews {
+            if let Err(err) = preview.condition(expr) {
+                findings.push(error(format!("recommended: {expr} on {system}: {err:#}")));
+                break;
+            }
+        }
     }
 
     for dep in &app.dependencies {
         if !apps.iter().any(|a| a.id == dep.app) {
             findings.push(error(format!("depends on {}, which is not an app of the collection", dep.app)));
         }
-        if let Some(condition) = &dep.condition
-            && let Err(err) = crate::conditions::holds_for(&app.doc, condition, &values)
-        {
-            findings.push(error(format!("dependency {}: condition {condition}: {err:#}", dep.app)));
+        for ((system, graph), (_, preview)) in graphs.iter_mut().zip(&previews) {
+            let applies = match &dep.condition {
+                Some(condition) => match preview.condition(condition) {
+                    Ok(applies) => applies,
+                    Err(err) => {
+                        findings.push(error(format!("dependency {} on {system}: condition {condition}: {err:#}", dep.app)));
+                        break;
+                    }
+                },
+                None => Some(true),
+            };
+            graph.edge(&app.id, &dep.app, applies);
         }
     }
-    if let Some(cycle) = cycle(app, apps) {
-        findings.push(error(format!("dependencies form a cycle: {}", cycle.join(" → "))));
-    }
 
-    Item { name: app.id.clone(), kind: "app", findings, systems, coverage: None }
+    Item { name: app.id.clone(), kind: "app", findings, details: vec![], systems, coverage: None }
 }
 
 /// What loading doesn't check about each resource: that DSC finds its type here, and what
@@ -390,31 +412,48 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
     }
 }
 
-/// A dependency cycle through `app`, e.g. [a, b, a]. Depth-first; each app is explored once (an app
-/// fully explored without reaching `app` can't lead back to it), so diamonds stay linear.
-fn cycle(app: &App, apps: &[App]) -> Option<Vec<String>> {
-    fn visit<'a>(id: &'a str, target: &str, apps: &'a [App], path: &mut Vec<&'a str>, done: &mut HashSet<&'a str>) -> bool {
-        if !path.is_empty() && id == target {
-            return true;
+/// Edges that can apply on the same target. Known-false edges never enter the graph.
+#[derive(Default)]
+struct Graph(BTreeMap<String, Vec<(String, bool)>>);
+
+impl Graph {
+    fn edge(&mut self, app: &str, dependency: &str, applies: Option<bool>) {
+        if applies != Some(false) {
+            self.0.entry(app.into()).or_default().push((dependency.into(), applies.is_some()));
         }
-        if !done.insert(id) {
-            return false;
-        }
-        let Some(app) = apps.iter().find(|a| a.id == id) else { return false };
-        path.push(id);
-        if app.dependencies.iter().any(|dep| visit(&dep.app, target, apps, path, done)) {
-            return true;
-        }
-        path.pop();
-        false
     }
-    let mut path = Vec::new();
-    if !visit(&app.id, &app.id, apps, &mut path, &mut HashSet::new()) {
-        return None;
+
+    fn finding(&self, app: &str, system: &str, possible: bool) -> Option<Finding> {
+        let cycle = self.cycle(app, possible)?.join(" → ");
+        Some(if possible {
+            warning(format!("dependencies may form a cycle on {system} depending on host facts: {cycle}"))
+        } else {
+            error(format!("dependencies form a cycle on {system}: {cycle}"))
+        })
     }
-    let mut cycle: Vec<String> = path.into_iter().map(String::from).collect();
-    cycle.push(app.id.clone());
-    Some(cycle)
+
+    fn cycle(&self, target: &str, possible: bool) -> Option<Vec<String>> {
+        fn visit<'a>(graph: &'a Graph, id: &'a str, target: &str, possible: bool, path: &mut Vec<&'a str>, done: &mut HashSet<&'a str>) -> bool {
+            if !path.is_empty() && id == target {
+                return true;
+            }
+            if !done.insert(id) {
+                return false;
+            }
+            path.push(id);
+            if graph.0.get(id).into_iter().flatten().any(|(dep, known)| (*known || possible) && visit(graph, dep, target, possible, path, done)) {
+                return true;
+            }
+            path.pop();
+            false
+        }
+        let mut path = Vec::new();
+        if !visit(self, target, target, possible, &mut path, &mut HashSet::new()) {
+            return None;
+        }
+        path.push(target);
+        Some(path.into_iter().map(String::from).collect())
+    }
 }
 
 fn files(dir: &Path, suffix: &str) -> Vec<PathBuf> {
@@ -529,6 +568,15 @@ mod tests {
 
     #[test]
     fn cycles_are_found_and_deep_diamonds_stay_fast() {
+        let cycle = |app: &App, apps: &[App]| {
+            let mut graph = Graph::default();
+            for app in apps {
+                for dep in &app.dependencies {
+                    graph.edge(&app.id, &dep.app, Some(true));
+                }
+            }
+            graph.cycle(&app.id, false)
+        };
         let apps = [app("a", &["b".into()]), app("b", &["c".into()]), app("c", &["a".into()]), app("d", &["a".into()])];
         assert_eq!(cycle(&apps[0], &apps), Some(vec!["a".into(), "b".into(), "c".into(), "a".into()]));
         assert_eq!(cycle(&apps[3], &apps), None, "d leads into a cycle but isn't part of one");

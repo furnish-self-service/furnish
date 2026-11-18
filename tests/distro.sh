@@ -19,5 +19,5 @@ case "$image" in
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac
 
-docker run --rm -v "$repo:/src:ro" -v "$binary:/usr/local/bin/furnish:ro" -w /src "$image" \
-    sh -c "$setup && bash tests/e2e.sh --real /usr/local/bin/furnish"
+sh "$repo/tests/distro-container.sh" "$image" "$setup && bash tests/e2e.sh --real /usr/local/bin/furnish" \
+    -v "$repo:/src:ro" -v "$binary:/usr/local/bin/furnish:ro" -w /src

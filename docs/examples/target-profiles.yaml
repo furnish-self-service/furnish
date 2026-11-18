@@ -1,0 +1,28 @@
+# Run against tests/fixtures/collection from the Furnish repository.
+profiles:
+  arch-workstation:
+    family: Linux
+    distribution: cachyos
+    distributionLike: [arch]
+    packageManagers: [pacman, brew, nix]
+    options: { role: developer, userInstall: false }
+    appOptions:
+      renamed: { pacmanPackage: workstation-tool }
+    expect:
+      renamed:
+        packages:
+          renamed: { manager: pacman, name: workstation-tool }
+      cli-tool:
+        dependencies: []
+        steps: ["cli-tool (system-wide)"]
+        skipped: ["cli-tool (just for you)"]
+  windows-office:
+    family: Windows
+    packageManagers: [winget]
+    options: { role: design }
+    expect:
+      hyperfine:
+        steps: ["hyperfine (winget)"]
+        skipped: [hyperfine]
+        packages:
+          "hyperfine (winget)": { manager: winget, name: sharkdp.hyperfine }

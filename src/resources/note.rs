@@ -29,6 +29,16 @@ impl Note {
     pub fn english(&self) -> String {
         let s = |k| self.s(k);
         match self.code {
+            "package.explicit" => format!("The app selects the {} package manager", s("manager")),
+            "package.native" => format!("{} is the first available system package manager", s("manager")),
+            "package.explicitScript" => format!("The app selects the collection’s {} script manager", s("manager")),
+            "package.onlyScript" => format!("{} is the only available collection script manager", s("manager")),
+            "package.windows" => format!("Windows uses {} as its fallback package manager", s("manager")),
+            "package.noManager" => "No package manager is available".to_owned(),
+            "package.distroName" => format!("Package name {} matches distribution {}", s("name"), s("selector")),
+            "package.familyName" => format!("Package name {} matches {} in ID_LIKE", s("name"), s("selector")),
+            "package.managerName" => format!("Package name {} comes from the mapping for {}", s("name"), s("selector")),
+            "package.defaultName" => format!("{} is the default package name", s("name")),
             "dir.create" => format!("Create the folder {}", s("path")),
             "dir.remove" => format!("Remove the empty folder {}", s("path")),
             "dir.keep" => format!("Keep {}: it isn't empty", s("path")),

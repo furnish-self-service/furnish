@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultDependencies, planInstall, releaseDependents, type Queued } from './install-queue.ts';
+import { defaultDependencies, needsRetry, planInstall, releaseDependents, type Queued } from './install-queue.ts';
 
 const dependency = (key: string, required = true, selected = required) => ({ key, required, selected });
 const app = (key: string, ...dependencies: ReturnType<typeof dependency>[]) => ({ key, dependencies });
@@ -77,4 +77,21 @@ test('an uninstall cannot silently satisfy a root install or one of its prerequi
     assert.deepEqual(plan.error, { kind: 'uninstalling', detail: 'brew' });
     assert.deepEqual(plan.installs, []);
   }
+});
+
+test('retries use current app and option state without resurrecting removed updates or repeating applied changes', () => {
+  const app = { held: null, optionChanges: {} };
+  assert.ok(needsRetry('install', true, 'needsUpdate', app));
+  for (const status of ['installed', 'notInstalled', 'unavailable'] as const)
+    assert.equal(needsRetry('install', true, status, app), false);
+  assert.ok(needsRetry('install', false, 'notInstalled', app));
+  assert.equal(needsRetry('install', false, 'installed', app), false);
+  assert.equal(needsRetry('uninstall', false, 'notInstalled', app), false);
+  assert.ok(needsRetry('reinstall', false, 'installed', { ...app, optionChanges: { path: '/old' } }));
+  assert.equal(needsRetry('reinstall', false, 'installed', app), false);
+  const pinned = { ...app, held: { commit: 'a123456', chosen: true, newer: false, date: '2026-01-01' } };
+  assert.ok(needsRetry('installVersion', false, 'installed', pinned, 'abcd123'));
+  assert.equal(needsRetry('installVersion', false, 'installed', pinned, 'a123456'), false);
+  assert.ok(needsRetry('installCurrent', false, 'installed', pinned));
+  assert.equal(needsRetry('installCurrent', false, 'installed', app), false);
 });

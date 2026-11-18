@@ -25,7 +25,7 @@ When your organization adds a collection to its address, furnish adds it the nex
 Click an app for its description, its source and what it sets up on this computer. Closed sections show details:
 
 - Versions lists the app's versions from the collection's history, with the day of each. Install next to one installs that version (see [Earlier versions of an app](#earlier-versions-of-an-app)).
-- Steps lists what installing or uninstalling would do: each step, the exact command, and whether it needs administrator rights. Nothing changes until you click Install.
+- **Steps** previews the commands an install or uninstall would run and whether they need administrator rights. For a package, it shows which manager and package name furnish chose on this computer and why. When a condition skips a step, its explanation appears above the original DSC expression. You can select and copy the expression.
 - Activity log shows what the package manager printed during the last install.
 - DSC configuration shows the app's file in the collection.
 
@@ -47,11 +47,13 @@ On NixOS, apps from your NixOS or Home Manager configuration show as installed v
 
 If your NixOS configuration sets `services.furnish.nix.configuration`, furnish uses that folder. Otherwise it looks in the usual places, such as `/etc/nixos` or nh's `NH_FLAKE`. The NixOS section of the Settings page shows what it found and how. If it found nothing, or the wrong folder, enter your configuration's folder there, or pick one of the suggested folders. You can also set the name in the flake if it isn't your computer's name. "Find it automatically" goes back to searching. In the terminal: `furnish settings --nixos-configuration ~/nixos-config`, `--nixos-flake-attribute <name>` and `--nixos-reset`.
 
-Installs run one at a time. Clicking Install on more apps adds them to a queue, which the Activity page shows; ✕ removes an app from it.
+Installs run one at a time. **Activity** shows the current operation and the queue. Expand **Steps** to follow an app while it runs, or use ✕ to remove a waiting app from the queue.
 
 ![The Activity page: one install running, two waiting.](images/activity.webp)
 
 ## When an install fails
+
+Open **Activity** to see which step failed and the collection revision used. The failure summary survives a restart. **Retry** checks the app and its prerequisites again using the current collection.
 
 If installing or updating an app fails, furnish offers an earlier version of it: the one that last installed on this computer, else the version before the collection's latest change to the app. The app's page shows Install the version from, with the day of that version.
 
@@ -75,7 +77,7 @@ The list holds only versions your organization allows: within the history furnis
 
 furnish checks for updates when it starts and every 30 minutes, and installs them. It waits while the computer is busy: when the last 5 minutes averaged over 50% CPU, 90% memory or 1000 KB/s network traffic, not counting furnish's own work. You can turn automatic updates off for one app on its page, and change the schedule or the busy check on the Settings page. Check now there looks for updates right away.
 
-On the Updates page, choose **Update all** to queue every available app update, including apps with automatic updates turned off. You can follow each update in Activity.
+On the Updates page, choose **Update all** to queue every available app update, including apps with automatic updates turned off. Open the **Update all** entry in **Activity** for the batch progress, then expand an app’s steps for details. If some updates fail, **Retry failed** retries those apps in the same group.
 
 Your organization can require a version of an app, for example after a security fix. When yours is older, the app shows Security update required and furnish installs the update right away, also if automatic updates are off for the app or the computer is busy. If no acceptable version is available yet, the app says which version it needs and which one is offered.
 

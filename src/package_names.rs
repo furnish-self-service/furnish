@@ -1,6 +1,5 @@
 //! Resolve a package's native name after DSC has evaluated the properties for this operation.
 use std::{
-    collections::BTreeMap,
     io::{Seek, Write},
     process::{Command, Stdio},
 };
@@ -9,10 +8,13 @@ use std::{
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::platform::{self, Distribution};
-use crate::resources::common::Missing;
+use crate::resources::{
+    common::Missing,
+    note::{Note, note},
+};
 use crate::script_managers::Script;
 
 /// Collection package-manager IDs are portable JSON property names and command selectors.
@@ -63,30 +65,69 @@ pub(crate) fn validate(props: &Value) -> Result<()> {
     Ok(())
 }
 
-fn resolve<'a>(props: &'a Value, distribution: &Distribution, manager: Option<&str>) -> Result<&'a str> {
-    let base = props["name"].as_str().filter(|s| valid_name(s)).context("a valid package name is required")?;
-    let name = std::iter::once(&distribution.id)
-        .chain(&distribution.like)
-        .find_map(|id| props["namesByDistribution"].get(id))
-        .or_else(|| manager.and_then(|m| props["namesByManager"].get(m)));
-    match name {
-        None => Ok(base),
-        Some(v) => v.as_str().filter(|s| valid_name(s)).context("invalid resolved package name"),
+/// The package decision is made after DSC evaluates properties. Both the active resource and
+/// target-profile checks use this function, with the appropriate ordered list of native managers.
+pub(crate) struct Selection<'a> {
+    pub name: &'a str,
+    pub manager: Option<String>,
+    notes: [Note; 2],
+}
+
+impl Selection<'_> {
+    pub(crate) fn explanation(&self) -> String {
+        self.notes.each_ref().map(Note::english).join(". ")
+    }
+
+    fn annotate(&self, mut state: Value) -> Result<String> {
+        let metadata = &mut state["_metadata"];
+        ensure!(metadata.is_null() || metadata.is_object(), "package preview metadata must be an object");
+        metadata["furnishPackageSelection"] = self.notes.iter()
+            .map(|n| json!({ "code": n.code, "params": n.params, "english": n.english() }))
+            .collect();
+        Ok(state.to_string())
     }
 }
 
-/// Only used when no built-in manager was selected. An explicit ID must be available
-/// in this collection, even when another script could handle the same package.
-fn select_script<'a>(id: Option<&str>, managers: &'a BTreeMap<String, Script>) -> Result<Option<(&'a str, &'a Script)>> {
-    let selected = match id {
-        Some(id) => Some(managers.get_key_value(id).ok_or_else(|| Missing(format!("package manager {id}")))?),
-        None if managers.len() <= 1 => managers.first_key_value(),
-        None => anyhow::bail!(
-            "multiple collection package managers are available ({}). Set packageManager to choose one",
-            managers.keys().map(String::as_str).collect::<Vec<_>>().join(", ")
-        ),
+fn preferred_manager<'a>(props: &'a Value, native: &[&'a str]) -> Option<&'a str> {
+    props["packageManager"].as_str().or_else(|| native.first().copied())
+}
+
+pub(crate) fn select<'a>(
+    props: &'a Value, distribution: &Distribution, native: &[&str], scripts: &[&str], windows: bool,
+) -> Result<Selection<'a>> {
+    let requested = props.get("packageManager").map(|v| v.as_str().context("packageManager must be a name")).transpose()?;
+    let (manager, reason) = match preferred_manager(props, native) {
+        Some(id) if platform::supported_manager(id) => {
+            ensure!((id == "winget") == windows, "package manager '{id}' is unavailable on this platform");
+            (Some(id), if requested.is_some() { "package.explicit" } else { "package.native" })
+        }
+        Some(id) if scripts.contains(&id) => (Some(id), "package.explicitScript"),
+        Some(id) => return Err(Missing(format!("package manager {id}")).into()),
+        None => match scripts {
+            [id] => (Some(*id), "package.onlyScript"),
+            [] if windows => (Some("winget"), "package.windows"),
+            [] => (None, "package.noManager"),
+            _ => anyhow::bail!(
+                "multiple collection package managers are available ({}). Set packageManager to choose one",
+                scripts.join(", ")
+            ),
+        },
     };
-    Ok(selected.map(|(id, script)| (id.as_str(), script)))
+
+    let base = props["name"].as_str().filter(|s| valid_name(s)).context("a valid package name is required")?;
+    let distro_names = &props["namesByDistribution"];
+    let matched = distro_names.get(&distribution.id).map(|v| (v, "package.distroName", distribution.id.as_str()))
+        .or_else(|| distribution.like.iter().find_map(|id| distro_names.get(id).map(|v| (v, "package.familyName", id.as_str()))))
+        .or_else(|| manager.and_then(|id| props["namesByManager"].get(id).map(|v| (v, "package.managerName", id))));
+    let (name, name_note) = match matched {
+        Some((v, code, selector)) => {
+            let name = v.as_str().filter(|s| valid_name(s)).context("invalid resolved package name")?;
+            (name, note(code, json!({"name": name, "selector": selector})))
+        }
+        None => (base, note("package.defaultName", json!({"name": base}))),
+    };
+    let manager_note = note(reason, manager.map_or_else(|| json!({}), |id| json!({"manager": id})));
+    Ok(Selection { name, manager: manager.map(str::to_owned), notes: [manager_note, name_note] })
 }
 
 #[cfg(windows)]
@@ -143,7 +184,7 @@ fn script_command(id: &str, script: &Script) -> Result<Command> {
     }
 }
 
-fn run_script(id: &str, script: &Script, name: &str, props: &Value, operation: &str) -> Result<String> {
+fn run_script(id: &str, script: &Script, name: &str, props: &Value, operation: &str) -> Result<Value> {
     let mut cmd = script_command(id, script)?;
     let exist = props.get("_exist").map(|v| v.as_bool().context("_exist must be a boolean")).transpose()?.unwrap_or(true);
     let mut request = serde_json::json!({ "name":name, "packageManager":id, "_exist":exist });
@@ -178,33 +219,30 @@ fn run_script(id: &str, script: &Script, name: &str, props: &Value, operation: &
         operation != "test" || state["_inDesiredState"].is_boolean(),
         "package manager '{id}' test must return boolean _inDesiredState"
     );
-    Ok(state.to_string())
+    Ok(state)
 }
 
 /// DSC starts the resource in the directory of its manifest, beside the bundled backend.
-/// Inherit its stdout and stderr so package manager progress and errors reach DSC as they occur.
+/// A native preview returns one JSON state to annotate. During an actual operation its stdout
+/// and stderr are inherited so package manager progress and errors reach DSC as they occur.
 pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<String> {
     ensure!(matches!(operation, "get" | "test" | "set"), "unknown package operation '{operation}'");
     ensure!(!what_if || operation == "set", "only set accepts --what-if");
     validate(props)?;
-    let requested = props.get("packageManager").map(|v| v.as_str().context("packageManager must be a name")).transpose()?;
-    let selected = requested.or_else(|| platform::package_managers().first().copied());
-    if !selected.is_some_and(platform::supported_manager) {
-        let managers = crate::script_managers::active(props)?;
-        if let Some((id, script)) = select_script(selected, &managers)? {
-            let name = resolve(props, &platform::distribution(), Some(id))?;
-            let operation = if what_if { "what-if" } else { operation };
-            return run_script(id, script, name, props, operation);
-        }
-    }
-    // With no backend, the native resource can still recognize an external installation
-    // by its command and explain which tool a new installation would require.
-    let manager = selected.or(if cfg!(windows) { Some("winget") } else { None });
-    if let Some(m) = manager {
-        ensure!(
-            platform::supported_manager(m) && (m == "winget") == cfg!(windows),
-            "package manager '{m}' is unavailable on this platform"
-        );
+    let native = if props.get("packageManager").is_none() { platform::package_managers() } else { Vec::new() };
+    // Resolving collection scripts checks the installed policy and canonical paths. Do this
+    // only when the operation needs a script, as ordinary native packages don't rely on them.
+    let scripts = if preferred_manager(props, &native).is_some_and(platform::supported_manager) {
+        Default::default()
+    } else {
+        crate::script_managers::active(props)?
+    };
+    let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
+    let selection = select(props, &platform::distribution(), &native, &ids, cfg!(windows))?;
+    let manager = selection.manager.as_deref();
+    if let Some((id, script)) = manager.and_then(|id| scripts.get_key_value(id)) {
+        let state = run_script(id, script, selection.name, props, if what_if { "what-if" } else { operation })?;
+        return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
     }
 
     #[cfg(unix)]
@@ -218,7 +256,7 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
         }
         cmd
     };
-    backend.env("name", resolve(props, &platform::distribution(), manager)?);
+    backend.env("name", selection.name);
     backend.env("packageManager", manager.unwrap_or(""));
     // Only resource input properties may enter the backend environment.
     for key in ["nixpkgs", "command", "reportVersions", "targetVersion", "_exist"] {
@@ -234,6 +272,11 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     backend.arg(operation);
     if what_if {
         backend.arg(if cfg!(windows) { "what-if" } else { "--what-if" });
+        let out = backend.stderr(Stdio::inherit()).output().context("could not run the package preview")?;
+        if !out.status.success() {
+            std::process::exit(out.status.code().unwrap_or(1));
+        }
+        return selection.annotate(serde_json::from_slice(&out.stdout).context("reading the package preview state")?);
     }
     #[cfg(unix)]
     {
@@ -248,37 +291,55 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::path::PathBuf;
 
     #[test]
     fn exact_distribution_then_ordered_family_then_manager_then_base() {
         let props = json!({"name":"tool","namesByDistribution":{"custom.2":"own","ubuntu":"first","debian":"second"},
             "namesByManager":{"apt":"apt-tool","winget":"Vendor.Tool"}});
-        for (id, like, manager, expected) in [
-            ("custom.2", vec!["ubuntu", "debian"], Some("apt"), "own"),
-            ("linuxmint", vec!["ubuntu", "debian"], Some("apt"), "first"),
-            ("unknown", vec!["debian", "ubuntu"], Some("apt"), "second"),
-            ("unknown", vec![], Some("apt"), "apt-tool"),
-            ("", vec![], Some("winget"), "Vendor.Tool"),
-            ("", vec![], Some("nix"), "tool"),
-            ("", vec![], None, "tool"),
+        for (id, like, manager, expected, source, selector) in [
+            ("custom.2", vec!["ubuntu", "debian"], Some("apt"), "own", "package.distroName", Some("custom.2")),
+            ("linuxmint", vec!["ubuntu", "debian"], Some("apt"), "first", "package.familyName", Some("ubuntu")),
+            ("unknown", vec!["debian", "ubuntu"], Some("apt"), "second", "package.familyName", Some("debian")),
+            ("unknown", vec![], Some("apt"), "apt-tool", "package.managerName", Some("apt")),
+            ("", vec![], Some("winget"), "Vendor.Tool", "package.managerName", Some("winget")),
+            ("", vec![], Some("nix"), "tool", "package.defaultName", None),
+            ("", vec![], None, "tool", "package.defaultName", None),
         ] {
             let distro = Distribution { id: id.into(), like: like.into_iter().map(str::to_owned).collect() };
-            assert_eq!(resolve(&props, &distro, manager).unwrap(), expected);
+            let choice = select(&props, &distro, manager.as_slice(), &[], manager == Some("winget")).unwrap();
+            assert_eq!(choice.name, expected);
+            assert_eq!(choice.notes[1].code, source);
+            assert_eq!(choice.notes[1].params.get("selector").and_then(Value::as_str), selector);
         }
     }
 
     #[test]
-    fn scripts_are_selected_by_id_or_when_only_one_is_available() {
-        let mut managers = BTreeMap::new();
-        assert!(select_script(None, &managers).unwrap().is_none());
-        managers.insert("a".into(), Script { path: PathBuf::from("a.sh"), interpreter: None });
-        assert_eq!(select_script(None, &managers).unwrap().unwrap().0, "a");
-        let missing = select_script(Some("unavailable"), &managers).unwrap_err();
-        assert_eq!(missing.downcast_ref::<Missing>().unwrap().0, "package manager unavailable");
-        managers.insert("b".into(), Script { path: PathBuf::from("b.sh"), interpreter: None });
-        assert!(select_script(None, &managers).unwrap_err().to_string().contains("Set packageManager to choose one"));
-        assert_eq!(select_script(Some("b"), &managers).unwrap().unwrap().0, "b");
+    fn preview_explains_the_same_manager_as_the_resource_selects() {
+        let props = json!({"name":"tool"});
+        let distro = Distribution::default();
+        for (manager, native, scripts, windows, selected, code) in [
+            (Some("apt"), vec!["dnf"], vec![], false, Some("apt"), "package.explicit"),
+            (None, vec!["dnf", "apt"], vec!["a"], false, Some("dnf"), "package.native"),
+            (Some("b"), vec!["dnf"], vec!["a", "b"], false, Some("b"), "package.explicitScript"),
+            (None, vec![], vec!["a"], false, Some("a"), "package.onlyScript"),
+            (None, vec![], vec![], true, Some("winget"), "package.windows"),
+            (None, vec![], vec![], false, None, "package.noManager"),
+        ] {
+            let mut props = props.clone();
+            if let Some(id) = manager { props["packageManager"] = id.into(); }
+            let choice = select(&props, &distro, &native, &scripts, windows).unwrap();
+            assert_eq!(choice.manager.as_deref(), selected);
+            let state: Value = serde_json::from_str(&choice.annotate(json!({"_metadata":{"whatIf":["Run: query"]}})).unwrap()).unwrap();
+            assert_eq!(state["_metadata"]["whatIf"], json!(["Run: query"]));
+            let notes = &state["_metadata"]["furnishPackageSelection"];
+            assert_eq!(notes[0]["code"], code);
+            assert_eq!(notes[0]["params"]["manager"].as_str(), selected);
+            assert_eq!(notes[1]["params"]["name"], "tool");
+        }
+        assert!(select(&props, &distro, &[], &["a","b"], false).err().unwrap().to_string().contains("Set packageManager"));
+        let missing = select(&json!({"name":"tool","packageManager":"b"}), &distro, &[], &["a"], false).err().unwrap();
+        assert_eq!(missing.downcast_ref::<Missing>().unwrap().0, "package manager b");
+        assert!(select(&json!({"name":"tool","packageManager":"winget"}), &distro, &[], &[], false).is_err());
     }
 
     #[test]
@@ -319,9 +380,9 @@ if ($Operation -eq 'test') { [Console]::WriteLine('{"name":"native-tool","_exist
             "_metadata":{"private":"internal-only"}});
         let expected =
             json!({"name":"native-tool","packageManager":"org.tool","targetVersion":"2.0","reportVersions":"all","_exist":false});
-        let name = resolve(&props, &Distribution::default(), Some("org.tool")).unwrap();
+        let name = select(&props, &Distribution::default(), &[], &["org.tool"], false).unwrap().name;
         for operation in ["get", "test", "what-if", "set"] {
-            let state: Value = serde_json::from_str(&run_script("org.tool", &script, name, &props, operation).unwrap()).unwrap();
+            let state = run_script("org.tool", &script, name, &props, operation).unwrap();
             assert_eq!(state["name"], "native-tool");
             let input: Value = serde_json::from_slice(&std::fs::read(directory.path().join("input")).unwrap()).unwrap();
             assert_eq!(input, expected);
@@ -346,7 +407,7 @@ if ($Operation -eq 'test') { [Console]::WriteLine('{"name":"native-tool","_exist
             std::fs::write(&file, r#"test "$1" = what-if && printf '{"name":"tool","_exist":true}'"#).unwrap();
             let script = Script { path: file, interpreter: Some("/bin/sh".into()) };
             let json = run_script("example", &script, "tool", &json!({}), "what-if").unwrap();
-            assert_eq!(serde_json::from_str::<Value>(&json).unwrap()["_exist"], true);
+            assert_eq!(json["_exist"], true);
         }
     }
 

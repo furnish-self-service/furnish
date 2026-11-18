@@ -1,11 +1,13 @@
 // Plan a whole request before starting its first install, so every dependent has a
 // record of the operations that must succeed before it can run.
-import type { AppInfo, Trigger } from './api';
+import type { AppInfo, Status, Trigger } from './api';
 
 export interface Queued {
   key: string;
   action: 'install' | 'uninstall' | 'reinstall' | 'installPrevious' | 'installCurrent' | 'installVersion';
   commit?: string;
+  /** An explicit bulk update must never reinstall an app removed while it waited. */
+  updateOnly?: boolean;
   trigger: Trigger;
   prerequisites: string[];
 }
@@ -67,5 +69,22 @@ export function releaseDependents(queue: Queued[], installed: string) {
   for (const job of queue) {
     const index = job.prerequisites.indexOf(installed);
     if (index !== -1) job.prerequisites.splice(index, 1);
+  }
+}
+
+/** Decide whether the original intent still applies to the freshly checked app. */
+export function needsRetry(
+  action: Queued['action'], updateOnly: boolean, status: Status,
+  app: Pick<AppInfo, 'optionChanges' | 'held'>, commit?: string,
+) {
+  if (status === 'unavailable') return false;
+  const installed = status === 'installed' || status === 'needsUpdate';
+  switch (action) {
+    case 'uninstall': return installed;
+    case 'installVersion': return !!commit && !(installed && app.held?.chosen && app.held.commit === commit);
+    case 'installCurrent': return !!app.held || status !== 'installed';
+    case 'installPrevious': return !app.held || status !== 'installed';
+    case 'reinstall': return status !== 'installed' || Object.keys(app.optionChanges).length > 0;
+    case 'install': return updateOnly ? status === 'needsUpdate' || status === 'blocked' : status !== 'installed';
   }
 }

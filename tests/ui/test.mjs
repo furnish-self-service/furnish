@@ -238,9 +238,29 @@ const steps = [
       const t = await text(panel);
       return t.includes('pacman -R --noconfirm hyperfine') && /runs as administrator/i.test(t);
     });
+    await waitFor('the preview explains the selected manager and package name', async () => {
+      const plan = await text(panel);
+      return plan.includes('pacman is the first available system package manager') && plan.includes('hyperfine is the default package name');
+    });
     if (log('pkexec.log').includes('-R')) throw new Error('the preview ran the removal');
     await click(`${panel}//button[normalize-space()='Install']`);
     await waitFor('install preview: nothing to do', async () => (await text(panel)).includes('change nothing'));
+    const skipped = `${panel}//li[contains(@class,'skipped')]`;
+    await waitFor('skipped step explains the condition in prose', async () => (await text(`${skipped}//p`)).includes('Only on Windows'));
+    const condition = await text(`${skipped}//code[contains(@class,'condition')]`);
+    if (condition !== "[equals(context().os.family, 'Windows')]") throw new Error(`incomplete DSC condition: ${condition}`);
+    await wd('POST', s('/execute/sync'), { script: "arguments[0].scrollIntoView({ block: 'center' })", args: [{ [ELEMENT]: await find(skipped) }] });
+    await snap('steps');
+    const overflow = await wd('POST', s('/execute/sync'), {
+      script: `const plan = arguments[0].closest('.plan');
+        const width = plan.style.width;
+        plan.style.width = '21rem';
+        try {
+          return [...plan.querySelectorAll('.steps li')].some(row => row.scrollWidth > row.clientWidth + 1);
+        } finally { plan.style.width = width; }`,
+      args: [{ [ELEMENT]: await find(skipped) }],
+    });
+    if (overflow) throw new Error('the narrow Steps preview overflows its rows');
   }],
   ['activity log shows what the install did, after one click', async () => {
     const lines = "//details[summary[contains(., 'Activity log')]]//ol";
@@ -427,14 +447,32 @@ const steps = [
 
     await search('extras');
     await waitFor('only extras visible', async () => (await findAll(card('extras'))).length && !(await findAll(card('hyperfine'))).length);
+    writeFileSync(`${workDir}/fail-once-extras`, '');
     const updateAll = button('Update all');
     await click(`${updateAll}[not(@disabled)]`);
     await waitFor('pending batch cannot be queued twice', () => prop(updateAll, 'disabled'));
     await search('');
     await click(nav('Activity'));
+    const group = "//li[@data-kind='updates']";
+    const summary = `${group}/details/summary`;
+    await waitFor('partial Update all result', async () => (await text(summary)).includes('1 of 2 updated') && log('pkgs/hyperfine').trim() === '4.0', 30000);
+    await startSession();
+    // The next scenario changes a collection during a manual check. Finish the separate
+    // startup check before measuring how many times that manual check requests elevation.
+    await click(nav('Updates'));
+    await waitFor('startup check finished', () => find("//div[contains(@class,'check')]//span[contains(., 'Last checked ')]"), 30000);
+    await click(nav('Activity'));
+    await click(summary);
+    await waitFor('manual trigger recorded on the group', async () => (await text(group)).includes('Started by you'));
+    const extras = `${group}//li[@data-app='fixture/extras']`;
+    await click(`${extras}${button('Steps')}`);
+    await waitFor('failed package step survives restart', async () => (await text(`${extras}//ol`)).includes('extras · failed'));
+    const hyperfineCalls = () => log('pkexec.log').split('\n').filter(line => line.includes('pacman -S') && line.endsWith('hyperfine')).length;
+    const before = hyperfineCalls();
+    await click(`${group}${button('Retry failed')}`);
+    await waitFor('same Update all group completes', async () => (await text(summary)).includes('2 of 2 updated'), 30000);
+    if (hyperfineCalls() !== before || (await findAll(group)).length !== 1) throw new Error('retry duplicated an update');
     for (const [app, version] of [['hyperfine', '4.0'], ['extras', '2.0']]) {
-      const history = `//li[contains(@class,'history')][.//*[normalize-space()='Updated ${app}']][contains(., 'Started by you')]`;
-      await waitFor(`${app} completed as a manual update`, () => find(history), 30000);
       if (log(`pkgs/${app}`).trim() !== version) throw new Error(`${app} did not update to ${version}`);
       if (!optOuts().includes(`fixture/${app}`)) throw new Error(`${app} opted back into automatic updates`);
     }
@@ -464,7 +502,7 @@ const steps = [
       await waitFor('marked on the card', async () => (await text(card('secure'))).includes('Security update required'), 30000);
       await sleep(5000);
       const attempts = log('denied.log').split('\n').filter((l) => l.includes('secure')).length;
-      if (attempts !== 1) throw new Error(`${attempts} attempts after a refused one, expected no retry until the next check`);
+      if (attempts !== 1) throw new Error(`${attempts} attempts after a refused one, expected no retry until the next check: ${log('denied.log')}`);
       await snap('required-update-card');
       await click(`${card('secure')}//button[@aria-label='Open secure']`);
       await waitFor('status line', async () => (await text("//p[contains(@class,'status')]")) === 'Installed, security update required');
@@ -567,6 +605,23 @@ const steps = [
     if ((await text(row)).includes('Update available')) throw new Error('still marked after updating');
     await click(nav('Discover'));
     await waitFor('the update brought its app', () => find(card('later')), 30000);
+  }],
+  ['Activity retains a failed install and can retry it after a fresh launch', async () => {
+    writeFileSync(`${workDir}/fail-once-later`, '');
+    await click(`${card('later')}${button('Install')}`);
+    await click(nav('Activity'));
+    const entry = "//li[contains(@class,'history')][.//button[normalize-space()='Retry later']]";
+    await waitFor('failed later install', () => find(entry), 30000);
+    await startSession();
+    await click(nav('Activity'));
+    await waitFor('failed step and collection revision survive', async () => {
+      const detail = await text(entry);
+      return detail.includes('The package manager could not complete this step') && /[a-f0-9]{7,40}/.test(detail);
+    });
+    await click(`${entry}${button('Steps')}`);
+    await waitFor('failed step after restart', async () => (await text(`${entry}//ol`)).includes('later · failed'));
+    await click(`${entry}${button('Retry later')}`);
+    await waitFor('retry installed the package', () => existsSync(`${workDir}/pkgs/later`), 30000);
   }],
   ['a failed install offers the earlier version; installing it holds the app there', async () => {
     await click(button('Discover'));

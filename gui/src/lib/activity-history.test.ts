@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completedActivity, historyLimit, interruptedDependents, isKit, readHistory, recordProgress, trimHistory, writeHistory, type KitActivity, type Run } from './activity-history.ts';
+import { completedActivity, groupProgress, historyLimit, interruptedDependents, isGroup, readHistory, recordProgress, trimHistory, writeHistory, type ActivityGroup, type Run } from './activity-history.ts';
 
 const operation = (): Run => ({ id: 'r', name: 'VPN', trigger: 'autoInstall', kind: 'reinstall', startedAt: 0, steps: [], phaseStart: 0 });
 const plan = (name: string) => ({
@@ -39,15 +39,20 @@ test('recent history is bounded and profile-specific, with only summary fields s
   const run = operation();
   recordProgress(run, plan('Configure VPN'));
   recordProgress(run, finished('private failure details'));
-  Object.assign(run, { result: 'failed', finishedAt: 20, error: 'private error' });
+  Object.assign(run, { result: 'failed', finishedAt: 20, error: 'private error', collectionRevision: '123abcd' });
+  run.steps[0].step.changes.push({ property: 'password', before: 'private old', after: 'private new' });
+  run.steps[0].step.notes = [{ code: 'private', params: { value: 'private option' } }];
   const entry = completedActivity('work/vpn', run, [{ level: 'output', message: 'private stdout' }]);
   assert.deepEqual(entry.details?.run.steps, run.steps);
   writeHistory('/first', Array.from({ length: historyLimit + 2 }, (_, i) => ({ ...entry, summary: { ...entry.summary, id: String(i) } })));
   assert.doesNotMatch([...files.values()][0], /private|Furnish\/Command/);
   const restored = readHistory('/first');
   assert.equal(restored.length, historyLimit);
-  assert.ok(!isKit(restored[0]));
+  assert.ok(!isGroup(restored[0]));
   assert.equal(restored[0].summary.failedStep, 'Configure VPN');
+  assert.equal(restored[0].summary.collectionRevision, '123abcd');
+  assert.deepEqual(restored[0].summary.steps, [{ name: 'Configure VPN', state: 'failed' }]);
+  assert.equal(restored[0].summary.failure, 'step');
   assert.equal(restored[0].details, undefined);
   assert.deepEqual(readHistory('/second'), []);
   files.set([...files.keys()][0], '{');
@@ -74,8 +79,8 @@ test('kit summaries retain earlier attempts and mark unfinished members interrup
   recordProgress(run, finished('private failure details'));
   Object.assign(run, { result: 'failed', finishedAt: 20 });
   const attempt = completedActivity('work/vpn', run, [{ level: 'output', message: 'private stdout' }]);
-  const kit: KitActivity = {
-    id: 'one-request', key: 'work/tools', name: 'Tools', updatedAt: 21, items: [
+  const kit: ActivityGroup = {
+    kind: 'kit', id: 'one-request', key: 'work/tools', name: 'Tools', updatedAt: 21, items: [
       { key: 'work/editor', name: 'Editor', selected: true, state: 'done', attempts: [] },
       { key: 'work/vpn', name: 'VPN', selected: true, state: 'running', runId: 'retry', ownsJob: true, attempts: [attempt] },
       { key: 'work/helper', name: 'Helper', selected: false, state: 'queued', waitingFor: ['work/vpn'], attempts: [] },
@@ -85,14 +90,14 @@ test('kit summaries retain earlier attempts and mark unfinished members interrup
   const raw = [...files.values()][0];
   assert.doesNotMatch(raw, /private|phaseStart|runId|ownsJob/);
   const [restored, standalone] = readHistory('p');
-  assert.ok(isKit(restored));
+  assert.ok(isGroup(restored));
   assert.equal(restored.id, kit.id);
   assert.deepEqual(restored.items.map(i => i.state), ['done', 'interrupted', 'interrupted']);
   assert.deepEqual(interruptedDependents(restored, 'work/vpn').map(i => i.key), ['work/helper']);
   assert.deepEqual(restored.items.map(i => i.selected), [true, true, false]);
   assert.equal(restored.items[1].attempts[0].summary.failedStep, 'Configure VPN');
   assert.equal(restored.items[1].attempts[0].details, undefined);
-  assert.ok(!isKit(standalone));
+  assert.ok(!isGroup(standalone));
   assert.equal(standalone.summary.id, run.id);
 });
 
@@ -100,8 +105,8 @@ test('active kit requests remain tracked while newer unrelated activity exceeds 
   const run = operation();
   Object.assign(run, { result: 'done', finishedAt: 20 });
   const recent = Array.from({ length: historyLimit + 2 }, () => completedActivity('work/app', run, []));
-  const kit: KitActivity = {
-    id: 'active', key: 'work/kit', name: 'Kit', updatedAt: 0,
+  const kit: ActivityGroup = {
+    kind: 'kit', id: 'active', key: 'work/kit', name: 'Kit', updatedAt: 0,
     items: [{ key: 'work/app', name: 'App', selected: true, state: 'queued', attempts: [] }],
   };
   assert.equal(trimHistory([...recent, kit]).at(-1), kit);
@@ -110,10 +115,10 @@ test('active kit requests remain tracked while newer unrelated activity exceeds 
 });
 
 test('a restored retry follows the saved prerequisite edges and preserves cancelled and unrelated branches', () => {
-  const item = (key: string, state: KitActivity['items'][number]['state'], waitingFor: string[] = []) =>
+  const item = (key: string, state: ActivityGroup['items'][number]['state'], waitingFor: string[] = []) =>
     ({ key, name: key, selected: true, state, waitingFor, attempts: [] });
-  const group: KitActivity = {
-    id: 'kit', key: 'work/kit', name: 'Kit', updatedAt: 0, items: [
+  const group: ActivityGroup = {
+    kind: 'kit', id: 'kit', key: 'work/kit', name: 'Kit', updatedAt: 0, items: [
       item('app', 'interrupted', ['tool']), item('other', 'interrupted'),
       item('tool', 'interrupted', ['bootstrap']), item('bootstrap', 'failed'),
       item('cancelled', 'cancelled', ['bootstrap']), item('done', 'done', ['bootstrap']),
@@ -121,4 +126,72 @@ test('a restored retry follows the saved prerequisite edges and preserves cancel
     ],
   };
   assert.deepEqual(interruptedDependents(group, 'bootstrap').map(i => i.key), ['tool', 'app']);
+});
+
+test('update groups retain their identity, skipped updates and redacted package failure on restart', () => {
+  let raw = '';
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: () => raw, setItem: (_key: string, value: string) => { raw = value; },
+  } });
+  const run = operation();
+  recordProgress(run, plan('Install VPN'));
+  run.steps[0].step.type = 'Furnish/Package';
+  recordProgress(run, finished('sensitive script output and arguments'));
+  Object.assign(run, { result: 'failed', finishedAt: 12, collectionRevision: 'sensitive non-revision' });
+  const attempt = completedActivity('work/vpn', run, []);
+  writeHistory('work', [{
+    kind: 'updates', id: 'updates', updatedAt: 3, items: [
+      { key: 'work/vpn', name: 'VPN', selected: true, state: 'failed', attempts: [attempt] },
+      { key: 'work/old', name: 'Old', selected: true, state: 'skipped', attempts: [] },
+    ],
+  }]);
+  assert.doesNotMatch(raw, /sensitive|script output|arguments|Furnish\/Package/);
+  const [group] = readHistory('work');
+  assert.ok(isGroup(group));
+  assert.equal(group.kind, 'updates');
+  assert.equal(group.items[1].state, 'skipped');
+  assert.equal(group.items[0].attempts[0].summary.failure, 'package');
+  assert.equal(group.items[0].attempts[0].summary.collectionRevision, undefined);
+  // Existing versions persisted only these fields, with no per-step history.
+  const { failure, steps, action, commit, collectionRevision, ...legacy } = attempt.summary;
+  raw = JSON.stringify([legacy, { kind: 'kit', key: 'work/kit', name: 'Kit', id: 'kit', updatedAt: 2,
+    items: [{ key: 'work/vpn', selected: true, name: 'VPN', state: 'failed', attempts: [legacy] }] }]);
+  const [old, kit] = readHistory('work');
+  assert.ok(!isGroup(old) && old.summary.failedStep === 'Install VPN');
+  assert.ok(isGroup(kit) && kit.kind === 'kit' && kit.items[0].attempts.length === 1);
+});
+
+test('update progress follows failed prerequisite chains and excludes fallbacks and skips', () => {
+  const member = (key: string, state: ActivityGroup['items'][number]['state'], waitingFor: string[] = []) =>
+    ({ key, name: key, state, waitingFor, selected: true, attempts: [] });
+  const group: ActivityGroup = { kind: 'updates', id: 'req', updatedAt: 7, items: [
+    member('fallback', 'fallback'), member('skipped', 'skipped'), member('ok', 'done'),
+    member('work', 'running'), member('tool', 'failed'), member('middle', 'queued', ['tool']),
+    member('app', 'queued', ['middle']), member('later', 'queued', ['work']),
+  ] };
+  const progress = groupProgress(group, [], key => key === 'work' || key === 'middle');
+  assert.equal(progress.total, 8);
+  assert.equal(progress.done, 1);
+  assert.equal(progress.waiting, 1);
+  assert.deepEqual([...progress.blocked], [['middle', ['tool']], ['app', ['tool']]]);
+  group.items[4].state = 'running';
+  const retry = groupProgress(group, [], key => ['work', 'tool', 'middle'].includes(key));
+  assert.equal(retry.blocked.size, 0);
+  assert.equal(retry.waiting, 3);
+});
+
+test('native revision changes at fallback, including a failure before it can plan a step', () => {
+  const run = operation();
+  recordProgress(run, { key: 'work/vpn', event: 'revision', revision: 'a123456' });
+  recordProgress(run, plan('Original step'));
+  recordProgress(run, finished('permission denied: private path'));
+  Object.assign(run, { result: 'failed', finishedAt: 5 });
+  const first = completedActivity('work/vpn', run, []).summary;
+  assert.equal(first.failure, 'permission');
+  assert.equal(first.collectionRevision, 'a123456');
+  recordProgress(run, { key: 'work/vpn', event: 'revision', revision: 'b123456' });
+  const fallback = completedActivity('work/vpn', run, []).summary;
+  assert.equal(fallback.collectionRevision, 'b123456');
+  assert.equal(fallback.failedStep, null);
+  assert.equal(fallback.failure, 'operation');
 });
