@@ -3,7 +3,7 @@
   import ActivityAttempt from './ActivityAttempt.svelte';
   import RunLog from './RunLog.svelte';
   import { groupProgress, itemDone, type ActivityGroup, type GroupItem } from './activity-history';
-  import { appByKey, appName, isPending, kitName, queueBlocker, retryGroupItem, retryFailed, store } from './state.svelte';
+  import { appByKey, appName, isPending, kitName, queueBlocker, recheckClosed, retryGroupItem, retryFailed, store } from './state.svelte';
   import { formatDate, lang, t } from './i18n.svelte';
 
   let { group }: { group: ActivityGroup } = $props();
@@ -11,6 +11,8 @@
   const progress = $derived(groupProgress(group, store.queue, isPending));
   const failed = $derived(group.items.filter(i => i.state === 'failed'));
   const blockerNames = $derived([...new Set([...progress.blocked.values()].flat())].map(key => {
+    const names = store.queue.find(q => q.key === key)?.waitingForClose;
+    if (names?.length) return names.join(', ');
     const app = appByKey(key);
     return app ? appName(app) : group.items.find(item => item.key === key)?.name ?? key;
   }).join(', '));
@@ -21,6 +23,8 @@
   }
 
   function stateLabel(item: GroupItem) {
+    const names = store.queue.find(q => q.key === item.key)?.waitingForClose;
+    if (names?.length) return t('queue.closeApps', {names: names.join(', ')});
     const blocked = progress.blocked.get(item.key)?.[0];
     if (blocked) {
       const app = appByKey(blocked);
@@ -68,7 +72,9 @@
         <li data-app={item.key}>
           <strong>{name(item)}</strong> · {stateLabel(item)}
           {#if !item.selected}<small>{t('activity.kitPrerequisite')}</small>{/if}
-          {#if item.state === 'failed' || item.state === 'cancelled' || item.state === 'interrupted'}
+          {#if store.queue.some(q => q.key === item.key && q.waitingForClose?.length)}
+            <button class="secondary" onclick={() => recheckClosed(item.key)}>{t('queue.recheckClosed')}</button>
+          {:else if item.state === 'failed' || item.state === 'cancelled' || item.state === 'interrupted'}
             {#if appByKey(item.key) && store.status[item.key] !== 'unavailable'}
               <button class="secondary" disabled={isPending(item.key) || store.retrying[item.key]} onclick={() => retryGroupItem(group, item.key)}>
                 {t('queue.retry', { app: name(item) })}

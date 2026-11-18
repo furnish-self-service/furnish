@@ -148,6 +148,7 @@ pub fn operation<T>(event: &'static str, app: &crate::catalog::App, version: Opt
     let result = f();
     let outcome = match &result {
         Ok(_) => "succeeded",
+        Err(err) if err.is::<crate::engine::WaitingForClose>() => return result,
         Err(err) if err.is::<crate::engine::Cancelled>() => "cancelled",
         Err(_) => "failed",
     };

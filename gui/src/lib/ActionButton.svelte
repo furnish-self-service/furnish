@@ -4,7 +4,7 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { store, requestInstall, uninstall, stop, dequeue, askQuestions, appName } from './state.svelte';
+  import { recheckClosed, store, requestInstall, uninstall, stop, dequeue, askQuestions, appName } from './state.svelte';
   import { t } from './i18n.svelte';
 
   // `oninstall` replaces the default (asking about optional dependencies, then installing).
@@ -61,6 +61,8 @@
   <span class="checking needs" class:large title={t('action.needs', { what: store.reasons[app.key] ?? t('common.missingTool') })}>
     {t('action.needs', { what: (store.reasons[app.key] ?? t('common.missingTool')).split(' (')[0] })}
   </span>
+{:else if store.queue.some(q => q.key === app.key && q.waitingForClose?.length)}
+  <button class="action" class:large onclick={(event) => { event.stopPropagation(); recheckClosed(app.key); }}>{t('queue.recheckClosed')}</button>
 {:else if queued}
   <!-- Waiting: same slot, removable from the queue. -->
   <div class="action queued" class:large role="group" aria-label={t('action.queuedPosition', { app: appName(app), n: position })}>

@@ -338,7 +338,7 @@ Some desktop apps keep their settings in memory and save them again on exit. Use
     requiresClosed: [notes-desktop]
 ```
 
-Use executable names, such as `notes-desktop`, for processes visible to the account applying the change. The Furnish service can see applications in other users’ sessions. If the file needs to change while the editor is running, Furnish asks the user to quit it and retry. For an app in the system tray, use its Quit action. A step whose settings already match can finish while the app stays open.
+Use executable names, such as `notes-desktop`, for processes visible to the account applying the change. The Furnish service can see applications in other users’ sessions. The desktop checks the pending operation before starting any steps and keeps it in Activity until the user closes the named applications and chooses **Recheck and continue**. The file resource checks again immediately before writing, including when invoked from the CLI. For an app in the system tray, use its Quit action. A step whose settings already match can finish while the app stays open.
 
 `mode` and `private` are part of the desired state: a file that someone made readable for others shows as an available update, and installing again restores them. A step without them leaves the mode as it is, so for a file that several `Furnish/Value`, `Furnish/Line` or `Furnish/Block` steps edit, `private: true` on one of them is enough. Steps that give the same file different modes would undo each other, so furnish refuses such an app when it loads it. Uninstalling never changes the mode, and these three resources never delete the file: it may hold the user's own settings.
 

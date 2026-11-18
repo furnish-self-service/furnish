@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completedActivity, groupProgress, historyLimit, interruptedDependents, isGroup, readHistory, recordProgress, trimHistory, writeHistory, type ActivityGroup, type Run } from './activity-history.ts';
+import { completedActivity, groupProgress, historyLimit, interruptedDependents, isGroup, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityGroup, type Run } from './activity-history.ts';
 
 const operation = (): Run => ({ id: 'r', name: 'VPN', trigger: 'autoInstall', kind: 'reinstall', startedAt: 0, steps: [], phaseStart: 0 });
 const plan = (name: string) => ({
@@ -194,4 +194,33 @@ test('native revision changes at fallback, including a failure before it can pla
   assert.equal(fallback.collectionRevision, 'b123456');
   assert.equal(fallback.failedStep, null);
   assert.equal(fallback.failure, 'operation');
+});
+
+
+test('a paused dependency branch survives restart, while independent queued work stays interrupted', () => {
+  let saved = '';
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    setItem: (_: string, value: string) => { saved = value; }, getItem: () => saved,
+  }});
+  const job = (key: string, prerequisites: string[]) => ({key, action: 'install' as const, trigger: 'user' as const, prerequisites});
+  const queue = [
+    {...job('fixture/helper', []), waitingForClose: ['Notes Desktop']},
+    {...job('fixture/root', ['fixture/helper']), updateOnly: true, chosen: ['fixture/helper']},
+    job('fixture/unrelated', []),
+  ];
+  const group: ActivityGroup = {kind:'updates', id:'batch', updatedAt:1, items:
+    queue.map(j => ({key:j.key, name:j.key, selected:true, state:'queued', ownsJob:true, attempts:[]}))};
+  writeHistory('work', [group], queue);
+  const restored = readWaitingQueue('work');
+  assert.deepEqual(restored.map(j => j.key), ['fixture/helper', 'fixture/root']);
+  assert.deepEqual(restored[0].waitingForClose, ['Notes Desktop']);
+  assert.deepEqual(restored[1].chosen, ['fixture/helper']);
+  assert.equal(restored[1].updateOnly, true);
+  const [entry] = readHistory('work', new Set(restored.map(j => j.key)));
+  assert.ok(isGroup(entry));
+  assert.deepEqual(entry.items.map(i => i.state), ['queued', 'queued', 'interrupted']);
+  assert.deepEqual([...groupProgress(entry, restored, key => restored.some(j => j.key === key)).blocked.keys()],
+    ['fixture/helper', 'fixture/root']);
+  writeHistory('work', [group], []);
+  assert.deepEqual(readWaitingQueue('work'), []);
 });

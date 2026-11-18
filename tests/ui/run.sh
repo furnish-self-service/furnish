@@ -112,6 +112,28 @@ resources:
     type: Furnish/File
     properties: { path: "$work/session-notice", content: ready }
 YAML
+cat > "$work/origin-src/apps/preflight-settings.dsc.yaml" <<YAML
+resources:
+  - name: Earlier step
+    type: Furnish/File
+    properties: { path: "$work/preflight-earlier", content: ready }
+  - name: Write settings
+    type: Furnish/Value
+    properties: { path: "$work/preflight.json", location: '$.enabled', value: true, requiresClosed: [furnish-ui-cache, absent-cache-writer] }
+YAML
+cat > "$work/origin-src/apps/preflight-dependent.dsc.yaml" <<YAML
+metadata: { furnish: { dependencies: [{ app: preflight-settings, required: true }] } }
+resources:
+  - name: Dependent
+    type: Furnish/File
+    properties: { path: "$work/preflight-dependent", content: ready }
+YAML
+cat > "$work/origin-src/apps/preflight-free.dsc.yaml" <<YAML
+resources:
+  - name: Independent
+    type: Furnish/File
+    properties: { path: "$work/preflight-free", content: ready }
+YAML
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"

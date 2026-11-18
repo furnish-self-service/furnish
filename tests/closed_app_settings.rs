@@ -64,10 +64,14 @@ fn furnish(root: &Path, args: &[&str], input: Option<&Value>, success: bool) -> 
 
 fn app_file(repo: &Path, settings: &Path, guard: Option<Value>) {
     let mut props = json!({"path":settings,"location":"$.agentEnabled","value":true});
+    let mut resources = Vec::new();
     if let Some(guard) = guard {
         props["requiresClosed"] = guard;
+        resources.push(json!({"name":"Earlier setup","type":"Furnish/File",
+            "properties":{"path":settings.with_extension("marker"),"content":"ready"}}));
     }
-    let app = json!({"resources":[{"name":"Enable agent","type":"Furnish/Value","properties":props}]});
+    resources.push(json!({"name":"Enable agent","type":"Furnish/Value","properties":props}));
+    let app = json!({"resources":resources});
     fs::write(repo.join("apps/settings.dsc.yaml"), app.to_string()).unwrap();
 }
 
@@ -143,6 +147,7 @@ fn cached_settings_survive_relaunch() {
     let blocked = furnish(root, &["install", "test/settings"], None, false);
     assert_blocked(&blocked, &name);
     assert_eq!(fs::read(&settings).unwrap(), expected);
+    assert!(!settings.with_extension("marker").exists(), "the operation must pause before its first write");
     drop(app);
 
     furnish(root, &["install", "test/settings"], None, true);

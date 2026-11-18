@@ -53,25 +53,31 @@ impl ClosedApps {
     }
 
     pub(super) fn ensure_closed(&self) -> Result<()> {
-        if self.is_empty() {
-            return Ok(());
-        }
-        let mut system = System::new();
-        let refreshed = system.refresh_processes_specifics(
-            ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().without_tasks().with_exe(UpdateKind::Always),
-        );
-        ensure!(refreshed > 0, "could not check running applications; retry this change when the process list is available");
-        let running: Vec<_> = self.0.iter().filter(|wanted| {
-            system.processes().values().any(|p| {
-                // A zombie can no longer write. On Linux the kernel process name can be
-                // truncated or renamed, so prefer the executable path whenever available.
-                let basename = p.exe().and_then(|path| path.file_name()).unwrap_or_else(|| p.name());
-                p.status() != ProcessStatus::Zombie && matches_name(basename, wanted)
-            })
-        }).map(String::as_str).collect();
+        let running = running(&self.0)?;
         ensure!(running.is_empty(), "Close {}, then retry this change", running.join(", "));
         Ok(())
     }
+}
+
+/// Match only the requested executable basenames against one fresh process snapshot.
+pub(crate) fn running(names: &[String]) -> Result<Vec<String>> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut system = System::new();
+    let refreshed = system.refresh_processes_specifics(
+        ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().without_tasks().with_exe(UpdateKind::Always),
+    );
+    ensure!(refreshed > 0, "could not check running applications; retry this change when the process list is available");
+    let running = names.iter().filter(|wanted| {
+        system.processes().values().any(|p| {
+            // A zombie can no longer write. On Linux the kernel process name can be
+            // truncated or renamed, so prefer the executable path whenever available.
+            let basename = p.exe().and_then(|path| path.file_name()).unwrap_or_else(|| p.name());
+            p.status() != ProcessStatus::Zombie && matches_name(basename, wanted)
+        })
+    }).cloned().collect();
+    Ok(running)
 }
 
 #[cfg(not(windows))]

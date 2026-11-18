@@ -1388,7 +1388,7 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
 /// (ask) or install it (automatic). Cancelled installs are no failure.
 fn report_failure(app: &catalog::App, result: Result<()>) -> Result<()> {
     let Err(err) = result else { return Ok(()) };
-    if err.is::<engine::Cancelled>() || app.held.is_some() {
+    if err.is::<engine::Cancelled>() || err.is::<engine::WaitingForClose>() || app.held.is_some() {
         return Err(err);
     }
     let Ok(version) = app.previous_version() else { return Err(err) };
