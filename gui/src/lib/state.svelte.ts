@@ -1,5 +1,6 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
+import { StatusCache } from './status-cache';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
 import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, terror, formatDate, lang } from './i18n.svelte';
@@ -172,11 +173,26 @@ export function dismiss(id: number) {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export async function loadAll() {
+let catalogLoad = 0;
+let latestLoad: Promise<void>;
+let cache: StatusCache | undefined;
+const revisions = new Map<string, string>();
+// Cached values are for display. Automatic updates and inventory use live checks.
+const verifiedKeys = new Set<string>();
+const pendingChecks = new Map<string, symbol>();
+
+export function loadAll(): Promise<void> {
+  return latestLoad = loadCatalog(++catalogLoad);
+}
+
+async function loadCatalog(load: number): Promise<void> {
   if (!store.autoUpdate.running) checkRound++; // inside a check for updates, part of its round
   store.loading = true;
   // Loaded independently: a problem with one must not hide the other.
-  const [apps, collections, kits] = await Promise.allSettled([api.listApps(), api.listCollections(), api.listKits()]);
+  const [apps, collections, kits, dataDir] = await Promise.allSettled([
+    api.listApps(), api.listCollections(), api.listKits(), api.dataDir(),
+  ]);
+  if (load !== catalogLoad) return latestLoad;
   if (apps.status === 'fulfilled') store.apps = apps.value;
   else toast('error', t('toast.loadApps'), message(apps.reason));
   if (kits.status === 'fulfilled') store.kits = kits.value;
@@ -184,33 +200,75 @@ export async function loadAll() {
   if (collections.status === 'fulfilled') store.collections = collections.value;
   else toast('error', t('toast.loadCollections'), message(collections.reason));
   askQuestions(); // on launch, and when an update brings a new question
-  store.loading = false;
+  cache = dataDir.status === 'fulfilled' ? new StatusCache(dataDir.value) : undefined;
+  revisions.clear();
+  pendingChecks.clear();
+  verifiedKeys.clear();
   store.status = {};
+  store.reasons = {};
+  store.unremovable = {};
+  store.external = {};
+  store.required = {};
+  if (apps.status === 'fulfilled' && collections.status === 'fulfilled') {
+    const byCollection = new Map(collections.value.map(c => [c.name, c.revision]));
+    cache?.prune(new Set(apps.value.map(app => app.key)));
+    for (const app of apps.value) {
+      const revision = byCollection.get(app.collection);
+      if (!revision || revision === 'unknown') continue;
+      revisions.set(app.key, revision);
+      const saved = cache?.read(app.key, revision);
+      if (saved) showCheck(app.key, saved);
+    }
+  }
+  store.loading = false;
   // The engine runs one check at a time anyway; sequential keeps the UI updating card by card.
-  for (const app of store.apps) await checkStatus(app.key);
+  for (const app of store.apps) {
+    if (load !== catalogLoad) return latestLoad;
+    await checkStatus(app.key);
+  }
+  if (load !== catalogLoad) return latestLoad;
   // The daily inventory report, if the organization takes reports and asks for everything.
   if (store.settings?.reporting === 'all') {
-    api.reportInventory(Object.entries(store.status).map(([key, status]) => [key, String(status)])).catch(() => {});
+    api.reportInventory(Array.from(verifiedKeys, key => [key, store.status[key]])).catch(() => {});
   }
+}
+
+function showCheck(key: string, check: api.AppCheck) {
+  store.status[key] = check.status;
+  if (check.reason) store.reasons[key] = check.reason;
+  else delete store.reasons[key];
+  if (check.removable) delete store.unremovable[key];
+  else store.unremovable[key] = true;
+  if (check.external) store.external[key] = check.external;
+  else delete store.external[key];
+  if (check.required) store.required[key] = check.required;
+  else delete store.required[key];
 }
 
 /** Ask for an app's status. A security update its collection requires is queued right away,
  *  whatever the automatic-update settings say. */
 export async function checkStatus(key: string) {
+  const load = catalogLoad;
+  const request = Symbol();
+  pendingChecks.set(key, request);
   try {
     const check = await api.appStatus(key);
-    store.status[key] = check.status;
-    if (check.reason) store.reasons[key] = check.reason;
-    else delete store.reasons[key];
-    if (check.removable) delete store.unremovable[key];
-    else store.unremovable[key] = true;
-    if (check.external) store.external[key] = check.external;
-    else delete store.external[key];
-    if (check.required) store.required[key] = check.required;
-    else delete store.required[key];
+    if (load !== catalogLoad || pendingChecks.get(key) !== request) return;
+    showCheck(key, check);
+    verifiedKeys.add(key);
+    const revision = revisions.get(key);
+    if (revision) cache?.write(key, revision, check);
     installRequiredUpdate(key);
   } catch {
+    if (load !== catalogLoad || pendingChecks.get(key) !== request) return;
     store.status[key] = 'error';
+    delete store.reasons[key];
+    delete store.external[key];
+    delete store.unremovable[key];
+    delete store.required[key];
+    verifiedKeys.delete(key);
+  } finally {
+    if (pendingChecks.get(key) === request) pendingChecks.delete(key);
   }
 }
 
@@ -340,7 +398,7 @@ async function updateApps() {
   const due = () =>
     store.apps.filter(
       (a) =>
-        store.status[a.key] === 'needsUpdate' &&
+        verifiedKeys.has(a.key) && store.status[a.key] === 'needsUpdate' &&
         !store.settings?.noAutoUpdate.includes(a.key) &&
         !declinedUpdates.has(a.key) &&
         !isPending(a.key),
@@ -611,7 +669,7 @@ function openLink(url: string) {
 async function autoInstall() {
   for (const key of await api.autoInstallPending().catch(() => [])) {
     const app = store.apps.find((a) => a.key === key);
-    if (!app) continue; // its collection may arrive later (e.g. after signing in)
+    if (!app || !verifiedKeys.has(key)) continue; // wait for its collection and its first live check
     if (isInstalled(key)) {
       await api.autoInstallDone(key);
     } else {
