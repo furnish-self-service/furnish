@@ -232,6 +232,8 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     let native = if props.get("packageManager").is_none() { platform::package_managers() } else { Vec::new() };
     // Resolving collection scripts checks the installed policy and canonical paths. Do this
     // only when the operation needs a script, as ordinary native packages don't rely on them.
+    let delegated = props["_metadata"][crate::nixos_apps::PACKAGE_FINGERPRINT].is_string();
+    ensure!(!delegated || preferred_manager(props, &native) == Some("nix"), "this step does not select the Nix package manager");
     let scripts = if preferred_manager(props, &native).is_some_and(platform::supported_manager) {
         Default::default()
     } else {
@@ -245,30 +247,21 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
         return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
     }
 
-    #[cfg(unix)]
-    let mut backend = Command::new("./furnish-package.dsc.resource.sh");
-    #[cfg(windows)]
-    let mut backend = {
-        let mut cmd = powershell_script(Path::new("./furnish-package.dsc.resource.ps1"))?;
-        cmd.env_remove("FURNISH_WINGET");
-        if let Some(path) = platform::winget_path() {
-            cmd.env("FURNISH_WINGET", path);
-        }
-        cmd
-    };
-    backend.env("name", selection.name);
-    backend.env("packageManager", manager.unwrap_or(""));
-    // Only resource input properties may enter the backend environment.
-    for key in ["nixpkgs", "command", "reportVersions", "targetVersion", "_exist"] {
-        backend.env_remove(key);
-        if let Some(value) = props.get(key) {
-            if key == "_exist" {
-                backend.env(key, value.as_bool().context("_exist must be a boolean")?.to_string());
-            } else {
-                backend.env(key, value.as_str().with_context(|| format!("{key} must be a string"))?);
+    if manager == Some("nix") {
+        let probe = || {
+            let out = native_backend(props, selection.name, manager)?.arg("get").stderr(Stdio::inherit()).output()
+                .context("checking for an existing Nix package")?;
+            if !out.status.success() {
+                std::process::exit(out.status.code().unwrap_or(1));
             }
+            serde_json::from_slice(&out.stdout).context("reading the installed Nix package state")
+        };
+        if let Some(state) = crate::nixos_apps::package(props, selection.name, operation, what_if, probe)? {
+            return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
         }
     }
+    ensure!(!delegated, "the current preset package cannot be installed into the Nix configuration");
+    let mut backend = native_backend(props, selection.name, manager)?;
     backend.arg(operation);
     if what_if {
         backend.arg(if cfg!(windows) { "what-if" } else { "--what-if" });
@@ -287,10 +280,48 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     std::process::exit(backend.status().context("could not run the Windows package backend")?.code().unwrap_or(1))
 }
 
+fn native_backend(props: &Value, name: &str, manager: Option<&str>) -> Result<Command> {
+    #[cfg(unix)]
+    let mut backend = Command::new("./furnish-package.dsc.resource.sh");
+    #[cfg(windows)]
+    let mut backend = {
+        let mut cmd = powershell_script(Path::new("./furnish-package.dsc.resource.ps1"))?;
+        cmd.env_remove("FURNISH_WINGET");
+        if let Some(path) = platform::winget_path() {
+            cmd.env("FURNISH_WINGET", path);
+        }
+        cmd
+    };
+    backend.env("FURNISH_NIX_SERVICE_PROFILE", if props["_metadata"][crate::nixos_apps::SERVICE_PROFILE] == true { "1" } else { "" });
+    backend.env("name", name);
+    backend.env("packageManager", manager.unwrap_or(""));
+    // Only resource input properties may enter the backend environment.
+    for key in ["nixpkgs", "command", "reportVersions", "targetVersion", "_exist"] {
+        backend.env_remove(key);
+        if let Some(value) = props.get(key) {
+            if key == "_exist" {
+                backend.env(key, value.as_bool().context("_exist must be a boolean")?.to_string());
+            } else {
+                backend.env(key, value.as_str().with_context(|| format!("{key} must be a string"))?);
+            }
+        }
+    }
+    Ok(backend)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn delegated_nix_change_never_runs_another_backend() {
+        for manager in ["apt", "winget", "collection-script"] {
+            let props = json!({"packageManager":manager, "name":"tool",
+                "_metadata":{(crate::nixos_apps::PACKAGE_FINGERPRINT):"unmatched"}});
+            assert!(run(&props, "set", false).unwrap_err().to_string().contains("does not select the Nix package manager"));
+        }
+    }
 
     #[test]
     fn exact_distribution_then_ordered_family_then_manager_then_base() {

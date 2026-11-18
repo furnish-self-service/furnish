@@ -283,7 +283,7 @@ On Windows, the service manager restarts the service when it crashes or stops wi
 
 The service finds DSC resources only in folders that people without administrator rights can't change. A folder counts if it and every folder above it belong to root (on Windows: SYSTEM, Administrators or TrustedInstaller) and nobody else can write to it, the same rule as for the furnish binary. The service looks in the folder of the DSC resources furnish includes, which is inside furnish's installation, in the folders on its `PATH` and where DSC is installed, and drops the others. A resource in `/opt/homebrew/bin` or in a folder of a user's own `PATH` would otherwise run with full rights. The service also runs programs only from these folders, except `brew`, which it runs as Homebrew's owner.
 
-For an install, the service reads the app from its own copy of a preset collection and checks the requested option values against the app's declarations and the policy. [Personal apps](collections.md#installing-for-one-person) run in the user's account. If a personal app needs a system rebuild, the service verifies and applies the requested `Furnish/NixOS` step. The app's file and command steps still run as the person installing it.
+For an install, the service reads the app from its own copy of a preset collection and checks the requested option values against the app's declarations and the policy. [Personal apps](collections.md#installing-for-one-person) run in the user's account. If a personal app needs a system rebuild, the service verifies the requested step against its preset collection before applying a NixOS declaration or adding an ordinary Nix package to the configuration. The app's file and command steps still run as the person installing it.
 
 ### macOS: the service and Homebrew
 
@@ -335,7 +335,9 @@ Builds of the `main` branch are in the cache. The two `nix.settings` lines are n
 
 `service.enable` runs the furnish service and turns it on in the policy, so the service installs the apps of the preset collections (see [People without administrator rights](#people-without-administrator-rights)). Members of `policy.service.allowedGroup` install without a password.
 
-On NixOS, furnish installs Nix packages into the user's profile. Through the service it installs them into a shared profile that the module adds to everyone's `PATH`.
+When Nix is the selected package manager and the selected configuration has Furnish’s apps input, a new `Furnish/Package` install goes into that configuration. For example, installing `jq` records it in `apps.json` and rebuilds NixOS or activates Home Manager. A collection can use the same package step on other operating systems. The `installInto` setting and the existing service permissions also apply to these installs.
+
+Without a configured apps input, Furnish uses the person's Nix profile, or the shared `/nix/var/nix/profiles/furnish` profile when the service performs the install. Packages already installed in a profile keep that location. Steps that specify their own `nixpkgs` source or require particular versions also use the profile, where Furnish can select the requested build. Packages declared elsewhere in the configuration and programs detected through `command` keep their original ownership.
 
 Packages from the NixOS configuration (`environment.systemPackages`, `users.users.<name>.packages`) and from Home Manager show as installed, with where they come from. furnish finds them in the symlink farms NixOS and Home Manager build, such as `/run/current-system/sw`, and matches them by the package's name in nixpkgs. It doesn't install such a package a second time, doesn't update it, and refuses to uninstall it: you change it in the configuration. The app's page shows the package to remove there, for example `pkgs.jq`.
 
@@ -366,7 +368,7 @@ The furnish service ignores people's own settings for this. It takes the locatio
 
 ### Installing apps into the configuration
 
-Apps with a `Furnish/NixOS` resource (see [Writing a collection](collections.md#furnishnixos)) go into the NixOS configuration instead of a profile. furnish doesn't edit the configuration's files. Add these lines to its `flake.nix` once, next to the furnish input:
+The configuration can hold ordinary Nix packages as well as apps that declare NixOS options. [Writing a collection](collections.md#furnishnixos) describes the resources. furnish doesn't edit the configuration's files. Add these lines to its `flake.nix` once, next to the furnish input:
 
 ```nix
 inputs.furnish.url = "github:furnish-self-service/furnish";
@@ -420,7 +422,7 @@ The computer itself keeps working, also when the folder is gone, as long as its 
 
 ### Installing apps into Home Manager
 
-People who keep their programs in Home Manager can get furnish's apps there instead of in the system. furnish's flake has a Home Manager module for this, `homeManagerModules.default`. With the module set up for a person, apps with a `Furnish/NixOS` resource go into their Home Manager configuration. The setting `osSpecific.nixos.installInto` (`system` or `home`) overrides this, in the policy or on the Settings page. If an app only has options for one of the two (`options` for NixOS, `homeOptions` for Home Manager, see [Writing a collection](collections.md#furnishnixos)), it goes there if that is set up, and otherwise shows "Needs ...". A step with `onlyIfSetUp` is skipped instead.
+People who keep their programs in Home Manager can get furnish's apps there instead of in the system. furnish's flake has a Home Manager module for this, `homeManagerModules.default`. With the module set up for a person, their Home Manager configuration can receive Nix packages and apps with a `Furnish/NixOS` resource. The setting `osSpecific.nixos.installInto` (`system` or `home`) overrides this, in the policy or on the Settings page. If an app only has options for one of the two (`options` for NixOS, `homeOptions` for Home Manager, see [Writing a collection](collections.md#furnishnixos)), it goes there if that is set up, and otherwise shows "Needs ...". A step with `onlyIfSetUp` is skipped instead.
 
 #### Standalone Home Manager
 

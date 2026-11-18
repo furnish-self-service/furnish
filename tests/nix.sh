@@ -17,8 +17,10 @@ export FURNISH_DATA_DIR=/tmp/data PATH="/usr/local/bin:$PATH"
 command -v git >/dev/null || nix-env -iA nixpkgs.git >/dev/null 2>&1
 git config --global user.name t; git config --global user.email t@t; git config --global init.defaultBranch main
 mkdir -p /tmp/org/apps
-app() {  # hyperfine from a pinned nixpkgs
-    printf 'metadata: { furnish: { description: Benchmarking, categories: [Test] } }\nresources:\n  - name: hyperfine\n    type: Furnish/Package\n    properties: { name: hyperfine, packageManager: nix, nixpkgs: "github:NixOS/nixpkgs/%s" }\n' "$1" \
+app() {  # hyperfine from the default nixpkgs or a pinned branch
+    source=
+    if [ -n "${1:-}" ]; then source=", nixpkgs: \"github:NixOS/nixpkgs/$1\""; fi
+    printf 'metadata: { furnish: { description: Benchmarking, categories: [Test] } }\nresources:\n  - name: hyperfine\n    type: Furnish/Package\n    properties: { name: hyperfine, packageManager: nix%s }\n' "$source" \
         > /tmp/org/apps/hyperfine.dsc.yaml
 }
 app nixos-24.11; cd /tmp/org && git init -q && git add -A && git commit -qm old
@@ -38,4 +40,15 @@ furnish list | grep -q "↑  hyperfine" || {
 furnish install hyperfine >/dev/null || fail "update failed"
 furnish list | grep -q "✓  hyperfine" || fail "not up to date after the update"
 [ "$(profile | grep -c 'hyperfine-')" = 1 ] || fail "old version left in the profile"
+furnish uninstall hyperfine >/dev/null || fail "uninstall failed"
+if profile | grep -q hyperfine; then fail "still in the shared profile after uninstall"; fi
+echo "== no module or package source override: an ordinary package still uses the profile"
+nix --extra-experimental-features "nix-command flakes" registry add nixpkgs github:NixOS/nixpkgs/nixos-25.11
+app
+git commit -qam 'use the default nixpkgs'
+furnish collection update org >/dev/null
+furnish install hyperfine >/dev/null || fail "default Nix package install failed"
+profile | grep -q hyperfine || fail "default Nix package missing from profile"
+furnish uninstall hyperfine >/dev/null || fail "default Nix package uninstall failed"
+if profile | grep -q hyperfine; then fail "default Nix package remains after uninstall"; fi
 echo "nix OK"

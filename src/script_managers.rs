@@ -202,11 +202,16 @@ fn paths(source: &Value, verify_checkout: bool) -> Result<BTreeMap<String, Scrip
 /// Overwrite resource metadata with the scope of the document Furnish loaded. Collections
 /// select a manager by name. They never supply a backend executable in package properties.
 pub(crate) fn stamp(doc: &mut Value) {
-    fn visit(resources: &mut Value, source: &Value) {
+    fn visit(resources: &mut Value, source: &Value, service_profile: bool) {
         for r in resources.as_array_mut().into_iter().flatten() {
             if r["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case(catalog::PACKAGE_TYPE)) {
                 if let Some(props) = r["properties"].as_object_mut() {
                     props.remove("_metadata");
+                }
+                if service_profile {
+                    r["metadata"][crate::nixos_apps::SERVICE_PROFILE] = true.into();
+                } else if let Some(metadata) = r["metadata"].as_object_mut() {
+                    metadata.remove(crate::nixos_apps::SERVICE_PROFILE);
                 }
                 if source.is_null() {
                     if let Some(meta) = r["metadata"].as_object_mut() {
@@ -217,10 +222,11 @@ pub(crate) fn stamp(doc: &mut Value) {
                 }
             }
             if let Some(children) = r["properties"].get_mut("resources") {
-                visit(children, source);
+                visit(children, source, service_profile);
             }
         }
     }
     let source = doc["metadata"]["furnish"][SOURCE].clone();
-    visit(&mut doc["resources"], &source);
+    let shared = doc["metadata"]["furnish"][crate::nixos_apps::SERVICE_PROFILE] == true;
+    visit(&mut doc["resources"], &source, shared);
 }

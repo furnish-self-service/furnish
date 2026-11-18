@@ -1279,6 +1279,10 @@ impl Collection {
     pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
+        anyhow::ensure!(doc.is_object(), "the app document must be an object");
+        for (field, value) in [("metadata", &doc["metadata"]), ("metadata.furnish", &doc["metadata"]["furnish"])] {
+            anyhow::ensure!(value.is_null() || value.is_object(), "{field} must be an object");
+        }
         crate::script_managers::attach(self, &mut doc)?;
         if doc["variables"].get(crate::conditions::HOST).is_some() {
             bail!("DSC variable '{}' is supplied by furnish and cannot be redeclared", crate::conditions::HOST);
@@ -1298,6 +1302,7 @@ impl Collection {
             }
             self.check_resources(steps, allowed, &id).context("metadata.furnish.uninstall")?;
         }
+        crate::nixos_apps::stamp_packages(&mut doc, &format!("{}/{id}", self.name))?;
         let meta = &doc["metadata"]["furnish"];
         if meta.get("requiresNewSession").is_some_and(|v| !v.is_boolean()) {
             bail!("metadata.furnish.requiresNewSession must be true or false");
@@ -1641,7 +1646,15 @@ impl App {
     }
 
     pub fn doc_for(&self, values: &serde_json::Map<String, Value>) -> Value {
-        crate::options::apply(&self.doc, values)
+        let mut doc = crate::options::apply(&self.doc, values);
+        // A client checking a service-installed app should query the profile the service
+        // would change. The backend accepts this hint only for read-only operations.
+        if self.remote(values) {
+            doc["metadata"]["furnish"][crate::nixos_apps::SERVICE_PROFILE] = true.into();
+        } else if let Some(meta) = doc["metadata"]["furnish"].as_object_mut() {
+            meta.remove(crate::nixos_apps::SERVICE_PROFILE);
+        }
+        doc
     }
 
     /// `doc_for`, to run in this process: it says why the furnish service doesn't run it, for
@@ -2619,6 +2632,20 @@ mod tests {
             fs::write(dir.join(path), contents).unwrap();
         }
         (Collection { name: "c".into(), dir: dir.clone(), managed: false }, dir)
+    }
+
+    #[test]
+    fn invalid_metadata_is_rejected_before_stamping_the_app() {
+        let (mut collection, dir) = collection_with(&[("apps/app.dsc.yaml", "")]);
+        collection.managed = true;
+        let path = dir.join("apps/app.dsc.yaml");
+        for (input, expected) in [
+            ("false", "app document"), ("metadata: false", "metadata must"), ("metadata: { furnish: 1 }", "metadata.furnish must"),
+        ] {
+            fs::write(&path, input).unwrap();
+            assert!(collection.load_app(&path).err().unwrap().to_string().contains(expected));
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod locale;
 pub mod nixos;
 pub mod nixos_apps;
 pub mod options;
+mod nix_profile;
 mod package_names;
 mod script_managers;
 pub(crate) mod platform;

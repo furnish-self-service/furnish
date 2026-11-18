@@ -1053,7 +1053,7 @@ fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
             }
             let mut single = doc.clone();
             if let Some(route) = single.pointer_mut("/metadata/furnish/outsideService")
-                && route["reason"] == "perUser" && resource["type"] == "Furnish/NixOS"
+                && route["reason"] == "perUser" && nix_step(&resource)
             {
                 route["step"] = resource["name"].clone();
                 route["uninstall"] = uninstall.into();
@@ -1064,6 +1064,10 @@ fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
         .collect())
 }
 
+fn nix_step(resource: &Value) -> bool {
+    matches!(resource["type"].as_str(), Some("Furnish/NixOS" | crate::catalog::PACKAGE_TYPE))
+}
+
 /// Reconstruct the requested install or removal step from the service's trusted document. DSC
 /// resolves expressions with the accepted options and checks the condition before anything changes.
 pub(crate) fn apply_nixos_step(doc: &Value, request: &crate::nixos_apps::ServiceStep) -> Result<()> {
@@ -1071,13 +1075,24 @@ pub(crate) fn apply_nixos_step(doc: &Value, request: &crate::nixos_apps::Service
     let steps = step_docs(doc, request.uninstall)?;
     let mut matches = steps.iter().filter(|s| {
         let resource = &s["resources"][0];
-        resource["type"] == "Furnish/NixOS" && resource["name"] == request.step
+        nix_step(resource) && resource["name"] == request.step
     });
     let step = matches.next().context("no such Furnish/NixOS step in the current preset app")?;
     if matches.next().is_some() {
         anyhow::bail!("ambiguous Furnish/NixOS step '{}'", request.step);
     }
-    let step = applicable(step).context("the requested Furnish/NixOS step does not apply here")?;
+    let mut step = applicable(step).context("the requested Nix step does not apply here")?;
+    if step["resources"][0]["type"] == crate::catalog::PACKAGE_TYPE {
+        // The native package resource will re-resolve the manager and refuse any operation
+        // other than the fingerprinted packages-only declaration, including script managers.
+        // DSC still checks the actual step condition and validates/evaluates the properties.
+        let resource = &mut step["resources"][0];
+        anyhow::ensure!(resource["directives"]["requireAdapter"].is_null(), "a delegated Nix package must use the built-in resource");
+        resource["metadata"][crate::nixos_apps::PACKAGE_FINGERPRINT] = request.fingerprint.clone().into();
+        let result = configurator(&step)?.invoke_set(true)?;
+        anyhow::ensure!(result.results.len() == 1, "the requested Nix package does not apply here");
+        return Ok(());
+    }
     let states = test(&step)?;
     let [state] = states.as_slice() else { anyhow::bail!("the requested Furnish/NixOS step does not apply here") };
     crate::nixos_apps::apply_service_step(&state.desired, &request.fingerprint)

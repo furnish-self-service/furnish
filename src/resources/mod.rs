@@ -81,6 +81,9 @@ pub fn dispatch() -> Option<u8> {
 }
 
 fn run(args: &[String]) -> Result<String> {
+    if let [kind, manifest, name] = args && kind == "nix-profile-version" {
+        return crate::nix_profile::version(Path::new(manifest), name);
+    }
     if let [kind, op] = args && kind == "installer-download" {
         return crate::installer_download::command(op);
     }
