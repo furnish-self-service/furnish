@@ -6,7 +6,10 @@
 # added herself is refused with a message that names it, and an uninstall with other changes in
 # the repository leaves flake.lock uncommitted. A configuration in /etc/nixos that wheel can change
 # (root:wheel 2775) is rebuilt for alice, a member of wheel, which the module trusts because sudo
-# lets wheel become root; another group that can change it is refused. Run:
+# lets wheel become root; another group that can change it is refused. As an admin's clone of it
+# would be, its files and git folder belong to alice and only the folder itself to root (#24):
+# root's git and Nix use it because alice is in wheel, and refuse it when the git folder belongs
+# to bob, who isn't. Run:
 #   nix build -L .#checks.x86_64-linux.nixos-install
 { pkgs, nixpkgs, nixosModule, furnish, module }:
 let
@@ -121,14 +124,25 @@ pkgs.testers.runNixOSTest {
     assert sorted(status.split()) == ["M", "M", "configuration.nix", "flake.lock"], status
 
     # A configuration the admins share (#21): /etc/nixos as root:wheel 2775. sudo lets wheel run
-    # any command as root, so the module trusts wheel, and alice, a member, installs into it.
+    # any command as root, so the module trusts wheel, and alice, a member, installs into it. Its
+    # files and git folder are alice's, as after she cloned it (#24): root's git and Nix refuse
+    # such a repository unless furnish allows it with safe.directory.
     facts = json.loads(machine.succeed("cat /etc/furnish/nixos.json"))
     assert facts["nix"]["trustedGroups"] == ["wheel"], facts
     machine.succeed(
         "mkdir -p /etc/nixos && cp -a /home/alice/cfg/. /etc/nixos/",
-        "chown -R root:wheel /etc/nixos && chmod -R g+rwX /etc/nixos && find /etc/nixos -type d -exec chmod 2775 {} +",
-        "cd /etc/nixos && git add -A && git commit -qm shared",
+        "chown -R alice:wheel /etc/nixos && chown root /etc/nixos",
+        "chmod -R g+rwX /etc/nixos && find /etc/nixos -type d -exec chmod 2775 {} +",
+        # git refuses a work tree of root's to alice too, so she allows it herself, as admins do.
+        "su - alice -c 'git config --global --add safe.directory /etc/nixos'",
+        "su - alice -c 'cd /etc/nixos && git add -A && git commit -qm shared'",
     )
+    owners = machine.succeed("stat -c %U:%G /etc/nixos/.git /etc/nixos/flake.lock /etc/nixos/flake.nix").split()
+    assert set(owners) == {"alice:wheel"}, owners
+
+    def shared(cmd):
+        return machine.succeed(f"su - alice -c 'cd /etc/nixos && {cmd}'")
+
     # furnish looks there now: the module's two files, changed as if it said /etc/nixos.
     policy = json.loads(machine.succeed("cat /etc/furnish/policy.json"))
     policy["osSpecific"]["nixos"]["configuration"]["value"] = "/etc/nixos"
@@ -138,8 +152,20 @@ pkgs.testers.runNixOSTest {
     machine.succeed("systemctl restart furnish")
     print(machine.succeed("su - alice -c 'furnish install htop' 2>&1"))
     assert list(apps()) == ["htop"] and system() == "${after}", system()
-    assert machine.succeed("git -C /etc/nixos log -1 --format=%s").strip() == "furnish: install htop"
-    assert machine.succeed("git -C /etc/nixos status --porcelain").strip() == ""
+    assert shared("git log -1 --format=%s").strip() == "furnish: install htop"
+    assert shared("git status --porcelain").strip() == ""
+    # What root's commit added to the git folder stays the group's, and flake.lock alice's.
+    added = machine.succeed("find /etc/nixos/.git -user root -type d ! -perm -g+w").strip()
+    assert added == "", added
+    assert machine.succeed("stat -c %U /etc/nixos/flake.lock").strip() == "alice"
+    shared("echo '# alice' >> configuration.nix && git commit -qam 'a change of alice'")
+
+    # The git folder belongs to bob, who isn't in wheel: root's git doesn't run in it.
+    machine.succeed("chown bob /etc/nixos/.git")
+    out = machine.fail("su - alice -c 'furnish uninstall htop' 2>&1")
+    assert "/etc/nixos/.git belongs to bob" in out and "trustedGroups" in out, out
+    assert list(apps()) == ["htop"] and system() == "${after}"
+    machine.succeed("chown alice /etc/nixos/.git")
 
     # Another group that can change the folder: refused, and the message says how to trust it.
     machine.succeed("chgrp users /etc/nixos")
