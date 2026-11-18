@@ -1,10 +1,7 @@
 #!/bin/sh
 # Furnish/Package: manage a package with the system package manager.
-# DSC passes the resource properties as env vars: $name, $packageManager (optional: pacman, apt,
-# dnf, zypper, brew, nix; default: the first one found), $<manager>Name (optional: the package's
-# name for that package manager, e.g. nixName), $nixpkgs (optional flake reference), $command
-# (optional: a program the package provides), $_exist, and from furnish's required versions
-# $reportVersions and $targetVersion (see furnish-common.sh).
+# The native resource passes its resolved package name and manager, plus optional
+# nixpkgs, command, _exist, reportVersions and targetVersion (see furnish-common.sh).
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
@@ -32,7 +29,7 @@ uniq_words() {
 # `-` (checked again below); `--` before it where the tool takes that.
 use_pacman() {
     have pacman || return 1
-    via=pacman manager=pacman admin=true
+    manager=pacman via=pacman admin=true
     installed_version() { pacman -Q -- "$name" 2>/dev/null | cut -d' ' -f2; }
     do_install() { run_step pacman -S --noconfirm --needed -- "$name"; }
     do_remove() { run_step pacman -R --noconfirm -- "$name"; }
@@ -45,7 +42,7 @@ use_pacman() {
 }
 use_apt() {
     have apt-get || return 1
-    via=apt manager=apt admin=true
+    manager=apt via=apt admin=true
     installed_version() { dpkg-query -W -f='${db:Status-Status} ${Version}' -- "$name" 2>/dev/null | sed -n 's/^installed //p'; }
     do_install() { run_step env DEBIAN_FRONTEND=noninteractive apt-get install -y -- "$name"; }
     do_remove() { run_step env DEBIAN_FRONTEND=noninteractive apt-get remove -y -- "$name"; }
@@ -63,7 +60,7 @@ use_apt() {
 }
 use_dnf() {
     have dnf || return 1
-    via=dnf manager=dnf admin=true
+    manager=dnf via=dnf admin=true
     installed_version() { rpm_version; }
     do_install() { run_step dnf install -y -- "$name"; }
     do_remove() { run_step dnf remove -y -- "$name"; }
@@ -88,7 +85,7 @@ dnf_versions() {
 }
 use_zypper() {
     have zypper || return 1
-    via=zypper manager=zypper admin=true
+    manager=zypper via=zypper admin=true
     installed_version() { rpm_version; }
     do_install() { run_step zypper --non-interactive install -- "$name"; }
     do_remove() { run_step zypper --non-interactive remove -- "$name"; }
@@ -135,7 +132,7 @@ use_brew() {
             have brew || return 1
         fi
     fi
-    via=Homebrew manager=brew admin=false # Homebrew refuses to run as root
+    manager=brew via=Homebrew admin=false # Homebrew refuses to run as root
     # A cask (an app such as tunnelblick) is listed only with --cask when it is named.
     installed_version() {
         { run_brew command list --versions "$name" || run_brew command list --cask --versions "$name"; } 2>/dev/null | head -n 1 | cut -d' ' -f2
@@ -221,7 +218,7 @@ use_nix() {
     # neither installs it again nor removes or updates it (see furnish-nix.sh).
     have nix || return 1
     . "$(dirname "$0")/furnish-nix.sh"
-    via=nix manager=nix admin=false declared_in=
+    manager=nix via=nix admin=false declared_in=
     # Add to the user's settings rather than replacing them.
     export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG
 }extra-experimental-features = nix-command flakes"
@@ -317,10 +314,8 @@ zypper) use_zypper || need="zypper (openSUSE)" ;;
 brew) use_brew || need="Homebrew (brew)" ;;
 nix) use_nix || need="Nix" ;;
 '')
-    use_pacman || use_apt || use_dnf || use_zypper || use_brew || use_nix || {
-        if [ "$(uname -s)" = Darwin ]; then need="Homebrew (brew)"
-        else need="a package manager (pacman, apt, dnf, zypper or nix)"; fi
-    }
+    if [ "$(uname -s)" = Darwin ]; then need="Homebrew (brew)"
+    else need="a package manager (pacman, apt, dnf, zypper or nix)"; fi
     ;;
 *) fail 10 "unknown packageManager '$packageManager' (pacman, apt, dnf, zypper, brew, nix)" ;;
 esac
@@ -331,10 +326,6 @@ if [ -n "$need" ]; then
     via=$need admin=false
     installed_version() { :; }
     install_desc="(needs $need)" remove_desc=$install_desc
-else
-    # A package can have another name per package manager (e.g. code / vscode).
-    eval "override=\${${manager}Name:-}"
-    if [ -n "$override" ]; then name=$override subject=$override; fi
 fi
 # Not an option to the package manager (the schema says so too; this holds without it).
 case $name in -*) fail 10 "package name starts with '-': $name" ;; esac

@@ -135,12 +135,36 @@ resources:
     properties: { name: required-tool, versions: [">=2.0"] }
 YAML
 fi
+# Exercise the running distribution ID and parameter values through real DSC on Linux.
+distro=
+if ! $real && [ "$(uname -s)" = Linux ]; then
+    release=/etc/os-release
+    [ -e "$release" ] || release=/usr/lib/os-release
+    if [ -r "$release" ]; then distro=$( ( unset ID; . "$release"; printf '%s' "${ID:-}" ) ); fi
+fi
+if [ -n "$distro" ]; then
+    cat > "$tmp/repo/apps/distro-package.dsc.yaml" <<YAML
+parameters:
+  backend: { type: string, defaultValue: pacman }
+  nativeName: { type: string, defaultValue: native-distro-tool }
+metadata: { furnish: { description: Package selected by distribution, categories: [Test] } }
+resources:
+  - name: native-package
+    type: Furnish/Package
+    properties:
+      name: generic-tool
+      packageManager: "[parameters('backend')]"
+      namesByDistribution: { "$distro": "[parameters('nativeName')]" }
+      namesByManager: { pacman: manager-tool }
+      versions: [">=1.0"]
+YAML
+fi
 # Pinning: a package with two versions on offer, asked from the resource itself.
 pin_pkg= pin_version=
 if $real && [ "$(id -u)" = 0 ] && { command -v apt-get || command -v dnf || command -v zypper; } >/dev/null 2>&1; then
-    res="$(dirname "$0")/../resources/unix/furnish-package.dsc.resource.sh"
+    backend_dir="$(dirname "$0")/../resources/unix"
     for p in tzdata hyperfine; do
-        state=$(name=$p reportVersions=all sh "$res" get 2>/dev/null) || continue
+        state=$(cd "$backend_dir" && printf '{"name":"%s","reportVersions":"all"}\n' "$p" | "$furnish" dsc-resource package get 2>/dev/null) || continue
         latest=$(printf '%s' "$state" | sed -n 's/.*"latestVersion":"\([^"]*\)".*/\1/p')
         for v in $(printf '%s' "$state" | sed -n 's/.*"availableVersions":\[\([^]]*\)\].*/\1/p' | tr -d '"' | tr ',' ' '); do
             [ "$v" != "$latest" ] && { pin_pkg=$p pin_version=$v; break 2; }
@@ -366,12 +390,16 @@ step option set fixture role developer >/dev/null
 expect "$(step list)" "·  hyperfine"
 expect "$(step list)" "–  nowhere"
 if step install nowhere >/dev/null 2>&1; then echo "FAIL: installing an unavailable app succeeded" >&2; exit 1; fi
-expect "$(step install hyperfine --dry-run)" "+ install"
+plan=$(step install hyperfine --dry-run)
+expect "$plan" "+ install"
+if command -v cygpath >/dev/null; then expect "$plan" "winget install --exact --id sharkdp.hyperfine "; fi
 expect "$(step list)" "·  hyperfine"   # a preview changes nothing
 expect "$(step install hyperfine)" "Installed hyperfine"
 expect "$(step list)" "✓  hyperfine"
 expect "$(step install fixture/hyperfine)" "already installed"
-expect "$(step uninstall hyperfine --dry-run)" "- remove"
+plan=$(step uninstall hyperfine --dry-run)
+expect "$plan" "- remove"
+if command -v cygpath >/dev/null; then expect "$plan" "winget uninstall --exact --id sharkdp.hyperfine "; fi
 expect "$(step list)" "✓  hyperfine"
 expect "$(step uninstall hyperfine)" "Uninstalled hyperfine"
 expect "$(step list)" "·  hyperfine"
@@ -383,7 +411,7 @@ if ! $real; then
     out=$(step install brewed)
     expect "$out" "brewed needs homebrew first"
     expect "$out" "Installed brewed"
-    [ -f "$tmp/brew-pkgs/brewed-tool" ] && [ ! -f "$tmp/brew-pkgs/brewed-generic" ] || { echo "FAIL: brewName not used" >&2; exit 1; }
+    [ -f "$tmp/brew-pkgs/brewed-tool" ] && [ ! -f "$tmp/brew-pkgs/brewed-generic" ] || { echo "FAIL: wrong Homebrew package name" >&2; exit 1; }
     expect "$(step list)" "✓  brewed"
     expect "$(step list)" "·  brew-only"   # brew is there now
     step uninstall brewed >/dev/null && step uninstall homebrew >/dev/null
@@ -423,13 +451,13 @@ if ! $real; then
     # from the Finder doesn't have on its PATH.
     mkdir -p "$tmp/home/.local/bin"
     printf '#!/bin/sh\n' > "$tmp/home/.local/bin/elsewhere-tool" && chmod +x "$tmp/home/.local/bin/elsewhere-tool"
-    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
+    out=$(HOME="$tmp/home" packageManager=pacman name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
     expect "$out" "\"_exist\":true,\"managedBy\":\"other\",\"path\":\"$tmp/home/.local/bin/elsewhere-tool\""
-    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" test)
+    out=$(HOME="$tmp/home" packageManager=pacman name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" test)
     expect "$out" '"_inDesiredState":true'
     # Not something else that happens to carry the name.
     rm "$tmp/home/.local/bin/elsewhere-tool" && mkdir "$tmp/home/.local/bin/elsewhere-tool"
-    out=$(HOME="$tmp/home" name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
+    out=$(HOME="$tmp/home" packageManager=pacman name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)
     expect "$out" '"_exist":false'
     if (name=x command=../x sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get) >/dev/null 2>&1; then
         echo "FAIL: a command with a path was accepted" >&2; exit 1
@@ -483,12 +511,25 @@ if ! $real; then
     step uninstall homebrew >/dev/null
 fi
 
-# A per-package-manager name: the fake pacman gets pacmanName (fake package managers only).
+# The resolved name reaches both the preview and the actual package manager.
 if ! $real; then
+    expect "$(step install renamed --dry-run)" "pacman -S --noconfirm --needed renamed$"
     expect "$(step install renamed)" "Installed renamed"
-    [ -f "$tmp/pkgs/renamed" ] && [ ! -f "$tmp/pkgs/renamed-generic" ] || { echo "FAIL: pacmanName not used" >&2; exit 1; }
+    [ -f "$tmp/pkgs/renamed" ] && [ ! -f "$tmp/pkgs/renamed-generic" ] || { echo "FAIL: wrong pacman package name" >&2; exit 1; }
     expect "$(step list)" "✓  renamed"
+    expect "$(step uninstall renamed --dry-run)" "pacman -R --noconfirm renamed$"
     expect "$(step uninstall renamed)" "Uninstalled renamed"
+    [ ! -f "$tmp/pkgs/renamed" ] || { echo "FAIL: renamed package still installed" >&2; exit 1; }
+fi
+
+if [ -n "$distro" ]; then
+    expect "$(step install distro-package --dry-run)" "pacman -S --noconfirm --needed native-distro-tool$"
+    expect "$(step install distro-package)" "Installed distro-package"
+    [ -f "$tmp/pkgs/native-distro-tool" ] || { echo "FAIL: wrong distribution package" >&2; exit 1; }
+    echo 2.0 > "$tmp/pkgs/native-distro-tool.new"
+    expect "$(step install distro-package --dry-run)" "Update native-distro-tool from 1.0 to 2.0"
+    expect "$(step uninstall distro-package)" "Uninstalled distro-package"
+    [ ! -e "$tmp/pkgs/native-distro-tool" ] || { echo "FAIL: distribution package still installed" >&2; exit 1; }
 fi
 
 # Kits (fake package manager only: the fixture's packages don't exist for real).

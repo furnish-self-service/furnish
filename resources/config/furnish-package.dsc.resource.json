@@ -1,41 +1,45 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/Package",
-  "description": "Install or remove a package with the system package manager (pacman, apt, dnf, zypper, brew, nix)",
+  "description": "Manage a package with the system package manager",
   "version": "0.1.0",
   "get": {
-    "executable": "furnish-package.dsc.resource.sh",
+    "executable": "furnish",
     "args": [
+      "dsc-resource",
+      "package",
       "get"
     ],
-    "input": "env"
+    "input": "stdin"
   },
   "test": {
-    "executable": "furnish-package.dsc.resource.sh",
+    "executable": "furnish",
     "args": [
+      "dsc-resource",
+      "package",
       "test"
     ],
-    "input": "env",
+    "input": "stdin",
     "return": "state"
   },
   "set": {
-    "executable": "furnish-package.dsc.resource.sh",
+    "executable": "furnish",
     "args": [
+      "dsc-resource",
+      "package",
       "set",
       {
         "whatIfArg": "--what-if"
       }
     ],
-    "input": "env",
+    "input": "stdin",
     "handlesExist": true,
     "implementsPretest": true,
     "return": "state"
   },
   "exitCodes": {
     "0": "Success",
-    "10": "Invalid arguments",
-    "12": "Cancelled: administrator rights were not granted",
-    "13": "Cancelled: stopped by the user"
+    "10": "Invalid arguments"
   },
   "schema": {
     "embedded": {
@@ -49,8 +53,38 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Package name",
+          "description": "Default package name or winget ID",
           "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
+        },
+        "namesByDistribution": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z0-9._-]+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
+          },
+          "description": "Package names by Linux os-release ID, then ID_LIKE in order"
+        },
+        "namesByManager": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "pacman",
+              "apt",
+              "dnf",
+              "zypper",
+              "brew",
+              "nix",
+              "winget"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
+          },
+          "description": "Package names by backend when no distribution name matches"
         },
         "version": {
           "type": "string",
@@ -98,43 +132,14 @@
             "dnf",
             "zypper",
             "brew",
-            "nix"
+            "nix",
+            "winget"
           ],
           "description": "Use this package manager (default: the first one found)"
         },
         "_inDesiredState": {
           "type": "boolean",
           "readOnly": true
-        },
-        "pacmanName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when pacman installs it (default: name)"
-        },
-        "aptName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when apt installs it (default: name)"
-        },
-        "dnfName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when dnf installs it (default: name)"
-        },
-        "zypperName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when zypper installs it (default: name)"
-        },
-        "brewName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when brew installs it (default: name)"
-        },
-        "nixName": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$",
-          "description": "Package name when nix installs it (default: name)"
         },
         "nixpkgs": {
           "type": "string",

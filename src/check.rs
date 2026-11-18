@@ -224,7 +224,19 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     }
 
     let mut values = collection_values.clone();
-    values.extend(crate::options::values(&app.options()));
+    let options = app.options();
+    values.extend(crate::options::values(&options));
+    let previews = SYSTEMS.map(|system| {
+        let mut preview = crate::conditions::Preview::new(system, &values);
+        for option in &options {
+            if option.source == crate::options::Source::Default && !collection_values.contains_key(&option.name)
+                && let Some(expr) = app.doc["parameters"][&option.name]["defaultValue"].as_str().filter(|s| s.starts_with('['))
+            {
+                preview.default(&option.name, expr);
+            }
+        }
+        (system, preview)
+    });
 
     // DSC reads the document as furnish would run it.
     if let Err(err) = crate::engine::validate(&app.doc_for(&values)) {
@@ -247,8 +259,8 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
             check_resources(steps, "removal step ", dir, &mut findings);
             for r in steps {
                 if let Some(condition) = r["condition"].as_str() {
-                    for system in SYSTEMS {
-                        if let Err(err) = crate::options::condition_holds(&on_system(condition, system), &values) {
+                    for (_, preview) in &previews {
+                        if let Err(err) = preview.condition(condition) {
                             let name = r["name"].as_str().unwrap_or("?");
                             findings.push(error(format!("removal step {name}: condition {condition}: {err:#}")));
                             break;
@@ -279,15 +291,16 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     }
 
     let mut systems = Vec::new();
-    for system in SYSTEMS {
+    for (system, preview) in &previews {
         let mut runs = Vec::new();
         for r in &resources {
             let name = r["name"].as_str().unwrap_or("?").to_string();
             match r["condition"].as_str() {
                 None => runs.push(name),
-                Some(condition) => match crate::options::condition_holds(&on_system(condition, system), &values) {
-                    Ok(true) => runs.push(name),
-                    Ok(false) => {}
+                Some(condition) => match preview.condition(condition) {
+                    Ok(Some(true)) => runs.push(name),
+                    Ok(Some(false)) => {}
+                    Ok(None) => runs.push(format!("{name} (depends on host)")),
                     Err(err) => {
                         findings.push(error(format!("{name}: condition {condition}: {err:#}")));
                         break;
@@ -295,7 +308,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
                 },
             }
         }
-        systems.push((system, runs));
+        systems.push((*system, runs));
     }
     if systems.iter().all(|(_, runs)| runs.is_empty()) {
         findings.push(warning("no resource applies on Windows, macOS or Linux: furnish hides the app everywhere"));
@@ -377,12 +390,6 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
     }
 }
 
-/// The condition as it evaluates on another system: `context().os.family` replaced by its name.
-/// ponytail: textual; conditions on other context (os.version, architecture) use this computer's.
-fn on_system(condition: &str, system: &str) -> String {
-    condition.replace("context().os.family", &format!("'{system}'"))
-}
-
 /// A dependency cycle through `app`, e.g. [a, b, a]. Depth-first; each app is explored once (an app
 /// fully explored without reaching `app` can't lead back to it), so diamonds stay linear.
 fn cycle(app: &App, apps: &[App]) -> Option<Vec<String>> {
@@ -456,10 +463,8 @@ mod tests {
     #[test]
     fn conditions_evaluate_per_system() {
         let windows_only = "[equals(context().os.family, 'Windows')]";
-        assert_eq!(on_system(windows_only, "Linux"), "[equals('Linux', 'Windows')]");
-        let values = Map::new();
-        assert!(!crate::options::condition_holds(&on_system(windows_only, "Linux"), &values).unwrap());
-        assert!(crate::options::condition_holds(&on_system(windows_only, "Windows"), &values).unwrap());
+        assert_eq!(crate::conditions::Preview::new("Linux", &Map::new()).condition(windows_only).unwrap(), Some(false));
+        assert_eq!(crate::conditions::Preview::new("Windows", &Map::new()).condition(windows_only).unwrap(), Some(true));
     }
 
     fn app(id: &str, deps: &[String]) -> App {

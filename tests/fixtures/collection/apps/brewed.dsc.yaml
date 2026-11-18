@@ -1,5 +1,5 @@
 # Needs Homebrew; depends on the homebrew app, so installing it installs that first. Homebrew
-# knows it by another name (brewName).
+# knows it by another name (namesByManager.brew).
 metadata:
   furnish:
     description: A tool installed with Homebrew
@@ -13,5 +13,5 @@ resources:
     condition: "[not(equals(context().os.family, 'Windows'))]"
     properties:
       name: brewed-generic
-      brewName: brewed-tool
+      namesByManager: { brew: brewed-tool }
       packageManager: brew

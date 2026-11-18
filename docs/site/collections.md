@@ -30,19 +30,37 @@ metadata:
 resources:
   - name: GIMP
     type: Furnish/Package
-    condition: "[not(equals(context().os.family, 'Windows'))]"
     properties:
       name: gimp
-  - name: GIMP (winget)
-    type: Furnish/Package
-    condition: "[equals(context().os.family, 'Windows')]"
-    properties:
-      name: GIMP.GIMP.3
+      namesByManager:
+        winget: GIMP.GIMP.3
 ```
 
 furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
+
+### Host information
+
+Resource steps and dependencies can use the DSC variable `variables('furnish.host')` to choose an install method for the current computer.
+
+| Field | Value |
+|---|---|
+| `distribution` | Linux distribution ID from `os-release`, such as `fedora`, or an empty string when unavailable |
+| `distributionLike` | Ordered list of Linux distribution IDs from `ID_LIKE`, or an empty list when unavailable |
+| `packageManagers` | List of supported package managers available to the account running Furnish |
+
+For a step specific to Fedora and its derivatives, check both the exact ID and its parents:
+
+```yaml
+condition: "[or(equals(variables('furnish.host').distribution, 'fedora'), contains(variables('furnish.host').distributionLike, 'fedora'))]"
+```
+
+To prefer Nix wherever it is available, give the Nix step this condition and set `packageManager: nix`. Use the negated condition for the alternative step:
+
+```yaml
+condition: "[contains(variables('furnish.host').packageManagers, 'nix')]"
+```
 
 ### Installing for one person
 
@@ -72,12 +90,30 @@ Installs a package with the system's package manager: winget on Windows; on macO
 
 | Property | Meaning |
 |---|---|
-| `name` | The package's name |
+| `name` | The default package name (required) |
 | `packageManager` | Use this package manager, not the first one found |
-| `pacmanName`, `aptName`, `dnfName`, `zypperName`, `brewName`, `nixName` | The package's name with that package manager, if it differs, for example `pacmanName: libreoffice-fresh` |
+| `namesByDistribution` | Package names keyed by Linux distribution ID, including IDs used by your organization |
+| `namesByManager` | Package names keyed by package manager, such as `brew`, `pacman` or `winget` |
 | `nixpkgs` | The flake to install Nix packages from (default: the registry's `nixpkgs`) |
 | `command` | A program the package provides, for example `claude`. If the package manager doesn't have the package but the program is there, the app shows as installed outside furnish |
 | `versions` | The versions that are acceptable (see [Required versions](#required-versions)) |
+
+Furnish first looks up the Linux distribution's `ID` from `os-release`, then each entry in `ID_LIKE` in the order the distribution lists them. If none match, it looks up the selected package manager in `namesByManager`, then falls back to `name`. macOS and Windows start with the package manager lookup.
+
+```yaml
+- name: Company tools
+  type: Furnish/Package
+  properties:
+    name: company-tools
+    namesByDistribution:
+      acme-linux: acme-workstation-tools
+      debian: company-tools-deb
+    namesByManager:
+      brew: company-cli
+      winget: Acme.CompanyTools
+```
+
+When migrating an existing collection, move each per-manager property into `namesByManager`. For example, replace `pacmanName: libreoffice-fresh` with `namesByManager: { pacman: libreoffice-fresh }`.
 
 Many tools are also installed some other way: with npm or pip, with the vendor's own installer, or with another package manager. With `command`, such an app shows as installed outside furnish, and furnish neither installs it a second time nor updates or removes it. furnish looks for the program on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (on Windows, in `~\.local\bin` and npm's folder in `%APPDATA%`), and never runs it. If the package manager is missing, the app shows as installed when the program is there, and as needing the package manager when it isn't.
 
@@ -591,8 +627,11 @@ metadata:
     dependencies:
       - app: homebrew
         required: true
+        condition: "[equals(context().os.family, 'macOS')]"
       - app: fonts
 ```
+
+A dependency can have a DSC `condition`, whether it is required or optional. Furnish includes the dependency when the expression is true and skips it when false. In this example, only macOS requires Homebrew, and fonts are optional on every system. Conditions can also use the app’s parameters and the [host information](#host-information) available to resource steps.
 
 If a resource needs a tool that is missing, such as Homebrew on a Mac, the app shows "Needs Homebrew" instead of an Install button. A dependency can install the tool.
 
@@ -742,7 +781,7 @@ furnish-check:
     - furnish check
 ```
 
-Conditions are evaluated for each system by putting the system's name in place of `context().os.family`. Conditions on other details, such as the system's version, are evaluated for the computer `furnish check` runs on.
+The preview evaluates `context().os.family` for each system. It marks a step `(depends on host)` when its result depends on the target computer's distribution or available package managers. Other details, such as the system version, come from the computer running `furnish check`.
 
 ## Private repositories
 

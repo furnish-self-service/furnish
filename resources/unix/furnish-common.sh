@@ -77,12 +77,13 @@ as_root() {
 }
 
 # pkexec exits 126 (dialog dismissed) or 127 (not authorized) without running anything:
-# that is the user saying no, not a failure. Exit 12 tells furnish the step was cancelled.
+# that is the user saying no. Report cancellation to DSC from the branch that detected it:
+# package managers can also return 12 or 13 for a failure of their own.
 pkexec_or_cancel() {
     rc=0
     pkexec "$@" || rc=$?
     if [ "$rc" = 126 ] || [ "$rc" = 127 ]; then
-        echo '{"warn":"administrator rights were not granted"}' >&2
+        echo "furnish: Cancelled: administrator rights were not granted" >&2
         exit 12
     fi
     return "$rc"
@@ -94,7 +95,11 @@ pkexec_or_cancel() {
 # non-interactive shells start background jobs with SIGINT ignored.
 WATCH='stop=$1; shift; "$@" & pid=$!
 while kill -0 "$pid" 2>/dev/null; do
-    if [ -n "$stop" ] && [ -e "$stop" ]; then kill -TERM "$pid"; wait "$pid"; exit 13; fi
+    if [ -n "$stop" ] && [ -e "$stop" ]; then
+        kill -TERM "$pid"; wait "$pid"
+        echo "furnish: Cancelled: stopped by the user" >&2
+        exit 13
+    fi
     sleep 0.3
 done
 wait "$pid"'
