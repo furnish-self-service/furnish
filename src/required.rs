@@ -860,7 +860,9 @@ pub fn carry(current: &Value, earlier: &mut Value) {
 pub fn check(name: &str, kind: &str, properties: &Value) -> Vec<(bool, String)> {
     let Some(Ok(entries)) = properties.get(PROPERTY).filter(|_| applies_to(kind)).map(parse) else { return vec![] };
     let file = properties["file"].as_str().filter(|_| kind == crate::catalog::INSTALLER_TYPE);
-    let scheme = file.map_or(Scheme::Generic, Scheme::of_file);
+    let download = properties["url"].as_str().filter(|_| kind == crate::catalog::INSTALLER_TYPE);
+    let path = file.or_else(|| download.map(|url| url.split('?').next().unwrap_or(url)));
+    let scheme = path.map_or(Scheme::Generic, Scheme::of_file);
     let mut findings: Vec<(bool, String)> = entries
         .iter()
         .filter(|e| never_matches(e, scheme))

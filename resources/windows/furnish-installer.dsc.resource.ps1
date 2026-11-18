@@ -1,4 +1,4 @@
-# Furnish/Installer on Windows: install an .msi or .exe shipped in the collection.
+# Furnish/Installer on Windows: install an .msi or .exe from the collection or a pinned URL.
 # furnish passes `file` as an absolute path inside the collection. DSC passes the resource
 # properties as env vars: file, productCode (.msi, optional), displayName and installArgs
 # (.exe), uninstallArgs (.exe, optional), _exist, and from furnish's required versions:
@@ -18,8 +18,34 @@ function Fail([int]$Code, [string]$Message) {
     [Console]::Error.WriteLine((@{ error = $Message } | ConvertTo-Json -Compress)); exit $Code
 }
 
+function Resolve-Download([string]$Action) {
+    if (-not $env:FURNISH_EXE) { Fail 10 'FURNISH_EXE is missing' }
+    # Windows PowerShell otherwise decodes native stdout with the console code
+    # page. Furnish returns a UTF-8 path, including the user's profile name.
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $env:FURNISH_EXE
+    $start.Arguments = "dsc-resource installer-download $Action"
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $path = $process.StandardOutput.ReadToEnd().TrimEnd([char[]]"`r`n")
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+    } finally {
+        $process.Dispose()
+    }
+    if (-not $path) { Fail 10 'could not resolve the installer download' }
+    return $path
+}
+
 $file = $env:file
-if (-not $file) { Fail 10 'property file is required' }
+if ($env:url) {
+    if ($file -or -not $env:sha256) { Fail 10 'use either file or url with sha256' }
+    $file = Resolve-Download lookup
+} elseif (-not $file -or $env:sha256) { Fail 10 'use either file or url with sha256' }
 $report = $env:reportVersions
 $target = $env:targetVersion
 if ($report -and $report -cnotin 'latest', 'all') { Fail 10 "reportVersions must be latest or all: $report" }
@@ -29,7 +55,7 @@ $manager = 'its installer'
 $fileVersion = $null
 function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     # Echo back every identifying property: DSC's test compares each desired property with the state.
-    $state = [ordered]@{ file = $file }
+    $state = if ($env:url) { [ordered]@{ url = $env:url; sha256 = $env:sha256 } } else { [ordered]@{ file = $file } }
     foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
         $v = [Environment]::GetEnvironmentVariable($p)
         if ($null -ne $v) { $state[$p] = $v }
@@ -47,14 +73,14 @@ function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     [Console]::Out.WriteLine(($state | ConvertTo-Json -Compress -Depth 4))
 }
 
-$subject = Split-Path -Leaf $file
+$subject = if ($env:url) { [IO.Path]::GetFileName(([uri]$env:url).AbsolutePath) } else { Split-Path -Leaf $file }
 # A link (symbolic link, junction) could point anywhere outside the collection. GetAttributes reads
 # the link itself, so a dangling one counts too; it throws only when nothing is there.
 $attributes = try { [IO.File]::GetAttributes($file) } catch { $null }
 if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) {
     Fail 10 "installer is a symbolic link: $file"
 }
-if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+if (-not $env:url -and -not (Test-Path -LiteralPath $file -PathType Leaf)) {
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
     if ($Operation -eq 'get') { Write-State ''; exit 0 }
@@ -68,7 +94,7 @@ if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
     }
     Fail 11 "installer not found: $file"
 }
-if ((Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue) -like 'version https://git-lfs*') {
+if (-not $env:url -and (Get-Content -LiteralPath $file -TotalCount 1 -ErrorAction SilentlyContinue) -like 'version https://git-lfs*') {
     [Console]::Error.WriteLine("furnish: needs git-lfs to download $subject (install it, then update the collection)"); exit 11
 }
 
@@ -81,10 +107,28 @@ function Find-Installed([scriptblock]$Match) {
     Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue | Where-Object $Match | Select-Object -First 1
 }
 
+# A supplied registry identity lets us skip the download when the app is already installed.
+# Always verify the payload before passing it to an elevated installer.
+function Get-InstallFile($Installed) {
+    if ($env:url -and $Operation -eq 'set' -and $Mode -ne 'what-if' -and $env:_exist -ne 'false' -and
+        (-not $Installed -or ($target -and $Installed.DisplayVersion -ne $target))) {
+        return (Resolve-Download fetch)
+    }
+    return $file
+}
+
 switch -Wildcard ($file) {
     '*.msi' {
         $code = $env:productCode
-        if (-not $code -or $report -or $target) {
+        $installed = if ($code) { Find-Installed { $_.PSChildName -eq $code } }
+        # Removal can only select an MSI product by its verified ProductCode.
+        # With no explicit code, recover the pinned metadata even if the cache was cleared.
+        if ($env:url -and -not $code -and $env:_exist -eq 'false' -and $Operation -eq 'set' -and $Mode -ne 'what-if') {
+            $file = Resolve-Download fetch
+        } else {
+            $file = Get-InstallFile $installed
+        }
+        if ((-not $code -or $report -or $target) -and (Test-Path -LiteralPath $file -PathType Leaf)) {
             # Read the ProductCode (and ProductVersion) from the package itself.
             $wi = New-Object -ComObject WindowsInstaller.Installer
             $db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($file, 0))
@@ -95,10 +139,13 @@ switch -Wildcard ($file) {
                 if ($null -eq $record) { return $null }
                 $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
             }
-            if (-not $code) { $code = Get-MsiProperty 'ProductCode' }
+            if (-not $code) {
+                $code = Get-MsiProperty 'ProductCode'
+                if ($code -notmatch '^\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$') { Fail 10 "cannot read a valid ProductCode from $subject" }
+                $installed = Find-Installed { $_.PSChildName -eq $code }
+            }
             if ($report -or $target) { $fileVersion = Get-MsiProperty 'ProductVersion' }
         }
-        $installed = Find-Installed { $_.PSChildName -eq $code }
         $installCmd = @('msiexec.exe', "/i `"$file`" /qn /norestart")
         $removeCmd = @('msiexec.exe', "/x $code /qn /norestart")
         $manager = 'Windows Installer'
@@ -107,6 +154,7 @@ switch -Wildcard ($file) {
         if (-not $env:displayName) { Fail 10 '.exe installers need the property displayName (as shown in Apps & features)' }
         if ($null -eq $env:installArgs) { Fail 10 '.exe installers need the property installArgs (silent install switches, e.g. /S)' }
         $installed = Find-Installed { $_.DisplayName -like $env:displayName }
+        $file = Get-InstallFile $installed
         $installCmd = @($file, $env:installArgs)
         $removeCmd = $null
         if ($installed) {
@@ -167,11 +215,19 @@ switch ($Operation) {
             $step = "Remove $shown with $manager"; $cmd = $removeCmd; $after = ''
         }
         elseif ($version) { $step = "$shown is already installed"; $after = $version }
+        elseif ($env:url -and -not $want -and $file -like '*.msi' -and -not $code) {
+            if ($Mode -ne 'what-if') { Fail 10 "cannot read the ProductCode needed to uninstall $subject" }
+            $step = "Read the ProductCode from the pinned MSI and remove $subject if installed"
+            $after = ''
+        }
         else { $step = "$subject is not installed"; $after = '' }
 
         if ($Mode -eq 'what-if') {
             $whatIf = @($step)
-            if ($cmd) { $whatIf += "Run as administrator: $($cmd -join ' ')" }
+            if ($cmd) {
+                if ($env:url -and $want) { $whatIf += "Verify $subject against its pinned SHA-256, downloading it if needed" }
+                $whatIf += "Run as administrator: $($cmd -join ' ')"
+            }
             Write-State $after $whatIf
             exit 0
         }

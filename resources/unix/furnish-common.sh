@@ -66,19 +66,23 @@ fail() { echo "{\"error\":$(json "$2")}" >&2; exit "$1"; }
 missing() { echo "furnish: needs $1" >&2; exit 11; }
 
 # Run privileged commands: directly as root; from the GUI (FURNISH_GRAPHICAL) always via the
-# graphical pkexec dialog, even if a terminal exists; otherwise via sudo, or pkexec without a terminal.
+# system authorization dialog, even if a terminal exists; otherwise via sudo when possible.
 as_root() {
     if [ "$(id -u)" = 0 ]; then "$@"
-    elif [ -n "${FURNISH_GRAPHICAL:-}" ]; then pkexec_or_cancel "$@"
+    elif [ -n "${FURNISH_GRAPHICAL:-}" ]; then graphical_authorization "$@"
     elif sudo -n true 2>/dev/null; then sudo -n "$@"
     elif (: </dev/tty) 2>/dev/null; then sudo "$@" </dev/tty
-    else pkexec_or_cancel "$@"
+    else graphical_authorization "$@"
     fi
 }
 
 # pkexec exits 126 (dialog dismissed) or 127 (not authorized) without running anything:
 # that is the user saying no, not a failure. Exit 12 tells furnish the step was cancelled.
-pkexec_or_cancel() {
+graphical_authorization() {
+    if [ "$(uname -s)" = Darwin ]; then
+        rc=$(/usr/bin/osascript "$(dirname "$0")/furnish-authorize.applescript" "$@") || return $?
+        return "$rc"
+    fi
     rc=0
     pkexec "$@" || rc=$?
     if [ "$rc" = 126 ] || [ "$rc" = 127 ]; then

@@ -1138,9 +1138,22 @@ impl Collection {
                 None => continue,
             };
             // Windows passes properties as environment variables, whose names ignore case.
-            let keys = resource["properties"].as_object().into_iter().flat_map(|p| p.keys());
-            if let Some(other) = keys.into_iter().find(|k| k.eq_ignore_ascii_case(key) && *k != key) {
-                bail!("{what} property '{other}': did you mean '{key}'?");
+            let properties = &resource["properties"];
+            let source_keys: &[&str] = if canonical == Some(&INSTALLER_TYPE) { &["file", "url", "sha256"] } else { &["source"] };
+            for actual in properties.as_object().into_iter().flat_map(|p| p.keys()) {
+                if let Some(expected) = source_keys.iter().find(|k| k.eq_ignore_ascii_case(actual) && **k != actual) {
+                    bail!("{what} property '{actual}': did you mean '{expected}'?");
+                }
+            }
+            if canonical == Some(&INSTALLER_TYPE) {
+                match (properties.get("file"), properties.get("url"), properties.get("sha256")) {
+                    (Some(Value::String(_)), None, None) => {}
+                    (None, Some(Value::String(url)), Some(Value::String(pin))) => {
+                        crate::installer_download::validate(url, pin).with_context(|| format!("resource '{name}'"))?;
+                        continue;
+                    }
+                    _ => bail!("resource '{name}': Furnish/Installer needs either file or both url and sha256"),
+                }
             }
             // Installer and source files are given relative to the collection; resources need absolute paths.
             if let Some(file) = resource["properties"][key].as_str() {
@@ -1469,6 +1482,18 @@ impl App {
         }
         crate::reports::requirement(self, check.required.as_ref());
         Ok(check)
+    }
+
+    /// Before an explicit uninstall, recover the package identity when it comes
+    /// from a downloaded installer. An empty cache alone cannot prove the app is absent.
+    pub fn check_for_uninstall(&self) -> Result<crate::engine::Check> {
+        let doc = self.doc_for(&self.installed_values());
+        for resource in doc["resources"].as_array().into_iter().flatten() {
+            if resource["type"] == INSTALLER_TYPE && crate::engine::applies_here(resource, &doc) {
+                crate::installer_download::prepare_removal_identity(&resource["properties"])?;
+            }
+        }
+        self.check()
     }
 
     pub fn status(&self) -> Result<crate::engine::Status> {

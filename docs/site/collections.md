@@ -121,7 +121,7 @@ On macOS, Homebrew packages also recognize vendor-installed apps without a `comm
 
 ### Furnish/Installer
 
-Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe`. furnish downloads the file when someone installs an app that uses it, so a computer only stores the installers of its own apps. Git LFS works too and keeps large files out of the repository's history.
+Installs a `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe` from the collection or a vendor download. To ship the installer in the collection, set `file` to its path. Git LFS works for large files.
 
 ```yaml
 - name: Company VPN
@@ -131,6 +131,22 @@ Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `
 ```
 
 `file` is a path inside the collection. furnish refuses a path that leads outside it, also through a symbolic link, and the resource refuses to install a symbolic link. `versions` lists the versions that are acceptable (see [Required versions](#required-versions)).
+
+To use a vendor download, set `url` and `sha256`. For example, an app that depends on Homebrew can name this installer as a dependency:
+
+```yaml
+- name: Homebrew
+  type: Furnish/Installer
+  condition: "[equals(context().os.family, 'macOS')]"
+  properties:
+    url: https://github.com/Homebrew/brew/releases/download/7.0.14/Homebrew.pkg
+    sha256: 8d7adb3cf2cd26a6fcdc3b93570e7e1ce79e832d780a52e5ba672a303dbf3789
+    packageId: sh.brew.homebrew
+```
+
+Use an HTTPS URL whose path ends in the installer extension, and pin the 64 hexadecimal digits of the file’s SHA-256. Update the URL and checksum together when selecting another release. Listing apps, checking a collection, and previewing an install leave the download until installation. Furnish verifies the bytes before handing them to the usual platform installer. A checksum mismatch stops the step before elevation.
+
+For macOS packages, furnish can read a single receipt identifier from the verified download. Set `packageId` to choose a receipt explicitly or detect an existing installation before downloading the package. For disk images, set `app` to the bundle name. On Windows, `productCode` identifies an MSI before download, and an EXE uses `displayName` and `installArgs` as it does for a collection file. When the package identity comes from the installer, furnish uses the cached file for removal and retrieves it again if necessary.
 
 ### Furnish/NixOS
 
@@ -228,7 +244,7 @@ When the installed version isn't acceptable, the app shows "Security update requ
 
 While an acceptable version is installed, furnish doesn't update it to one that isn't. With `<129`, Firefox 129 waits until the collection accepts it.
 
-For `Furnish/Installer`, the collection's file is what is offered, so it has to be acceptable itself. `furnish check` reports an error when it isn't. It reads the version of `.deb` files (with `dpkg-deb`) and of `.rpm` files, and warns that it can't tell for the others.
+For `Furnish/Installer`, the version offered comes from the installer. For files in the collection, `furnish check` reads the version of `.deb` files (with `dpkg-deb`) and of `.rpm` files, reports an error for an unacceptable version, and warns when it cannot read the version. For a URL, it checks the pin and URL offline. During installation furnish evaluates version requirements against the verified download wherever the installer format exposes its version.
 
 furnish never falls back to an earlier version of the app that the current `versions` don't accept (see [When an install fails](using.md#when-an-install-fails)).
 

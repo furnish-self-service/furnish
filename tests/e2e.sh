@@ -604,6 +604,56 @@ for i in $(seq 1 "$n"); do
     expect "$(step uninstall "$app")" "Uninstalled $app"
     expect "$(step list)" "·  $app "
 done
+# Exercise the downloaded MSI through the installed Windows tools. The local-file
+# installer above uses this same MSI, so its status is an independent registry check.
+if $real && [ -n "${FURNISH_TEST_MSI:-}" ]; then (
+    repo="$tmp/download-collection"
+    mkdir -p "$repo/apps"
+    node - "$FURNISH_TEST_MSI" "$tmp/downloads" <<'JS' > "$tmp/download-port" &
+const fs = require('node:fs');
+const http = require('node:http');
+const [file, log] = process.argv.slice(2);
+const server = http.createServer((req, res) => {
+    fs.appendFileSync(log, req.url + '\n');
+    fs.createReadStream(file).pipe(res);
+});
+server.listen(0, '127.0.0.1', () => console.log(server.address().port));
+JS
+    server=$!
+    trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
+    for _ in {1..100}; do [ -s "$tmp/download-port" ] && break; sleep 0.1; done
+    port=$(tr -d '\r\n' < "$tmp/download-port")
+    [ -n "$port" ]
+    digest=$(sha256sum "$FURNISH_TEST_MSI" | cut -d' ' -f1)
+    for app in download-msi wrong-digest; do
+        pin=$digest
+        if [ "$app" = wrong-digest ]; then pin=$(printf '%064d' 0); fi
+        cat > "$repo/apps/$app.dsc.yaml" <<YAML
+resources:
+  - name: Vendor MSI
+    type: Furnish/Installer
+    properties:
+      url: http://127.0.0.1:$port/vendor.msi
+      sha256: '$pin'
+YAML
+    done
+    git -C "$repo" init -q && git -C "$repo" add -A && git -C "$repo" -c user.name=t -c user.email=t@t commit -qm downloads
+    step collection add "$repo" --name downloads
+    expect "$(step install download-msi --dry-run)" '+ install'
+    [ ! -e "$tmp/downloads" ] || { echo 'FAIL: preview downloaded the MSI' >&2; exit 1; }
+    if error=$("$furnish" install wrong-digest 2>&1); then echo 'FAIL: installed an MSI with the wrong digest' >&2; exit 1; fi
+    expect "$error" 'SHA-256 mismatch'
+    expect "$(step list)" "·  installer-$n "
+    expect "$(step install download-msi)" 'Installed download-msi'
+    expect "$(step list)" "✓  installer-$n "
+    # The collection omits ProductCode. Reacquire the pinned MSI if its cached
+    # copy was lost, and use its ProductCode to remove the real installation.
+    mv "$FURNISH_DATA_DIR/installer-downloads/$digest.msi" "$tmp/evicted.msi"
+    expect "$(step uninstall download-msi)" 'Uninstalled download-msi'
+    expect "$(step list)" "·  installer-$n "
+    [ "$(wc -l < "$tmp/downloads")" -eq 3 ] || { echo 'FAIL: expected a rejected download, install and cold-cache uninstall' >&2; exit 1; }
+    step collection remove downloads
+); fi
 if $dsc; then
     expect "$(step list)" "·  dsc-file "
     expect "$(step install dsc-file)" "Installed dsc-file"

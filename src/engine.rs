@@ -31,6 +31,7 @@ use crate::required::Decision;
 #[cfg(not(windows))]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ("furnish-common.sh", include_str!("../resources/unix/furnish-common.sh")),
+    ("furnish-authorize.applescript", include_str!("../resources/unix/furnish-authorize.applescript")),
     ("furnish-homebrew.sh", include_str!("../resources/unix/furnish-homebrew.sh")),
     ("furnish-nix.sh", include_str!("../resources/unix/furnish-nix.sh")),
     ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
@@ -647,7 +648,7 @@ fn get_state(doc: &Value, resource: &Value, report: &str) -> Result<Value> {
 /// A single-resource step document ready to run: without `versions`, and with `targetVersion`
 /// where the required versions call for one. The second value is set when no acceptable version
 /// is offered: the step must not run. The caller holds the engine lock.
-fn resolve(step_doc: &Value) -> Result<(Value, Option<crate::required::Required>)> {
+fn resolve(step_doc: &Value, installing: bool) -> Result<(Value, Option<crate::required::Required>)> {
     let mut doc = step_doc.clone();
     let resource = &doc["resources"][0];
     let entries = match crate::required::of(resource)? {
@@ -657,6 +658,13 @@ fn resolve(step_doc: &Value) -> Result<(Value, Option<crate::required::Required>
             return Ok((doc, None));
         }
     };
+    // A downloaded .deb, .rpm or .msi can carry its own version. Check the actual
+    // pinned artifact before choosing a target; catalog scans and previews stay offline.
+    if installing && resource["type"] == crate::catalog::INSTALLER_TYPE
+        && let (Some(url), Some(pin)) = (resource["properties"]["url"].as_str(), resource["properties"]["sha256"].as_str())
+    {
+        crate::installer_download::fetch(url, pin)?;
+    }
     crate::required::strip(&mut doc["resources"]);
     let state = get_state(&doc, &doc["resources"][0], "latest")?;
     let judged = judge(&doc, &doc["resources"][0].clone(), &entries, &state)?;
@@ -670,7 +678,7 @@ fn resolve(step_doc: &Value) -> Result<(Value, Option<crate::required::Required>
 
 /// The preview of a step, with its required version resolved where furnish can tell.
 fn preview_resolved(step_doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
-    match resolve(step_doc) {
+    match resolve(step_doc, false) {
         Ok((doc, None)) => preview(&doc, files),
         Ok((doc, Some(required))) => {
             let mut step = preview(&doc, files)?;
@@ -916,7 +924,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         }
         report(Progress::Started { index, at_ms: started });
         // The required version, decided right before the step: earlier steps may have changed it.
-        let result = resolve(step_doc).and_then(|(step_doc, none_offered)| match none_offered {
+        let result = resolve(step_doc, true).and_then(|(step_doc, none_offered)| match none_offered {
             Some(required) => Err(anyhow::anyhow!("'{}' ({}): needs {}", step.name, step.kind, required.summary)),
             None => configurator(&step_doc).and_then(|mut c| Ok(c.invoke_set(false)?)),
         });

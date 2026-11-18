@@ -40,6 +40,51 @@ resources:
       file: installers/furnish-demo.pkg
       packageId: io.github.furnish-self-service.demo
 YAML
+# A vendor product archive served outside git, with a component receipt at a non-root location.
+mkdir -p "$work/http" "$work/vendor-root"
+echo receipt >"$work/vendor-root/receipt.txt"
+pkgbuild --quiet --root "$work/vendor-root" --identifier io.github.furnish-self-service.remote --version 2.0 \
+    --install-location /opt/furnish-pinned-demo "$work/component.pkg"
+productbuild --quiet --package "$work/component.pkg" "$work/http/vendor.pkg"
+digest=$(shasum -a 256 "$work/http/vendor.pkg" | cut -d ' ' -f 1)
+python3 -u - "$work/http" "$work/port" >"$work/http.log" 2>&1 <<'PYTHON' &
+import http.server
+import os
+from pathlib import Path
+import sys
+os.chdir(sys.argv[1])
+with http.server.HTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler) as server:
+    Path(sys.argv[2]).write_text(str(server.server_port))
+    server.serve_forever()
+PYTHON
+server=$!
+trap 'kill "$server" 2>/dev/null || :' EXIT
+for _ in $(seq 100); do [ -s "$work/port" ] && break; sleep 0.1; done
+for app in pinned wrong-pin; do
+    pin=$digest
+    [ "$app" != wrong-pin ] || pin=0000000000000000000000000000000000000000000000000000000000000000
+    cat >"$work/org/apps/$app.dsc.yaml" <<YAML
+resources:
+  - name: Vendor installer
+    type: Furnish/Installer
+    properties:
+      url: http://127.0.0.1:$(cat "$work/port")/vendor.pkg
+      sha256: "$pin"
+YAML
+done
+
+# Check the AppleScript used by GUI installs, without opening an authorization dialog in CI.
+osacompile -o "$work/authorize.scpt" "$(dirname "$0")/../resources/unix/furnish-authorize.applescript"
+osascript - "$work/authorize.scpt" <<'APPLESCRIPT'
+on run argv
+    set helper to load script (POSIX file (item 1 of argv))
+    set sample to "file with ' apostrophe, $variable, and space"
+    set commandText to helper's quotedCommand({"/usr/bin/printf", "%s:%s", "", sample})
+    if (do shell script commandText) is not (":" & sample) then error "authorization changed argv"
+    if (helper's commandFailed("cancelled", -128)) is not 12 then error "lost authorization cancellation"
+    if (helper's commandFailed("stopped", 13)) is not 13 then error "lost the step's exit status"
+end run
+APPLESCRIPT
 # A cask with an installer package, from a local tap: brew runs `sudo installer` for it.
 mkdir -p "$work/brewroot/opt/furnish-brewdemo"
 echo brewdemo > "$work/brewroot/opt/furnish-brewdemo/demo.txt"
@@ -151,6 +196,23 @@ for _ in $(seq 100); do [ -S /var/run/furnish.sock ] && [ -d "/Library/Applicati
 echo "== a member of the allowed group installs system-wide"
 as alice "$furnish" install demo || fail "alice couldn't install"
 installed || fail "not installed"
+
+echo "== pinned vendor .pkg through the service"
+as alice "$furnish" install pinned --dry-run >"$work/preview"
+grep -q 'vendor.pkg' "$work/preview" || fail "the preview missed the download"
+if grep -q 'GET /vendor.pkg' "$work/http.log"; then fail "preview or status fetched the installer"; fi
+if out=$(as alice "$furnish" install wrong-pin 2>&1); then fail "installed with an incorrect pin"; fi
+echo "$out" | grep -iq 'SHA-256 mismatch' || fail "missing checksum diagnostic: $out"
+[ ! -e /opt/furnish-pinned-demo/receipt.txt ] || fail "checksum failure ran the installer"
+as alice "$furnish" install pinned || fail "pinned vendor package did not install"
+[ -f /opt/furnish-pinned-demo/receipt.txt ] || fail "vendor payload missing"
+pkgutil --pkg-info io.github.furnish-self-service.remote | grep -q 'version: 2.0' || fail "vendor receipt missing"
+kill "$server"; wait "$server" || :
+trap - EXIT
+as alice "$furnish" list | grep -q "✓  pinned " || fail "pinned package was not installed offline"
+as alice "$furnish" uninstall pinned || fail "cached vendor package could not be removed offline"
+[ ! -e /opt/furnish-pinned-demo/receipt.txt ] || fail "receipt file at non-root install location was left behind"
+if pkgutil --pkg-info io.github.furnish-self-service.remote; then fail "receipt still exists"; fi
 
 echo "== others are refused"
 if out=$(as bob "$furnish" uninstall demo 2>&1); then fail "bob uninstalled"; fi

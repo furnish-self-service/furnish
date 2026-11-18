@@ -6,6 +6,7 @@ mod conditions;
 mod diagnostics;
 pub mod endpoint;
 pub mod engine;
+mod installer_download;
 pub mod load;
 pub mod locale;
 pub mod nixos;
