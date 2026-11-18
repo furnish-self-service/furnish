@@ -4,13 +4,26 @@
   import { describeRequired, unmet } from './required';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
+  import CheckStatusButton from './CheckStatusButton.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   import { t, lang } from './i18n.svelte';
 
   let { app, onopen }: { app: AppInfo; onopen: () => void } = $props();
   const status = $derived(store.status[app.key]);
+  const checkFailed = $derived(store.statusErrors[app.key] !== undefined);
   // No acceptable version is offered: what the collection needs and what there is.
   const needs = $derived(unmet(store.required[app.key]) ? describeRequired(lang(), store.required[app.key]) : null);
+  const stateLabel = $derived.by(() => {
+    if (needs && (status === 'installed' || status === 'blocked')) return needs;
+    switch (status) {
+      case 'installed': return store.external[app.key] ? externalStatus(store.external[app.key]) : t('common.installed');
+      case 'needsUpdate': return requiredUpdate(app.key) ? t('common.securityUpdate') : t('common.updateAvailable');
+      case 'notInstalled': return checkFailed ? t('app.status.notInstalled') : null;
+      case 'unavailable': return checkFailed ? t('app.status.unavailable') : null;
+      case 'blocked': return checkFailed ? t('action.needs', { what: store.reasons[app.key] ?? t('common.missingTool') }) : null;
+      default: return null;
+    }
+  });
 </script>
 
 <article class="card">
@@ -25,19 +38,23 @@
   </header>
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
-    {#if needs && (status === 'installed' || status === 'blocked')}
-      <span class="state update needs" title={needs}>{needs}</span>
-    {:else if status === 'installed'}
-      <span class="state installed">{store.external[app.key] ? externalStatus(store.external[app.key]) : t('common.installed')}</span>
-    {:else if status === 'needsUpdate' && requiredUpdate(app.key)}
-      <span class="state required">{t('common.securityUpdate')}</span>
-    {:else if status === 'needsUpdate'}
-      <span class="state update">{t('common.updateAvailable')}</span>
+    {#if stateLabel}
+      <span class="state" class:installed={status === 'installed' && !needs && !checkFailed}
+        class:update={status === 'needsUpdate' || !!needs} class:required={requiredUpdate(app.key)}
+        class:needs={!!needs} title={needs ?? undefined}>
+        {checkFailed ? t('status.lastKnown', { state: stateLabel }) : stateLabel}
+      </span>
+    {:else if checkFailed}
+      <span class="state">{t('action.status')}</span>
     {:else}
       <span class="collection"><CollectionAvatar name={app.collection} /> {app.collection}</span>
     {/if}
     <!-- Uninstalling is only offered on the detail page, behind a confirmation. -->
-    {#if status !== 'installed' || store.busy[app.key] || store.queue.some((q) => q.key === app.key)}<ActionButton {app} />{/if}
+    {#if checkFailed && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
+      <CheckStatusButton appKey={app.key} />
+    {:else if status !== 'installed' || store.busy[app.key] || store.queue.some((q) => q.key === app.key)}
+      <ActionButton {app} />
+    {/if}
   </footer>
 </article>
 

@@ -250,6 +250,17 @@ const steps = [
     await waitFor('fresh still installable', () => find(`${card('fresh')}${button('Install')}`));
     if (existsSync(`${workDir}/pkgs/fresh`)) throw new Error('removed item was installed');
   }],
+  ['Activity keeps the exact steps and outcome of a completed run', async () => {
+    await click(nav('Activity'));
+    const extras = "//li[contains(@class,'history')][.//*[normalize-space()='Installed extras']]";
+    await waitFor('completed install in Activity', () => find(extras));
+    if (!(await text(extras)).includes('Started by you')) throw new Error('install trigger missing from Activity');
+    await click(`${extras}${button('Steps')}`);
+    await waitFor('recorded package command in Activity', async () => {
+      const step = await text(`${extras}//ol[contains(@class,'steps')]/li`);
+      return step.includes('pacman -S') && step.includes('extras') && step.includes('Installed');
+    });
+  }],
   ['kit uninstall: deselected items stay, the rest is removed', async () => {
     const item = (app) => `//ul[contains(@class,'items')]/li[.//*[contains(@class,'name') and normalize-space()='${app}']]`;
     await click(button('Discover'));
@@ -562,6 +573,8 @@ const steps = [
     try {
       await startSession();
       await waitFor('entry removed at start', () => !autostartEntry());
+      await click(nav('Activity'));
+      await waitFor('history after restart', () => find("//li[contains(@class,'history')]//time"));
       await click(nav('Settings'));
       const label = "//label[contains(., 'Start Acme Apps when you sign in')]";
       await waitFor('locked', async () => (await prop(`${label}//input`, 'disabled')) && !(await prop(`${label}//input`, 'checked')));

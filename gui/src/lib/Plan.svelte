@@ -3,24 +3,27 @@
   // nothing) or, during and after a run, live progress of those same steps.
   import * as api from './api';
   import type { AppInfo, Step } from './api';
-  import { store, appName, externalNote, type RunStep } from './state.svelte';
+  import type { Run, RunStep } from './activity-history';
+  import { store, appName, externalNote } from './state.svelte';
   import { describeCondition } from './conditions';
-  import { t, terror, tparts, parts, formatTime, formatDuration } from './i18n.svelte';
+  import { t, terror, tparts, parts, formatTime, formatDuration, formatDate } from './i18n.svelte';
   import { dictionaries, type Key } from './i18n.ts';
 
-  let { app }: { app: AppInfo } = $props();
+  // Activity supplies the actual operation, even if the app has since left the catalog.
+  let { app, operation }: { app: AppInfo; operation?: never } | { app?: never; operation: Run } = $props();
 
-  const status = $derived(store.status[app.key]);
+  const status = $derived(app && store.status[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
-  const run = $derived(store.runs[app.key]);
-  const running = $derived(!!store.busy[app.key]);
+  const run = $derived(operation ?? (app && store.runs[app.key]));
+  const name = $derived(app ? appName(app) : operation!.name);
+  const running = $derived(!!run && run.finishedAt === undefined);
 
   type Mode = 'install' | 'uninstall' | 'run';
   let picked = $state<Mode | null>(null);
   // While an operation runs, always follow it; otherwise show what the user picked, or the
   // preview of the app's primary action.
-  const unremovable = $derived(!!store.unremovable[app.key]);
-  const mode: Mode = $derived(running ? 'run' : (picked ?? (status === 'installed' && !unremovable ? 'uninstall' : 'install')));
+  const unremovable = $derived(app && !!store.unremovable[app.key]);
+  const mode: Mode = $derived(operation || running ? 'run' : (picked ?? (status === 'installed' && !unremovable ? 'uninstall' : 'install')));
   const installLabel = $derived(status === 'needsUpdate' ? t('common.update') : t('common.install'));
 
   // Once a run starts, keep showing it after it ends, so its results stay visible.
@@ -34,7 +37,7 @@
 
   // Load the preview when it is shown, and again after the app's state changed.
   $effect(() => {
-    if (mode === 'run' || running) return;
+    if (!app || mode === 'run' || running) return;
     const uninstall = mode === 'uninstall';
     status; // dependency: refresh after install/uninstall
     if (uninstall && unremovable) return; // nothing to preview, see the note below
@@ -70,7 +73,7 @@
   const skippedCount = $derived(rows.length - active.length);
   const previewKind = $derived(mode === 'uninstall' ? 'uninstall' : status === 'needsUpdate' ? 'update' : 'install');
   const finished = $derived(rows.filter((r) => r.state !== 'pending' && r.state !== 'running').length);
-  const failedRow = $derived(rows.find((r) => r.state === 'failed'));
+  const failedRow = $derived(rows.slice(run?.phaseStart ?? 0).find((r) => r.state === 'failed'));
   const total = $derived(run ? (run.finishedAt ?? now) - run.startedAt : 0);
 
   /** "Run as administrator: cmd" → who + command, rendered as a command line. */
@@ -179,19 +182,21 @@
 {/snippet}
 
 <div class="plan">
-  <div class="switch" role="radiogroup" aria-label={t('plan.show')}>
-    <button role="radio" aria-checked={mode === 'install'} class:on={mode === 'install'} disabled={running} onclick={() => (picked = 'install')}>
-      {installLabel}
-    </button>
-    <button role="radio" aria-checked={mode === 'uninstall'} class:on={mode === 'uninstall'} disabled={running || !installed} onclick={() => (picked = 'uninstall')}>
-      {t('common.uninstall')}
-    </button>
-    {#if run}
-      <button role="radio" aria-checked={mode === 'run'} class:on={mode === 'run'} onclick={() => (picked = 'run')}>
-        {running ? t('plan.running') : t('plan.lastRun')}
+  {#if app}
+    <div class="switch" role="radiogroup" aria-label={t('plan.show')}>
+      <button role="radio" aria-checked={mode === 'install'} class:on={mode === 'install'} disabled={running} onclick={() => (picked = 'install')}>
+        {installLabel}
       </button>
-    {/if}
-  </div>
+      <button role="radio" aria-checked={mode === 'uninstall'} class:on={mode === 'uninstall'} disabled={running || !installed} onclick={() => (picked = 'uninstall')}>
+        {t('common.uninstall')}
+      </button>
+      {#if run}
+        <button role="radio" aria-checked={mode === 'run'} class:on={mode === 'run'} onclick={() => (picked = 'run')}>
+          {running ? t('plan.running') : t('plan.lastRun')}
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   {#if mode === 'run' && run}
     <p class="summary" aria-live="polite">
@@ -199,27 +204,34 @@
         <span class="pulse" aria-hidden="true"></span>
         {@render marked(
           t('plan.runningSummary', {
-            what: t(`plan.running.${run.kind}`, { app: appName(app) }),
+            what: t(`plan.running.${run.kind}`, { app: name }),
             step: t('run.stepOf', { n: Math.min(finished + 1, rows.length || 1), total: rows.length || '…' }),
           }),
         )}
         <span class="muted">· {seconds(total)}</span>
         {#if run.stopping === 'abort'}<span class="stopping">{t('plan.stoppingAfter')}</span>
         {:else if run.stopping === 'force'}<span class="stopping">{t('plan.interrupting')}</span>{/if}
-      {:else if run.cancelled}
-        {@render marked(t('plan.cancelledAfter', { what: t(`run.cancelled.${run.kind}`, { app: appName(app) }), time: seconds(total) }))}
+      {:else if run.result === 'cancelled'}
+        {@render marked(t('plan.cancelledAfter', { what: t(`run.cancelled.${run.kind}`, { app: name }), time: seconds(total) }))}
         <span class="muted">{t('plan.doneStepsStay')}</span>
-      {:else if failedRow}
+      {:else if run.result === 'fallback'}
+        {t('toast.fellBack', { app: name, date: formatDate(run.fallbackDate!) })}
+      {:else if run.result === 'failed' && failedRow}
         {@render marked(
-          t('plan.failedAt', { what: t(`plan.failed.${run.kind}`, { app: appName(app) }), step: failedRow.step.name, time: seconds(total) }),
+          t('plan.failedAt', { what: t(`plan.failed.${run.kind}`, { app: name }), step: failedRow.step.name, time: seconds(total) }),
           'failed-text',
         )}
+      {:else if run.result === 'failed'}
+        <span class="failed-text">{t(`run.failed.${run.kind}`, { app: name })}</span>
       {:else}
-        {@render marked(t('plan.doneIn', { what: t(`run.done.${run.kind}`, { app: appName(app) }), time: seconds(total) }))}
+        {@render marked(t('plan.doneIn', { what: t(`run.done.${run.kind}`, { app: name }), time: seconds(total) }))}
         <span class="muted">· {t('plan.started', { time: clock(run.startedAt) })}</span>
       {/if}
     </p>
-  {:else if mode === 'uninstall' && unremovable}
+    {#if run.result === 'failed' && run.error && !failedRow?.outcome?.error}
+      <pre class="failure">{terror(run.error)}</pre>
+    {/if}
+  {:else if app && mode === 'uninstall' && unremovable}
     <p class="muted">
       {store.external[app.key]
         ? externalNote(store.external[app.key])
@@ -233,8 +245,8 @@
     <p class="summary" class:stale={loading}>
       {@render marked(
         changing === 0
-          ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: appName(app) }) })
-          : t('plan.changes', { subject: t(`plan.subject.${previewKind}`, { app: appName(app) }), n: changing }),
+          ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: name }) })
+          : t('plan.changes', { subject: t(`plan.subject.${previewKind}`, { app: name }), n: changing }),
       )}
       {#if skippedCount}<span class="muted">{t('plan.skipped', { n: skippedCount })}</span>{/if}
     </p>
@@ -245,11 +257,12 @@
       {@const step = row.step}
       <li class="{step.action} {row.state}">
         {#if mode === 'run'}
-          <span class="marker" title={t(`plan.state.${row.state}`)} aria-label={t(`plan.state.${row.state}`)}>
+          {@const stateLabel = row.state === 'notRun' ? t('plan.notRun') : t(`plan.state.${row.state}`)}
+          <span class="marker" title={stateLabel} aria-label={stateLabel}>
             {#if row.state === 'running'}<span class="spinner"></span>
             {:else if row.state === 'done'}✓
             {:else if row.state === 'failed'}✕
-            {:else if row.state === 'skipped'}–
+            {:else if row.state === 'skipped' || row.state === 'notRun'}–
             {:else if row.state === 'cancelled'}⊘
             {:else}{i + 1}{/if}
           </span>
@@ -312,7 +325,7 @@
             <pre class="failure">{terror(row.outcome.error)}</pre>
           {/if}
         </div>
-        {#if mode === 'run' && row.state === 'pending' && !running}
+        {#if mode === 'run' && (row.state === 'notRun' || (row.state === 'pending' && !running))}
           <div class="timing"><span class="muted">{t('plan.notRun')}</span></div>
         {:else if mode === 'run' && row.state !== 'pending' && row.state !== 'skipped'}
           <div class="timing">
@@ -427,7 +440,7 @@
     opacity: 0.75;
   }
   /* Live view: upcoming steps recede, the current one stands out. */
-  .live li.pending {
+  .live li.pending, .live li.notRun {
     opacity: 0.55;
   }
   .live li.running {

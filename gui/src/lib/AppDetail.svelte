@@ -7,15 +7,16 @@
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
+  import CheckStatusButton from './CheckStatusButton.svelte';
   import { highlightYaml } from './highlight';
+  import RunLog from './RunLog.svelte';
   import Plan from './Plan.svelte';
   import Versions from './Versions.svelte';
-  import { t, formatDate, lang } from './i18n.svelte';
+  import { t, formatDate, lang, terror } from './i18n.svelte';
   import External from './External.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
-  let logList = $state<HTMLOListElement>();
   let planOpen = $state(false);
   let versionsOpen = $state(false);
   // People may choose a version of the collection's apps (setting chooseVersion).
@@ -27,15 +28,9 @@
   });
   const autoUpdate = $derived(!store.settings?.noAutoUpdate.includes(app.key));
 
-  const lines = $derived(store.logs[app.key] ?? []);
-  const busy = $derived(!!store.busy[app.key]);
-  // Follow the log while it grows.
-  $effect(() => {
-    lines.length;
-    if (logList) logList.scrollTop = logList.scrollHeight;
-  });
-
   const status = $derived(store.status[app.key]);
+  const checkError = $derived(store.statusErrors[app.key]);
+  const checkedAt = $derived(store.checkedAt[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
   const required = $derived(store.required[app.key]);
   // A security update the collection requires: installs right away, automatic updates or not.
@@ -69,8 +64,21 @@
     <div class="heading">
       <h1>{appName(app)}</h1>
       <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ')}{app.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={app.collection} size={20} /> {app.collection}</p>
-      <p class="status" class:installed={status === 'installed' && !needs} class:update={status === 'needsUpdate' || status === 'blocked' || !!needs} class:required={securityUpdate}>{statusText}</p>
-      {#if securityUpdate && required.installed}
+      <p class="status" class:installed={status === 'installed' && !needs} class:update={status === 'needsUpdate' || status === 'blocked' || !!needs} class:required={securityUpdate}>
+        {checkError !== undefined && status !== 'error' ? t('status.lastKnown', { state: statusText }) : statusText}
+      </p>
+      {#if checkError !== undefined}
+        <p class="check-error" role="status">{#if status !== 'error'}{t('app.status.error')}{/if}
+          {#if checkError}<span>{terror(checkError)}</span>{/if}
+        </p>
+      {/if}
+      <div class="status-check">
+        <CheckStatusButton appKey={app.key} />
+        {#if checkedAt}
+          <span>{t('status.checkedAt', { time: new Date(checkedAt).toLocaleString(lang(), { dateStyle: 'medium', timeStyle: 'short' }) })}</span>
+        {/if}
+      </div>
+      {#if securityUpdate && required.installed && checkError === undefined}
         <p class="required-detail">{t('app.requiredUpdate', { collection: app.collection, needs: describeNeeds(lang(), required.needs), installed: required.installed, target: required.target ?? '' })}</p>
       {/if}
       {#if required?.unknown}
@@ -80,7 +88,7 @@
       {/if}
     </div>
     <div class="cta">
-      {#if status === 'installed' && confirming}
+      {#if status === 'installed' && confirming && checkError === undefined}
         <p class="confirm">{t('app.confirmUninstall', { app: appName(app) })}</p>
         <div class="row">
           <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>{t('common.uninstall')}</button>
@@ -93,10 +101,10 @@
         {:else if store.unremovable[app.key]}
           <!-- A resource can't remove what it set up, and the collection gives no removal steps. -->
           <p class="unremovable">{t('app.cantUninstall', { collection: app.collection })}</p>
-        {:else}
+        {:else if checkError === undefined}
           <button class="secondary large" onclick={() => (confirming = true)}>{t('common.uninstall')}</button>
         {/if}
-      {:else}
+      {:else if checkError === undefined || isPending(app.key)}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
       {#if installed && !store.external[app.key]}
@@ -191,21 +199,7 @@
     {#if planOpen}<Plan {app} />{/if}
   </details>
 
-  <details class="expert">
-    <summary>
-      {t('app.log')}
-      {#if busy}<span class="live">{t('app.live')}</span>{:else if lines.length}<span class="hint">{t('app.lines', { n: lines.length })}</span>{/if}
-    </summary>
-    {#if lines.length}
-      <ol class="panel log" bind:this={logList}>
-        {#each lines as line}
-          <li class={line.level}><span class="level">{line.level}</span><span>{line.message}</span></li>
-        {/each}
-      </ol>
-    {:else}
-      <p class="empty">{t('app.logEmpty')}</p>
-    {/if}
-  </details>
+  <RunLog lines={store.logs[app.key] ?? []} busy={!!store.busy[app.key]} />
 
   <details class="expert">
     <summary>{t('app.configuration')} <span class="hint">apps/{app.id}.dsc.yaml</span></summary>
@@ -250,6 +244,25 @@
     margin: 0.6rem 0 0;
     font-weight: 600;
     font-size: 0.9rem;
+  }
+  .status-check {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.5rem;
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .check-error {
+    margin: 0.4rem 0;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+  }
+  .check-error span {
+    display: block;
+    white-space: pre-wrap;
   }
   .status.installed {
     color: var(--accent-ink);
@@ -379,20 +392,6 @@
     font: 400 0.78rem var(--font-mono);
     color: var(--muted);
   }
-  .live {
-    margin-left: 0.5rem;
-    padding: 0.05rem 0.45rem;
-    border-radius: 999px;
-    font: 700 0.7rem var(--font-body);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--on-accent);
-    background: var(--accent);
-  }
-  .empty {
-    color: var(--muted);
-    font-size: 0.9rem;
-  }
   /* Terminal-style panel, dark in both themes. */
   .panel {
     margin: 0.75rem 0 0;
@@ -403,33 +402,6 @@
     background: #0e1d21;
     color: #d5e5e3;
     font: 0.8rem/1.55 var(--font-mono);
-  }
-  .log {
-    list-style: none;
-  }
-  .log li {
-    display: flex;
-    gap: 0.9rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .level {
-    flex: none;
-    width: 3.6rem;
-    text-align: right;
-    opacity: 0.85;
-  }
-  .log .error {
-    color: #ff8f86;
-  }
-  .log .warn {
-    color: #f6c453;
-  }
-  .log .info {
-    color: #7fdccf;
-  }
-  .log .output {
-    color: #9db2b5;
   }
   .code :global(.y-key) {
     color: #7fdccf;

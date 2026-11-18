@@ -14,6 +14,10 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'nav.collectionUpdates': { one: '{n} Sammlung hat ein Update', other: '{n} Sammlungen haben ein Update' },
   'nav.settings': 'Einstellungen',
   'nav.selfUpdate': 'Eine neue Version von {brand} ist verfügbar',
+  'catalog.scanProgress': "{done} von {total} Apps geprüft",
+  'catalog.scanFailures': "Nicht geprüfte Apps: {n}",
+  'catalog.noUpdatesFound': "Bei den geprüften Apps wurden keine Updates gefunden.",
+  'catalog.settingUp': "Sammlungen werden eingerichtet…",
   'catalog.checking': 'Wird geprüft…',
   'catalog.checkForUpdates': 'Nach Updates suchen',
   'catalog.postponed': 'Updates verschoben: {reason}',
@@ -64,6 +68,10 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
 
   // ActionButton.svelte
   'action.stopping': 'Stoppt…',
+  'status.check': "Status prüfen",
+  'status.retry': "Erneut prüfen",
+  'status.lastKnown': "Zuletzt bekannt: {state}",
+  'status.checkedAt': "Zuletzt bestätigt: {time}",
   'action.status': 'Status unbekannt',
   'action.answerFirst': 'Erst beantworten',
   'action.needs': 'Benötigt {what}',
@@ -102,6 +110,11 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
 
   // Activity.svelte
   'activity.title': 'Aktivität',
+  'activity.recent': "Letzte Aktivitäten",
+  'activity.trigger.user': "Von dir gestartet",
+  'activity.trigger.update': "Automatische Aktualisierung",
+  'activity.trigger.autoInstall': "Installation durch die Organisation",
+  'activity.failedStep': "Fehlgeschlagener Schritt: {step}",
   'activity.now': 'Jetzt',
   'activity.nothingRunning': 'Gerade läuft nichts. Installationen, Updates und Deinstallationen, die Sie starten, erscheinen hier.',
   'activity.upNext': 'Als Nächstes',

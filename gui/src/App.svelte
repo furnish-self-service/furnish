@@ -34,6 +34,9 @@
       .sort((a, b) => a.name.localeCompare(b.name, lang())),
   );
   const count = (page: 'installed' | 'updates') => visibleApps({ page }, '').length;
+  const checking = $derived(store.autoUpdate.running || store.scan.running);
+  const failedChecks = $derived(Object.keys(store.statusErrors).length);
+  const partialResults = $derived(failedChecks > 0 || !!store.autoUpdate.error || store.catalogError);
   const activity = $derived(Object.keys(store.busy).length + store.queue.length);
   const apps = $derived(visibleApps(view, store.query));
   const kits = $derived(visibleKits(view, store.query));
@@ -168,10 +171,17 @@
         <h1>{title}</h1>
         {#if view.page === 'updates'}
           <div class="check">
-            <button class="secondary" disabled={store.autoUpdate.running} onclick={checkForUpdates}>
-              {store.autoUpdate.running ? t('catalog.checking') : t('catalog.checkForUpdates')}
+            <button class="secondary" disabled={checking || store.loading} onclick={checkForUpdates}>
+              {checking ? t('catalog.checking') : t('catalog.checkForUpdates')}
             </button>
             <span class="muted" aria-live="polite">
+              {#if store.scan.running}
+                {t('catalog.scanProgress', { done: store.scan.checked, total: store.scan.total })}
+              {:else if store.autoUpdate.running}
+                {t('settings.checking')}
+              {:else if failedChecks}
+                {t('catalog.scanFailures', { n: failedChecks })}
+              {/if}
               {#if store.autoUpdate.postponed}
                 <span class="postponed">{t('catalog.postponed', {
                   // The backend says "measuring …" until it has a first sample (src/load.rs).
@@ -179,7 +189,7 @@
                     ? t('catalog.measuring')
                     : t('catalog.busy', { load: store.autoUpdate.postponed }),
                 })}</span>
-              {:else if store.autoUpdate.error}{t('catalog.lastCheckFailed')}{:else if store.autoUpdate.lastAt}{t('catalog.lastChecked', {
+              {:else if !checking && (store.autoUpdate.error || store.catalogError)}{t('catalog.lastCheckFailed')}{:else if !checking && !failedChecks && store.autoUpdate.lastAt}{t('catalog.lastChecked', {
                   time: formatTime(store.autoUpdate.lastAt),
                 })}{/if}
             </span>
@@ -196,6 +206,8 @@
 
       {#if store.loading}
         <p class="empty">{t('catalog.loading')}</p>
+      {:else if !store.collections.length && store.settingUpCollections}
+        <p class="empty" role="status">{t('catalog.settingUp')}</p>
       {:else if !store.collections.length}
         <div class="empty">
           <h2>{t('catalog.noCollections')}</h2>
@@ -203,13 +215,13 @@
           <button class="primary" onclick={() => go({ page: 'collections' })}>{t('catalog.addCollection')}</button>
         </div>
       {:else if !apps.length && !kits.length}
-        <p class="empty">
-          {store.query
-            ? t('catalog.noMatch', { query: store.query })
-            : view.page === 'updates'
-              ? t('catalog.upToDate', { brand: store.brand.name })
-              : t('catalog.empty')}
-        </p>
+        {#if store.query}
+          <p class="empty">{t('catalog.noMatch', { query: store.query })}</p>
+        {:else if view.page !== 'updates'}
+          <p class="empty">{t('catalog.empty')}</p>
+        {:else if !checking && store.scan.complete}
+          <p class="empty">{partialResults ? t('catalog.noUpdatesFound') : t('catalog.upToDate', { brand: store.brand.name })}</p>
+        {/if}
       {:else}
         {#if recommended.length}
           <h2 class="row-title">{t('catalog.recommended')}</h2>

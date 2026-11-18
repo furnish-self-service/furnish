@@ -1,12 +1,16 @@
 <script lang="ts">
-  // What is running now and what is queued after it.
+  // Current, queued and recently completed operations.
   import { store, dequeue, clearQueue, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
-  import { t } from './i18n.svelte';
+  import Plan from './Plan.svelte';
+  import RunLog from './RunLog.svelte';
+  import { t, lang, formatDate } from './i18n.svelte';
 
   let { onopen }: { onopen: (key: string) => void } = $props();
 
+  let showSteps = $state(false);
+  let expanded = $state<string | null>(null);
   const runningKey = $derived(Object.keys(store.busy)[0]);
   const running = $derived(store.apps.find((a) => a.key === runningKey));
   const run = $derived(runningKey ? store.runs[runningKey] : undefined);
@@ -23,20 +27,29 @@
   <h1>{t('activity.title')}</h1>
 
   <h2>{t('activity.now')}</h2>
-  {#if running}
+  {#if run}
     <div class="row now">
-      <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: appName(running) })}>
-        <AppIcon app={running} size={44} />
-        <span class="text">
-          <span class="name">{appName(running)}</span>
-          <span class="meta">
-            {run ? t(kindLabel[run.kind]) : t('run.starting')}
-            {#if run?.steps.length} · {t('run.stepOf', { n: Math.min(done + 1, run.steps.length), total: run.steps.length })}{/if}
+      {#if running}
+        <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: appName(running) })}>
+          <AppIcon app={running} size={44} />
+          <span class="text">
+            <span class="name">{appName(running)}</span>
+            <span class="meta">
+              {t(kindLabel[run.kind])}
+              {#if run.steps.length} · {t('run.stepOf', { n: Math.min(done + 1, run.steps.length), total: run.steps.length })}{/if}
+            </span>
           </span>
-        </span>
-      </button>
-      <ActionButton app={running} />
+        </button>
+        <ActionButton app={running} />
+      {:else}
+        <span class="text"><span class="name">{run.name}</span><span class="meta">{t(kindLabel[run.kind])}</span></span>
+      {/if}
     </div>
+    <details class="steps" bind:open={showSteps}>
+      <summary>{t('app.steps')}</summary>
+      {#if showSteps}<Plan operation={run} />{/if}
+    </details>
+    <RunLog lines={store.logs[runningKey!] ?? []} busy />
   {:else}
     <p class="empty">{t('activity.nothingRunning')}</p>
   {/if}
@@ -65,6 +78,37 @@
     </ol>
   {:else}
     <p class="empty">{t('activity.queueEmpty')}</p>
+  {/if}
+
+  {#if store.recent.length}
+    <h2>{t('activity.recent')}</h2>
+    <ol class="queue">
+      {#each store.recent as entry (entry.summary.id)}
+        {@const item = entry.summary}
+        <li class="history">
+          <div class="name" class:failed={item.result === 'failed'}>
+            {item.result === 'fallback'
+              ? t('toast.fellBack', { app: item.name, date: formatDate(item.fallbackDate ?? '') })
+              : t(`run.${item.result}.${item.kind}`, { app: item.name })}
+          </div>
+          <div class="meta">
+            <time datetime={new Date(item.finishedAt).toISOString()}>
+              {new Date(item.finishedAt).toLocaleString(lang(), { dateStyle: 'medium', timeStyle: 'short' })}
+            </time>
+            · {t(`activity.trigger.${item.trigger}`)} · {item.key}
+          </div>
+          {#if item.failedStep}<div class="failed">{t('activity.failedStep', { step: item.failedStep })}</div>{/if}
+          {#if entry.details}
+            <button class="secondary reveal" aria-expanded={expanded === item.id}
+              onclick={() => expanded = expanded === item.id ? null : item.id}>{t('app.steps')}</button>
+            {#if expanded === item.id}
+              <Plan operation={entry.details.run} />
+              <RunLog lines={entry.details.logs} />
+            {/if}
+          {/if}
+        </li>
+      {/each}
+    </ol>
   {/if}
 </section>
 
@@ -116,6 +160,17 @@
     display: grid;
     gap: 0.5rem;
   }
+  .steps, .history {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.75rem 1rem;
+  }
+  .steps { margin-top: 0.5rem; }
+  .steps summary { cursor: pointer; font-weight: 650; }
+  .history .meta { margin: 0.25rem 0; overflow-wrap: anywhere; }
+  .failed { color: var(--danger); }
+  .reveal { margin-top: 0.45rem; }
   .position {
     flex: none;
     width: 1.5rem;

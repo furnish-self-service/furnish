@@ -1,7 +1,8 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
+import { completedActivity, historyLimit, readHistory, recordProgress, writeHistory, type RecentActivity, type Run } from './activity-history';
 import { StatusCache } from './status-cache';
-import type { AppInfo, CollectionInfo, KitInfo, LogLine, Outcome, Settings, Status, Step } from './api';
+import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
 import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, terror, formatDate, lang } from './i18n.svelte';
 import { serverLooks } from './schedule';
@@ -21,32 +22,12 @@ export type View =
 
 export type Busy = 'install' | 'uninstall';
 
-/** A step of a run: the planned step plus what happened to it so far. */
-export interface RunStep {
-  step: Step;
-  state: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled';
-  startedAt?: number;
-  durationMs?: number;
-  outcome?: Outcome;
-}
-
-export interface Run {
-  kind: 'install' | 'update' | 'uninstall' | 'reinstall';
-  startedAt: number;
-  finishedAt?: number;
-  /** Abort requested: 'abort' stops after the current step, 'force' interrupts it. */
-  stopping?: 'abort' | 'force';
-  cancelled?: boolean;
-  steps: RunStep[];
-}
-
 export interface Queued {
   key: string;
   action: Busy | 'reinstall' | 'installPrevious' | 'installCurrent' | 'installVersion';
   /** For installVersion: the commit of the version the person chose. */
   commit?: string;
-  /** Started by automatic updates, not by the user. */
-  auto?: boolean;
+  trigger: api.Trigger;
 }
 
 export interface Toast {
@@ -61,8 +42,11 @@ export const store = $state({
   brand: { name: 'furnish', logo: null, accent: null, accentDark: null, light: {}, dark: {} } as Branding,
   apps: [] as AppInfo[],
   kits: [] as KitInfo[],
-  /** Missing key: status not known yet. 'error': the check failed. */
+  /** Last known result. 'error' means no successful result is available. */
   status: {} as Record<string, Status | 'error'>,
+  statusErrors: {} as Record<string, string>,
+  checkedAt: {} as Record<string, number>,
+  checkingStatus: {} as Record<string, true>,
   /** For blocked apps: what they need, e.g. "Homebrew (brew)". */
   reasons: {} as Record<string, string>,
   /** Apps furnish can't uninstall: a resource can't remove what it set up and the app has no removal steps. */
@@ -74,6 +58,9 @@ export const store = $state({
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
   loading: true,
+  settingUpCollections: true,
+  catalogError: false,
+  scan: { running: false, complete: false, checked: 0, total: 0 },
   view: { page: 'discover' } as View,
   query: '',
   toasts: [] as Toast[],
@@ -81,6 +68,7 @@ export const store = $state({
   logs: {} as Record<string, LogLine[]>,
   /** Step progress of the current or last install/update/uninstall per app (this session only). */
   runs: {} as Record<string, Run>,
+  recent: [] as RecentActivity[],
   /** Operations waiting for the running one to finish, in order. */
   queue: [] as Queued[],
   /** Installs that failed in this session, and the earlier version that may work. */
@@ -120,27 +108,34 @@ export const store = $state({
 
 api.onProgress((p) => {
   const run = store.runs[p.key];
-  if (!run) return;
-  if (p.event === 'planned') {
-    run.steps = p.steps.map((step) => ({ step, state: 'pending' }));
-  } else if (p.event === 'started') {
-    Object.assign(run.steps[p.index], { state: 'running', startedAt: p.atMs });
-  } else {
-    const s = run.steps[p.index];
-    s.state = p.outcome.cancelled ? 'cancelled' : p.outcome.error ? 'failed' : p.outcome.action === 'skipped' ? 'skipped' : 'done';
-    s.startedAt ??= p.atMs - p.durationMs;
-    s.durationMs = p.durationMs;
-    s.outcome = p.outcome;
-  }
+  if (run && run.finishedAt === undefined) recordProgress(run, p);
 });
 
-function startRun(key: string, kind: Run['kind']) {
-  store.logs[key] = [];
-  store.runs[key] = { kind, startedAt: Date.now(), steps: [] };
+let historyProfile: string | undefined;
+function initializeActivity(dataDir: string) {
+  if (historyProfile === dataDir) return;
+  // The profile is fixed for the process. A later catalog load can recover from a
+  // failed initial data_dir call; keep anything completed in the meantime.
+  const current = historyProfile === undefined ? store.recent : [];
+  historyProfile = dataDir;
+  store.recent = [...current, ...readHistory(dataDir)].slice(0, historyLimit);
+  if (current.length) writeHistory(dataDir, store.recent);
 }
-function endRun(key: string, cancelled = false) {
-  const run = store.runs[key];
-  if (run) Object.assign(run, { finishedAt: Date.now(), cancelled });
+
+function startRun(app: AppInfo, kind: Run['kind'], trigger: api.Trigger) {
+  store.logs[app.key] = [];
+  store.runs[app.key] = {
+    id: crypto.randomUUID(), name: appName(app), kind, trigger, startedAt: Date.now(), steps: [], phaseStart: 0,
+  };
+  return store.runs[app.key];
+}
+
+function endRun(key: string, run: Run, result: NonNullable<Run['result']>) {
+  run.finishedAt = Date.now();
+  run.result = result;
+  const entry = completedActivity(key, run, store.logs[key]);
+  store.recent = [entry, ...store.recent].slice(0, historyLimit);
+  if (historyProfile) writeHistory(historyProfile, store.recent);
 }
 
 /** Abort the running operation of an app: first after its current step, then (force) right away. */
@@ -174,7 +169,9 @@ export function dismiss(id: number) {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 let catalogLoad = 0;
+let catalogListed: Promise<void>;
 let latestLoad: Promise<void>;
+let reportedCatalog = 0;
 let cache: StatusCache | undefined;
 const revisions = new Map<string, string>();
 // Cached values are for display. Automatic updates and inventory use live checks.
@@ -182,17 +179,35 @@ const verifiedKeys = new Set<string>();
 const pendingChecks = new Map<string, symbol>();
 
 export function loadAll(): Promise<void> {
-  return latestLoad = loadCatalog(++catalogLoad);
+  const load = ++catalogLoad;
+  if (!store.autoUpdate.running) checkRound++;
+  catalogListed = listCatalog(load);
+  latestLoad = catalogListed.then(async () => {
+    if (load !== catalogLoad) return latestLoad;
+    await scanApps(store.apps, load);
+    if (load !== catalogLoad) return latestLoad;
+    reportInventory();
+  });
+  return latestLoad;
 }
 
-async function loadCatalog(load: number): Promise<void> {
-  if (!store.autoUpdate.running) checkRound++; // inside a check for updates, part of its round
+// A daily inventory must include newly provisioned collections and a completed local scan.
+function reportInventory() {
+  if (store.settingUpCollections || !store.scan.complete || store.catalogError
+    || reportedCatalog === catalogLoad || store.settings?.reporting !== 'all') return;
+  reportedCatalog = catalogLoad;
+  api.reportInventory(Array.from(verifiedKeys, key => [key, store.status[key]])).catch(() => {});
+}
+
+async function listCatalog(load: number) {
   store.loading = true;
+  store.scan.complete = false;
   // Loaded independently: a problem with one must not hide the other.
   const [apps, collections, kits, dataDir] = await Promise.allSettled([
     api.listApps(), api.listCollections(), api.listKits(), api.dataDir(),
   ]);
-  if (load !== catalogLoad) return latestLoad;
+  if (load !== catalogLoad) return;
+  store.catalogError = apps.status === 'rejected' || collections.status === 'rejected';
   if (apps.status === 'fulfilled') store.apps = apps.value;
   else toast('error', t('toast.loadApps'), message(apps.reason));
   if (kits.status === 'fulfilled') store.kits = kits.value;
@@ -200,11 +215,15 @@ async function loadCatalog(load: number): Promise<void> {
   if (collections.status === 'fulfilled') store.collections = collections.value;
   else toast('error', t('toast.loadCollections'), message(collections.reason));
   askQuestions(); // on launch, and when an update brings a new question
+  if (dataDir.status === 'fulfilled') initializeActivity(dataDir.value);
   cache = dataDir.status === 'fulfilled' ? new StatusCache(dataDir.value) : undefined;
   revisions.clear();
   pendingChecks.clear();
   verifiedKeys.clear();
   store.status = {};
+  store.statusErrors = {};
+  store.checkedAt = {};
+  store.checkingStatus = {};
   store.reasons = {};
   store.unremovable = {};
   store.external = {};
@@ -217,23 +236,30 @@ async function loadCatalog(load: number): Promise<void> {
       if (!revision || revision === 'unknown') continue;
       revisions.set(app.key, revision);
       const saved = cache?.read(app.key, revision);
-      if (saved) showCheck(app.key, saved);
+      if (saved) showCheck(app.key, saved.check, saved.checkedAt);
     }
   }
   store.loading = false;
-  // The engine runs one check at a time anyway; sequential keeps the UI updating card by card.
-  for (const app of store.apps) {
-    if (load !== catalogLoad) return latestLoad;
-    await checkStatus(app.key);
-  }
-  if (load !== catalogLoad) return latestLoad;
-  // The daily inventory report, if the organization takes reports and asks for everything.
-  if (store.settings?.reporting === 'all') {
-    api.reportInventory(Array.from(verifiedKeys, key => [key, store.status[key]])).catch(() => {});
+}
+
+/** The engine checks one app at a time. A newer catalog scan takes over its progress. */
+async function scanApps(apps: AppInfo[], load: number) {
+  store.scan = { running: true, complete: false, checked: 0, total: apps.length };
+  try {
+    for (const app of apps) {
+      if (load !== catalogLoad) return;
+      await checkStatus(app.key);
+      if (load === catalogLoad) store.scan.checked++;
+    }
+    if (load === catalogLoad) store.scan.complete = true;
+  } finally {
+    if (load === catalogLoad) store.scan.running = false;
   }
 }
 
-function showCheck(key: string, check: api.AppCheck) {
+function showCheck(key: string, check: api.AppCheck, checkedAt: number | null) {
+  if (checkedAt !== null) store.checkedAt[key] = checkedAt;
+  delete store.statusErrors[key];
   store.status[key] = check.status;
   if (check.reason) store.reasons[key] = check.reason;
   else delete store.reasons[key];
@@ -247,28 +273,34 @@ function showCheck(key: string, check: api.AppCheck) {
 
 /** Ask for an app's status. A security update its collection requires is queued right away,
  *  whatever the automatic-update settings say. */
-export async function checkStatus(key: string) {
+export async function checkStatus(key: string): Promise<boolean> {
   const load = catalogLoad;
   const request = Symbol();
   pendingChecks.set(key, request);
+  store.checkingStatus[key] = true;
+  const current = () => load === catalogLoad && pendingChecks.get(key) === request;
   try {
     const check = await api.appStatus(key);
-    if (load !== catalogLoad || pendingChecks.get(key) !== request) return;
-    showCheck(key, check);
+    if (!current()) return false;
+    const checkedAt = Date.now();
+    showCheck(key, check, checkedAt);
     verifiedKeys.add(key);
     const revision = revisions.get(key);
-    if (revision) cache?.write(key, revision, check);
+    if (revision) cache?.write(key, revision, check, checkedAt);
     installRequiredUpdate(key);
-  } catch {
-    if (load !== catalogLoad || pendingChecks.get(key) !== request) return;
-    store.status[key] = 'error';
-    delete store.reasons[key];
-    delete store.external[key];
-    delete store.unremovable[key];
-    delete store.required[key];
-    verifiedKeys.delete(key);
+    return true;
+  } catch (error) {
+    if (current()) {
+      store.status[key] ??= 'error';
+      store.statusErrors[key] = message(error);
+      verifiedKeys.delete(key);
+    }
+    return false;
   } finally {
-    if (pendingChecks.get(key) === request) pendingChecks.delete(key);
+    if (pendingChecks.get(key) === request) {
+      pendingChecks.delete(key);
+      delete store.checkingStatus[key];
+    }
   }
 }
 
@@ -282,13 +314,14 @@ const requiredTried = new Map<string, number>();
  *  automatic updates off for the app, after a declined update and while the computer is busy.
  *  It waits for the install that is running (one at a time). */
 function installRequiredUpdate(key: string) {
+  if (store.settingUpCollections) return;
   const app = appByKey(key);
   if (!app) return;
   const tried = requiredTried.get(key) === checkRound;
   const action = urgentAction(app, store.required[key], { pending: isPending(key), declared: !!store.external[key], tried });
   if (!action) return;
   requiredTried.set(key, checkRound);
-  enqueue(key, action, true);
+  enqueue(key, action, 'update');
   toast('info', t('toast.requiredUpdate', { app: appName(app) }));
 }
 
@@ -297,11 +330,10 @@ export const requiredUpdate = (key: string) => store.status[key] === 'needsUpdat
 
 
 /** Run one queued operation; resolves to whether it succeeded. */
-async function runOperation(app: AppInfo, action: Queued['action'], auto = false, commit?: string): Promise<boolean> {
-  const trigger: api.Trigger = autoInstalling.has(app.key) ? 'autoInstall' : auto ? 'update' : 'user';
+async function runOperation(app: AppInfo, action: Queued['action'], trigger: api.Trigger, commit?: string): Promise<boolean> {
   const installs = action !== 'uninstall' && action !== 'reinstall';
   const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
-  startRun(app.key, kind);
+  const run = startRun(app, kind, trigger);
   store.busy[app.key] = action === 'uninstall' ? 'uninstall' : 'install';
   delete store.failed[app.key];
   let cancelled = false;
@@ -309,12 +341,14 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
   try {
     const fellBack = action === 'installVersion' ? await api.installVersion(app.key, commit ?? '', trigger) : await api[action](app.key, trigger);
     ok = true;
-    if (fellBack)
+    if (fellBack) {
+      run.fallbackDate = fellBack.date;
       toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
-    else toast('success', t(`run.done.${kind}`, { app: appName(app) }));
-    if (autoInstalling.delete(app.key)) await api.autoInstallDone(app.key);
+    } else toast('success', t(`run.done.${kind}`, { app: appName(app) }));
+    if (autoInstalling.has(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
-    cancelled = message(e) === api.CANCELLED;
+    run.error = message(e);
+    cancelled = run.error === api.CANCELLED;
     if (cancelled) toast('info', t(`run.cancelled.${kind}`, { app: appName(app) }));
     else {
       toast('error', t(`run.failed.${kind}`, { app: appName(app) }), terror(message(e)));
@@ -323,7 +357,8 @@ async function runOperation(app: AppInfo, action: Queued['action'], auto = false
       store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };
     }
   } finally {
-    endRun(app.key, cancelled);
+    autoInstalling.delete(app.key);
+    endRun(app.key, run, cancelled ? 'cancelled' : !ok ? 'failed' : run.fallbackDate ? 'fallback' : 'done');
     delete store.busy[app.key];
     // Which options the app is installed with changed (they decide whether a reinstall is offered).
     if (ok) await reloadApps();
@@ -348,7 +383,7 @@ export function visibleApps(view: View, query: string): AppInfo[] {
   const languages = wanted();
   const apps = store.apps.filter((app) => {
     const status = store.status[app.key];
-    if (status === 'unavailable') return false;
+    if (status === 'unavailable' && store.statusErrors[app.key] === undefined) return false;
     if (view.page === 'installed' && status !== 'installed' && status !== 'needsUpdate') return false;
     if (view.page === 'updates' && status !== 'needsUpdate') return false;
     if (view.page === 'category' && !app.categories.includes(view.name)) return false;
@@ -394,6 +429,7 @@ let retry: ReturnType<typeof setTimeout> | undefined;
 /** Queue updates of installed apps that have one, unless turned off for the app. With
  *  load-aware updates on, wait while the computer is busy and ask again a little later. */
 async function updateApps() {
+  if (store.settingUpCollections) return;
   clearTimeout(retry);
   const due = () =>
     store.apps.filter(
@@ -417,7 +453,7 @@ async function updateApps() {
   }
   store.autoUpdate.postponed = null;
   const apps = due();
-  for (const app of apps) enqueue(app.key, 'install', true);
+  for (const app of apps) enqueue(app.key, 'install', 'update');
   if (apps.length) toast('info', t('toast.autoUpdating', { apps: apps.map(appName).join(', '), n: apps.length }));
 }
 
@@ -426,23 +462,32 @@ async function updateApps() {
 export async function checkForUpdates() {
   if (store.autoUpdate.running) return;
   store.autoUpdate.running = true;
+  const catalogAtStart = catalogLoad;
+  const catalogWasChecking = !!latestLoad && (store.loading || store.scan.running);
   checkRound++;
   try {
-    const changed = await updateCollections();
-    store.autoUpdate.error = null;
-    if (changed.length) toast('info', t('toast.updated', { names: changed.join(', ') }));
-  } catch (e) {
-    store.autoUpdate.error = message(e);
+    try {
+      const changed = await updateCollections();
+      store.autoUpdate.error = null;
+      if (changed.length) toast('info', t('toast.updated', { names: changed.join(', ') }));
+    } catch (e) {
+      store.autoUpdate.error = message(e);
+    }
+    checkSelfUpdate();
+    // A catalog reload already checks every app, including newly added ones.
+    if (catalogWasChecking || catalogLoad !== catalogAtStart) {
+      await latestLoad;
+    } else {
+      const due = store.apps.filter(app =>
+        !isPending(app.key) && (isInstalled(app.key) || !verifiedKeys.has(app.key)));
+      await scanApps(due, catalogAtStart);
+      if (catalogLoad !== catalogAtStart) await latestLoad;
+    }
+    await updateApps();
   } finally {
-    store.autoUpdate.running = false;
     store.autoUpdate.lastAt = Date.now();
+    store.autoUpdate.running = false;
   }
-  checkSelfUpdate();
-  for (const app of store.apps) {
-    const s = store.status[app.key];
-    if ((s === 'installed' || s === 'needsUpdate') && !isPending(app.key)) await checkStatus(app.key);
-  }
-  await updateApps();
 }
 
 /** Automatic updates for one app (on by default). */
@@ -551,12 +596,29 @@ export async function start() {
   // furnish:// links: the one furnish started with, and those arriving while it runs.
   api.onLink(openLink);
   api.pendingLink().then((url) => url && openLink(url)).catch(() => {});
-  // Collections the organization provides, for this user too. A missing sign-in shows as a banner.
-  for (const problem of await api.ensurePresets().catch((e) => [message(e)])) {
-    if (!problem.includes('sign in to')) toast('error', t('toast.setupCollection'), problem);
+  // Publish the local catalog first. Its live checks can proceed while presets are fetched.
+  loadAll();
+  await catalogListed;
+  try {
+    for (const problem of await api.ensurePresets().catch((e) => [message(e)])) {
+      if (!problem.includes('sign in to')) toast('error', t('toast.setupCollection'), problem);
+    }
+    const collections = await api.listCollections();
+    // Presets can be added or replaced under the same name. Recheck their catalog only
+    // when it changed, so a slow endpoint doesn't restart a scan of the same local apps.
+    const changed = collections.length !== store.collections.length || collections.some((c, i) => {
+      const previous = store.collections[i];
+      return previous.name !== c.name || previous.url !== c.url || previous.revision !== c.revision || previous.managed !== c.managed;
+    });
+    if (changed || store.catalogError) loadAll();
+  } catch (e) {
+    toast('error', t('toast.loadCollections'), message(e));
   }
-  await refreshEndpoints();
-  await loadAll();
+  await Promise.all([refreshEndpoints(), catalogListed]);
+  store.settingUpCollections = false;
+  for (const key of verifiedKeys) installRequiredUpdate(key);
+  reportInventory();
+  await latestLoad;
   await autoInstall();
   if (store.settings?.updateOnLaunch) await checkForUpdates();
   else {
@@ -664,17 +726,29 @@ function openLink(url: string) {
     });
 }
 
+/** A first-launch install can enqueue dependencies too. Wait if any selected app's
+ *  last check failed, including one whose cached state still says it is installed. */
+function verifiedInstall(app: AppInfo, seen = new Set<string>()): boolean {
+  if (!verifiedKeys.has(app.key)) return false;
+  if (seen.has(app.key) || isInstalled(app.key) || store.status[app.key] === 'unavailable') return true;
+  seen.add(app.key);
+  return defaultDependencies(app).every(key => {
+    const dep = appByKey(key);
+    return !dep || verifiedInstall(dep, seen);
+  });
+}
+
 /** Apps the organization installs on first launch (e.g. its VPN client), once each: an app the
  *  user uninstalls later stays uninstalled. */
 async function autoInstall() {
   for (const key of await api.autoInstallPending().catch(() => [])) {
     const app = store.apps.find((a) => a.key === key);
-    if (!app || !verifiedKeys.has(key)) continue; // wait for its collection and its first live check
+    if (!app || store.status[key] === 'unavailable' || !verifiedInstall(app)) continue;
     if (isInstalled(key)) {
       await api.autoInstallDone(key);
     } else {
-      install(app);
       autoInstalling.add(key);
+      install(app, defaultDependencies(app), 'autoInstall');
     }
   }
 }
@@ -704,17 +778,17 @@ export const defaultDependencies = (app: AppInfo) => app.dependencies.filter((d)
 
 /** Install or update an app: right away, or after what is already running and queued.
  *  Its chosen dependencies (default: required + preselected) that are missing are queued first. */
-export function install(app: AppInfo, chosen = defaultDependencies(app), seen = new Set<string>()) {
+export function install(app: AppInfo, chosen = defaultDependencies(app), trigger: api.Trigger = 'user', seen = new Set<string>()) {
   if (seen.has(app.key)) return; // a dependency cycle: the run itself will report it
   seen.add(app.key);
   for (const key of chosen) {
     const dep = store.apps.find((a) => a.key === key);
     const status = store.status[key];
     if (dep && status !== 'installed' && status !== 'needsUpdate' && status !== 'unavailable') {
-      install(dep, defaultDependencies(dep), seen);
+      install(dep, defaultDependencies(dep), trigger, seen);
     }
   }
-  enqueue(app.key, 'install');
+  enqueue(app.key, 'install', trigger);
 }
 
 /** Reinstall an app so its current options apply: uninstalls with the options it was installed
@@ -787,7 +861,7 @@ export function installPrevious(app: AppInfo) {
 
 /** Install a version of the app the person chose (see api.appVersions) and keep it there. */
 export function installVersion(app: AppInfo, commit: string) {
-  enqueue(app.key, 'installVersion', false, commit);
+  enqueue(app.key, 'installVersion', 'user', commit);
 }
 
 /** For an app held at an earlier version: try the collection's current version again. */
@@ -801,17 +875,19 @@ export function uninstall(app: AppInfo) {
   enqueue(app.key, 'uninstall');
 }
 
-function enqueue(key: string, action: Queued['action'], auto = false, commit?: string) {
+function enqueue(key: string, action: Queued['action'], trigger: api.Trigger = 'user', commit?: string) {
   if (store.busy[key] || store.queue.some((q) => q.key === key)) return;
-  store.queue.push({ key, action, auto, commit });
+  store.queue.push({ key, action, trigger, commit });
   pump();
 }
 
 export function dequeue(key: string) {
   store.queue = store.queue.filter((q) => q.key !== key);
+  autoInstalling.delete(key);
 }
 
 export function clearQueue() {
+  for (const q of store.queue) autoInstalling.delete(q.key);
   store.queue = [];
 }
 
@@ -824,10 +900,14 @@ async function pump() {
     return;
   }
   const app = store.apps.find((a) => a.key === next.key);
-  if (app) {
-    const ok = await runOperation(app, next.action, next.auto, next.commit);
+  // A catalog reload or a failed refresh can invalidate an automatic action while it waits.
+  const canRun = next.trigger === 'user' || verifiedKeys.has(next.key);
+  if (app && canRun && (next.trigger !== 'autoInstall' || verifiedInstall(app))) {
+    const ok = await runOperation(app, next.action, next.trigger, next.commit);
     // Don't retry an automatic update the user cancelled or that failed, until the app restarts.
-    if (next.auto && !ok) declinedUpdates.add(next.key);
+    if (next.trigger === 'update' && !ok) declinedUpdates.add(next.key);
+  } else {
+    autoInstalling.delete(next.key);
   }
   await recheckBlocked();
   // A cancelled or failed operation only ends itself; the queue carries on.

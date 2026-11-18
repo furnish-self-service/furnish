@@ -16,6 +16,10 @@ export const pt: Record<keyof typeof en, Entry> = {
   'nav.collectionUpdates': { one: '{n} coleção tem uma atualização', other: '{n} coleções têm uma atualização' },
   'nav.settings': 'Definições',
   'nav.selfUpdate': 'Está disponível uma nova versão do {brand}',
+  'catalog.scanProgress': "Apps verificadas: {done} de {total}",
+  'catalog.scanFailures': "Apps que não foi possível verificar: {n}",
+  'catalog.noUpdatesFound': "Nenhuma atualização encontrada entre as apps verificadas.",
+  'catalog.settingUp': "A configurar as coleções…",
   'catalog.checking': 'A verificar…',
   'catalog.checkForUpdates': 'Procurar atualizações',
   'catalog.postponed': 'Atualizações adiadas: {reason}',
@@ -66,6 +70,10 @@ export const pt: Record<keyof typeof en, Entry> = {
 
   // ActionButton.svelte
   'action.stopping': 'A parar…',
+  'status.check': "Verificar estado",
+  'status.retry': "Tentar novamente",
+  'status.lastKnown': "Último estado conhecido: {state}",
+  'status.checkedAt': "Última verificação bem-sucedida: {time}",
   'action.status': 'Estado desconhecido',
   'action.answerFirst': 'Responda primeiro',
   'action.needs': 'Requer {what}',
@@ -104,6 +112,11 @@ export const pt: Record<keyof typeof en, Entry> = {
 
   // Activity.svelte
   'activity.title': 'Atividade',
+  'activity.recent': "Atividade recente",
+  'activity.trigger.user': "Iniciada por você",
+  'activity.trigger.update': "Atualização automática",
+  'activity.trigger.autoInstall': "Instalação pela organização",
+  'activity.failedStep': "Etapa com falha: {step}",
   'activity.now': 'Agora',
   'activity.nothingRunning': 'Nada em curso. As instalações, atualizações e desinstalações que iniciar aparecem aqui.',
   'activity.upNext': 'A seguir',

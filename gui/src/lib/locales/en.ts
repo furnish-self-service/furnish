@@ -13,6 +13,10 @@ export const en = {
   'nav.collectionUpdates': { one: '{n} collection has an update', other: '{n} collections have an update' },
   'nav.settings': 'Settings',
   'nav.selfUpdate': 'A new version of {brand} is available',
+  'catalog.scanProgress': "Checked {done} of {total} apps",
+  'catalog.scanFailures': "Apps that couldn’t be checked: {n}",
+  'catalog.noUpdatesFound': "No updates found among the apps checked.",
+  'catalog.settingUp': "Setting up your collections…",
   'catalog.checking': 'Checking…',
   'catalog.checkForUpdates': 'Check for updates',
   'catalog.postponed': 'Updates postponed: {reason}',
@@ -63,6 +67,10 @@ export const en = {
 
   // ActionButton.svelte
   'action.stopping': 'Stopping…',
+  'status.check': "Check status",
+  'status.retry': "Retry check",
+  'status.lastKnown': "Last known: {state}",
+  'status.checkedAt': "Last verified {time}",
   'action.status': 'Status unknown',
   'action.answerFirst': 'Answer first',
   'action.needs': 'Needs {what}',
@@ -101,6 +109,11 @@ export const en = {
 
   // Activity.svelte
   'activity.title': 'Activity',
+  'activity.recent': "Recent activity",
+  'activity.trigger.user': "Started by you",
+  'activity.trigger.update': "Automatic update",
+  'activity.trigger.autoInstall': "Organization install",
+  'activity.failedStep': "Failed step: {step}",
   'activity.now': 'Now',
   'activity.nothingRunning': 'Nothing is running. Installs, updates and uninstalls you start show up here.',
   'activity.upNext': 'Up next',
