@@ -346,6 +346,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.note.dir.keep': "Mantiene <code>{path}</code> perché non è vuota",
   'plan.note.mode': "Imposta i permessi di <code>{path}</code> a <code>{mode}</code>",
   'plan.note.private': "Rende <code>{path}</code> accessibile solo a te",
+  'plan.note.file.requiresClosed': "Chiudi <code>{names}</code> prima di modificare questo file.",
   'plan.note.file.create': { one: "Crea <code>{path}</code> ({n} riga)", other: "Crea <code>{path}</code> ({n} righe)" },
   'plan.note.file.copy': "Copia <code>{source}</code> dalla raccolta in <code>{path}</code>",
   'plan.note.file.write': "Modifica <code>{path}</code> (+{added} −{removed})",

@@ -11,6 +11,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use super::closed_apps::ClosedApps;
+
 /// A path as written in the app, `~/` expanded to the home folder (on Windows too).
 pub fn expand(path: &str) -> Result<PathBuf> {
     let rest = if path == "~" {
@@ -78,6 +80,7 @@ pub fn resolve(path: &Path) -> Result<PathBuf> {
 /// A file a resource manages: where it is as written (`shown`) and in fact (`real`), and its
 /// contents (`None`: there is no file).
 pub struct Managed {
+    requires_closed: ClosedApps,
     pub shown: String,
     pub real: PathBuf,
     pub bytes: Option<Vec<u8>>,
@@ -88,6 +91,10 @@ pub struct Managed {
 
 impl Managed {
     pub fn open(path: &str) -> Result<Self> {
+        Self::open_guarded(path, ClosedApps::default())
+    }
+
+    pub(super) fn open_guarded(path: &str, requires_closed: ClosedApps) -> Result<Self> {
         let real = resolve(&expand(path)?)?;
         let mut unreadable = false;
         let bytes = match fs::read(&real) {
@@ -101,7 +108,19 @@ impl Managed {
             }
             Err(e) => return Err(anyhow!(e).context(format!("reading {path}"))),
         };
-        Ok(Managed { shown: path.to_string(), real, bytes, unreadable })
+        Ok(Managed { shown: path.to_string(), real, bytes, unreadable, requires_closed })
+    }
+
+    /// A settings app may have saved on exit, or restarted during validation. Only write
+    /// the planned edit if its input still matches after checking the process list.
+    pub(super) fn check_before_change(&self) -> Result<()> {
+        if !self.requires_closed.is_empty() {
+            self.requires_closed.ensure_closed()?;
+            let now = Self::open(&self.shown)?;
+            anyhow::ensure!(!now.unreadable && self.real == now.real && self.bytes == now.bytes,
+                "{} changed while preparing this edit; retry to use the latest settings", self.shown);
+        }
+        Ok(())
     }
 
     /// The file's text (empty if there is no file), decoded from its encoding.
@@ -201,6 +220,7 @@ pub fn write(file: &Managed, bytes: &[u8], options: &WriteOptions) -> Result<()>
             anyhow!("can't write {}: {e}", file.shown)
         }
     };
+    file.check_before_change()?;
     fs::create_dir_all(parent).map_err(unwritable)?;
     let existing = fs::metadata(real).ok();
     if existing.as_ref().is_some_and(|m| m.permissions().readonly()) {
@@ -214,6 +234,7 @@ pub fn write(file: &Managed, bytes: &[u8], options: &WriteOptions) -> Result<()>
     if let Some(command) = &options.validate {
         validate(command, &temp.0, &file.shown)?;
     }
+    file.check_before_change()?;
     if options.backup && file.bytes.is_some() {
         backup(real, options.private)?;
     }
@@ -225,6 +246,7 @@ pub fn delete(file: &Managed, options: &WriteOptions) -> Result<()> {
     if file.bytes.is_none() {
         return Ok(());
     }
+    file.check_before_change()?;
     if options.backup {
         backup(&file.real, options.private)?;
     }
@@ -641,6 +663,24 @@ mod tests {
         let text = Text::decode(&utf16).unwrap();
         assert_eq!((text.bom, text.text.as_str()), (Bom::Utf16Le, "Grüße\n"));
         assert_eq!(text.encode("Grüße\n"), utf16);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_guarded_write_preserves_a_save_during_validation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        fs::write(&path, "old").unwrap();
+        let guard = serde_json::from_value(serde_json::json!(["furnish-test-no-running-writer"])).unwrap();
+        let file = Managed::open_guarded(path.to_str().unwrap(), guard).unwrap();
+        let opts = WriteOptions {
+            backup: true,
+            validate: Some(vec!["sh".into(), "-c".into(), r#"printf saved > "$1""#.into(), "validator".into(), file.shown.clone(), "%s".into()]),
+            ..Default::default()
+        };
+        assert!(write(&file, b"new", &opts).unwrap_err().to_string().contains("retry"));
+        assert_eq!(fs::read(&path).unwrap(), b"saved");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

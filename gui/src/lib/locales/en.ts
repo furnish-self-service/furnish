@@ -343,6 +343,7 @@ export const en = {
   'plan.note.dir.keep': "Keeps <code>{path}</code> because it isn’t empty",
   'plan.note.mode': "Sets the permissions of <code>{path}</code> to <code>{mode}</code>",
   'plan.note.private': "Makes <code>{path}</code> accessible only to you",
+  'plan.note.file.requiresClosed': "Close <code>{names}</code> before changing this file.",
   'plan.note.file.create': { one: "Creates <code>{path}</code> ({n} line)", other: "Creates <code>{path}</code> ({n} lines)" },
   'plan.note.file.copy': "Copies <code>{source}</code> from the collection to <code>{path}</code>",
   'plan.note.file.write': "Changes <code>{path}</code> (+{added} −{removed})",

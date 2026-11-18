@@ -363,6 +363,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.note.dir.keep': "Zostawia <code>{path}</code>, bo folder nie jest pusty",
   'plan.note.mode': "Ustawia uprawnienia <code>{path}</code> na <code>{mode}</code>",
   'plan.note.private': "Udostępnia <code>{path}</code> tylko tobie",
+  'plan.note.file.requiresClosed': "Zamknij <code>{names}</code> przed zmianą tego pliku.",
   'plan.note.file.create': { one: "Tworzy <code>{path}</code> ({n} wiersz)", few: "Tworzy <code>{path}</code> ({n} wiersze)", many: "Tworzy <code>{path}</code> ({n} wierszy)", other: "Tworzy <code>{path}</code> ({n} wiersza)" },
   'plan.note.file.copy': "Kopiuje <code>{source}</code> z kolekcji do <code>{path}</code>",
   'plan.note.file.write': "Zmienia <code>{path}</code> (+{added} −{removed})",

@@ -344,6 +344,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.note.dir.keep': "Behält <code>{path}</code>, weil der Ordner nicht leer ist",
   'plan.note.mode': "Setzt die Berechtigungen von <code>{path}</code> auf <code>{mode}</code>",
   'plan.note.private': "Macht <code>{path}</code> nur für dich zugänglich",
+  'plan.note.file.requiresClosed': "Schließe <code>{names}</code>, bevor diese Datei geändert wird.",
   'plan.note.file.create': { one: "Legt <code>{path}</code> an ({n} Zeile)", other: "Legt <code>{path}</code> an ({n} Zeilen)" },
   'plan.note.file.copy': "Kopiert <code>{source}</code> aus der Sammlung nach <code>{path}</code>",
   'plan.note.file.write': "Ändert <code>{path}</code> (+{added} −{removed})",

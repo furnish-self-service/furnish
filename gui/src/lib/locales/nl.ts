@@ -346,6 +346,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.note.dir.keep': "Houdt <code>{path}</code>, omdat de map niet leeg is",
   'plan.note.mode': "Zet de rechten van <code>{path}</code> op <code>{mode}</code>",
   'plan.note.private': "Maakt <code>{path}</code> alleen voor jou toegankelijk",
+  'plan.note.file.requiresClosed': "Sluit <code>{names}</code> voordat dit bestand wordt gewijzigd.",
   'plan.note.file.create': { one: "Maakt <code>{path}</code> aan ({n} regel)", other: "Maakt <code>{path}</code> aan ({n} regels)" },
   'plan.note.file.copy': "Kopieert <code>{source}</code> uit de collectie naar <code>{path}</code>",
   'plan.note.file.write': "Wijzigt <code>{path}</code> (+{added} −{removed})",
