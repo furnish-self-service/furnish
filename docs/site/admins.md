@@ -38,6 +38,8 @@ An admin policy decides which collections people get and what they can change. f
 - `osSpecific`: settings for one operating system, grouped by system. Each value is a plain default or `{ "value": …, "locked": true }`, and furnish checks each one on its own. NixOS has `configuration`, `flakeAttribute`, `homeManagerConfiguration` and `installInto`; see [NixOS](#nixos).
 - `allowedResourceTypes`: the DSC resource types apps may use besides furnish's own, such as `Furnish/Package`. Case doesn't matter. furnish refuses an app with any other type, also inside a group. Without this key, apps may use any resource that DSC finds.
 
+For an environment with its own package tool, ship a script in a preset collection and register it under `packageManagers` in that collection's `collection.yaml`. The service runs the script from its own checkout when it installs a system app. [Writing a collection](collections.md#package-managers-supplied-by-a-collection)
+
 ## Starting at sign-in
 
 furnish installs updates only while it runs. With `startAtSignIn` on, which is the default, it starts when people sign in, with the window closed and its icon in the system tray or menu bar. furnish adds the entry for the current user: a value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, a LaunchAgent in `~/Library/LaunchAgents` on macOS, `~/.config/autostart/furnish.desktop` on Linux. It updates or removes the entry each time it starts, so a locked policy value applies from the next start on:

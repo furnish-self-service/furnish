@@ -63,6 +63,8 @@ impl Declaration {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct CollectionFile {
+    #[serde(default, rename = "packageManagers")]
+    package_managers: BTreeMap<String, crate::script_managers::Definition>,
     #[serde(default)]
     parameters: BTreeMap<String, Declaration>,
     /// Image file in the collection (SVG, PNG, JPEG or WebP).
@@ -80,6 +82,20 @@ fn collection_file(dir: &Path) -> Result<CollectionFile> {
         return Ok(CollectionFile::default());
     }
     serde_yaml::from_str(&fs::read_to_string(&path)?).with_context(|| format!("{}", path.display()))
+}
+
+pub(crate) fn package_managers(dir: &Path) -> Result<BTreeMap<String, crate::script_managers::Definition>> {
+    checked_managers(collection_file(dir)?)
+}
+
+/// The declarations from a historical collection.yaml blob, before its scripts are extracted.
+pub(crate) fn package_managers_from_yaml(bytes: &[u8]) -> Result<BTreeMap<String, crate::script_managers::Definition>> {
+    checked_managers(serde_yaml::from_slice(bytes)?)
+}
+
+fn checked_managers(file: CollectionFile) -> Result<BTreeMap<String, crate::script_managers::Definition>> {
+    for (id, def) in &file.package_managers { def.check(id)?; }
+    Ok(file.package_managers)
 }
 
 /// Options a collection declares in `collection.yaml` (none if the file is missing).
@@ -112,7 +128,7 @@ pub fn app_declarations(doc: &Value) -> BTreeMap<String, Declaration> {
         .map(|(name, p)| {
             let decl = Declaration {
                 kind: p["type"].as_str().unwrap_or("string").to_string(),
-                default: p.get("defaultValue").map(crate::conditions::parameter_default),
+                default: p.get("defaultValue").map(|value| crate::conditions::parameter_default(doc, value)),
                 label: None,
                 description: p["description"].as_str().map(String::from),
                 allowed_values: p["allowedValues"].as_array().cloned().unwrap_or_default(),

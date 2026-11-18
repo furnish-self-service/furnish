@@ -388,6 +388,8 @@ jobs:
       - run: cargo build --release
       - run: cargo test --release --locked --test cli_pipe
       - if: runner.os == 'Windows'
+        run: cargo test --release --locked --lib package_names::tests
+      - if: runner.os == 'Windows'
         run: winget --version
       # A real .msi for the Furnish/Installer test (macOS builds .pkg/.dmg inside the test).
       - if: runner.os == 'Windows'

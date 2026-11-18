@@ -65,6 +65,9 @@ pub fn collection(dir: &Path) -> Result<Vec<Item>> {
     let mut items = Vec::new();
 
     let mut options = Item { name: "collection.yaml".into(), kind: "options", findings: vec![], systems: vec![], coverage: None };
+    if let Err(err) = crate::script_managers::check_files(&dir) {
+        options.findings.push(error(format!("{err:#}")));
+    }
     let shared = match crate::options::collection_declarations(&dir) {
         Ok(shared) => shared,
         Err(err) => {
@@ -315,7 +318,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
     }
 
     if let Value::String(expr) = &meta["recommended"]
-        && let Err(err) = crate::options::condition_holds(expr, &values)
+        && let Err(err) = crate::conditions::holds_for(&app.doc, expr, &values)
     {
         findings.push(error(format!("recommended: {expr}: {err:#}")));
     }
@@ -325,7 +328,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, apps
             findings.push(error(format!("depends on {}, which is not an app of the collection", dep.app)));
         }
         if let Some(condition) = &dep.condition
-            && let Err(err) = crate::options::condition_holds(condition, &values)
+            && let Err(err) = crate::conditions::holds_for(&app.doc, condition, &values)
         {
             findings.push(error(format!("dependency {}: condition {condition}: {err:#}", dep.app)));
         }

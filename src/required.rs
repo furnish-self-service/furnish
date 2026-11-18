@@ -645,16 +645,10 @@ pub struct Facts {
     pub available: Option<Vec<String>>,
     pub scheme: Option<Scheme>,
     pub via: String,
-    /// It can install a given version (apt, dnf, zypper, winget).
+    /// The resource reports that it can list and install a specific version.
     pub pinnable: bool,
     /// A `Furnish/Installer`: what is offered is the collection's file.
     pub installer: bool,
-}
-
-/// Package managers that install a given version: apt `name=version`, dnf and zypper, winget
-/// `--version`.
-pub fn pinnable(kind: &str, via: &str) -> bool {
-    kind == crate::catalog::PACKAGE_TYPE && matches!(via, "apt" | "dnf" | "zypper" | "winget")
 }
 
 impl Facts {
@@ -670,7 +664,7 @@ impl Facts {
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).filter(|v| !v.is_empty()).collect()),
             scheme: text("versionScheme").map(|s| Scheme::named(&s)),
-            pinnable: pinnable(kind, &via),
+            pinnable: kind == crate::catalog::PACKAGE_TYPE && state["supportsVersionPin"] == true,
             installer: kind == crate::catalog::INSTALLER_TYPE,
             via,
         }
@@ -1188,12 +1182,12 @@ mod tests {
         assert_eq!(decision, Decision::NoneOffered);
         assert_eq!(shown.unwrap().summary, "2 or later; the collection's file has 1.5");
         assert!(Facts::from_state(crate::catalog::INSTALLER_TYPE, &json!({"_exist": true, "version": "1.0", "via": "apt"})).installer);
-        assert!(!pinnable(crate::catalog::INSTALLER_TYPE, "apt"));
+        assert!(!Facts::from_state(crate::catalog::INSTALLER_TYPE, &json!({"supportsVersionPin":true})).pinnable);
     }
 
     #[test]
     fn facts_come_from_the_resources_state() {
-        let state = json!({"name": "firefox", "_exist": true, "version": "127.0", "latestVersion": "128.0.5", "versionScheme": "dpkg", "via": "apt", "availableVersions": ["128.0.5", "127.0"]});
+        let state = json!({"name": "firefox", "_exist": true, "version": "127.0", "latestVersion": "128.0.5", "versionScheme": "dpkg", "via": "apt", "supportsVersionPin": true, "availableVersions": ["128.0.5", "127.0"]});
         let f = Facts::from_state(crate::catalog::PACKAGE_TYPE, &state);
         assert_eq!((f.installed.as_deref(), f.latest.as_deref(), f.scheme, f.pinnable), (Some("127.0"), Some("128.0.5"), Some(Scheme::Dpkg), true));
         assert_eq!(f.available.unwrap().len(), 2);

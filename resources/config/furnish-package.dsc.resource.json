@@ -70,15 +70,7 @@
         "namesByManager": {
           "type": "object",
           "propertyNames": {
-            "enum": [
-              "pacman",
-              "apt",
-              "dnf",
-              "zypper",
-              "brew",
-              "nix",
-              "winget"
-            ]
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
           },
           "additionalProperties": {
             "type": "string",
@@ -126,16 +118,8 @@
         },
         "packageManager": {
           "type": "string",
-          "enum": [
-            "pacman",
-            "apt",
-            "dnf",
-            "zypper",
-            "brew",
-            "nix",
-            "winget"
-          ],
-          "description": "Use this package manager (default: the first one found)"
+          "description": "Use this built-in or collection package manager. By default, use the first available built-in manager or the only available collection manager.",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
         },
         "_inDesiredState": {
           "type": "boolean",
@@ -175,6 +159,11 @@
           "type": "string",
           "readOnly": true,
           "description": "With reportVersions: the newest version on offer, installed or not (for an installer: the version in the file), if known"
+        },
+        "supportsVersionPin": {
+          "type": "boolean",
+          "readOnly": true,
+          "description": "With reportVersions: this manager can list available versions and install a requested targetVersion"
         },
         "availableVersions": {
           "type": "array",

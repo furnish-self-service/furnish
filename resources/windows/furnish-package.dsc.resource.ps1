@@ -111,6 +111,7 @@ function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     if ($outside) { $state.managedBy = 'other'; $state.path = $outside }
     if ($report -and -not $outside) {
         if ($Version -and $Version -ne '?') { $state.version = $Version }
+        $state.supportsVersionPin = $true
         $state.versionScheme = 'winget'
         $state.via = 'winget'
         if ($null -eq $script:latest) { $script:latest = Get-Latest }
