@@ -898,7 +898,23 @@ profiles:
 
 The report lists each active dependency, the install steps in execution order, the package selection and the condition behind each skip. Active dependencies include optional dependencies users can select. An applicable package step lists a missing prerequisite when its manager is absent from the profile. A preceding dependency may supply it during installation. Omit `expect` to inspect the decisions first. Each field you include checks the entire list or package map for that app. An empty list asserts that no entries apply. A mismatch prints the expected and actual values and exits with status 1. Defaults come from the collection and app documents. Supply option values for the choices you want to exercise.
 
-The family preview reports a dependency cycle as an error when its conditions hold together on one system. A cycle that depends on unresolved host facts produces a warning. Profiles check the graph again with their concrete facts and options. Profile assertions cover install-time selection. Windows profiles skip `Furnish/NixOS` steps marked `onlyIfSetUp`. On Unix those steps depend on the target’s NixOS or Home Manager configuration, so the checker reports that it cannot determine them. A condition or package expression that needs a live machine fact outside the profile, such as an environment variable, produces a diagnostic.
+The family preview reports a dependency cycle as an error when its conditions hold together on one system. A cycle that depends on unresolved host facts produces a warning. Profiles check the graph again with their concrete facts and options. Profile assertions cover install-time selection. A condition or package expression that needs a live machine fact outside the profile, such as an environment variable, produces a diagnostic.
+
+A profile assumes a fresh target with no configured Furnish NixOS or Home Manager module. A `Furnish/NixOS` step with `onlyIfSetUp: true` appears in `skipped` by default, including when `nix` is present in `packageManagers`. To test a machine with a configured destination, include `nix` in `packageManagers` and declare the ready destinations:
+
+```yaml
+profiles:
+  mac-home:
+    family: macOS
+    packageManagers: [brew, nix]
+    nixSetup: { home: true }
+  nixos-workstation:
+    family: Linux
+    packageManagers: [nix]
+    nixSetup: { system: true, home: true }
+```
+
+Use `home` for Home Manager on Linux or macOS and `system` for the NixOS system configuration on Linux. Each defaults to `false`. Steps declaring only `homeOptions` require the home destination. Steps declaring only `options` require the system destination. For packages alone or options for both destinations, the profile uses home when configured and system otherwise. Windows profiles always skip guarded steps. A step without the guard keeps its normal condition.
 
 The [two-profile example](https://github.com/furnish-self-service/furnish/blob/main/docs/examples/target-profiles.yaml) runs against Furnish's test collection:
 

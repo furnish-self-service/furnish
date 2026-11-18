@@ -642,6 +642,18 @@ fn pick(wanted: Place, home: Place, desired: &Desired) -> Place {
     }
 }
 
+/// A fresh target profile has no installed entries. Use the same default destination and
+/// option-driven selection as a fresh machine, without inspecting this computer's settings.
+pub(crate) fn missing_profile_destination(properties: &Value, system: bool, home: bool) -> Result<Option<&'static str>> {
+    let desired: Desired = serde_json::from_value(properties.clone())?;
+    let wanted = if install_into(None, home) == "home" { Place::HomeStandalone } else { Place::System };
+    Ok(match pick(wanted, Place::HomeStandalone, &desired) {
+        Place::System if !system => Some("the NixOS configuration is not set up in this profile"),
+        Place::HomeStandalone | Place::HomeNixos if !home => Some("Home Manager is not set up in this profile"),
+        _ => None,
+    })
+}
+
 /// Install (or remove) an app in the person's standalone Home Manager configuration: as the
 /// person, update furnish/home-apps, build the generation and activate it.
 fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<()> {
