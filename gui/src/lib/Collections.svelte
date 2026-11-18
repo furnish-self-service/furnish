@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
+  import CollectionRelease from './CollectionRelease.svelte';
   import CollectionTracking from './CollectionTracking.svelte';
   import TrackingFields from './TrackingFields.svelte';
   import CollectionSettings from './CollectionSettings.svelte';
@@ -64,7 +65,7 @@
     }
   }
 
-  async function update(target: string) {
+  async function update(target: string, reviewed?: api.ReviewedRevisions) {
     working = target;
     if (target === '*') {
       try {
@@ -75,7 +76,7 @@
       }
     } else {
       await collectionAction(async () => {
-        const r = await api.updateCollection(target);
+        const r = await api.updateCollection(target, reviewed);
         return r.old !== r.new ? t('collections.updated', { names: target }) : t('collections.isUpToDate', { name: target });
       }, t('collections.updateFailed'));
     }
@@ -178,6 +179,9 @@
               <button class="secondary" disabled={working !== null} onclick={() => (confirmRemove = c.name)}>{t('common.remove')}</button>
             </span>
           {/if}
+          {#key JSON.stringify([c.name, c.revision, c.settings.settings.tracking])}
+            <CollectionRelease name={c.name} busy={working !== null} apply={(revisions) => update(c.name, revisions)} />
+          {/key}
           {#if c.options.length}
             <details class="copts">
               <summary>

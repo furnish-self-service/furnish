@@ -459,7 +459,17 @@ enum CollectionCommand {
     #[command(visible_alias = "ls")]
     List,
     /// Pull the latest version of one or all collections
-    Update { name: Option<String> },
+    Update {
+        name: Option<String>,
+        /// Compare declared app and step changes without adopting the release
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply only if both full commit IDs still match the preview
+        #[arg(long, requires = "name", conflicts_with = "dry_run", num_args = 2, value_names = ["CURRENT", "CANDIDATE"])]
+        reviewed: Vec<String>,
+        #[command(flatten)]
+        tracking: TrackingArgs,
+    },
     /// Remove a collection (installed apps stay installed)
     Remove { name: String },
     /// Show or change the update source, download settings, and fallback behavior for a collection
@@ -499,7 +509,12 @@ fn main() -> ExitCode {
     if cli.verbose {
         engine::capture_logs(print_log_line);
     }
-    let result = engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command));
+    // Comparing Git snapshots only needs collection metadata, even on a machine without DSC.
+    let result = if matches!(cli.command, Command::Collection(CollectionCommand::Update { dry_run: true, .. })) {
+        run(cli.command)
+    } else {
+        engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command))
+    };
     // Reports this command queued (and older ones still waiting), if the organization takes them.
     furnish::reports::send();
     match result {
@@ -517,7 +532,7 @@ fn main() -> ExitCode {
 
 fn run(command: Command) -> Result<()> {
     // Collections the admin provides are set up for every user.
-    if !matches!(command, Command::Settings { .. } | Command::SelfUpdate { .. } | Command::Reports | Command::Check { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
+    if !matches!(command, Command::Collection(CollectionCommand::Update { dry_run: true, .. }) | Command::Settings { .. } | Command::SelfUpdate { .. } | Command::Reports | Command::Check { .. } | Command::Service { .. } | Command::Login { .. } | Command::Logout { .. }) {
         for problem in catalog::ensure_presets() {
             eprintln!("warning: {problem}");
         }
@@ -902,6 +917,31 @@ fn collection_locales() -> std::collections::HashMap<String, furnish::locale::Lo
     catalog::collections().unwrap_or_default().iter().map(|c| (c.name.clone(), c.locales())).collect()
 }
 
+fn print_collection_preview(name: &str, preview: &catalog::CollectionPreview) {
+    fn tags(tags: &[String]) -> String {
+        if tags.is_empty() { String::new() } else { format!(" ({})", tags.join(", ")) }
+    }
+    println!("{name} — {}", preview.reference);
+    println!("  Current:   {}{}", preview.revisions.current, tags(&preview.current_tags));
+    println!("  Candidate: {}{}", preview.revisions.candidate, tags(&preview.candidate_tags));
+    if preview.revisions.current == preview.revisions.candidate {
+        println!("  Already at the selected revision.");
+        return;
+    }
+    for app in &preview.apps {
+        let installed = if app.installed { " · recorded as installed" } else { "" };
+        let held = if app.held { " · held version" } else { "" };
+        println!("  {}: {}{installed}{held}", app.id, app.change.label());
+        for step in &app.steps {
+            let phase = if step.removal { "uninstall" } else { "install" };
+            println!("    {phase} step {}: {} ({})", step.change.label(), step.name, step.kind);
+        }
+    }
+    if preview.apps.is_empty() { println!("  No direct app changes found."); }
+    if !preview.other_files.is_empty() { println!("  Other collection files changed: {}", preview.other_files.join(", ")); }
+    println!("  Declared steps are compared between collection revisions. Conditions, options, held versions and shared files can affect what runs. Installation labels use Furnish’s records.");
+}
+
 fn collection(cmd: CollectionCommand) -> Result<()> {
     match cmd {
         // An organization's furnish address: sign in, then add all of its collections.
@@ -961,9 +1001,16 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
                 println!("\nYour organization manages the collections; adding others isn't allowed.");
             }
         }
-        CollectionCommand::Update { name } => {
+        CollectionCommand::Update { name, dry_run, reviewed, tracking } => {
+            let selector = tracking.selection();
+            anyhow::ensure!(selector.is_none() || (dry_run && name.is_some()), "source selection requires --dry-run and a collection name");
+            let reviewed = match reviewed.as_slice() {
+                [current, candidate] => Some(catalog::ReviewedRevisions { current: current.clone(), candidate: candidate.clone() }),
+                _ => None,
+            };
             let collections = match name {
                 Some(name) => vec![catalog::get(&name)?],
+                None if dry_run => catalog::collections()?,
                 None => {
                     // All of them: the organizations' descriptions too, which may have changed
                     // and list new collections.
@@ -980,7 +1027,12 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
                 }
             };
             for c in collections {
-                match c.update()? {
+                if dry_run {
+                    let comparison = c.preview_update(selector.as_ref())?;
+                    print_collection_preview(&c.name, &comparison);
+                    continue;
+                }
+                match c.update_reviewed(reviewed.as_ref())? {
                     (old, new) if old == new => println!("✓ {} is up to date ({new})", c.name),
                     (old, new) => println!("✓ Updated {} from {old} to {new}", c.name),
                 }

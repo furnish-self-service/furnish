@@ -11,6 +11,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+mod release;
+pub use release::{AppChange, Change, CollectionPreview, ReviewedRevisions, StepChange};
 mod tracking;
 use crate::settings::Tracking;
 use tracking::Target;
@@ -731,7 +733,7 @@ impl Collection {
         let url = origin_url(&self.dir)?;
         let tracking = crate::settings::tracking_for_change(&self.name, &url, self.managed, requested)?;
         let old = self.head()?;
-        let updated = self.update_target(&url, &tracking, false)?;
+        let updated = self.update_target(&url, &tracking, false, None)?;
         if let Err(err) = persist_tracking(&self.name, requested) {
             self.checkout(&old).context("restoring the previous revision after a settings error")?;
             return Err(err);
@@ -744,7 +746,12 @@ impl Collection {
 
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
-        let result = self.update_unreported();
+        self.update_reviewed(None)
+    }
+
+    /// Apply only when the current checkout and verified remote still match a comparison.
+    pub fn update_reviewed(&self, reviewed: Option<&ReviewedRevisions>) -> Result<(String, String)> {
+        let result = self.update_unreported(reviewed);
         let error = result.as_ref().err().map(|e| format!("{e:#}"));
         if let Some(message) = &error
             && !crate::service::in_service()
@@ -763,17 +770,17 @@ impl Collection {
         result
     }
 
-    fn update_unreported(&self) -> Result<(String, String)> {
+    fn update_unreported(&self, reviewed: Option<&ReviewedRevisions>) -> Result<(String, String)> {
         if self.managed && crate::service::enabled() {
             let _poll = self.observation_lock()?;
             // The service resolves its own policy. Keep the client's remote observation so
             // update_available compares it with the checkout the service actually applied.
-            return crate::service::update(&self.name);
+            return crate::service::update_reviewed(&self.name, reviewed);
         }
         let _lock = self.lock()?;
         let url = origin_url(&self.dir)?;
         let tracking = crate::settings::tracking_for(&self.name, &url, self.managed, None)?;
-        self.update_target(&url, &tracking, true)
+        self.update_target(&url, &tracking, true, reviewed)
     }
 
     /// Serialize observations with local updates. With the service, use a per-client lock
@@ -805,17 +812,26 @@ impl Collection {
         })
     }
 
-    fn update_target(&self, url: &str, tracking: &Tracking, current_source: bool) -> Result<(String, String)> {
-        let old = self.head()?;
-        let old_revision = self.revision()?;
-        let settings = crate::settings::for_collection(&self.name).settings;
+    fn verified_target(&self, url: &str, tracking: &Tracking, current_source: bool, depth: u32) -> Result<Target> {
         let target = self.resolve_target(url, tracking, current_source)?;
-        target.fetch(&self.dir, settings.checkout_depth)?;
+        target.fetch(&self.dir, depth)?;
         if current_source {
             remember_remote_head(&remote_heads_file(), &self.name, &source_key(url, tracking), &target.commit);
         }
         self.verify(&target.commit)?;
         self.require_descendant(&target)?;
+        Ok(target)
+    }
+
+    fn update_target(&self, url: &str, tracking: &Tracking, current_source: bool, reviewed: Option<&ReviewedRevisions>) -> Result<(String, String)> {
+        let old = self.head()?;
+        let old_revision = self.revision()?;
+        let settings = crate::settings::for_collection(&self.name).settings;
+        let target = self.verified_target(url, tracking, current_source, settings.checkout_depth)?;
+        if let Some(review) = reviewed {
+            anyhow::ensure!(review.current == old && review.candidate == target.commit,
+                "the collection changed since this comparison; preview the update again");
+        }
         let checkout = self.prepare_checkout(&settings, &target.commit, false).and_then(|()| self.checkout(&target.commit));
         if let Err(err) = checkout {
             self.checkout(&old).context("restoring the previous revision after checkout failed")?;

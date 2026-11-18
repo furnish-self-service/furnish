@@ -19,6 +19,8 @@ On macOS, Homebrew sets up the command when it installs furnish. If you dragged 
 | `furnish collection add <url or address>` | Add a Git collection, optionally with `--branch NAME` or `--tag-pattern REGEX [--tag-order version\|newest]`, or add the collections from your organization's Furnish address. `--option name=value` answers a question, `--username` (with `--password-stdin` in scripts) logs in to a private HTTPS repository |
 | `furnish login <address>`, `logout <address>` | Sign in to your organization's furnish address again, or remove the sign-in |
 | `furnish collection list`, `update`, `remove` | Manage collections |
+| `furnish collection update [name] --dry-run` | Compare the current and candidate collection releases, including changes to declared steps and apps with recorded installations. Omit the name to compare all existing checkouts. |
+| `furnish collection update <name> --reviewed <current> <candidate>` | Apply the reviewed update if the checkout and the configured remote target still match both full commit IDs. |
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
 | `furnish option set`, `reset` | Change an option, or go back to the collection's value |
 | `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |

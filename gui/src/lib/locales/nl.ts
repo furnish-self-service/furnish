@@ -5,6 +5,21 @@ import type { Entry } from '../i18n.ts';
 
 export const nl: Record<keyof typeof en, Entry> = {
   // App.svelte: navigation and the catalog pages
+  'release.heading': "Collectie-update bekijken",
+  'release.loading': "Versies vergelijken…",
+  'release.refresh': "Vergelijking vernieuwen",
+  'release.current': "Huidige revisie",
+  'release.candidate': "Voorgestelde revisie",
+  'release.added': "Toegevoegd",
+  'release.removed': "Verwijderd",
+  'release.changed': "Gewijzigd",
+  'release.recorded': "Als geïnstalleerd geregistreerd",
+  'release.held': "Vastgezette versie",
+  'release.uninstall': "Verwijderingsstap",
+  'release.noApps': "Geen directe appwijzigingen gevonden.",
+  'release.files': "Andere collectiebestanden ({n})",
+  'release.scope': "De vergelijking toont de vastgelegde stappen. Voorwaarden, opties, vastgezette appversies en gedeelde bestanden kunnen de uitvoering beïnvloeden. Installatiegegevens komen uit de administratie van Furnish.",
+  'release.apply': "Beoordeelde revisie toepassen",
   'nav.sections': 'Onderdelen',
   'nav.home': '{brand}, naar Ontdekken',
   'nav.discover': 'Ontdekken',

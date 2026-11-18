@@ -376,8 +376,22 @@ export const autoInstallDone = (app: string) => invoke<void>('auto_install_done'
 export const checkCollectionServers = () => invoke<void>('check_collection_servers');
 /** The folder furnish keeps its collections, settings and logs in. */
 export const dataDir = () => invoke<string>('data_dir');
-export const updateCollection = (name: string) =>
-  invoke<{ old: string; new: string }>('update_collection', { name });
+export interface ReviewedRevisions { current: string; candidate: string }
+export type ReleaseChange = 'added' | 'removed' | 'changed';
+export interface CollectionPreview {
+  revisions: ReviewedRevisions;
+  currentTags: string[];
+  candidateTags: string[];
+  reference: string;
+  otherFiles: string[];
+  apps: {
+    id: string; installed: boolean; held: boolean; change: ReleaseChange;
+    steps: { name: string; kind: string; removal: boolean; change: ReleaseChange }[];
+  }[];
+}
+export const previewCollectionUpdate = (name: string) => invoke<CollectionPreview>('preview_collection_update', { name });
+export const updateCollection = (name: string, reviewed?: ReviewedRevisions) =>
+  invoke<{ old: string; new: string }>('update_collection', { name, reviewed });
 export const removeCollection = (name: string) => invoke<void>('remove_collection', { name });
 
 export interface Settings {

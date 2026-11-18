@@ -5,6 +5,21 @@ import type { Entry } from '../i18n.ts';
 
 export const es: Record<keyof typeof en, Entry> = {
   // App.svelte: navigation and the catalog pages
+  'release.heading': "Vista previa de la actualización de la colección",
+  'release.loading': "Comparando versiones…",
+  'release.refresh': "Actualizar comparación",
+  'release.current': "Revisión actual",
+  'release.candidate': "Revisión propuesta",
+  'release.added': "Añadido",
+  'release.removed': "Eliminado",
+  'release.changed': "Modificado",
+  'release.recorded': "Instalación registrada",
+  'release.held': "Versión fijada",
+  'release.uninstall': "Paso de desinstalación",
+  'release.noApps': "No se encontraron cambios directos en las aplicaciones.",
+  'release.files': "Otros archivos de la colección ({n})",
+  'release.scope': "Se comparan los pasos declarados. Las condiciones, las opciones, las versiones fijadas y los archivos compartidos pueden afectar a la ejecución. Los datos de instalación proceden de los registros de Furnish.",
+  'release.apply': "Aplicar la revisión examinada",
   'nav.sections': 'Secciones',
   'nav.home': '{brand}, ir a Descubrir',
   'nav.discover': 'Descubrir',

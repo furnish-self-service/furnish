@@ -3,6 +3,21 @@ import type { en } from './en.ts';
 
 export const de: Record<keyof typeof en, string | { one: string; other: string }> = {
   // App.svelte: navigation and the catalog pages
+  'release.heading': "Sammlungsupdate ansehen",
+  'release.loading': "Versionen werden verglichen…",
+  'release.refresh': "Vergleich aktualisieren",
+  'release.current': "Aktueller Stand",
+  'release.candidate': "Vorgeschlagener Stand",
+  'release.added': "Hinzugefügt",
+  'release.removed': "Entfernt",
+  'release.changed': "Geändert",
+  'release.recorded': "Als installiert erfasst",
+  'release.held': "Festgehaltene Version",
+  'release.uninstall': "Deinstallationsschritt",
+  'release.noApps': "Keine direkten App-Änderungen gefunden.",
+  'release.files': "Weitere Sammlungsdateien ({n})",
+  'release.scope': "Verglichen werden die definierten Schritte. Bedingungen, Optionen, festgehaltene App-Versionen und gemeinsame Dateien können die Ausführung beeinflussen. Die Installationsangaben stammen aus den Aufzeichnungen von Furnish.",
+  'release.apply': "Geprüften Stand übernehmen",
   'nav.sections': 'Bereiche',
   'nav.home': '{brand}, zu Entdecken wechseln',
   'nav.discover': 'Entdecken',
