@@ -44,6 +44,28 @@ furnish ships resources for installing software (`Furnish/Package`, `Furnish/Ins
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
+### Installing for one person
+
+Set `metadata.furnish.perUser: true` when an app writes files in a person's home folder or calls a tool that stores settings in their account. This includes importing a VPN profile for that person. By default, the furnish service installs apps from an administrator's preset collection as root on Unix or SYSTEM on Windows. In that case, a command can succeed while configuring the service's account.
+
+```yaml
+metadata:
+  furnish:
+    description: Create a private folder for your SSH configuration.
+    categories: [Tools]
+    perUser: true
+resources:
+  - name: Personal SSH configuration folder
+    type: Furnish/Directory
+    properties:
+      path: ~/.ssh
+      private: true
+```
+
+For an administrator's preset collection, a personal app can also include a [`Furnish/NixOS` step](#furnish-nixos). When the step requires a system rebuild, furnish asks the service to apply that step. With standalone Home Manager, the activation runs as the person. If someone chooses an older app version, its privileged step must still match the declaration in the current preset collection.
+
+If an install option selects between a personal and a system-wide install, declare it as a boolean app parameter and set `perUser: "[parameters('userInstall')]"`. Use the same option in the steps that select the install location.
+
 ### Furnish/Package
 
 Installs a package with the system's package manager: winget on Windows; on macOS and Linux, the first of pacman, apt, dnf, zypper, brew and nix that is installed, which is Homebrew on most Macs.
@@ -101,7 +123,7 @@ Each install or uninstall rebuilds the system or the Home Manager generation onc
 
 Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. A `condition` can't do this, because it doesn't see whether furnish's modules are set up. An app that is already in a configuration counts as set up, so it can still be removed.
 
-This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. Home Manager puts all includes into one `Include` line before the first `Host`, so the `Line` step accepts an `Include` that names the file among others. After the generation is activated, the `Line` step finds that line and changes nothing. Everywhere else, only the `Line` step runs:
+This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. Home Manager puts all includes into one `Include` line before the first `Host`, so the `Line` step accepts an `Include` that names the file among others. After the generation is activated, the `Line` step finds that line and changes nothing. Everywhere else, only the `Line` step runs. Set [`perUser: true`](#installing-for-one-person) on the app so the SSH file belongs to the person installing it:
 
 ```yaml
 - name: SSH include through Home Manager
@@ -178,7 +200,7 @@ Sometimes furnish can't read the installed version: for a package installed outs
 
 Six resources set up configuration: folders, files, parts of files and settings that a tool applies itself. They work the same on Windows, macOS and Linux, so one step covers every system. Each of them can remove what it set up, so an app made of them needs no removal steps.
 
-Paths are absolute or start with `~/`, which furnish replaces with the home folder on every system. Missing parent folders are created. A path that is a symbolic link is written through to its target. If the target can't be written, as with a file that Home Manager links from the Nix store, the step fails and names the file.
+Paths are absolute or start with `~/`, which resolves to the home folder of the account running the step. For the personal files in the examples below, set [`perUser: true`](#installing-for-one-person) on the app. Missing parent folders are created. A path that is a symbolic link is written through to its target. If the target can't be written, as with a file that Home Manager links from the Nix store, the step fails and names the file.
 
 The resources that write files have these properties in common:
 
@@ -409,19 +431,26 @@ An app whose steps are all kept still tests as installed after uninstalling, so 
 
 Many tools keep their own copy of a file the app writes, and the test is whether that copy still matches the file. `file` compares the output with the file's content instead of a fixed text. The path is absolute or starts with `~/`. `ignoreLines`, a regular expression, leaves out the lines it matches, in the output and in the file (or in `output`). furnish also ignores Windows line ends, spaces at the end of a line, and blank lines at the start and end, so this works the same on Windows, macOS and Linux, without a shell. The steps preview names the command and the file, and if they differ, it shows the differing lines as for a file change, or only how many if only the file's owner may read it. A file that the account checking the app's status may not read counts as matching, as with the file resources.
 
-openvpn3, for example, keeps its own copy of an imported profile. Its dump of that copy leaves out the profile's comment lines and adds blank lines:
+When a tool keeps its own copy, give the Command step a collection file with `source` or inline text with `content`. A command argument written as `'%s'` receives the path of a private temporary file. The file exists only while that command runs. A source file keeps its filename and extension. For `test.file` or `present.file`, `'%s'` compares the command's output directly with the supplied input. Only the tool's own copy determines whether the step is installed.
+
+For example, openvpn3 drops comment lines and adds blank lines when it exports a profile. This step recognizes a matching profile even if someone imported it by hand:
 
 ```yaml
 - name: VPN profile in openvpn3
   type: Furnish/Command
   properties:
+    source: files/acme.ovpn
     test:
       command: [openvpn3, config-dump, --config, Acme]
-      file: ~/.config/acme/acme.ovpn
+      file: '%s'
       ignoreLines: '^(#|$)'
     present: { command: [openvpn3, config-manage, --config, Acme, --show] }
-    set: [openvpn3, config-import, --config, ~/.config/acme/acme.ovpn, --name, Acme, --persistent]
+    set: [openvpn3, config-import, --config, '%s', --name, Acme, --persistent]
 ```
+
+Use `'%s'` as a whole argument in `test.command`, `present.command`, `set` or `remove`. If a shell is needed, pass the file as a positional argument to the script. The preview shows the command as written and gives only line counts for differences in the input.
+
+When `test.file` or `present.file` names a file an earlier `Furnish/File` step will write, the preview compares the command output with the planned file contents. During installation the command checks the file on disk after the earlier step finishes.
 
 Other tools that keep their own copy work the same way, for example `nmcli connection export`, `kubectl config view --minify` and `security find-certificate -p`.
 

@@ -30,6 +30,7 @@ serde_yaml = "0.9.34"
 sha2 = "0.11.1"
 similar = "2.7.0"
 sysinfo = "0.38.4"
+tempfile = "3"
 toml_edit = "0.25.19"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
@@ -59,6 +60,3 @@ libc = "0.2"
 windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 winreg = "0.56.0"
-
-[dev-dependencies]
-tempfile = "3"

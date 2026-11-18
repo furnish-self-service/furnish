@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use dsc_lib::{
     configure::{Configurator, config_doc::ExecutionKind, config_result::ResourceTestResult},
     discovery::{Discovery, command_discovery::ImportedManifest, discovery_trait::{DiscoveryFilter, DiscoveryKind}},
@@ -678,11 +678,11 @@ fn resolve(step_doc: &Value) -> Result<(Value, Option<crate::required::Required>
 }
 
 /// The preview of a step, with its required version resolved where furnish can tell.
-fn preview_resolved(step_doc: &Value) -> Result<Step> {
+fn preview_resolved(step_doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
     match resolve(step_doc) {
-        Ok((doc, None)) => preview(&doc),
+        Ok((doc, None)) => preview(&doc, files),
         Ok((doc, Some(required))) => {
-            let mut step = preview(&doc)?;
+            let mut step = preview(&doc, files)?;
             (step.action, step.changes) = (Action::Nothing, vec![]);
             step.details = vec![format!("No acceptable version: needs {}", required.summary)];
             Ok(step)
@@ -691,7 +691,7 @@ fn preview_resolved(step_doc: &Value) -> Result<Step> {
         Err(_) => {
             let mut doc = step_doc.clone();
             crate::required::strip(&mut doc["resources"]);
-            preview(&doc)
+            preview(&doc, files)
         }
     }
 }
@@ -903,7 +903,7 @@ pub struct Outcome {
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
-    step_docs(doc, uninstall)?.iter().map(preview_resolved).collect()
+    preview_steps(&step_docs(doc, uninstall)?)
 }
 
 /// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
@@ -917,7 +917,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let _ = fs::remove_file(file);
     }
     let docs = step_docs(doc, uninstall)?;
-    let steps = docs.iter().map(preview_resolved).collect::<Result<Vec<_>>>()?;
+    let steps = preview_steps(&docs)?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
         if ABORT.load(Ordering::SeqCst) {
@@ -937,15 +937,11 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         });
         let finished = now_ms();
         let outcome = match &result {
-            Ok(r) => match r.results.first().map(|r| &r.result) {
-                Some(SetResult::Resource(r)) => Outcome {
-                    // A step without preview ran its command, even if its state reads the same.
-                    action: match action(&r.before_state, &r.after_state) {
-                        Action::Nothing if step.details.first().is_some_and(|d| d == NO_PREVIEW) => Action::Change,
-                        // A configuration resource changed what its properties don't show (see preview).
-                        Action::Nothing if !step.notes.is_empty() && step.action != Action::Nothing => step.action,
-                        a => a,
-                    },
+            Ok(result) => match result.results.first().map(|r| (&r.result, r.metadata.as_ref())) {
+                Some((SetResult::Resource(r), metadata)) => Outcome {
+                    // Built-in resources measure changes (including a command actually run) in set.
+                    action: reported_action(&step.kind, metadata, &r.before_state, &r.after_state,
+                        step.details.first().is_some_and(|d| d == NO_PREVIEW)),
                     changes: changes(&r.before_state, &r.after_state),
                     error: failed_command(&r.before_state, &r.after_state)
                         .map(|failure| format!("'{}' ({}): {failure}", step.name, step.kind)),
@@ -1026,15 +1022,47 @@ fn step_docs(doc: &Value, uninstall: bool) -> Result<Vec<Value>> {
             if let Some(r) = resource.as_object_mut() {
                 // Ordering is handled here; DSC would reject references to absent resources.
                 r.remove("dependsOn");
+                // Comparison forecasts belong to this run, never to the collection.
+                if let Some(metadata) = r.get_mut("metadata").and_then(Value::as_object_mut) {
+                    metadata.remove("furnishComparisonFiles");
+                }
+                if let Some(metadata) = r.get_mut("properties").and_then(|p| p.get_mut("_metadata")).and_then(Value::as_object_mut) {
+                    metadata.remove("furnishComparisonFiles");
+                }
             }
             if flip {
                 resource["properties"]["_exist"] = Value::Bool(false);
             }
             let mut single = doc.clone();
+            if let Some(route) = single.pointer_mut("/metadata/furnish/outsideService")
+                && route["reason"] == "perUser" && resource["type"] == "Furnish/NixOS"
+            {
+                route["step"] = resource["name"].clone();
+                route["uninstall"] = uninstall.into();
+            }
             single["resources"] = Value::Array(vec![resource]);
             single
         })
         .collect())
+}
+
+/// Reconstruct the requested install or removal step from the service's trusted document. DSC
+/// resolves expressions with the accepted options and checks the condition before anything changes.
+pub(crate) fn apply_nixos_step(doc: &Value, request: &crate::nixos_apps::ServiceStep) -> Result<()> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    let steps = step_docs(doc, request.uninstall)?;
+    let mut matches = steps.iter().filter(|s| {
+        let resource = &s["resources"][0];
+        resource["type"] == "Furnish/NixOS" && resource["name"] == request.step
+    });
+    let step = matches.next().context("no such Furnish/NixOS step in the current preset app")?;
+    if matches.next().is_some() {
+        anyhow::bail!("ambiguous Furnish/NixOS step '{}'", request.step);
+    }
+    let step = applicable(step).context("the requested Furnish/NixOS step does not apply here")?;
+    let states = test(&step)?;
+    let [state] = states.as_slice() else { anyhow::bail!("the requested Furnish/NixOS step does not apply here") };
+    crate::nixos_apps::apply_service_step(&state.desired, &request.fingerprint)
 }
 
 /// DSC's order: document order, except that a dependency runs right before the first
@@ -1080,8 +1108,61 @@ fn dependency(entry: &Value) -> Option<String> {
 /// The first detail of a step DSC can't preview (see `preview`).
 const NO_PREVIEW: &str = "No preview: this step runs its command or script";
 
+/// File contents known from earlier steps, in DSC execution order. Only the comparison a
+/// Command actually references is passed to its what-if; real operations always read the file.
+type PreviewFiles = std::collections::HashMap<PathBuf, Value>;
+
+fn preview_steps(docs: &[Value]) -> Result<Vec<Step>> {
+    let mut files = PreviewFiles::new();
+    docs.iter().map(|doc| preview_resolved(doc, &mut files)).collect()
+}
+
+fn comparison_path(path: &str) -> Option<PathBuf> {
+    crate::resources::common::resolve(&crate::resources::common::expand(path).ok()?).ok()
+}
+
+fn command_preview(doc: &Value, files: &PreviewFiles) -> Result<Option<Value>> {
+    let resource = &doc["resources"][0];
+    if files.is_empty() || !resource["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case("Furnish/Command")) {
+        return Ok(None);
+    }
+    let mut comparisons = serde_json::Map::new();
+    for check in ["test", "present"] {
+        let Some(raw) = resource["properties"][check]["file"].as_str() else { continue };
+        let path = if raw.starts_with('[') {
+            let context = configurator(doc)?.context;
+            dsc_lib::parser::Statement::new()?.parse_and_execute(raw, &context)?.as_str().map(String::from)
+        } else {
+            Some(raw.to_string())
+        };
+        if let Some(file) = path.as_deref().and_then(comparison_path).and_then(|p| files.get(&p)) {
+            comparisons.insert(check.to_string(), file.clone());
+        }
+    }
+    if comparisons.is_empty() {
+        return Ok(None);
+    }
+    let mut doc = doc.clone();
+    doc["resources"][0]["metadata"]["furnishComparisonFiles"] = comparisons.into();
+    Ok(Some(doc))
+}
+
+fn reported_action(
+    kind: &str, metadata: Option<&dsc_lib::configure::config_doc::Metadata>, before: &Value, after: &Value, ran: bool,
+) -> Action {
+    if crate::resources::TYPES.iter().any(|(t, _, _)| t.eq_ignore_ascii_case(kind))
+        && let Some(action) = metadata.and_then(|m| m.other.get("furnishAction")).and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        return action;
+    }
+    match action(before, after) {
+        Action::Nothing if ran || metadata.and_then(|m| m.other.get("furnishChange")) == Some(&Value::Bool(true)) => Action::Change,
+        a => a,
+    }
+}
+
 /// What-if for one single-resource document.
-fn preview(doc: &Value) -> Result<Step> {
+fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
     let resource = &doc["resources"][0];
     let name = resource["name"].as_str().unwrap_or_default().to_string();
     let kind = resource["type"].as_str().unwrap_or_default().to_string();
@@ -1095,7 +1176,8 @@ fn preview(doc: &Value) -> Result<Step> {
     if !applies_here(resource, doc) {
         return Ok(skipped());
     }
-    let mut configurator = configurator(doc)?;
+    let forecast = command_preview(doc, files)?;
+    let mut configurator = configurator(forecast.as_ref().unwrap_or(doc))?;
     configurator.context.execution_type = ExecutionKind::WhatIf;
     let result = match configurator.invoke_set(false) {
         Ok(result) => result,
@@ -1128,12 +1210,38 @@ fn preview(doc: &Value) -> Result<Step> {
     };
     let other = r.metadata.as_ref().map(|m| &m.other);
     let notes = other.and_then(|m| m.get("furnish")).and_then(Value::as_array).cloned().unwrap_or_default();
-    // furnish's configuration resources don't show whole files as properties, so a change can
-    // leave the properties shown as they were; they say so (see resources::run).
-    let action = match action(&before, &after) {
-        Action::Nothing if other.and_then(|m| m.get("furnishChange")) == Some(&Value::Bool(true)) => Action::Change,
-        a => a,
-    };
+    let action = reported_action(&kind, r.metadata.as_ref(), &before, &after, false);
+    if let Some(path) = after["path"].as_str().and_then(comparison_path)
+        && (action != Action::Nothing || files.contains_key(&path))
+    {
+        if kind.eq_ignore_ascii_case("Furnish/File") {
+            let mut projection = serde_json::json!({
+                "content": after["content"], "source": after["source"], "exists": exists(&after),
+                "private": after["private"] == true || after["mode"].as_str()
+                    .and_then(|m| u32::from_str_radix(m, 8).ok()).is_some_and(|m| m & 0o044 == 0),
+            });
+            // A file with no contents specified keeps whatever the earlier step wrote.
+            if exists(&after) && after["content"].is_null() && after["source"].is_null()
+                && let Some(previous) = files.get(&path)
+            {
+                if previous["exists"] == false {
+                    projection["content"] = "".into();
+                } else {
+                    projection["content"] = previous["content"].clone();
+                    projection["source"] = previous["source"].clone();
+                }
+            }
+            if exists(&after) && after["private"].is_null() && after["mode"].is_null()
+                && let Some(previous) = files.get(&path)
+            {
+                projection["private"] = previous["private"].clone();
+            }
+            files.insert(path, projection);
+        } else {
+            // A later edit supersedes what the earlier File declared.
+            files.remove(&path);
+        }
+    }
     Ok(Step { name, kind, action, details, notes, changes: changes(&before, &after) })
 }
 
@@ -1264,6 +1372,24 @@ fn classify(states: &[(bool, Value)]) -> Status {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_prior_file_steps_supply_comparison_forecasts() {
+        let bogus = json!({"test": {"exists": true, "content": "from collection metadata"}});
+        let doc = json!({"resources": [{
+            "name": "command", "type": "Furnish/Command",
+            "metadata": {"furnishComparisonFiles": bogus, "other": true},
+            "properties": {
+                "_metadata": {"furnishComparisonFiles": bogus, "other": true},
+                "test": {"command": ["tool"], "file": "~/profile"}, "set": ["tool"]
+            }
+        }]});
+        let docs = step_docs(&doc, false).unwrap();
+        let resource = &docs[0]["resources"][0];
+        assert_eq!(resource["metadata"], json!({"other": true}));
+        assert_eq!(resource["properties"]["_metadata"], json!({"other": true}));
+        assert!(command_preview(&docs[0], &PreviewFiles::new()).unwrap().is_none());
+    }
 
     #[test]
     fn classify_states() {
@@ -1578,7 +1704,7 @@ mod tests {
         assert_eq!(kept["resources"][0]["name"], "SSH include");
         assert_eq!(kept["resources"][0]["dependsOn"], json!([]));
         let step = json!({"resources": [doc["resources"][0].clone()]});
-        let p = preview(&step).unwrap();
+        let p = preview(&step, &mut PreviewFiles::new()).unwrap();
         assert_eq!((p.action, p.details), (Action::Skipped, vec!["Not needed here: Nix isn't installed on this computer".to_string()]));
         // Without the property, the step stays: the resource then says what it needs.
         let mut plain = doc.clone();

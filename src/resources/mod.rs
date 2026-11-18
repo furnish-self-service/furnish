@@ -8,7 +8,7 @@
 //! change, and set changes only then, so test and set can't disagree.
 
 mod command;
-mod common;
+pub(crate) mod common;
 pub mod diff;
 mod note;
 pub mod text;
@@ -87,8 +87,22 @@ fn run(args: &[String]) -> Result<String> {
     };
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
-    let props: Value = serde_json::from_str(&input).context("the properties on stdin aren't JSON")?;
-    let plan = evaluate(kind, &props)?;
+    let mut props: Value = serde_json::from_str(&input).context("the properties on stdin aren't JSON")?;
+    let files = props.get_mut("_metadata").and_then(Value::as_object_mut).and_then(|m| m.remove("furnishComparisonFiles"));
+    let plan = if kind == "command" && what_if && op == "set" {
+        command::evaluate_with_files(&props, files.as_ref().unwrap_or(&Value::Null))?
+    } else {
+        evaluate(kind, &props)?
+    };
+    let action = if plan.apply.is_none() {
+        crate::engine::Action::Nothing
+    } else {
+        match (plan.state.get("_exist"), plan.after.get("_exist")) {
+            (Some(Value::Bool(false)), Some(Value::Bool(true))) => crate::engine::Action::Install,
+            (Some(Value::Bool(true)), Some(Value::Bool(false))) => crate::engine::Action::Remove,
+            _ => crate::engine::Action::Change,
+        }
+    };
     let mut out = match op {
         "get" => plan.state,
         "test" => {
@@ -124,6 +138,9 @@ fn run(args: &[String]) -> Result<String> {
         },
         _ => bail!("unknown operation '{op}'"),
     };
+    if op == "set" {
+        out.entry("_metadata").or_insert_with(|| json!({}))["furnishAction"] = serde_json::to_value(action)?;
+    }
     out.retain(|k, _| !k.starts_with('_') || ["_exist", "_inDesiredState", "_metadata"].contains(&k.as_str()));
     Ok(Value::Object(out).to_string())
 }

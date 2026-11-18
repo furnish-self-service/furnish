@@ -48,6 +48,14 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "content": {
+          "type": "string",
+          "description": "Text to supply as a private temporary file. Use %s as a command argument or comparison file."
+        },
+        "source": {
+          "type": "string",
+          "description": "A file in the collection to supply as a private temporary copy, in place of content."
+        },
         "test": {
           "type": "object",
           "required": [
@@ -73,7 +81,7 @@
             },
             "file": {
               "type": "string",
-              "description": "A file whose content the output must equal (absolute or starting with ~/)"
+              "description": "Compare output with this file (absolute or starting with ~/) or with the command's input (%s)"
             },
             "ignoreLines": {
               "type": "string",
@@ -113,7 +121,7 @@
             },
             "file": {
               "type": "string",
-              "description": "A file whose content the output must equal (absolute or starting with ~/)"
+              "description": "Compare output with this file (absolute or starting with ~/) or with the command's input (%s)"
             },
             "ignoreLines": {
               "type": "string",
@@ -172,6 +180,12 @@
             }
           }
         }
+      },
+      "not": {
+        "required": [
+          "content",
+          "source"
+        ]
       }
     }
   }

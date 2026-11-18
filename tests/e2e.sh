@@ -314,13 +314,26 @@ resources:
   # Git's): the output is compared with the file, without its comment and blank lines.
   - name: vpn file
     type: Furnish/File
-    properties: { path: "~/$home_file.ovpn", content: "# Fixture VPN\nremote vpn.fixture.example 1194\n" }
+    properties: { path: "~/$home_file.ovpn", content: "# Fixture VPN\nremote vpn.fixture.example 1194\n", private: true }
   - name: vpn import
     type: Furnish/Command
     properties:
       test: { command: [cat, "~/$home_file.imported"], file: "~/$home_file.ovpn", ignoreLines: '^(#|$)' }
+      present: { command: [cat, "~/$home_file.imported"] }
       set: [cp, "~/$home_file.ovpn", "~/$home_file.imported"]
       remove: [rm, -f, "~/$home_file.imported"]
+YAML
+
+# A profile import with only a temporary input (Git Bash supplies cat, cp and rm on Windows).
+cat > "$tmp/repo/apps/command-input.dsc.yaml" <<YAML
+resources:
+  - name: import
+    type: Furnish/Command
+    properties:
+      source: files/profile.conf
+      test: { command: [cat, "$tmp/tool-copy"], file: '%s' }
+      set: [cp, '%s', "$tmp/tool-copy"]
+      remove: [rm, -f, "$tmp/tool-copy"]
 YAML
 
 git -C "$tmp/repo" init -q
@@ -593,11 +606,26 @@ mkdir -p "$tmp/conf"
 printf 'Host other.example\n  User me\n' > "$tmp/conf/ssh_config"
 printf 'current-context: fixture-prod\n' > "$tmp/conf/kube.yaml"
 expect "$(step list)" "·  config "
-plan=$(step install config --dry-run)
+# A matching hand import predates the file Furnish/File writes. An import would overwrite
+# its comment, so the marker verifies that the set command never ran.
+printf '# imported by hand\nremote vpn.fixture.example 1194\n' > ~/"$home_file".imported
+plan=$(step --verbose install config --dry-run 2>&1)
+if grep -Fq 'remote vpn.fixture.example 1194' <<<"$plan"; then echo "FAIL: a private profile appeared in the preview or its log" >&2; exit 1; fi
 expect "$plan" "Add 'Include config.d/fixture.conf' to $tmp/conf/ssh_config"
 expect "$plan" "Run: git config --file ~/$home_file.gitconfig fixture.home home"
 expect "$plan" "Set \$.enabledPlugins\['fixture@market'\] in $tmp/conf/settings.json"
-expect "$(step install config)" "Installed config"
+expect "$plan" "= nothing to do  vpn import"
+[ ! -e ~/"$home_file".ovpn ] || { echo "FAIL: preview wrote the profile" >&2; exit 1; }
+out=$(step install config)
+expect "$out" "Installed config"
+expect "$out" "vpn import already as described"
+grep -q '^# imported by hand$' ~/"$home_file".imported || { echo "FAIL: a matching profile was reimported" >&2; exit 1; }
+# A stale local file is also replaced before comparing, and is untouched by the dry run.
+printf 'remote stale.example 1194\n' > ~/"$home_file".ovpn
+expect "$(step install config --dry-run)" "= nothing to do  vpn import"
+grep -q '^remote stale.example 1194$' ~/"$home_file".ovpn || { echo "FAIL: preview changed the stale profile" >&2; exit 1; }
+expect "$(step install config)" "vpn import already as described"
+grep -q '^# imported by hand$' ~/"$home_file".imported || { echo "FAIL: fixing the file replaced the imported profile" >&2; exit 1; }
 expect "$(step list)" "✓  config "
 [ "$(head -n 1 "$tmp/conf/ssh_config")" = "Include config.d/fixture.conf" ] || { echo "FAIL: the Include line isn't first" >&2; cat "$tmp/conf/ssh_config" >&2; exit 1; }
 grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAIL: no block" >&2; exit 1; }
@@ -658,6 +686,18 @@ expect "$(step list)" "·  config "
 [ ! -e "$tmp/conf/profile.conf" ] && [ ! -e ~/"$home_file" ] || { echo "FAIL: files left behind" >&2; exit 1; }
 ls "$tmp/conf"/ssh_config.*~ >/dev/null || { echo "FAIL: no backup of ssh_config" >&2; exit 1; }
 [ -d "$tmp/conf" ] || { echo "FAIL: a folder that isn't empty was removed" >&2; exit 1; }
+
+# A matching copy previously imported by the tool is sufficient on its own.
+cp "$tmp/repo/files/profile.conf" "$tmp/tool-copy"
+expect "$(step install command-input)" "already installed"
+printf 'outdated\n' > "$tmp/tool-copy"
+plan=$(step install command-input --dry-run)
+expect "$plan" "differs from profile.conf"
+if [[ "$plan" == *vpn.fixture.example* ]]; then echo "FAIL: private command input in preview" >&2; exit 1; fi
+expect "$(step install command-input)" "Installed command-input"
+git diff --no-index --quiet -- "$tmp/repo/files/profile.conf" "$tmp/tool-copy"
+expect "$(step uninstall command-input)" "Uninstalled command-input"
+[ ! -e "$tmp/tool-copy" ] || { echo "FAIL: profile still imported after uninstall" >&2; exit 1; }
 
 [ "$n" -gt 0 ] || echo "(no installer format can be built on this platform: installer test skipped)" >&2
 step collection remove fixture >/dev/null
