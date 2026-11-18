@@ -224,11 +224,19 @@ use_nix() {
 }extra-experimental-features = nix-command flakes"
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
+    personal=${HOME:-/nonexistent}/.nix-profile
+    xdg=${XDG_STATE_HOME:-${HOME:-/nonexistent}/.local/state}/nix
+    if [ -e "$xdg/profile" ] && { [ ! -e "$personal" ] || [ "$(nix config show use-xdg-base-directories 2>/dev/null)" = true ]; }; then
+        personal=$xdg/profile
+    elif [ ! -e "$personal" ]; then
+        # Read an existing generation even if Nix has not created the alias in HOME.
+        personal=$xdg/profiles/profile
+        [ -e "$personal" ] || personal=${NIX_STATE_DIR:-/nix/var/nix}/profiles/per-user/$(id -un)/profile
+    fi
     if [ "$(id -u)" = 0 ] || [ "$read_shared_profile" = true ]; then
-        profile="--profile $shared" other_profile="" other_path=${HOME:-/root}/.nix-profile
-        [ -e "$other_path" ] || other_path=${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/nix/profiles/profile
+        profile="--profile $shared" profile_path=$shared other_path=$personal
     else
-        profile="" other_profile="--profile $shared" other_path=$shared
+        profile="" profile_path=$personal other_path=$shared
     fi
     # The declarative roots don't change while furnish runs: look once (needs the final $name).
     prepare() {
@@ -240,8 +248,12 @@ use_nix() {
         home-manager) cant_remove="$subject is in your Home Manager configuration${declared_in:+ ($declared_in)}: remove it there" ;;
         esac
         # Both profiles are visible, but this process may change only the one it installs into.
-        if [ -z "$declared_by" ] && [ -e "$other_path" ] && [ -z "$(version_in "$profile")" ]; then
-            declared_version=$(version_in "$other_profile")
+        profile_version=
+        if [ -z "$declared_by" ]; then
+            profile_version=$(version_in "$profile_path") || fail 10 "could not read Nix profile $profile_path"
+        fi
+        if [ -z "$declared_by" ] && [ -z "$profile_version" ] && [ -e "$other_path" ]; then
+            declared_version=$(version_in "$other_path") || fail 10 "could not read Nix profile $other_path"
             if [ -n "$declared_version" ]; then
                 declared_by=other
                 cant_remove="$subject is installed in the other Nix profile ($other_path): remove it there"
@@ -259,19 +271,33 @@ use_nix() {
     }
     # A profile names an entry after the package's last attribute: kdePackages.kdenlive → kdenlive.
     entry=${name##*.}
-    # The version in a profile ("" if it doesn't hold the package).
+    # 'nix profile list' creates the default profile link even with --profile pointing
+    # elsewhere. Observe the existing generation directly. A nix-env profile has no JSON
+    # manifest; its direct store references are the packages in that generation.
     version_in() {
-        nix profile list $1 --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$entry\":" || return 0
-        path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$entry-[^\"]*" | head -n1)
-        if [ -z "$path" ]; then echo '?'; else echo "${path##*-"$entry"-}"; fi
+        if [ -f "$1/manifest.json" ]; then
+            "${FURNISH_EXE:-furnish}" dsc-resource nix-profile-version "$1/manifest.json" "$name"
+        elif [ -f "$1/manifest.nix" ]; then
+            refs=$(nix-store -q --references "$1") || return 1
+            printf '%s\n' "$refs" | while IFS= read -r path; do
+                n=${path##*/}; nix_name_version "${n#*-}" "$entry" && break
+            done
+            return 0
+        fi
     }
-    # Declared, or installed for this user or for everyone.
     installed_version() {
-        [ -n "$declared_by" ] && { echo "$declared_version"; return; }
-        version_in "$profile"
+        if [ -n "$declared_by" ]; then echo "$declared_version"; else echo "$profile_version"; fi
     }
-    do_install() { run_step nix profile install $profile "$ref#$name"; }
-    do_remove() { run_step nix profile remove $profile "$entry"; }
+    refresh_profile() { profile_version=$(version_in "$profile_path"); }
+    do_install() {
+        run_step nix profile install $profile "$ref#$name" || return $?
+        # Nix may just have created the user's default profile and its link.
+        if [ -z "$profile" ] && [ ! -e "$profile_path" ]; then
+            if [ -e "${HOME:-/nonexistent}/.nix-profile" ]; then profile_path=$HOME/.nix-profile; else profile_path=$xdg/profile; fi
+        fi
+        refresh_profile
+    }
+    do_remove() { run_step nix profile remove $profile "$entry" && refresh_profile; }
     # Not `nix profile upgrade`: it re-resolves the reference installed from, not the current one.
     do_upgrade() { do_remove && do_install; }
     install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $entry"

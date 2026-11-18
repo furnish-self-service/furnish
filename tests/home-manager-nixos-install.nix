@@ -89,17 +89,26 @@ pkgs.testers.runNixOSTest {
     assert "add to" not in out, out
 
     # The same ordinary package belongs to alice's Home Manager generation on this computer.
-    profiles = alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true")
+    link_paths = "readlink ~/.nix-profile /nix/var/nix/profiles/furnish || true"
+    profile_paths = "readlink -e ~/.nix-profile ~/.local/state/nix/profiles/profile /nix/var/nix/profiles/furnish || true"
+    links = alice(link_paths)
+    generations = alice(profile_paths)
     preview = furnish("install greeting --dry-run")
     assert "Home Manager" in preview and "nix profile install" not in preview, preview
     assert apps() == {"version": 1, "apps": {}}, apps()
+    after_preview = (alice(link_paths), alice(profile_paths))
+    assert after_preview == (links, generations), ((links, generations), after_preview)
     furnish("install greeting")
     values = apps()
     assert values["apps"] == {} and set(values["homes"]) == {"alice"}, values
     assert list(values["homes"]["alice"]["apps"].values()) == [{"packages": ["hello"], "options": {}}], values
     assert system() == "${greeting}", system()
     machine.fail("test -e ${greeting}/sw/bin/hello")
-    assert alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true") == profiles
+    # A Nix flake build may initialize a compatibility symlink. Only existing targets are
+    # installed profile generations; they must remain exactly as they were before the rebuild.
+    after_install = alice(profile_paths)
+    assert after_install == generations, (generations, after_install)
+    alice("test ! -e ~/.nix-profile/bin/hello && test ! -e /nix/var/nix/profiles/furnish/bin/hello")
     assert any(line.startswith("✓  greeting") for line in furnish("list").splitlines())
     furnish("uninstall greeting")
     assert apps() == {"version": 1, "apps": {}} and system() == "${before}", apps()

@@ -127,7 +127,7 @@ Furnish first looks up the Linux distribution's `ID` from `os-release`, then eac
       winget: Acme.CompanyTools
 ```
 
-When this step selects Nix on a machine with a configured Furnish apps input, the resolved package name is an attribute of the configuration’s nixpkgs, such as `jq` or `kdePackages.kdenlive`. Furnish can use the same step for NixOS or Home Manager. Supply `nixpkgs` or `versions` when the app must use a particular source or release. Those steps use a Nix profile. [NixOS configuration](admins.md#installing-apps-into-the-configuration)
+When this step selects Nix on a machine with a configured Furnish apps input, the resolved package name is an attribute of the configuration’s nixpkgs, such as `jq` or `kdePackages.kdenlive`. Furnish can use the same step for NixOS or Home Manager. Supply `nixpkgs` or `versions` when the app must use a particular source or release. Those steps use a Nix profile. If an update adds a source or version constraint to a package that Furnish already installed in the configuration, uninstall the app and install it again to move it to the profile. [NixOS configuration](admins.md#installing-apps-into-the-configuration)
 
 When migrating an existing collection, move each per-manager property into `namesByManager`. For example, replace `pacmanName: libreoffice-fresh` with `namesByManager: { pacman: libreoffice-fresh }`.
 
