@@ -5,6 +5,7 @@ import { defaultDependencies, needsRetry, pausedBranch, planInstall, releaseDepe
 export { defaultDependencies, type Queued } from './install-queue';
 import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
 import { StatusCache } from './status-cache';
+import { StatusChecks } from './status-checks';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
 import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, terror, formatDate, lang } from './i18n.svelte';
@@ -218,7 +219,7 @@ let cache: StatusCache | undefined;
 const revisions = new Map<string, string>();
 // Cached values are for display. Automatic updates and inventory use live checks.
 const verifiedKeys = new SvelteSet<string>();
-const pendingChecks = new Map<string, symbol>();
+const pendingChecks = new StatusChecks();
 
 export function loadAll(): Promise<void> {
   const load = ++catalogLoad;
@@ -321,12 +322,13 @@ function showCheck(key: string, check: api.AppCheck, checkedAt: number | null) {
 
 /** Ask for an app's status. A security update its collection requires is queued right away,
  *  whatever the automatic-update settings say. */
-export async function checkStatus(key: string): Promise<boolean> {
+export function checkStatus(key: string): Promise<boolean> {
   const load = catalogLoad;
-  const request = Symbol();
-  pendingChecks.set(key, request);
+  return pendingChecks.check(key, current => readStatus(key, () => current() && load === catalogLoad));
+}
+
+async function readStatus(key: string, current: () => boolean): Promise<boolean> {
   store.checkingStatus[key] = true;
-  const current = () => load === catalogLoad && pendingChecks.get(key) === request;
   try {
     const check = await api.appStatus(key);
     if (!current()) return false;
@@ -357,10 +359,7 @@ export async function checkStatus(key: string): Promise<boolean> {
     }
     return false;
   } finally {
-    if (pendingChecks.get(key) === request) {
-      pendingChecks.delete(key);
-      delete store.checkingStatus[key];
-    }
+    if (current()) delete store.checkingStatus[key];
   }
 }
 
@@ -389,11 +388,15 @@ function installRequiredUpdate(key: string) {
 export const requiredUpdate = (key: string) => store.status[key] === 'needsUpdate' && urgent(store.required[key]);
 
 
+function operationKind(job: Queued): Run['kind'] {
+  if (job.action === 'uninstall' || job.action === 'reinstall') return job.action;
+  return job.updateOnly || store.status[job.key] === 'needsUpdate' ? 'update' : 'install';
+}
+
 /** Run one queued operation; resolves to whether it succeeded. */
 async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed' | 'paused'> {
   const {action, trigger, commit} = job;
-  const installs = action !== 'uninstall' && action !== 'reinstall';
-  const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
+  const kind = operationKind(job);
   const previousRun = store.runs[app.key];
   const previousLogs = store.logs[app.key];
   const run = startRun(app, kind, trigger, action, commit);
@@ -439,6 +442,7 @@ async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed
       endRun(app.key, run, cancelled ? 'cancelled' : !ok ? 'failed' : run.fallbackDate ? 'fallback' : 'done');
       // Refresh the installed options and the resulting state.
       if (ok) await reloadApps();
+      pendingChecks.invalidate(app.key); // Discard a scan that started before this operation completed.
       await checkStatus(app.key);
     }
   }
@@ -1112,7 +1116,11 @@ async function pump() {
         } catch (error) {
           toast('error', app ? appName(app) : next.key, terror(message(error)));
           if (next.waitingForClose?.length) store.queue.splice(index, 0, next);
-          else groupItemDequeued(next.key);
+          else if (app) {
+            const run = startRun(app, operationKind(next), next.trigger, next.action, next.commit);
+            run.error = message(error);
+            endRun(next.key, run, 'failed');
+          }
           activeRequest = undefined;
           saveActivity();
           continue;
