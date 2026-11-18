@@ -387,7 +387,7 @@ jobs:
         with:
           shared-key: release
       - run: cargo build --release
-      - run: cargo test --release --locked --test cli_pipe
+      - run: cargo test --release --locked --test cli_pipe --test installer_external
       - if: runner.os == 'Windows'
         run: cargo test --release --locked --lib package_names::tests
       - if: runner.os == 'Windows'

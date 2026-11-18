@@ -112,6 +112,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'run.stepOf': 'stap {n} van {total}',
 
   // Activity.svelte
+  'session.preview': "Meld je na de installatie af bij je computer en meld je opnieuw aan om de wijzigingen te gebruiken.",
+  'session.after': "Meld je af bij je computer en meld je opnieuw aan om de wijzigingen te gebruiken.",
   'activity.title': 'Activiteit',
   'queue.waitingFor': "Wacht op {app}",
   'queue.retry': "{app} opnieuw proberen",

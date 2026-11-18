@@ -11,17 +11,25 @@ set -eu
 # identity even when an installer is downloaded into furnish's content-addressed cache.
 if [ -n "${url:-}" ]; then
     [ -z "${file:-}" ] && [ -n "${sha256:-}" ] || fail 10 "use either file or url with sha256"
-    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && [ "${_exist:-true}" = true ]; then
-        file=$("$FURNISH_EXE" dsc-resource installer-download fetch)
-    else
-        file=$("$FURNISH_EXE" dsc-resource installer-download lookup)
-        # Only real removal can act on an identity read from the cache. Verify
-        # those bytes too; an explicit receipt or app bundle needs no file.
-        if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && [ -f "$file" ]; then
+    file=$("$FURNISH_EXE" dsc-resource installer-download lookup)
+    verified=false
+    verify_download() {
+        if ! "$verified"; then
+            file=$("$FURNISH_EXE" dsc-resource installer-download fetch) || exit $?
+            verified=true
+        fi
+    }
+    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ]; then
+        # An uncached payload cannot identify a package. An explicitly supplied command
+        # can still establish an external installation without fetching or running it.
+        if [ "${_exist:-true}" = true ] && ! find_external_command >/dev/null; then
+            verify_download
+        elif [ -f "$file" ]; then
+            # An inferred identity used to change the machine must come from pinned bytes.
             case "$file" in
             *.dmg) ;;
-            *.pkg) [ -n "${packageId:-}" ] || file=$("$FURNISH_EXE" dsc-resource installer-download fetch) ;;
-            *) file=$("$FURNISH_EXE" dsc-resource installer-download fetch) ;;
+            *.pkg) [ -n "${packageId:-}" ] || verify_download ;;
+            *) verify_download ;;
             esac
         fi
     fi
@@ -32,6 +40,7 @@ else
     identity=$(json_member file "$file")
     subject=$(basename "$file")
 fi
+[ -n "${command:-}" ] && identity="$identity,$(json_member command "$command")"
 [ -n "${packageId:-}" ] && identity="$identity,$(json_member packageId "$packageId")"
 [ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
 case "$file" in
@@ -45,7 +54,7 @@ esac
 # An explicit receipt ID or app bundle identifies a remote macOS installation even
 # before the installer is cached, including for offline status and removal.
 known_without_file=false
-if [ -n "${url:-}" ]; then
+if [ -n "${url:-}" ] || find_external_command >/dev/null; then
     case "$file" in
     *.pkg) [ -z "${packageId:-}" ] || known_without_file=true ;;
     *.dmg) [ -z "${app:-}" ] || known_without_file=true ;;
@@ -54,7 +63,7 @@ fi
 if [ ! -f "$file" ] && ! "$known_without_file"; then
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
-    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && { [ -z "${url:-}" ] || [ "${_exist:-true}" = true ]; }; then
+    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && { [ -z "${url:-}" ] || [ "${_exist:-true}" = true ]; } && ! find_external_command >/dev/null; then
         fail 10 "installer not found: $file"
     fi
     installed_version() { :; }
@@ -65,7 +74,7 @@ if [ ! -f "$file" ] && ! "$known_without_file"; then
     exit
 fi
 # Without git-lfs, an LFS-tracked file is a small text pointer instead of the installer.
-if [ -z "${url:-}" ] && head -c 64 "$file" | grep -q '^version https://git-lfs'; then
+if [ -z "${url:-}" ] && [ -f "$file" ] && head -c 64 "$file" | grep -q '^version https://git-lfs'; then
     missing "git-lfs to download $subject (install it, then update the collection)"
 fi
 
@@ -133,7 +142,7 @@ case "$file" in
     [ -n "${packageId:-}" ] || fail 10 ".pkg installers need the property packageId (see: pkgutil --pkgs)"
     via=installer
     installed_version() { pkgutil --pkg-info "$packageId" 2>/dev/null | sed -n 's/^version: //p'; }
-    do_install() { run_step installer -pkg "$file" -target /; }
+    do_install() { [ -z "${url:-}" ] || verify_download; run_step installer -pkg "$file" -target /; }
     # pkgutil lists paths relative to the receipt's install location (Homebrew: /opt/homebrew).
     # Unlink one leaf from its checked physical directory, so symlinked parents cannot redirect it.
     do_remove() {
@@ -187,6 +196,7 @@ case "$file" in
         defaults read "$target/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo '?'
     }
     do_install() {
+        [ -z "${url:-}" ] || verify_download
         run_step sh -c 'mnt=$(mktemp -d) && hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$1" >/dev/null &&
             cp -R "$mnt/$2" /Applications/; rc=$?; hdiutil detach "$mnt" >/dev/null; exit $rc' sh "$file" "$app"
     }

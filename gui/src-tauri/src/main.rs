@@ -352,9 +352,16 @@ struct FellBack {
     error: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OperationResult {
+    requires_new_session: bool,
+    fallback: Option<FellBack>,
+}
+
 /// Run an install/update, uninstall or reinstall, streaming step progress as `furnish://progress` events.
 /// `trigger`: who started it, for reports: `update` (automatic updates), `autoInstall`, else the user.
-async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Option<String>) -> CmdResult<OperationResult> {
     let trigger = match trigger.as_deref() {
         Some("update") => "update",
         Some("autoInstall") => "autoInstall",
@@ -374,20 +381,21 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
         let report = |progress| {
             let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
         };
-        match action {
-            Action::Install(which) => match app.install_version(which.clone(), report) {
+        let install = |which| engine::session_result(report, |progress| app.install_version(which, progress));
+        let (requires_new_session, fallback) = match action {
+            Action::Install(which) => match install(which.clone()) {
                 Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && app.held.is_none() => {
                     let automatic = furnish::settings::for_collection(&app.collection).settings.fallback == furnish::settings::Fallback::Automatic;
                     let Some(version) = app.previous_version().ok().filter(|_| automatic) else { return Err(err) };
                     record_revision(Some(version.commit.clone()));
-                    app.install_version(catalog::Which::Previous, report)?;
-                    Ok(Some(FellBack { date: version.date, error: format!("{err:#}") }))
+                    (install(catalog::Which::Previous)?, Some(FellBack { date: version.date, error: format!("{err:#}") }))
                 }
-                result => result.map(|()| None),
+                result => (result?, None),
             },
-            Action::Uninstall => app.uninstall(report).map(|()| None),
-            Action::Reinstall => app.reinstall(report).map(|()| None),
-        }
+            Action::Uninstall => (engine::session_result(report, |progress| app.uninstall(progress))?, None),
+            Action::Reinstall => (engine::session_result(report, |progress| app.reinstall(progress))?, None),
+        };
+        Ok(OperationResult { requires_new_session, fallback })
     }))
     .await;
     std::thread::spawn(furnish::reports::send);
@@ -397,25 +405,25 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
 
 /// Install or update; with the fallback "automatic", a failure installs the previous version.
 #[tauri::command]
-async fn install(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn install(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Install(catalog::Which::Shown), trigger).await
 }
 
 /// Install the previous version of an app (see `previous_version`).
 #[tauri::command]
-async fn install_previous(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn install_previous(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Install(catalog::Which::Previous), trigger).await
 }
 
 /// For an app held at an earlier version: install the collection's current one.
 #[tauri::command]
-async fn install_current(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn install_current(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Install(catalog::Which::Current), trigger).await
 }
 
 /// Install a version of an app the person chose (a commit, see `versions`) and keep it there.
 #[tauri::command]
-async fn install_version(app: tauri::AppHandle, key: String, commit: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn install_version(app: tauri::AppHandle, key: String, commit: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Install(catalog::Which::Version(commit)), trigger).await
 }
 
@@ -433,13 +441,13 @@ async fn previous_version(key: String) -> CmdResult<catalog::Version> {
 }
 
 #[tauri::command]
-async fn uninstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn uninstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Uninstall, trigger).await
 }
 
 /// Uninstall with the options the app was installed with, then install with the current ones.
 #[tauri::command]
-async fn reinstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<Option<FellBack>> {
+async fn reinstall(app: tauri::AppHandle, key: String, trigger: Option<String>) -> CmdResult<OperationResult> {
     run(app, key, Action::Reinstall, trigger).await
 }
 

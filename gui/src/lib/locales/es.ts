@@ -112,6 +112,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'run.stepOf': 'paso {n} de {total}',
 
   // Activity.svelte
+  'session.preview': "Después de la instalación, cierra tu sesión en el equipo y vuelve a iniciarla para que se apliquen los cambios.",
+  'session.after': "Cierra tu sesión en el equipo y vuelve a iniciarla para que se apliquen los cambios.",
   'activity.title': 'Actividad',
   'queue.waitingFor': "Esperando a {app}",
   'queue.retry': "Reintentar {app}",

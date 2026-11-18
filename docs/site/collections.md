@@ -40,6 +40,20 @@ furnish ships resources for installing software (`Furnish/Package`, `Furnish/Ins
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
+### Changes that need a new login session
+
+When installation changes the environment that a person receives at login, Steps shows a notice before installation. After a successful change, the desktop and CLI ask the person to sign out of the computer and sign back in.
+
+Furnish recognizes changes to Home Manager’s `home.sessionPath` and `home.sessionVariables` and content changes made by `Furnish/File`, `Furnish/Line`, and `Furnish/Block` to standard Unix login profiles such as `~/.profile` and `~/.zprofile`. For a package or custom installer whose changes require a new session, declare this at app level:
+
+```yaml
+metadata:
+  furnish:
+    requiresNewSession: true
+```
+
+With this declaration a successful install or update that changes any step produces the notice. An already up-to-date install produces no new notice.
+
 ### Host information
 
 Resource steps and dependencies can use the DSC variable `variables('furnish.host')` to choose an install method for the current computer.
@@ -179,9 +193,12 @@ To use a vendor download, set `url` and `sha256`. For example, an app that depen
     url: https://github.com/Homebrew/brew/releases/download/7.0.14/Homebrew.pkg
     sha256: 8d7adb3cf2cd26a6fcdc3b93570e7e1ce79e832d780a52e5ba672a303dbf3789
     packageId: sh.brew.homebrew
+    command: brew
 ```
 
 Use an HTTPS URL whose path ends in the installer extension, and pin the 64 hexadecimal digits of the file’s SHA-256. Update the URL and checksum together when selecting another release. Listing apps, checking a collection, and previewing an install leave the download until installation. Furnish verifies the bytes before handing them to the usual platform installer. A checksum mismatch stops the step before elevation.
+
+Set `command` to a program the installer provides when users may already have installed it another way. Furnish checks the installer's receipt, bundle or registered product first. If that identity is absent and the executable exists, Furnish shows its path as installed outside Furnish and leaves updates and removal to the original installation method. For Homebrew installed with `install.sh`, `command: brew` also finds the executable in `/opt/homebrew/bin` or `/usr/local/bin` when those directories are missing from the desktop app's PATH.
 
 For macOS packages, furnish can read a single receipt identifier from the verified download. Set `packageId` to choose a receipt explicitly or detect an existing installation before downloading the package. For disk images, set `app` to the bundle name. On Windows, `productCode` identifies an MSI before download, and an EXE uses `displayName` and `installArgs` as it does for a collection file. When the package identity comes from the installer, furnish uses the cached file for removal and retrieves it again if necessary.
 

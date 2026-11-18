@@ -109,6 +109,8 @@ export const en = {
   'run.stepOf': 'step {n} of {total}',
 
   // Activity.svelte
+  'session.preview': "After installation, sign out of your computer and sign back in to use these changes.",
+  'session.after': "Sign out of your computer and sign back in to use these changes.",
   'activity.title': 'Activity',
   'queue.waitingFor': "Waiting for {app}",
   'queue.retry': "Retry {app}",

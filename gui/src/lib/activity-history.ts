@@ -29,6 +29,7 @@ export interface Run {
   collectionRevision?: string;
   action?: Queued['action'];
   commit?: string;
+  requiresNewSession?: boolean;
   fallbackDate?: string;
   steps: RunStep[];
   /** Engine indices restart at zero for the second phase of a reinstall or fallback. */
@@ -82,6 +83,7 @@ export interface Summary {
   action?: Queued['action'];
   commit?: string;
   steps?: { name: string; state: RunStep['state'] }[];
+  requiresNewSession?: boolean;
   fallbackDate: string | null;
 }
 
@@ -119,6 +121,7 @@ export function completedActivity(key: string, run: Run, logs: LogLine[]): Recen
       collectionRevision: isRevision(run.collectionRevision) ? run.collectionRevision : undefined,
       action: run.action, commit: isRevision(run.commit) ? run.commit : undefined,
       steps: run.steps.map(row => ({ name: row.step.name, state: row.state === 'pending' ? 'notRun' : row.state })),
+      requiresNewSession: (run.result === 'done' || run.result === 'fallback') && run.requiresNewSession || undefined,
       fallbackDate: run.fallbackDate ?? null,
     },
     details: { run, logs },
@@ -140,6 +143,7 @@ function isSummary(v: unknown): v is Summary {
     && (s.steps === undefined || (Array.isArray(s.steps) && s.steps.every(step => step && typeof step.name === 'string'
       && ['pending', 'running', 'done', 'failed', 'skipped', 'cancelled', 'notRun'].includes(step.state))))
     && (s.failedStep === null || typeof s.failedStep === 'string')
+    && (s.requiresNewSession === undefined || typeof s.requiresNewSession === 'boolean')
     && (s.fallbackDate === null || typeof s.fallbackDate === 'string');
 }
 

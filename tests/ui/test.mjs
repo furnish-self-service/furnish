@@ -106,6 +106,22 @@ const steps = [
     await waitFor('NixOS install preview', async () => (await text(panel)).includes('Installing nixos-preview'));
     await click(nav('Discover'));
   }],
+  ['a session-changing install explains when to sign out in its preview and completed results', async () => {
+    const panel = "//details[summary[contains(., 'Steps')]]";
+    await click(`${card('session-notice')}//button[@aria-label='Open session-notice']`);
+    if (!(await isOpen(panel))) await click(`${panel}/summary`);
+    await waitFor('login notice in install preview', async () => (await text(panel)).includes('After installation, sign out of your computer'));
+    await click("//button[contains(@class,'action') and normalize-space()='Install']");
+    await waitFor('session setup wrote its file', () => log('session-notice') === 'ready');
+    const after = 'Sign out of your computer and sign back in to use these changes.';
+    await waitFor('completed plan gives the login instruction', async () => (await text(panel)).includes(after));
+    await click(`${panel}/summary`);
+    await waitFor('login instruction remains visible with expert Steps closed', async () => (await text("//p[@role='status']")).includes(after));
+    await click(nav('Activity'));
+    const history = "//li[contains(@class,'history')][.//*[normalize-space()='Installed session-notice']]";
+    await waitFor('Activity retains the login instruction', async () => (await text(history)).includes(after));
+    await click(nav('Discover'));
+  }],
   ['a Nix installation shows its flake update instructions and skips the release feed', async () => {
     const requests = () => (log('feed.log').match(/GET \/latest\.json /g) ?? []).length;
     // The regular install has checked this feed, so this also verifies that the counter is live.
@@ -285,7 +301,12 @@ const steps = [
     const panel = "//details[summary[contains(., 'Steps')]]";
     if (!(await isOpen(panel))) await click(`${panel}/summary`);
     await click("//button[contains(@class,'action') and normalize-space()='Install']");
-    await waitFor('a running step', () => find(`${panel}//li[contains(@class,'running')]`));
+    const current = `${panel}//li[contains(concat(' ', normalize-space(@class), ' '), ' running ')]`;
+    await waitFor('a numbered running step', async () => {
+      const items = await findAll(`${panel}//ol[contains(@class, 'steps')]/li`);
+      const n = items.indexOf(await find(current)) + 1;
+      return n > 0 && (await text(`${current}/span[contains(@class, 'marker')]`)).trim() === String(n);
+    });
     if (!/step \d of \d/.test(await text(`${panel}//p[contains(@class,'summary')]`))) throw new Error('no step counter');
     await waitFor('run finished', async () => /Installed hyperfine in/.test(await text(`${panel}//p[contains(@class,'summary')]`)), 30000);
     const done = await text(`${panel}//li[contains(@class,'done')]`);

@@ -1299,6 +1299,9 @@ impl Collection {
             self.check_resources(steps, allowed, &id).context("metadata.furnish.uninstall")?;
         }
         let meta = &doc["metadata"]["furnish"];
+        if meta.get("requiresNewSession").is_some_and(|v| !v.is_boolean()) {
+            bail!("metadata.furnish.requiresNewSession must be true or false");
+        }
         Ok(App {
             id,
             collection: self.name.clone(),

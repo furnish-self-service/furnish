@@ -256,6 +256,12 @@
     </p>
   {/if}
 
+  {#if mode === 'run' && run?.requiresNewSession && (run.result === 'done' || run.result === 'fallback')}
+    <p class="session-notice">{t('session.after')}</p>
+  {:else if mode === 'install' && !error && preview?.some(step => step.requiresNewSession)}
+    <p class="session-notice">{t('session.preview')}</p>
+  {/if}
+
   <ol class="steps" class:live={mode === 'run'}>
     {#each rows as row, i (i)}
       {@const step = row.step}
@@ -263,8 +269,7 @@
         {#if mode === 'run'}
           {@const stateLabel = row.state === 'notRun' ? t('plan.notRun') : t(`plan.state.${row.state}`)}
           <span class="marker" title={stateLabel} aria-label={stateLabel}>
-            {#if row.state === 'running'}<span class="spinner"></span>
-            {:else if row.state === 'done'}✓
+            {#if row.state === 'done'}✓
             {:else if row.state === 'failed'}✕
             {:else if row.state === 'skipped' || row.state === 'notRun'}–
             {:else if row.state === 'cancelled'}⊘
@@ -353,6 +358,8 @@
 </div>
 
 <style>
+  .session-notice { margin: .65rem 0; padding: .65rem .85rem; background: var(--highlight-soft); color: var(--highlight-ink); border-radius: var(--radius); }
+
   .plan {
     margin-top: 0.75rem;
     container-type: inline-size;
@@ -473,7 +480,9 @@
     border-color: var(--danger);
   }
   .running .marker {
-    border-color: var(--accent);
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    border-color: transparent;
   }
   .cancelled .marker {
     color: var(--surface);
@@ -490,19 +499,7 @@
     font-weight: 650;
     color: var(--danger);
   }
-  .spinner {
-    width: 0.8rem;
-    height: 0.8rem;
-    border: 2px solid var(--accent);
-    border-right-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
   @media (prefers-reduced-motion: reduce) {
-    .spinner,
     .pulse {
       animation: none;
     }

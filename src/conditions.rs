@@ -125,8 +125,8 @@ pub(crate) fn parameter_default(doc: &Value, value: &Value) -> Value {
 }
 
 /// An OS-family preview has no concrete package managers or Linux distribution.
-/// Use the same grammar as DSC to identify reads of those facts (including within
-/// a larger expression). DSC still parses, type-checks and evaluates the calls.
+/// Use DSC's grammar and function signatures to combine known family conditions with
+/// unknown host facts. Evaluate individual expressions with DSC and representative host values.
 pub(crate) struct Preview {
     system: &'static str,
     context: Context,
@@ -209,18 +209,56 @@ impl Preview {
         let tree = parser()?.parse(src, None).ok_or_else(|| anyhow::anyhow!("unable to parse DSC expression"))?;
         let root = tree.root_node();
         anyhow::ensure!(!root.has_error(), "invalid DSC expression {src}");
-        if self.needs_unsupplied_fact(root, src) {
-            validate_calls(root, src)?;
+        let node = root.named_child(0).filter(|n| n.kind() == "expression").unwrap_or(root);
+        self.evaluate_node(node, src, &mut Statement::new()?, false)
+    }
+
+    fn evaluate_node(&self, node: tree_sitter::Node, src: &str, statement: &mut Statement, boolean_operand: bool) -> Result<Option<Value>> {
+        if node.kind() == "boolean" {
+            return Ok(Some(Value::Bool(&src[node.byte_range()] == "true")));
+        }
+        if let Some(function) = node.child_by_field_name("function")
+            && node.child_by_field_name("accessor").is_none()
+            && let Some(name) = function.child_by_field_name("name")
+            && matches!(&src[name.byte_range()], "and" | "or" | "not")
+        {
+            validate_call(function, src)?;
+            let name = &src[name.byte_range()];
+            let args = function.child_by_field_name("args").expect("logical function has validated arguments");
+            let decisive = name == "or";
+            let mut result = Some(!decisive);
+            for arg in args.named_children(&mut args.walk()) {
+                let operand = self.evaluate_node(arg, src, statement, true)?.and_then(|v| v.as_bool());
+                if name == "not" {
+                    return Ok(operand.map(|v| Value::Bool(!v)));
+                }
+                // A false AND operand or a true OR operand decides the result in either order.
+                // Continue checking every operand so invalid calls still reach the author.
+                match operand {
+                    Some(v) if v == decisive => result = Some(v),
+                    None if result != Some(decisive) => result = None,
+                    _ => {}
+                }
+            }
+            return Ok(result.map(Value::Bool));
+        }
+        if self.needs_unsupplied_fact(node, src) {
+            validate_calls(node, src)?;
             return Ok(None);
         }
         let mut replacements = Vec::new();
         let mut unknown = false;
-        self.inspect(root, src, &mut unknown, &mut replacements);
-        let mut code = src.to_string();
+        self.inspect(node, src, &mut unknown, &mut replacements);
+        let start = node.start_byte();
+        let mut code = src[node.byte_range()].to_owned();
         for (range, value) in replacements.into_iter().rev() {
-            code.replace_range(range, &value);
+            code.replace_range(range.start - start..range.end - start, &value);
         }
-        let value = Statement::new()?.parse_and_execute(&code, &self.context)?;
+        if node.kind() == "expression" {
+            code = format!("[{code}]");
+        }
+        let value = statement.parse_and_execute(&code, &self.context)?;
+        anyhow::ensure!(!boolean_operand || value.is_boolean(), "logical function requires a boolean operand");
         Ok((!unknown).then_some(value))
     }
 
@@ -280,6 +318,14 @@ impl Preview {
 
 /// Check names, arity and literal argument types even when a machine-dependent call cannot execute.
 fn validate_calls(node: tree_sitter::Node, src: &str) -> Result<()> {
+    validate_call(node, src)?;
+    for child in node.named_children(&mut node.walk()) {
+        validate_calls(child, src)?;
+    }
+    Ok(())
+}
+
+fn validate_call(node: tree_sitter::Node, src: &str) -> Result<()> {
     use dsc_lib::functions::{FunctionArgKind, FunctionDefinition, FunctionDispatcher};
     use std::{collections::HashMap, sync::LazyLock};
     static FUNCTIONS: LazyLock<HashMap<String, FunctionDefinition>> = LazyLock::new(|| {
@@ -306,9 +352,6 @@ fn validate_calls(node: tree_sitter::Node, src: &str) -> Result<()> {
                 }
             }
         }
-    }
-    for child in node.named_children(&mut node.walk()) {
-        validate_calls(child, src)?;
     }
     Ok(())
 }
@@ -421,6 +464,9 @@ mod tests {
         assert_eq!(linux.condition("[equals('context().os.family', 'Linux')]").unwrap(), Some(false));
         assert_eq!(linux.condition("[equals(variables('furnish.host')['distributionLike'][43], 'fedora')]").unwrap(), None);
         assert_eq!(windows.condition("[contains(variables('furnish.host').packageManagers, 'winget')]").unwrap(), None);
+        assert_eq!(linux.condition("[or(equals(envvar('FURNISH_TEST_UNKNOWN'), 'yes'), true)]").unwrap(), Some(true));
+        assert!(linux.condition("[not()]").is_err());
+        assert!(linux.condition("[or(true, variables('furnish.host').distribution)]").is_err());
         assert!(linux.condition("[and('not a boolean', false)]").is_err());
         assert!(linux.condition("[equals(variables('furnish.host').distributionTypo, 'debian')]").is_err());
     }

@@ -110,6 +110,9 @@ fn run(args: &[String]) -> Result<String> {
             _ => crate::engine::Action::Change,
         }
     };
+    let new_session = op == "set" && plan.apply.is_some() && plan.unverified.is_none() && plan.steps.iter().any(|step| {
+        matches!(step.code, "file.create" | "file.copy" | "file.write" | "file.delete") || step.code.starts_with("line.") || step.code.starts_with("block.")
+    }) && props["path"].as_str().is_some_and(login_profile);
     let mut out = match op {
         "get" => plan.state,
         "test" => {
@@ -146,10 +149,24 @@ fn run(args: &[String]) -> Result<String> {
         _ => bail!("unknown operation '{op}'"),
     };
     if op == "set" {
-        out.entry("_metadata").or_insert_with(|| json!({}))["furnishAction"] = serde_json::to_value(action)?;
+        let meta = out.entry("_metadata").or_insert_with(|| json!({}));
+        meta["furnishAction"] = serde_json::to_value(action)?;
+        if new_session {
+            meta["furnishNewSession"] = true.into();
+        }
     }
     out.retain(|k, _| !k.starts_with('_') || ["_exist", "_inDesiredState", "_metadata"].contains(&k.as_str()));
     Ok(Value::Object(out).to_string())
+}
+
+/// Only files read by login shells. A matching basename elsewhere is an ordinary file.
+fn login_profile(path: &str) -> bool {
+    if cfg!(windows) { return false }
+    let Ok(path) = common::expand(path) else { return false };
+    if path == Path::new("/etc/profile") || path == Path::new("/etc/zprofile") || path == Path::new("/etc/zsh/zprofile") {
+        return true;
+    }
+    dirs::home_dir().is_some_and(|home| [".profile", ".bash_profile", ".bash_login", ".zprofile"].iter().any(|name| path == home.join(name)))
 }
 
 /// A resource's state now, after set, and the change in between.
