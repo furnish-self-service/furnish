@@ -695,7 +695,7 @@ plan=$(step install command-input --dry-run)
 expect "$plan" "differs from profile.conf"
 if [[ "$plan" == *vpn.fixture.example* ]]; then echo "FAIL: private command input in preview" >&2; exit 1; fi
 expect "$(step install command-input)" "Installed command-input"
-cmp "$tmp/repo/files/profile.conf" "$tmp/tool-copy"
+git diff --no-index --quiet -- "$tmp/repo/files/profile.conf" "$tmp/tool-copy"
 expect "$(step uninstall command-input)" "Uninstalled command-input"
 [ ! -e "$tmp/tool-copy" ] || { echo "FAIL: profile still imported after uninstall" >&2; exit 1; }
 
