@@ -154,8 +154,11 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
-    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$binary:/nix/store/fixture-furnish/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
+    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
+
+# A second launch path lets the suite exercise a Nix-managed installation of the same binary.
+docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
 if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container"; then
