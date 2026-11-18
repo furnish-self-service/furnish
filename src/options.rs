@@ -273,6 +273,17 @@ pub fn values(resolved: &[Resolved]) -> Map<String, Value> {
     resolved.iter().filter_map(|r| r.value.clone().map(|v| (r.name.clone(), v))).collect()
 }
 
+/// The installed values of declared options that would change on reinstall. A missing
+/// installation record can't tell us which values were used. In an existing record,
+/// a missing option (for example one added later) has no recorded value.
+pub fn changed_values(resolved: &[Resolved], installed: Option<&Map<String, Value>>) -> Map<String, Value> {
+    let Some(installed) = installed else { return Map::new() };
+    resolved.iter().filter_map(|option| {
+        let previous = installed.get(&option.name);
+        (previous != option.value.as_ref()).then(|| (option.name.clone(), previous.cloned().unwrap_or(Value::Null)))
+    }).collect()
+}
+
 /// The document with `values` as the parameters' defaults, so DSC uses them. DSC evaluates a
 /// string starting with `[` as an expression, so such a value gets another `[` in front (DSC's
 /// escape for a literal `[`); the app's own default stays as its author wrote it.
@@ -428,6 +439,25 @@ mod tests {
 
     fn entry(value: Value, locked: bool) -> crate::policy::Entry {
         crate::policy::Entry { value, locked }
+    }
+
+    #[test]
+    fn reinstall_compares_declared_options_against_the_recorded_install() {
+        let layers = Layers { user: BTreeMap::new(), policy: BTreeMap::new() };
+        let doc = json!({"parameters": {
+            "same": {"type": "int", "defaultValue": 0},
+            "switched": {"type": "bool", "defaultValue": false},
+            "added": {"type": "string", "defaultValue": "new"},
+            "unset": {"type": "string"},
+        }});
+        let resolved = resolve_app_with(&layers, "c", "app", &doc, &BTreeMap::new());
+        let installed = json!({"same": 0, "switched": true, "unset": "old", "retired": 1});
+        assert!(changed_values(&resolved, None).is_empty(), "no known install values");
+        assert_eq!(
+            changed_values(&resolved, installed.as_object()),
+            *json!({"switched": true, "added": null, "unset": "old"}).as_object().unwrap()
+        );
+        assert!(changed_values(&resolved, Some(&values(&resolved))).is_empty());
     }
 
     #[test]

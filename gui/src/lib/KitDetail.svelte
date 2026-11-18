@@ -8,6 +8,7 @@
     appByKey,
     isInstalled,
     isPending,
+    pendingUninstall,
     installKit,
     uninstallKit,
     defaultUninstall,
@@ -20,6 +21,7 @@
     externalStatus,
     requiredUpdate,
   } from './state.svelte';
+  import RemovalImpact from './RemovalImpact.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
 
@@ -35,11 +37,12 @@
   const locked = (item: KitInfo['items'][number]) =>
     item.required || isInstalled(item.key) || isPending(item.key) || unavailable(item.key);
   const checked = (item: KitInfo['items'][number]) =>
-    unavailable(item.key) ? false : locked(item) ? true : (picked[item.key] ?? item.selected);
+    unavailable(item.key) || (!item.required && pendingUninstall(item.key)) ? false : locked(item) ? true : (picked[item.key] ?? item.selected);
 
   const toInstall = $derived(
     kit.items.filter((i) => checked(i) && !isInstalled(i.key) && !isPending(i.key) && !unavailable(i.key)).map((i) => i.key),
   );
+  const conflict = $derived(kit.items.find(i => i.required && pendingUninstall(i.key)));
   const installedItems = $derived(kit.items.filter((i) => isInstalled(i.key)));
   const defaults = $derived(defaultUninstall(kit));
   const toRemove = $derived(
@@ -59,7 +62,8 @@
   }
 
   function install() {
-    installKit(kit, toInstall);
+    const selected = kit.items.filter(checked);
+    installKit(kit, selected.map(item => item.key));
     picked = {};
   }
   function uninstall() {
@@ -109,14 +113,19 @@
       {/each}
     </ul>
     <div class="actions">
-      <button class="primary big" disabled={!toInstall.length} onclick={install}>
+      <button class="primary big" disabled={!toInstall.length || !!conflict} onclick={install}>
         {toInstall.length ? t('kit.install', { n: toInstall.length }) : t('kit.nothingToInstall')}
       </button>
       {#if installedItems.length}
         <button class="secondary big" onclick={() => (removing = true)}>{t('kit.uninstallApps')}</button>
       {/if}
     </div>
-    <p class="hint">{t('kit.hint')}</p>
+    {#if conflict}
+      {@const app = appByKey(conflict.key)}
+      <p class="hint" role="status">{t('queue.uninstalling', { detail: app ? appName(app) : conflict.key })}</p>
+    {:else}
+      <p class="hint">{t('kit.hint')}</p>
+    {/if}
   {:else}
     <h2>{t('kit.chooseUninstall')}</h2>
     <ul class="items">
@@ -150,6 +159,7 @@
         {/if}
       {/each}
     </ul>
+    <RemovalImpact keys={toRemove} removingKit={kit.key} />
     <div class="actions">
       <button class="danger big" disabled={!toRemove.length} onclick={uninstall}>
         {toRemove.length ? t('kit.uninstall', { n: toRemove.length }) : t('kit.nothingSelected')}

@@ -1363,7 +1363,7 @@ impl App {
     }
 
     /// The values it was installed with: the user's record, else the service's.
-    fn recorded_values(&self) -> Option<serde_json::Map<String, Value>> {
+    pub fn recorded_values(&self) -> Option<serde_json::Map<String, Value>> {
         crate::options::installed_with(&data_dir(), &self.key()).or_else(|| {
             (self.managed && crate::service::enabled()).then(|| crate::options::installed_with(&system_dir(), &self.key())).flatten()
         })
@@ -1377,7 +1377,7 @@ impl App {
     /// Installed with option values that differ from the current ones (a reinstall applies them).
     pub fn options_differ(&self) -> bool {
         let Some(installed) = self.recorded_values() else { return false };
-        self.current_values().iter().any(|(k, v)| installed.get(k) != Some(v))
+        !crate::options::changed_values(&self.options(), Some(&installed)).is_empty()
     }
 
     pub fn doc_for(&self, values: &serde_json::Map<String, Value>) -> Value {

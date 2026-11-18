@@ -45,10 +45,12 @@ struct AppInfo {
     source: String,
     /// Apps installed first: required ones always, optional ones if chosen (for the current options).
     dependencies: Vec<ItemInfo>,
+    /// Required apps with the option values used for the installed configuration.
+    installed_requirements: Vec<String>,
     /// Options the app declares, with their current values.
     options: Vec<options::Resolved>,
-    /// Installed with other option values than the current ones: a reinstall applies them.
-    options_differ: bool,
+    /// Changed options and their installed values (null when the option was not recorded).
+    option_changes: serde_json::Map<String, serde_json::Value>,
     /// Recommended for this user (`metadata.furnish.recommended`).
     recommended: bool,
     /// Required collection options nobody answered yet: installing waits for them.
@@ -200,6 +202,9 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> anyhow::Result<T> + 
 }
 
 fn app_info(app: &App) -> AppInfo {
+    let options = app.options();
+    let current_values = options::values(&options);
+    let recorded_values = app.recorded_values();
     // Only what applies here: experts find the skipped ones in the steps preview.
     let resources = app
         .resources_here()
@@ -217,9 +222,15 @@ fn app_info(app: &App) -> AppInfo {
         icon_dark: app.icon_dark.as_deref().and_then(icon_data_url),
         resources,
         source: fs::read_to_string(&app.path).unwrap_or_default(),
-        dependencies: items(&app.collection, &app.dependencies_for(&app.current_values())),
-        options: app.options(),
-        options_differ: app.options_differ(),
+        dependencies: items(&app.collection, &app.dependencies_for(&current_values)),
+        installed_requirements: app
+            .dependencies_for(recorded_values.as_ref().unwrap_or(&current_values))
+            .into_iter()
+            .filter(|dep| dep.required)
+            .map(|dep| format!("{}/{}", app.collection, dep.app))
+            .collect(),
+        option_changes: options::changed_values(&options, recorded_values.as_ref()),
+        options,
         recommended: app.recommended(),
         unanswered: app.unanswered(),
         held: app.held_version().map(|version| HeldInfo {

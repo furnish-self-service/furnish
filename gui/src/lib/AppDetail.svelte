@@ -4,6 +4,7 @@
   import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
   import { describeNeeds, describeRequired, unmet } from './required';
   import Options from './Options.svelte';
+  import OptionChanges from './OptionChanges.svelte';
   import DependencyList from './DependencyList.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
@@ -13,6 +14,7 @@
   import Plan from './Plan.svelte';
   import Versions from './Versions.svelte';
   import { t, formatDate, lang, terror } from './i18n.svelte';
+  import RemovalImpact from './RemovalImpact.svelte';
   import External from './External.svelte';
 
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
@@ -90,6 +92,7 @@
     <div class="cta">
       {#if status === 'installed' && confirming && checkError === undefined}
         <p class="confirm">{t('app.confirmUninstall', { app: appName(app) })}</p>
+        <RemovalImpact keys={[app.key]} />
         <div class="row">
           <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>{t('common.uninstall')}</button>
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
@@ -148,12 +151,13 @@
     </div>
   {/if}
 
-  {#if installed && app.optionsDiffer}
+  {#if installed && Object.keys(app.optionChanges ?? {}).length}
     <div class="differ" role="status">
       <span>{t('app.optionsDiffer', { app: appName(app) })}</span>
       <button class="secondary" disabled={isPending(app.key)} onclick={() => reinstall(app)}>
         {isPending(app.key) ? t('app.reinstalling') : t('app.reinstall')}
       </button>
+      <OptionChanges {app} />
     </div>
   {/if}
 

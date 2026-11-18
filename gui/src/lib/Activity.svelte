@@ -1,9 +1,11 @@
 <script lang="ts">
   // Current, queued and recently completed operations.
-  import { store, dequeue, clearQueue, appName } from './state.svelte';
+  import { store, dequeue, clearQueue, queueBlocker, retryPrerequisite, isPending, appByKey, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import Plan from './Plan.svelte';
+  import KitActivityRow from './KitActivityRow.svelte';
+  import { isKit } from './activity-history';
   import RunLog from './RunLog.svelte';
   import { t, lang, formatDate } from './i18n.svelte';
 
@@ -63,6 +65,8 @@
   {#if queued.length}
     <ol class="queue">
       {#each queued as q, i (q.key)}
+        {@const blocker = queueBlocker(q)}
+        {@const dependency = blocker ? appByKey(blocker) : undefined}
         <li class="row">
           <span class="position">{i + 1}</span>
           <button class="open" onclick={() => onopen(q.key)} aria-label={t('common.open', { name: appName(q.app!) })}>
@@ -70,8 +74,14 @@
             <span class="text">
               <span class="name">{appName(q.app!)}</span>
               <span class="meta">{actionLabel(q.key, q.action)} · {q.app!.collection}</span>
+              {#if blocker}
+                <span class="meta">{dependency ? t('queue.waitingFor', { app: appName(dependency) }) : t('queue.missing', { detail: blocker })}</span>
+              {/if}
             </span>
           </button>
+          {#if dependency && !isPending(dependency.key)}
+            <button class="secondary" onclick={() => retryPrerequisite(dependency.key)}>{t('queue.retry', { app: appName(dependency) })}</button>
+          {/if}
           <button class="secondary" aria-label={t('action.removeFromQueue', { app: appName(q.app!) })} onclick={() => dequeue(q.key)}>{t('common.remove')}</button>
         </li>
       {/each}
@@ -83,30 +93,34 @@
   {#if store.recent.length}
     <h2>{t('activity.recent')}</h2>
     <ol class="queue">
-      {#each store.recent as entry (entry.summary.id)}
-        {@const item = entry.summary}
-        <li class="history">
-          <div class="name" class:failed={item.result === 'failed'}>
-            {item.result === 'fallback'
-              ? t('toast.fellBack', { app: item.name, date: formatDate(item.fallbackDate ?? '') })
-              : t(`run.${item.result}.${item.kind}`, { app: item.name })}
-          </div>
-          <div class="meta">
-            <time datetime={new Date(item.finishedAt).toISOString()}>
-              {new Date(item.finishedAt).toLocaleString(lang(), { dateStyle: 'medium', timeStyle: 'short' })}
-            </time>
-            · {t(`activity.trigger.${item.trigger}`)} · {item.key}
-          </div>
-          {#if item.failedStep}<div class="failed">{t('activity.failedStep', { step: item.failedStep })}</div>{/if}
-          {#if entry.details}
-            <button class="secondary reveal" aria-expanded={expanded === item.id}
-              onclick={() => expanded = expanded === item.id ? null : item.id}>{t('app.steps')}</button>
-            {#if expanded === item.id}
-              <Plan operation={entry.details.run} />
-              <RunLog lines={entry.details.logs} />
+      {#each store.recent as entry (isKit(entry) ? entry.id : entry.summary.id)}
+        {#if isKit(entry)}
+          <KitActivityRow group={entry} />
+        {:else}
+          {@const item = entry.summary}
+          <li class="history">
+            <div class="name" class:failed={item.result === 'failed'}>
+              {item.result === 'fallback'
+                ? t('toast.fellBack', { app: item.name, date: formatDate(item.fallbackDate ?? '') })
+                : t(`run.${item.result}.${item.kind}`, { app: item.name })}
+            </div>
+            <div class="meta">
+              <time datetime={new Date(item.finishedAt).toISOString()}>
+                {new Date(item.finishedAt).toLocaleString(lang(), { dateStyle: 'medium', timeStyle: 'short' })}
+              </time>
+              · {t(`activity.trigger.${item.trigger}`)} · {item.key}
+            </div>
+            {#if item.failedStep}<div class="failed">{t('activity.failedStep', { step: item.failedStep })}</div>{/if}
+            {#if entry.details}
+              <button class="secondary reveal" aria-expanded={expanded === item.id}
+                onclick={() => expanded = expanded === item.id ? null : item.id}>{t('app.steps')}</button>
+              {#if expanded === item.id}
+                <Plan operation={entry.details.run} />
+                <RunLog lines={entry.details.logs} />
+              {/if}
             {/if}
-          {/if}
-        </li>
+          </li>
+        {/if}
       {/each}
     </ol>
   {/if}
