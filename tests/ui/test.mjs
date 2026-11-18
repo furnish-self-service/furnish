@@ -64,6 +64,15 @@ const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/prope
 const button = (label) => `//button[normalize-space()='${label}']`;
 // A sidebar entry; Collections may carry a count after its name.
 const nav = (label) => `//nav//button[starts-with(normalize-space(), '${label}')]`;
+
+async function setLoadAwareUpdates(enabled) {
+  await click(nav('Settings'));
+  const toggle = "//label[contains(., 'Wait while this computer is busy')]//input";
+  await waitFor('load-aware update setting', () => find(toggle));
+  if (await prop(toggle, 'checked') !== enabled) await click(toggle);
+  await waitFor(`load-aware updates ${enabled ? 'enabled' : 'disabled'}`,
+    () => (JSON.parse(log('data/settings.json')).loadAwareUpdates ?? true) === enabled);
+}
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
 // Extra screenshots of states worth seeing, next to the final one.
 const snap = async (name) =>
@@ -405,6 +414,7 @@ const steps = [
     if (!existsSync(`${workDir}/pkgs/hyperfine`)) throw new Error('cancel removed the prerequisite');
   }],
   ['updates install automatically, except for apps where that is turned off', async () => {
+    await setLoadAwareUpdates(false);
     writeFileSync(`${workDir}/pkgs/hyperfine.new`, '2.0\n');
     writeFileSync(`${workDir}/pkgs/extras.new`, '2.0\n');
     await click(button('Discover'));
@@ -418,6 +428,7 @@ const steps = [
     if (log('pkgs/extras').trim() === '2.0') throw new Error('extras was updated although turned off');
   }],
   ['automatic updates wait while the computer is busy, unless that is turned off', async () => {
+    await setLoadAwareUpdates(true);
     // Real CPU load from outside furnish: a busy loop on every core for 45 s.
     spawnSync('docker', ['exec', '-d', container, 'sh', '-c',
       'for i in $(seq $(nproc)); do timeout 45 sh -c "while :; do :; done" & done; wait']);
@@ -427,9 +438,7 @@ const steps = [
     await click(button('Check for updates'));
     await waitFor('update postponed', async () => (await text("//*[contains(@class,'postponed')]")).includes('busy (CPU'), 20000);
     if (log('pkgs/hyperfine').trim() === '3.0') throw new Error('updated although the computer was busy');
-    await click(nav('Settings'));
-    await click("//label[contains(., 'Wait while this computer is busy')]//input");
-    await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
+    await setLoadAwareUpdates(false);
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
   ['Update all queues updates hidden by search and respects automatic-update preferences', async () => {
