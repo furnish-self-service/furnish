@@ -199,3 +199,41 @@ fn only_if_set_up_skips_windows_and_identifies_unmodeled_unix_setup() {
     let output = check(temp.path(), &dir, Some(&path), false);
     assert!(output.contains("onlyIfSetUp requires the target's NixOS or Home Manager configuration"), "{output}");
 }
+
+#[test]
+fn family_preview_combines_system_guards_with_unknown_host_conditions() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("repo");
+    let linux = "equals(context().os.family, 'Linux')";
+    let mac = "equals(context()['os'].family, 'macOS')";
+    let nix = "contains(variables('furnish.host').packageManagers, 'nix')";
+    let brew = "contains(variables('furnish.host').packageManagers, 'brew')";
+    let on_linux = format!("[and({linux}, {nix})]");
+    let on_mac = format!("[and(not({brew}), {mac})]");
+    let step = |name: &str, expr: &str| {
+        let mut value = package(name);
+        value["condition"] = expr.into();
+        value
+    };
+    app(&dir, "dependency", json!({
+        "resources":[package("library")],
+        "metadata":{"furnish":{"dependencies":[{"app":"tools","condition": on_mac}]}}
+    }));
+    let mut doc = json!({
+        "metadata":{"furnish":{"dependencies":[{"app":"dependency","condition": on_linux}]}},
+        "resources":[step("kargo", &on_linux), step("homebrew", &on_mac),
+            step("fallback", &format!("[or({nix}, {linux})]")),
+            step("portable", &format!("[not(and({mac}, {nix}, true))]"))]
+    });
+    app(&dir, "tools", doc.clone());
+    let report = check(temp.path(), &dir, None, true);
+    let systems = "Windows: fallback (depends on host), portable · macOS: homebrew (depends on host), fallback (depends on host), portable (depends on host) · Linux: kargo (depends on host), fallback, portable";
+    assert!(report.contains(systems), "{report}");
+    assert!(!report.contains("form a cycle"), "{report}");
+
+    // An impossible OS guard must still validate the rest of the condition.
+    doc["resources"][0]["condition"] = json!("[and(false, equals(variables('furnish.host').misspelled, 'x'))]");
+    app(&dir, "tools", doc);
+    let report = check(temp.path(), &dir, None, false);
+    assert!(report.contains("kargo: condition") && report.contains("misspelled"), "{report}");
+}

@@ -13,6 +13,7 @@
 #
 # Exit codes: 10 invalid input, 11 missing tool or file, 12 cancelled (UAC prompt declined).
 param([string]$Operation, [string]$Mode)
+. "$PSScriptRoot/furnish-program.ps1"
 
 function Fail([int]$Code, [string]$Message) {
     [Console]::Error.WriteLine((@{ error = $Message } | ConvertTo-Json -Compress)); exit $Code
@@ -56,13 +57,14 @@ $fileVersion = $null
 function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     # Echo back every identifying property: DSC's test compares each desired property with the state.
     $state = if ($env:url) { [ordered]@{ url = $env:url; sha256 = $env:sha256 } } else { [ordered]@{ file = $file } }
-    foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs') {
+    foreach ($p in 'productCode', 'displayName', 'installArgs', 'uninstallArgs', 'command') {
         $v = [Environment]::GetEnvironmentVariable($p)
         if ($null -ne $v) { $state[$p] = $v }
     }
     $state._exist = [bool]$Version
     if ($Version -and $Version -ne '?') { $state.version = $Version }
-    if ($report) {
+    if ($outside) { $state.managedBy = 'other'; $state.path = $outside }
+    if ($report -and -not $outside) {
         $state.versionScheme = 'generic'
         $state.via = $manager
         if ($fileVersion) { $state.latestVersion = $fileVersion }
@@ -80,7 +82,11 @@ $attributes = try { [IO.File]::GetAttributes($file) } catch { $null }
 if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)) {
     Fail 10 "installer is a symbolic link: $file"
 }
-if (-not $env:url -and -not (Test-Path -LiteralPath $file -PathType Leaf)) {
+$candidate = if ($command) { Find-Program $command }
+$outside = $null
+if (-not $env:url -and -not (Test-Path -LiteralPath $file -PathType Leaf) -and
+    -not ($candidate -and ($env:productCode -or $env:displayName))) {
+    if ($candidate) { $outside = $candidate; Complete-External $subject }
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
     if ($Operation -eq 'get') { Write-State ''; exit 0 }
@@ -110,6 +116,7 @@ function Find-Installed([scriptblock]$Match) {
 # A supplied registry identity lets us skip the download when the app is already installed.
 # Always verify the payload before passing it to an elevated installer.
 function Get-InstallFile($Installed) {
+    if (-not $Installed -and $candidate) { return $file }
     if ($env:url -and $Operation -eq 'set' -and $Mode -ne 'what-if' -and $env:_exist -ne 'false' -and
         (-not $Installed -or ($target -and $Installed.DisplayVersion -ne $target))) {
         return (Resolve-Download fetch)
@@ -123,7 +130,8 @@ switch -Wildcard ($file) {
         $installed = if ($code) { Find-Installed { $_.PSChildName -eq $code } }
         # Removal can only select an MSI product by its verified ProductCode.
         # With no explicit code, recover the pinned metadata even if the cache was cleared.
-        if ($env:url -and -not $code -and $env:_exist -eq 'false' -and $Operation -eq 'set' -and $Mode -ne 'what-if') {
+        if ($env:url -and -not $code -and $env:_exist -eq 'false' -and $Operation -eq 'set' -and $Mode -ne 'what-if' -and
+            (-not $candidate -or (Test-Path -LiteralPath $file -PathType Leaf))) {
             $file = Resolve-Download fetch
         } else {
             $file = Get-InstallFile $installed
@@ -165,6 +173,7 @@ switch -Wildcard ($file) {
     default { Fail 10 "unsupported installer: $subject (Windows: .msi, .exe)" }
 }
 
+if (-not $installed -and $candidate) { $outside = $candidate; Complete-External $subject }
 $version = if ($installed) { if ($installed.DisplayVersion) { [string]$installed.DisplayVersion } else { '?' } } else { '' }
 
 # Runs elevated (UAC prompt unless already elevated, e.g. as the furnish service) and waits.
@@ -233,6 +242,7 @@ switch ($Operation) {
         }
         if ($cmd) {
             [Console]::Error.WriteLine((@{ info = "$($step): running as administrator: $($cmd -join ' ')" } | ConvertTo-Json -Compress))
+            if ($want -and $candidate -and $env:url) { $null = Resolve-Download fetch }
             Invoke-Elevated $cmd
         }
         $installed = if ($file -like '*.msi') { Find-Installed { $_.PSChildName -eq $code } } else { Find-Installed { $_.DisplayName -like $env:displayName } }

@@ -159,7 +159,36 @@ version_state() {
 }
 
 prepare() { :; }
-check_external_install() { :; }
+# The program $command, where people's installers put programs: PATH, then the folders an app
+# started from the Finder or a desktop menu lacks on its PATH (~/.local/bin for vendors'
+# installers, Homebrew's, where npm and pip put programs with Homebrew's Node and Python). Only
+# looks: never runs it, so a folder others can write to is harmless.
+find_program() {
+    rest=$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin
+    while [ -n "$rest" ]; do
+        d=${rest%%:*}
+        case $rest in *:*) rest=${rest#*:} ;; *) rest= ;; esac
+        case $d in /*) ;; *) continue ;; esac # not relative to wherever DSC runs it
+        [ -f "$d/$1" ] && [ -x "$d/$1" ] && { echo "$d/$1"; return 0; }
+    done
+    return 1
+}
+case ${command:-} in -*|*[!A-Za-z0-9._+-]*) fail 10 "command must be a program's name, without a folder: $command" ;; esac
+
+find_external_command() { [ -n "${command:-}" ] && find_program "$command"; }
+find_external() { find_external_command; }
+
+check_external_install() {
+    [ -z "$version" ] && outside=$(find_external) || return 0
+    version='?'
+    installed_version() { echo '?'; }
+    newer_version() { :; }
+    # An external installation has no version facts Furnish can verify or apply.
+    reportVersions= targetVersion=
+    extra_state() { printf ',"managedBy":"other",%s' "$(json_member path "$outside")"; }
+    cant_remove="$subject was installed outside furnish ($outside): uninstall it the way it was installed"
+}
+
 extra_state() { :; }
 scheme=generic
 latest_version() { :; }
@@ -203,6 +232,7 @@ furnish_main() {
     esac
     prepare
     version=$(installed_version || true)
+    outside=
     check_external_install
     case "${1:-}" in
     get)
@@ -240,6 +270,8 @@ furnish_main() {
             step=$cant_remove after=$version
         elif [ "${_exist:-true}" != true ] && [ -n "$version" ]; then
             action=remove step="Remove $shown with $via" desc=$remove_desc after=
+        elif [ -n "$outside" ]; then
+            step="$subject is installed outside furnish ($outside)" after=$version
         elif [ -n "$version" ]; then
             step="$shown is installed and up to date" after=$version
         else

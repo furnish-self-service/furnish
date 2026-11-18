@@ -289,22 +289,6 @@ use_nix() {
     }
 }
 
-# The program $command, where people's installers put programs: PATH, then the folders an app
-# started from the Finder or a desktop menu lacks on its PATH (~/.local/bin for vendors'
-# installers, Homebrew's, where npm and pip put programs with Homebrew's Node and Python). Only
-# looks: never runs it, so a folder others can write to is harmless.
-find_program() {
-    rest=$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin
-    while [ -n "$rest" ]; do
-        d=${rest%%:*}
-        case $rest in *:*) rest=${rest#*:} ;; *) rest= ;; esac
-        case $d in /*) ;; *) continue ;; esac # not relative to wherever DSC runs it
-        [ -f "$d/$1" ] && [ -x "$d/$1" ] && { echo "$d/$1"; return 0; }
-    done
-    return 1
-}
-case ${command:-} in */*|-*) fail 10 "command must be a program's name, without a folder: $command" ;; esac
-
 need=
 case "${packageManager:-}" in
 pacman) use_pacman || need="pacman" ;;
@@ -331,20 +315,8 @@ fi
 case $name in -*) fail 10 "package name starts with '-': $name" ;; esac
 case ${nixpkgs:-} in -*) fail 10 "nixpkgs starts with '-': $nixpkgs" ;; esac
 
-# Installed some other way (npm, the vendor's installer, another package manager): the program is
-# there although the package manager doesn't have the package. It counts as installed, not by
-# furnish, which neither installs it again nor updates or removes it.
-check_external_install() {
-    [ -z "$version" ] || return 0
-    if [ -n "${command:-}" ] && outside=$(find_program "$command"); then :
-    elif [ "${manager:-}" = brew ] && [ "$(uname -s)" = Darwin ] && outside=$(brew_external_bundle); then :
-    else return 0
-    fi
-    version='?'
-    installed_version() { echo '?'; }
-    newer_version() { :; }
-    extra_state() { printf ',"managedBy":"other",%s' "$(json_member path "$outside")"; }
-    cant_remove="$subject was installed outside furnish ($outside): uninstall it the way it was installed"
-}
+if [ "${manager:-}" = brew ] && [ "$(uname -s)" = Darwin ]; then
+    find_external() { find_external_command || brew_external_bundle; }
+fi
 
 furnish_main "$@"

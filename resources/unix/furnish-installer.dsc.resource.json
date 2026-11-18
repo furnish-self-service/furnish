@@ -140,6 +140,24 @@
           "type": "string",
           "readOnly": true,
           "description": "With reportVersions: what installs it"
+        },
+        "command": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._+][A-Za-z0-9._+-]*$",
+          "description": "Program to look for if the installer's own installation is absent. An existing executable counts as installed outside Furnish."
+        },
+        "managedBy": {
+          "type": "string",
+          "enum": [
+            "other"
+          ],
+          "readOnly": true,
+          "description": "Present for an installation managed outside Furnish"
+        },
+        "path": {
+          "type": "string",
+          "readOnly": true,
+          "description": "Where the program was found, when the package was installed outside furnish (managedBy: other)"
         }
       },
       "oneOf": [

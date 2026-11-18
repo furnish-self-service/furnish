@@ -383,12 +383,14 @@ async function runOperation(app: AppInfo, action: Queued['action'], trigger: api
   let cancelled = false;
   let ok = false;
   try {
-    const fellBack = action === 'installVersion' ? await api.installVersion(app.key, commit ?? '', trigger) : await api[action](app.key, trigger);
+    const { fallback: fellBack, requiresNewSession } = action === 'installVersion' ? await api.installVersion(app.key, commit ?? '', trigger) : await api[action](app.key, trigger);
     ok = true;
+    run.requiresNewSession = requiresNewSession;
+    const notice = requiresNewSession ? t('session.after') : undefined;
     if (fellBack) {
       run.fallbackDate = fellBack.date;
-      toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), t('toast.fellBackDetail', { error: fellBack.error }));
-    } else toast('success', t(`run.done.${kind}`, { app: appName(app) }));
+      toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), [t('toast.fellBackDetail', { error: fellBack.error }), notice].filter(Boolean).join(' '));
+    } else toast('success', t(`run.done.${kind}`, { app: appName(app) }), notice);
     if (autoInstalling.has(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     run.error = message(e);

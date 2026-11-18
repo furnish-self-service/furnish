@@ -66,6 +66,11 @@ export const reportDestinations = () => invoke<string[]>('report_destinations');
 export const reportInventory = (apps: [string, string][]) => invoke<void>('report_inventory', { apps });
 
 /** An install failed and furnish installed an earlier version instead (fallback "automatic"). */
+export interface OperationResult {
+  requiresNewSession: boolean;
+  fallback: FellBack | null;
+}
+
 export interface FellBack {
   date: string;
   error: string;
@@ -108,6 +113,7 @@ export interface LogLine {
 export type Action = 'install' | 'remove' | 'change' | 'nothing' | 'skipped';
 
 export interface Step {
+  requiresNewSession?: boolean;
   name: string;
   type: string;
   action: Action;
@@ -267,16 +273,16 @@ export const nixosSetup = () => invoke<NixosSetup | null>('nixos_setup');
 /** Set `osSpecific.nixos.<name>`; null returns to finding it automatically. */
 export const setNixosSetting = (name: 'configuration' | 'flakeAttribute' | 'homeManagerConfiguration' | 'installInto', value: string | null) =>
   invoke<void>('set_setting', { key: `osSpecific.nixos.${name}`, value });
-export const install = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install', { key, trigger: trigger ?? null });
-export const uninstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('uninstall', { key, trigger: trigger ?? null });
-export const reinstall = (key: string, trigger?: Trigger) => invoke<FellBack | null>('reinstall', { key, trigger: trigger ?? null });
+export const install = (key: string, trigger?: Trigger) => invoke<OperationResult>('install', { key, trigger: trigger ?? null });
+export const uninstall = (key: string, trigger?: Trigger) => invoke<OperationResult>('uninstall', { key, trigger: trigger ?? null });
+export const reinstall = (key: string, trigger?: Trigger) => invoke<OperationResult>('reinstall', { key, trigger: trigger ?? null });
 /** Install the previous version: the one that last installed here, else the one before the latest change. */
-export const installPrevious = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_previous', { key, trigger: trigger ?? null });
+export const installPrevious = (key: string, trigger?: Trigger) => invoke<OperationResult>('install_previous', { key, trigger: trigger ?? null });
 /** For an app held at an earlier version: install the collection's current one. */
-export const installCurrent = (key: string, trigger?: Trigger) => invoke<FellBack | null>('install_current', { key, trigger: trigger ?? null });
+export const installCurrent = (key: string, trigger?: Trigger) => invoke<OperationResult>('install_current', { key, trigger: trigger ?? null });
 /** Install a version of an app the person chose (a commit from `appVersions`) and keep it there. */
 export const installVersion = (key: string, commit: string, trigger?: Trigger) =>
-  invoke<FellBack | null>('install_version', { key, commit, trigger: trigger ?? null });
+  invoke<OperationResult>('install_version', { key, commit, trigger: trigger ?? null });
 /** The versions of an app the person can choose from, newest (the current one) first. */
 export const appVersions = (key: string) => invoke<Version[]>('app_versions', { key });
 /** The version furnish would fall back to; rejects with the reason if there is none. */

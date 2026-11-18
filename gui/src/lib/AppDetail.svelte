@@ -31,6 +31,7 @@
   const autoUpdate = $derived(!store.settings?.noAutoUpdate.includes(app.key));
 
   const status = $derived(store.status[app.key]);
+  const run = $derived(store.runs[app.key]);
   const checkError = $derived(store.statusErrors[app.key]);
   const checkedAt = $derived(store.checkedAt[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
@@ -149,6 +150,10 @@
         {isPending(app.key) ? t('common.installing') : t('app.installPrevious', { date: formatDate(previous.date) })}
       </button>
     </div>
+  {/if}
+
+  {#if !planOpen && installed && run?.requiresNewSession && (run.result === 'done' || run.result === 'fallback')}
+    <p class="differ" role="status">{t('session.after')}</p>
   {/if}
 
   {#if installed && Object.keys(app.optionChanges ?? {}).length}

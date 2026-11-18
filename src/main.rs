@@ -578,7 +578,7 @@ fn run(command: Command) -> Result<()> {
             let app = catalog::find_app(&app)?;
             let version = app.resolve_version(&version)?;
             println!("⟳ Installing the version of {} from {}…", app.id, version.date);
-            app.install_version(catalog::Which::Version(version.commit.clone()), print_progress())?;
+            install_progress(|progress| app.install_version(catalog::Which::Version(version.commit.clone()), progress))?;
             match version.current {
                 true => println!("✓ Installed the current version of {}", app.id),
                 false => println!(
@@ -599,7 +599,7 @@ fn run(command: Command) -> Result<()> {
                 return install_with_dependencies(&app, &with, &without, &mut Vec::new());
             }
             println!("⟳ Installing the collection's current version of {}…", app.id);
-            report_failure(&app, app.install_version(catalog::Which::Current, print_progress()))?;
+            report_failure(&app, install_progress(|progress| app.install_version(catalog::Which::Current, progress)))?;
             println!("✓ Installed {}", app.id);
             Ok(())
         }
@@ -622,7 +622,7 @@ fn run(command: Command) -> Result<()> {
                 }
             }
             println!("⟳ Reinstalling {} with its current options…", app.id);
-            app.reinstall(print_progress())?;
+            install_progress(|progress| app.reinstall(progress))?;
             println!("✓ Reinstalled {}", app.id);
             Ok(())
         }
@@ -1042,6 +1042,15 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
     Ok(())
 }
 
+const NEW_SESSION: &str = "Sign out of your computer and sign back in to use these changes.";
+
+fn install_progress(work: impl FnOnce(&mut dyn FnMut(engine::Progress)) -> Result<()>) -> Result<()> {
+    if engine::session_result(print_progress(), work)? {
+        println!("{NEW_SESSION}");
+    }
+    Ok(())
+}
+
 /// Prints each step as it starts and finishes, with duration and result.
 fn print_progress() -> impl FnMut(engine::Progress) {
     use engine::{Action, Progress};
@@ -1370,7 +1379,7 @@ fn install_with_dependencies(app: &catalog::App, with: &[String], without: &[Str
         Status::NotInstalled | Status::NeedsUpdate => {}
     }
     println!("⟳ Installing {}…", app.id);
-    report_failure(app, app.install(print_progress()))?;
+    report_failure(app, install_progress(|progress| app.install(progress)))?;
     println!("✓ Installed {}", app.id);
     Ok(())
 }
@@ -1397,7 +1406,7 @@ fn report_failure(app: &catalog::App, result: Result<()>) -> Result<()> {
 
 fn install_previous(app: &catalog::App, version: &catalog::Version) -> Result<()> {
     println!("⟳ Installing the version of {} from {}…", app.id, version.date);
-    app.install_version(catalog::Which::Previous, print_progress())?;
+    install_progress(|progress| app.install_version(catalog::Which::Previous, progress))?;
     println!(
         "✓ Installed the version of {} from {}. furnish keeps it until the collection changes {}; furnish install {} --current tries the current version.",
         app.id, version.date, app.id, app.id
@@ -1530,6 +1539,9 @@ fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
         for c in step.changes.iter().filter(|c| !(diffed && c.property == "value")) {
             println!("  {:<16} {}: {} → {}", "", c.property, c.before, c.after);
         }
+    }
+    if steps.iter().any(|step| step.requires_new_session) {
+        println!("After installation, sign out of your computer and sign back in to use these changes.");
     }
     Ok(())
 }

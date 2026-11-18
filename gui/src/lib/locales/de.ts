@@ -110,6 +110,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'run.stepOf': 'Schritt {n} von {total}',
 
   // Activity.svelte
+  'session.preview': "Melde dich nach der Installation am Computer ab und wieder an, damit die Änderungen wirksam werden.",
+  'session.after': "Melde dich am Computer ab und wieder an, damit die Änderungen wirksam werden.",
   'activity.title': 'Aktivität',
   'queue.waitingFor': "Wartet auf {app}",
   'queue.retry': "{app} erneut versuchen",

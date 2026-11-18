@@ -42,6 +42,7 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
 ];
 #[cfg(windows)]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
+    ("furnish-program.ps1", include_str!("../resources/windows/furnish-program.ps1")),
     (
         "furnish-package.dsc.resource.ps1",
         include_str!("../resources/windows/furnish-package.dsc.resource.ps1"),
@@ -271,7 +272,7 @@ impl External {
 fn external(states: &[Tested]) -> Option<External> {
     states.iter().find_map(|t| {
         let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager" | "other"))?;
-        let package = t.actual["name"].as_str()?;
+        let package = t.actual["name"].as_str().or_else(|| t.actual["command"].as_str())?;
         let text = |key: &str| t.actual[key].as_str().map(String::from);
         Some(External { by: by.to_string(), package: package.to_string(), configuration: text("declaredIn"), path: text("path") })
     })
@@ -658,15 +659,21 @@ fn resolve(step_doc: &Value, installing: bool) -> Result<(Value, Option<crate::r
             return Ok((doc, None));
         }
     };
-    // A downloaded .deb, .rpm or .msi can carry its own version. Check the actual
-    // pinned artifact before choosing a target; catalog scans and previews stay offline.
+    crate::required::strip(&mut doc["resources"]);
+    let resource = &doc["resources"][0];
+    let mut state = None;
+    // The native command can identify an external install while the pinned payload is
+    // offline. Obtain package version metadata only if Furnish can manage the installation.
     if installing && resource["type"] == crate::catalog::INSTALLER_TYPE
         && let (Some(url), Some(pin)) = (resource["properties"]["url"].as_str(), resource["properties"]["sha256"].as_str())
     {
-        crate::installer_download::fetch(url, pin)?;
+        if resource["properties"].get("command").is_some() {
+            let current = get_state(&doc, resource, "latest")?;
+            if current["managedBy"] == "other" { state = Some(current); }
+        }
+        if state.is_none() { crate::installer_download::fetch(url, pin)?; }
     }
-    crate::required::strip(&mut doc["resources"]);
-    let state = get_state(&doc, &doc["resources"][0], "latest")?;
+    let state = match state { Some(current) => current, None => get_state(&doc, resource, "latest")? };
     let judged = judge(&doc, &doc["resources"][0].clone(), &entries, &state)?;
     match judged.decision {
         Decision::Exactly(version) => doc["resources"][0]["properties"]["targetVersion"] = version.into(),
@@ -682,7 +689,7 @@ fn preview_resolved(step_doc: &Value, files: &mut PreviewFiles) -> Result<Step> 
         Ok((doc, None)) => preview(&doc, files),
         Ok((doc, Some(required))) => {
             let mut step = preview(&doc, files)?;
-            (step.action, step.changes) = (Action::Nothing, vec![]);
+            (step.action, step.changes, step.requires_new_session) = (Action::Nothing, vec![], false);
             step.details = vec![format!("No acceptable version: needs {}", required.summary)];
             Ok(step)
         }
@@ -843,6 +850,9 @@ pub struct Step {
     #[serde(rename = "type")]
     pub kind: String,
     pub action: Action,
+    /// This change takes effect in a new operating-system login session.
+    #[serde(default, rename = "requiresNewSession", skip_serializing_if = "std::ops::Not::not")]
+    pub requires_new_session: bool,
     /// The resource's own description of its steps (DSC's `_metadata.whatIf`), e.g. the exact command.
     pub details: Vec<String>,
     /// The same as notes the GUI translates, from furnish's configuration resources
@@ -895,6 +905,9 @@ pub enum Progress {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     pub action: Action,
+    /// This change takes effect in a new operating-system login session.
+    #[serde(default, rename = "requiresNewSession", skip_serializing_if = "std::ops::Not::not")]
+    pub requires_new_session: bool,
     pub changes: Vec<Change>,
     /// Set if the step failed; the run stops there.
     pub error: Option<String>,
@@ -906,7 +919,7 @@ pub struct Outcome {
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
-    preview_steps(&step_docs(doc, uninstall)?)
+    preview_steps(&step_docs(doc, uninstall)?, uninstall)
 }
 
 /// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
@@ -920,7 +933,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let _ = fs::remove_file(file);
     }
     let docs = step_docs(doc, uninstall)?;
-    let steps = preview_steps(&docs)?;
+    let steps = preview_steps(&docs, uninstall)?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
         if ABORT.load(Ordering::SeqCst) {
@@ -928,7 +941,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         }
         let started = now_ms();
         if step.action == Action::Skipped {
-            let outcome = Outcome { action: Action::Skipped, changes: vec![], error: None, cancelled: false };
+            let outcome = Outcome { action: Action::Skipped, requires_new_session: false, changes: vec![], error: None, cancelled: false };
             report(Progress::Finished { index, at_ms: started, duration_ms: 0, outcome });
             continue;
         }
@@ -941,21 +954,23 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let finished = now_ms();
         let outcome = match &result {
             Ok(result) => match result.results.first().map(|r| (&r.result, r.metadata.as_ref())) {
-                Some((SetResult::Resource(r), metadata)) => Outcome {
-                    // Built-in resources measure changes (including a command actually run) in set.
-                    action: reported_action(&step.kind, metadata, &r.before_state, &r.after_state,
-                        step.details.first().is_some_and(|d| d == NO_PREVIEW)),
-                    changes: changes(&r.before_state, &r.after_state),
-                    error: failed_command(&r.before_state, &r.after_state)
-                        .map(|failure| format!("'{}' ({}): {failure}", step.name, step.kind)),
-                    cancelled: false,
-                },
-                _ => Outcome { action: Action::Skipped, changes: vec![], error: None, cancelled: false },
+                Some((SetResult::Resource(r), metadata)) => {
+                    let action = reported_action(&step.kind, metadata, &r.before_state, &r.after_state,
+                        step.details.first().is_some_and(|d| d == NO_PREVIEW));
+                    let error = failed_command(&r.before_state, &r.after_state)
+                        .map(|failure| format!("'{}' ({}): {failure}", step.name, step.kind));
+                    Outcome {
+                        action,
+                        requires_new_session: !uninstall && error.is_none() && requires_new_session(step_doc, action, &r.before_state, &r.after_state, metadata),
+                        changes: changes(&r.before_state, &r.after_state), error, cancelled: false,
+                    }
+                }
+                _ => Outcome { action: Action::Skipped, requires_new_session: false, changes: vec![], error: None, cancelled: false },
             },
             Err(e) => {
                 let error = format!("{e:#}");
                 let cancelled = is_cancellation(&error);
-                Outcome { action: step.action, changes: vec![], error: (!cancelled).then_some(error), cancelled }
+                Outcome { action: step.action, requires_new_session: false, changes: vec![], error: (!cancelled).then_some(error), cancelled }
             }
         };
         let cancelled = outcome.cancelled;
@@ -1115,9 +1130,13 @@ const NO_PREVIEW: &str = "No preview: this step runs its command or script";
 /// Command actually references is passed to its what-if; real operations always read the file.
 type PreviewFiles = std::collections::HashMap<PathBuf, Value>;
 
-fn preview_steps(docs: &[Value]) -> Result<Vec<Step>> {
+fn preview_steps(docs: &[Value], uninstall: bool) -> Result<Vec<Step>> {
     let mut files = PreviewFiles::new();
-    docs.iter().map(|doc| preview_resolved(doc, &mut files)).collect()
+    docs.iter().map(|doc| {
+        let mut step = preview_resolved(doc, &mut files)?;
+        step.requires_new_session &= !uninstall;
+        Ok(step)
+    }).collect()
 }
 
 fn comparison_path(path: &str) -> Option<PathBuf> {
@@ -1164,6 +1183,38 @@ fn reported_action(
     }
 }
 
+/// Compare only the effective Home Manager options: a change to unrelated
+/// packages in the same NixOS resource does not require a new login.
+fn requires_new_session(doc: &Value, action: Action, before: &Value, after: &Value, metadata: Option<&dsc_lib::configure::config_doc::Metadata>) -> bool {
+    if matches!(action, Action::Nothing | Action::Skipped) { return false }
+    if doc["metadata"]["furnish"]["requiresNewSession"] == true { return true }
+    let kind = doc["resources"][0]["type"].as_str().unwrap_or_default();
+    if kind.eq_ignore_ascii_case("Furnish/NixOS") {
+        let old = &before["homeOptions"];
+        let new = &after["homeOptions"];
+        return [old, new].into_iter().filter_map(Value::as_object).flat_map(|options| options.keys()).any(|key| {
+            (key == "home.sessionPath" || key == "home.sessionVariables" || key.starts_with("home.sessionVariables.")) && old.get(key) != new.get(key)
+        });
+    }
+    ["Furnish/File", "Furnish/Line", "Furnish/Block"].iter().any(|t| kind.eq_ignore_ascii_case(t))
+        && metadata.and_then(|m| m.other.get("furnishNewSession")) == Some(&Value::Bool(true))
+}
+
+/// Aggregate actual changes only when the entire operation, including the final
+/// status check, succeeds. A fallback calls this again for its own revision.
+pub fn session_result(
+    mut report: impl FnMut(Progress), work: impl FnOnce(&mut dyn FnMut(Progress)) -> Result<()>,
+) -> Result<bool> {
+    let mut needed = false;
+    work(&mut |event| {
+        if let Progress::Finished { outcome, .. } = &event {
+            needed |= outcome.requires_new_session;
+        }
+        report(event);
+    })?;
+    Ok(needed)
+}
+
 /// What-if for one single-resource document.
 fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
     let resource = &doc["resources"][0];
@@ -1174,7 +1225,7 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
             Some(why) => vec![format!("Not needed here: {why}")],
             None => resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect(),
         };
-        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, notes: vec![], selection_notes: vec![], changes: vec![] }
+        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, requires_new_session: false, details, notes: vec![], selection_notes: vec![], changes: vec![] }
     };
     if !applies_here(resource, doc) {
         return Ok(skipped());
@@ -1190,7 +1241,7 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
         Err(DscError::NotImplemented(_)) => {
             let mut details = vec![NO_PREVIEW.to_string()];
             details.extend(property_lines(&resource["properties"]));
-            return Ok(Step { name, kind, action: Action::Change, details, notes: vec![], selection_notes: vec![], changes: vec![] });
+            return Ok(Step { name, kind, action: Action::Change, requires_new_session: doc["metadata"]["furnish"]["requiresNewSession"] == true, details, notes: vec![], selection_notes: vec![], changes: vec![] });
         }
         Err(e) => return Err(e.into()),
     };
@@ -1250,7 +1301,8 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
             files.remove(&path);
         }
     }
-    Ok(Step { name, kind, action, details, notes, selection_notes, changes: changes(&before, &after) })
+    let requires_new_session = requires_new_session(doc, action, &before, &after, r.metadata.as_ref());
+    Ok(Step { name, kind, action, requires_new_session, details, notes, selection_notes, changes: changes(&before, &after) })
 }
 
 /// One line per property, `name: value`, shortened to a line's length.
@@ -1382,6 +1434,30 @@ fn classify(states: &[(bool, Value)]) -> Status {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn session_notice_tracks_changed_home_manager_options_and_app_declarations() {
+        let nix = json!({"resources":[{"type":"Furnish/NixOS"}]});
+        let old = json!({"homeOptions":{"home.sessionPath":["/old"],"home.sessionVariables.TEST":"old"}});
+        for changed in [
+            json!({"homeOptions":{"home.sessionPath":["/new"],"home.sessionVariables.TEST":"old"}}),
+            json!({"homeOptions":{"home.sessionPath":["/old"],"home.sessionVariables.TEST":"new"}}),
+            json!({"homeOptions":{"home.sessionVariables":{"EDITOR":"vi"}}}),
+            json!({}),
+        ] {
+            assert!(requires_new_session(&nix, Action::Change, &old, &changed, None));
+        }
+        let mut packages_only = old.clone();
+        packages_only["packages"] = json!(["vim"]);
+        assert!(!requires_new_session(&nix, Action::Change, &old, &packages_only, None));
+        let system = json!({"options":{"home.sessionPath":["/new"]}});
+        assert!(!requires_new_session(&nix, Action::Install, &Value::Null, &system, None));
+        let declared = json!({"metadata":{"furnish":{"requiresNewSession":true}}, "resources":[{"type":"Furnish/Package"}]});
+        assert!(requires_new_session(&declared, Action::Install, &Value::Null, &Value::Null, None));
+        for action in [Action::Nothing, Action::Skipped] {
+            assert!(!requires_new_session(&declared, action, &Value::Null, &Value::Null, None));
+        }
+    }
 
     #[test]
     fn only_prior_file_steps_supply_comparison_forecasts() {

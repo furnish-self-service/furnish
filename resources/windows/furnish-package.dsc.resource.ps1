@@ -18,10 +18,7 @@ $name = $env:name
 if (-not $name) { [Console]::Error.WriteLine('{"error":"property name is required"}'); exit 10 }
 # Not an option to winget (the schema says so too; this holds without it).
 if ($name.StartsWith('-')) { [Console]::Error.WriteLine((@{ error = "package name starts with '-': $name" } | ConvertTo-Json -Compress)); exit 10 }
-$command = $env:command
-if ($command -and ($command -match '[\\/:]' -or $command.StartsWith('-'))) {
-    [Console]::Error.WriteLine((@{ error = "command must be a program's name, without a folder: $command" } | ConvertTo-Json -Compress)); exit 10
-}
+. "$PSScriptRoot/furnish-program.ps1"
 $report = $env:reportVersions
 $target = $env:targetVersion
 if ($report -and $report -cnotin 'latest', 'all') { [Console]::Error.WriteLine((@{ error = "reportVersions must be latest or all: $report" } | ConvertTo-Json -Compress)); exit 10 }
@@ -96,16 +93,6 @@ function Test-Outdated {
     $installed, $available = $cols[$i + 1], $cols[$i + 2]
     return ($installed -notmatch '^(Unknown|<)' -and $available -and $available -ne $installed -and $available -ne 'winget')
 }
-# The program $command, where people's installers put programs: PATH, then the folders that
-# aren't always on it (~\.local\bin for vendors' installers, npm's global folder). Only looks.
-function Find-Program {
-    $found = Get-Command $command -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { return $found.Source }
-    $candidates = @()
-    if ($env:USERPROFILE) { $candidates += "$env:USERPROFILE\.local\bin\$command.exe" }
-    if ($env:APPDATA) { $candidates += "$env:APPDATA\npm\$command.cmd" }
-    return $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-}
 function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
     $state = [ordered]@{ name = $name; packageManager = 'winget'; _exist = [bool]$Version }
     if ($outside) { $state.managedBy = 'other'; $state.path = $outside }
@@ -127,29 +114,12 @@ function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
 # doesn't have the package. It counts as installed, not by furnish, which neither installs it
 # again nor updates or removes it.
 $outside = $null
-if ($command -and -not ($haveWinget -and (Test-Installed))) { $outside = Find-Program }
+if ($command -and -not ($haveWinget -and (Test-Installed))) { $outside = Find-Program $command }
 if (-not $haveWinget -and -not $outside) {
     # Plain text and an unmapped exit code: furnish shows "Needs winget" instead of a failure.
     [Console]::Error.WriteLine('furnish: needs winget (App Installer from the Microsoft Store)'); exit 11
 }
-if ($outside) {
-    $want = $env:_exist -ne 'false'
-    switch ($Operation) {
-        'get' { Write-State '?' }
-        'test' { Write-State '?' $null $want }
-        'set' {
-            $step = "$name is installed and up to date"
-            if (-not $want) {
-                $step = "$name was installed outside furnish ($outside): uninstall it the way it was installed"
-                # Plain text and an unmapped exit code, so DSC keeps the line in its error.
-                if ($Mode -ne 'what-if') { [Console]::Error.WriteLine("furnish: $step"); exit 14 }
-            }
-            Write-State '?' $(if ($Mode -eq 'what-if') { @($step) })
-        }
-        default { [Console]::Error.WriteLine('{"error":"usage: get|test|set [what-if]"}'); exit 10 }
-    }
-    exit 0
-}
+if ($outside) { Complete-External $name }
 # Without reportVersions and targetVersion, as before: installed or not.
 function Get-State { if ($report -or $target) { Get-Installed } elseif (Test-Installed) { '?' } else { '' } }
 $latest = $null

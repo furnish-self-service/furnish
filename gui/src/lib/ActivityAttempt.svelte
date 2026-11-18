@@ -12,6 +12,7 @@
 {#if summary.collectionRevision}
   <div class="meta">{t('collections.revision')} <code title={summary.collectionRevision}>{summary.collectionRevision.slice(0, 12)}</code></div>
 {/if}
+{#if summary.requiresNewSession && (!expanded || !entry.details)}<p>{t('session.after')}</p>{/if}
 {#if summary.failedStep}<div class="failed">{t('activity.failedStep', { step: summary.failedStep })}</div>{/if}
 {#if summary.failure}<div class="failed">{t(`activity.failure.${summary.failure}`)}</div>{/if}
 {#if entry.details || summary.steps?.length}

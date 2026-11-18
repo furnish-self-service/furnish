@@ -102,6 +102,16 @@ resources:
     type: Furnish/NixOS
     properties: { name: gui-preview, _exist: false }
 YAML
+cat > "$work/origin-src/apps/session-notice.dsc.yaml" <<YAML
+metadata:
+  furnish:
+    description: Exercise an installer that changes the login environment
+    requiresNewSession: true
+resources:
+  - name: Session setup
+    type: Furnish/File
+    properties: { path: "$work/session-notice", content: ready }
+YAML
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"
