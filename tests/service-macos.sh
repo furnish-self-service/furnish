@@ -75,7 +75,7 @@ done
 
 # Check the AppleScript used by GUI installs, without opening an authorization dialog in CI.
 osacompile -o "$work/authorize.scpt" "$(dirname "$0")/../resources/unix/furnish-authorize.applescript"
-osascript - "$work/authorize.scpt" <<'APPLESCRIPT'
+osascript - "$work/authorize.scpt" 2>"$work/authorization.stderr" <<'APPLESCRIPT' || { cat "$work/authorization.stderr" >&2; exit 1; }
 on run argv
     set helper to load script (POSIX file (item 1 of argv))
     set sample to "file with ' apostrophe, $variable, and space"
@@ -85,6 +85,7 @@ on run argv
     if (helper's commandFailed("stopped", 13)) is not 13 then error "lost the step's exit status"
 end run
 APPLESCRIPT
+grep -F "furnish: Cancelled: administrator rights were not granted" "$work/authorization.stderr"
 # A cask with an installer package, from a local tap: brew runs `sudo installer` for it.
 mkdir -p "$work/brewroot/opt/furnish-brewdemo"
 echo brewdemo > "$work/brewroot/opt/furnish-brewdemo/demo.txt"

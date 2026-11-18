@@ -22,7 +22,7 @@ end quotedCommand
 on commandFailed(errorText, errorCode)
     -- User cancelled, or Authorization Services denied/cancelled authorization.
     if errorCode is in {-128, -60005, -60006} then
-        log "{\"warn\":\"administrator rights were not granted\"}"
+        log "furnish: Cancelled: administrator rights were not granted"
         return 12
     end if
     if errorText is not "" then log errorText
