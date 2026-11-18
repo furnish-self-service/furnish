@@ -54,6 +54,10 @@ const click = async (xpath) =>
   });
 const text = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/text`));
 const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpath)}/value`), { text: value });
+const search = (value) => wd('POST', s('/execute/sync'), {
+  script: "const i = document.querySelector('input.search'); i.value = arguments[0]; i.dispatchEvent(new Event('input', { bubbles: true }));",
+  args: [value],
+});
 // WebKitWebDriver reports content of a closed <details> as displayed, so check `open` instead.
 const prop = async (xpath, name) => wd('GET', s(`/element/${await find(xpath)}/property/${name}`));
 const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/property/open`));
@@ -408,6 +412,33 @@ const steps = [
     await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
+  ['Update all queues updates hidden by search and respects automatic-update preferences', async () => {
+    await click(nav('Discover'));
+    await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
+    await waitFor('previous update finished', () => find(button('Uninstall')));
+    await click("//label[contains(., 'Update automatically')]/input");
+    const optOuts = () => JSON.parse(log('data/settings.json')).noAutoUpdate;
+    await waitFor('both automatic updates turned off', () =>
+      ['fixture/hyperfine', 'fixture/extras'].every((key) => optOuts().includes(key)));
+    writeFileSync(`${workDir}/pkgs/hyperfine.new`, '4.0\n');
+    await click(nav('Updates'));
+    await click(button('Check for updates'));
+    for (const app of ['hyperfine', 'extras']) await waitFor(`${app} update available`, () => find(`${card(app)}${button('Update')}`));
+
+    await search('extras');
+    await waitFor('only extras visible', async () => (await findAll(card('extras'))).length && !(await findAll(card('hyperfine'))).length);
+    const updateAll = button('Update all');
+    await click(`${updateAll}[not(@disabled)]`);
+    await waitFor('pending batch cannot be queued twice', () => prop(updateAll, 'disabled'));
+    await search('');
+    await click(nav('Activity'));
+    for (const [app, version] of [['hyperfine', '4.0'], ['extras', '2.0']]) {
+      const history = `//li[contains(@class,'history')][.//*[normalize-space()='Updated ${app}']][contains(., 'Started by you')]`;
+      await waitFor(`${app} completed as a manual update`, () => find(history), 30000);
+      if (log(`pkgs/${app}`).trim() !== version) throw new Error(`${app} did not update to ${version}`);
+      if (!optOuts().includes(`fixture/${app}`)) throw new Error(`${app} opted back into automatic updates`);
+    }
+  }],
   ['a security update the collection requires installs right away, also with automatic updates off', async () => {
     await click(button('Discover'));
     await click(`${card('secure')}//button[@aria-label='Open secure']`);
@@ -614,10 +645,6 @@ const steps = [
     await find(card('Werkzeugkiste'));
     await click(button('Entdecken'));
     // Search ignores accents, and also finds the collection's English texts (the fallback language).
-    const search = (value) => wd('POST', s('/execute/sync'), {
-      script: "const i = document.querySelector('input.search'); i.value = arguments[0]; i.dispatchEvent(new Event('input', { bubbles: true }));",
-      args: [value],
-    });
     const shown = async (app) => (await findAll(card(app))).length > 0;
     await search('buro');
     await waitFor('"buro" finds Büro', async () => (await shown('Werkzeugkiste')) && !(await shown('hyperfine')));

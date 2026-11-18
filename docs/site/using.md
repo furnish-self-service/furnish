@@ -75,6 +75,8 @@ The list holds only versions your organization allows: within the history furnis
 
 furnish checks for updates when it starts and every 30 minutes, and installs them. It waits while the computer is busy: when the last 5 minutes averaged over 50% CPU, 90% memory or 1000 KB/s network traffic, not counting furnish's own work. You can turn automatic updates off for one app on its page, and change the schedule or the busy check on the Settings page. Check now there looks for updates right away.
 
+On the Updates page, choose **Update all** to queue every available app update, including apps with automatic updates turned off. You can follow each update in Activity.
+
 Your organization can require a version of an app, for example after a security fix. When yours is older, the app shows Security update required and furnish installs the update right away, also if automatic updates are off for the app or the computer is busy. If no acceptable version is available yet, the app says which version it needs and which one is offered.
 
 Updates only run while furnish runs. So furnish starts when you sign in, with its window closed, and waits in the system tray on Windows and Linux or in the menu bar on macOS. Closing the window keeps it running there. Its icon, or your organization's, opens the window, checks for updates or quits furnish. Quitting waits for an install that is running. To stop starting furnish at sign-in, turn off Start furnish when you sign in on the Settings page. The tray menu's Settings… opens that page.

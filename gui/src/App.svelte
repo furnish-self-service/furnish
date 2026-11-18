@@ -1,6 +1,6 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, checkForUpdates, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -171,6 +171,9 @@
         <h1>{title}</h1>
         {#if view.page === 'updates'}
           <div class="check">
+            <button class="primary" disabled={checking || store.loading || !availableAppUpdates().length} onclick={updateAllApps}>
+              {t('common.updateAll')}
+            </button>
             <button class="secondary" disabled={checking || store.loading} onclick={checkForUpdates}>
               {checking ? t('catalog.checking') : t('catalog.checkForUpdates')}
             </button>
@@ -385,6 +388,7 @@
   }
   .check {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
     margin-right: auto;
