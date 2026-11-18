@@ -82,6 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      - run: node --test tests/update-feed.test.mjs
       - run: cargo t
       - run: cargo b && tests/check.sh
       # The action collection repositories use (check/action.yml), with this build.
@@ -529,6 +530,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, home-manager-macos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       pages: write
       id-token: write
@@ -572,12 +574,10 @@ jobs:
         uses: actions/deploy-pages@v4
       # What furnish's updater reads now: every download matches its signature under the app's key.
       - name: The published update feed verifies
+        timeout-minutes: 12
         run: |
-          for i in $(seq 30); do
-            curl -fsS "$BASE_URL/alpha/latest.json" | jq -e --arg v "$(jq -r .version site/alpha/latest.json)" '.version == $v' > /dev/null && break
-            sleep 10
-          done
-          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "$BASE_URL/alpha/latest.json"
+          expected=$(jq -er '.version | strings | select(length > 0)' site/alpha/latest.json)
+          EXPECTED_VERSION="$expected" REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "$BASE_URL/alpha/latest.json"
         env:
           BASE_URL: https://furnish-self-service.github.io/furnish
 

@@ -7,10 +7,12 @@
 //
 // Without a folder it downloads each file from its URL; with one it takes the file of the same
 // name from anywhere inside it. REQUIRE="windows-x86_64 darwin-aarch64" also fails when the feed
-// lacks one of these. Exits with 1 on any problem.
+// lacks one of these. EXPECTED_VERSION requires that exact feed version and waits up to five
+// minutes for an HTTP deployment to propagate. Exits with 1 on any problem.
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { bytes, readManifest } from './update-feed-download.mjs';
 
 const [feed, folder] = process.argv.slice(2);
 if (!feed) {
@@ -27,13 +29,6 @@ const keyId = pub.subarray(2, 10);
 const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), pub.subarray(10)]), format: 'der', type: 'spki' });
 
 const semver = (v) => v.replace(/^v/, '').replace('+alpha.', '-alpha.');
-
-async function bytes(where) {
-  if (!/^https?:/.test(where)) return readFileSync(where);
-  const res = await fetch(where);
-  if (!res.ok) throw new Error(`${where}: HTTP ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
-}
 
 /** minisign signature (base64 of its text): "ED" + key id + signature over BLAKE2b-512 of the
  *  file, then the trusted comment and a signature over both. */
@@ -52,7 +47,8 @@ function check(data, signature, version) {
   if (!signed || semver(signed) !== semver(version)) throw new Error(`signed for version ${signed}, the feed says ${version}`);
 }
 
-const manifest = JSON.parse((await bytes(feed)).toString('utf8'));
+const manifest = await readManifest(feed, process.env.EXPECTED_VERSION);
+console.log(`${feed}: version ${manifest.version}`);
 const platforms = Object.entries(manifest.platforms ?? {});
 if (!manifest.version || !platforms.length) throw new Error(`${feed}: no version or no platforms`);
 let failed = false;
@@ -71,12 +67,13 @@ const find = (url) => {
 };
 for (const [target, { url, signature }] of platforms) {
   try {
-    check(await bytes(folder ? find(url) : url), signature, manifest.version);
+    const artifact = folder ? find(url) : url;
+    console.log(`Verifying ${target} for ${manifest.version}: ${artifact}`);
+    check(await bytes(artifact, 120_000), signature, manifest.version);
     console.log(`✓ ${target}: ${url}`);
   } catch (e) {
     console.error(`✗ ${target}: ${url}: ${e.message}`);
     failed = true;
   }
 }
-console.log(`${feed}: version ${manifest.version}`);
 process.exit(failed ? 1 : 0);
