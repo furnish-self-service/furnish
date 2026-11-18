@@ -349,7 +349,7 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         for (is_error, message) in crate::required::check(&name, kind, &r["properties"]) {
             findings.push(if is_error { error(message) } else { warning(message) });
         }
-        if kind == "Furnish/File"
+        if matches!(kind, "Furnish/File" | "Furnish/Command")
             && let Some(source) = r["properties"]["source"].as_str()
         {
             // load_app made the path absolute; it may not be checked out (blobs_on_demand).

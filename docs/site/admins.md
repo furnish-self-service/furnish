@@ -246,7 +246,7 @@ On Windows, the service manager restarts the service when it crashes or stops wi
 
 The service finds DSC resources only in folders that people without administrator rights can't change. A folder counts if it and every folder above it belong to root (on Windows: SYSTEM, Administrators or TrustedInstaller) and nobody else can write to it, the same rule as for the furnish binary. The service looks in the folder of the DSC resources furnish includes, which is inside furnish's installation, in the folders on its `PATH` and where DSC is installed, and drops the others. A resource in `/opt/homebrew/bin` or in a folder of a user's own `PATH` would otherwise run with full rights. The service also runs programs only from these folders, except `brew`, which it runs as Homebrew's owner.
 
-The service accepts an app's name and option values, nothing else, and checks the values against the app's declared options and the policy. Apps that install into the user's account (`perUser` in their metadata) still install as the user.
+For an install, the service reads the app from its own copy of a preset collection and checks the requested option values against the app's declarations and the policy. [Personal apps](collections.md#installing-for-one-person) run in the user's account. If a personal app needs a system rebuild, the service verifies and applies the requested `Furnish/NixOS` step. The app's file and command steps still run as the person installing it.
 
 ### macOS: the service and Homebrew
 

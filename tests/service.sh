@@ -62,6 +62,26 @@ git config --global user.email admin@example.com
 git config --global gpg.format ssh
 git config --global user.signingkey /root/signing
 cp -r /src/tests/fixtures/collection /srv/org
+cat > /srv/org/apps/mixed.dsc.yaml <<'YAML'
+metadata:
+  furnish:
+    perUser: true
+    uninstall:
+      - name: remove-module
+        type: Furnish/NixOS
+        properties: { name: tool, _exist: false }
+resources:
+  - name: module
+    type: Furnish/NixOS
+    properties: { name: tool, packages: [hello] }
+  - name: other-platform
+    type: Furnish/NixOS
+    condition: "[equals(context().os.family, 'Windows')]"
+    properties: { name: tool }
+  - name: my-file
+    type: Furnish/File
+    properties: { path: ~/.tool, content: tool }
+YAML
 if [ -d /dsc ]; then
     mkdir -p /usr/lib/furnish && cp -r /dsc /usr/lib/furnish/dsc
     printf 'metadata:\n  furnish:\n    categories: [Test]\nresources:\n  - name: file\n    type: Microsoft.Filesystem.File/Content\n    properties: {path: /etc/furnish-dsc-test, content: furnish}\n' > /srv/org/apps/dsc-file.dsc.yaml
@@ -130,6 +150,21 @@ raw '{"install":{"app":"org/hyperfine","values":{"prefix":"/tmp"}}}' | grep -q "
 raw '{"install":{"app":"org/cli-tool","values":{"userInstall":"yes"}}}' | grep -q "needs a bool" || fail "wrong type accepted"
 raw '{"install":{"app":"../../tmp/evil","values":{}}}' | grep -q '"error"' || fail "odd app name accepted"
 raw '{"install":{"app":"org/hyperfine","values":{},"doc":"x"}}' | grep -q "invalid request" || fail "unknown field accepted"
+
+echo "== the service only applies the matching NixOS step of a preset per-user app"
+scoped() {
+    raw "{\"nixosStep\":{\"step\":{\"app\":\"org/mixed\",\"values\":{},\"step\":\"$1\",\"uninstall\":$2,\"fingerprint\":\"$3\"}}}"
+}
+scoped my-file false x | grep -q "no such Furnish/NixOS" || fail "accepted a user's file step"
+scoped other-platform false x | grep -q "does not apply" || fail "accepted a step for another OS"
+scoped module true x | grep -q "no such Furnish/NixOS" || fail "ignored the explicit removal steps"
+scoped module false x | grep -q "differs from the current preset" || fail "accepted mismatched NixOS properties"
+scoped remove-module true x | grep -q "differs from the current preset" || fail "didn't check the removal step"
+# A matching, already-absent removal is accepted even on this machine without Nix.
+properties='{"name":"tool","packages":[],"options":{},"homeOptions":{},"onlyIfSetUp":false,"_exist":false}'
+fingerprint=$(printf %s "$properties" | openssl dgst -sha256 -binary | base64)
+scoped remove-module true "$fingerprint" | grep -q '"done"' || fail "refused a matching removal"
+raw '{"uninstall":{"app":"org/mixed"}}' | grep -q "without the service" || fail "accepted an entire per-user removal"
 
 echo "== per-user installs run as the user; their dependencies go through the service"
 as alice furnish option set org/cli-tool userInstall true >/dev/null

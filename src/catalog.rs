@@ -690,6 +690,11 @@ impl Collection {
 
     /// The collection's lock (see `lock`).
     fn lock(&self) -> Result<Option<fs::File>> {
+        // The service locks its own clone when a per-user install delegates a rebuild.
+        // Even a client with write access must not hold that same lock across the request.
+        if self.managed && crate::service::enabled() {
+            return Ok(None);
+        }
         lock(self.dir.parent().unwrap_or(&self.dir), &self.name)
     }
 
@@ -1116,7 +1121,7 @@ impl Collection {
             }
             let (key, what) = match canonical {
                 Some(&INSTALLER_TYPE) => ("file", "installer"),
-                Some(&FILE_TYPE) => ("source", "source"),
+                Some(&FILE_TYPE | &COMMAND_TYPE) => ("source", "source"),
                 Some(kind) => {
                     crate::resources::check(kind, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
                     continue;
@@ -1143,8 +1148,8 @@ impl Collection {
             } else if !resource["properties"][key].is_null() {
                 bail!("{what} file must be a path in the collection");
             }
-            if canonical == Some(&FILE_TYPE) {
-                crate::resources::check(FILE_TYPE, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
+            if matches!(canonical, Some(&FILE_TYPE | &COMMAND_TYPE)) {
+                crate::resources::check(&kind, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
             }
         }
         Ok(())
@@ -1186,8 +1191,9 @@ pub const RESOURCE_TYPES: [&str; 9] = [
     BLOCK_TYPE,
     "Furnish/Line",
     "Furnish/Value",
-    "Furnish/Command",
+    COMMAND_TYPE,
 ];
+const COMMAND_TYPE: &str = "Furnish/Command";
 const FILE_TYPE: &str = "Furnish/File";
 const BLOCK_TYPE: &str = "Furnish/Block";
 pub const INSTALLER_TYPE: &str = "Furnish/Installer";
@@ -1391,7 +1397,12 @@ impl App {
         if let Some(furnish) = doc["metadata"]["furnish"].as_object_mut() {
             furnish.remove(crate::nixos_apps::OUTSIDE_SERVICE_KEY);
             if let Some(why) = self.outside_service(values) {
-                furnish.insert(crate::nixos_apps::OUTSIDE_SERVICE_KEY.into(), serde_json::to_value(why).unwrap_or_default());
+                let mut outside = serde_json::to_value(&why).unwrap_or_default();
+                if matches!(why, crate::nixos_apps::OutsideService::PerUser { .. }) {
+                    outside["app"] = self.key().into();
+                    outside["values"] = Value::Object(values.clone());
+                }
+                furnish.insert(crate::nixos_apps::OUTSIDE_SERVICE_KEY.into(), outside);
             }
         }
         doc
@@ -1401,6 +1412,21 @@ impl App {
     /// this is the service, or the service installs it).
     fn outside_service(&self, values: &serde_json::Map<String, Value>) -> Option<crate::nixos_apps::OutsideService> {
         outside_service(crate::service::in_service(), crate::service::enabled(), self.managed, &self.collection, &self.id, || self.per_user(values))
+    }
+
+    /// The service validates a single NixOS step against its current, verified preset checkout.
+    /// A checkout held by the user may delegate only a step the current preset still authorizes.
+    pub(crate) fn apply_nixos_step(&self, request: &crate::nixos_apps::ServiceStep) -> Result<()> {
+        let collection = self.collection_handle();
+        let _lock = collection.lock()?;
+        collection.verify(&collection.head()?)?;
+        let current = self.current()?;
+        let values = crate::options::accept(&current.options(), &request.values)?;
+        if !current.managed || !current.per_user(&values) {
+            bail!("{} is not a preset per-user app with these options", current.key());
+        }
+        let doc = current.doc_here(&values);
+        crate::engine::apply_nixos_step(&doc, request)
     }
 
     /// The resources that apply on this computer with the current option values, as the engine
@@ -1603,7 +1629,7 @@ impl App {
         for resource in self.doc["resources"].as_array().into_iter().flatten().chain(steps) {
             let file = match resource["type"].as_str() {
                 Some(INSTALLER_TYPE) => resource["properties"]["file"].as_str(),
-                Some(FILE_TYPE) => resource["properties"]["source"].as_str(),
+                Some(FILE_TYPE | COMMAND_TYPE) => resource["properties"]["source"].as_str(),
                 _ => None,
             };
             let Some(file) = file else { continue };
@@ -2328,6 +2354,30 @@ mod tests {
         assert_eq!(upper.doc["resources"][0]["type"], "Furnish/Installer");
         assert!(upper.doc["resources"][0]["properties"]["file"].as_str().unwrap().starts_with(&*dir.canonicalize().unwrap().to_string_lossy()));
         assert!(c.load_app(&dir.join("apps/case.dsc.yaml")).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn command_input_sources_are_resolved_inside_the_collection() {
+        let app = |source: &str| format!("resources:\n  - name: import\n    type: Furnish/Command\n    properties: {{ source: '{source}', test: {{ command: [tool] }}, set: [tool, '%s'] }}\n");
+        let (collection, dir) = collection_with(&[
+            ("apps/valid.dsc.yaml", &app("files/profile.ovpn")),
+            ("apps/outside.dsc.yaml", &app("../outside.ovpn")),
+            ("apps/missing.dsc.yaml", &app("files/missing.ovpn")),
+            ("files/profile.ovpn", "client"),
+        ]);
+        let valid = collection.load_app(&dir.join("apps/valid.dsc.yaml")).unwrap();
+        let path = valid.doc["resources"][0]["properties"]["source"].as_str().unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "client");
+        assert!(collection.load_app(&dir.join("apps/outside.dsc.yaml")).is_err());
+        let missing = collection.load_app(&dir.join("apps/missing.dsc.yaml")).unwrap();
+        assert_eq!(missing.missing_installers(&serde_json::Map::new()).iter().map(Path::new).collect::<Vec<_>>(), [Path::new("files/missing.ovpn")]);
+        #[cfg(unix)]
+        {
+            let outside = tempfile::NamedTempFile::new().unwrap();
+            std::os::unix::fs::symlink(outside.path(), dir.join("files/missing.ovpn")).unwrap();
+            assert!(collection.load_app(&dir.join("apps/missing.dsc.yaml")).is_err());
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -6,6 +6,8 @@
 //! app shows an update instead of "not installed". A leading `~/` in the commands' arguments is
 //! the home folder, as in the paths of the file resources.
 
+use std::{borrow::Cow, fs, io::Write, path::PathBuf};
+
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,6 +19,8 @@ use super::{Plan, common, diff, note::{Note, note}, parse, value};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Props {
+    content: Option<String>,
+    source: Option<PathBuf>,
     test: Test,
     present: Option<Test>,
     set: Vec<String>,
@@ -42,6 +46,46 @@ struct Test {
     value: Option<Value>,
 }
 
+/// A command that imports a file gets a fresh, private copy for the duration of that command.
+enum Input {
+    Content(String),
+    Source(PathBuf),
+}
+
+impl Input {
+    fn bytes(&self) -> Result<Cow<'_, [u8]>> {
+        match self {
+            Self::Content(text) => Ok(Cow::Borrowed(text.as_bytes())),
+            Self::Source(path) => Ok(Cow::Owned(fs::read(path).with_context(|| format!("reading {} from the collection", path.display()))?)),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Content(_) => "%s",
+            Self::Source(path) => path.file_name().and_then(|n| n.to_str()).unwrap_or("%s"),
+        }
+    }
+
+    fn temporary_file(&self) -> Result<(tempfile::TempDir, PathBuf)> {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("furnish-input-");
+        #[cfg(unix)]
+        builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let dir = builder.tempdir()?;
+        #[cfg(windows)]
+        common::set_private(dir.path(), true)?;
+        let path = dir.path().join(match self {
+            Self::Content(_) => "input",
+            Self::Source(_) => self.name(),
+        });
+        let mut file = fs::File::create_new(&path)?;
+        common::set_private(&path, false)?;
+        file.write_all(&self.bytes()?)?;
+        Ok((dir, path))
+    }
+}
+
 /// What uninstalling does: run a command, or `keep` the setting.
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -62,6 +106,9 @@ impl Remove {
 
 fn props(v: &Value) -> Result<Props> {
     let p: Props = parse(v)?;
+    if p.content.is_some() && p.source.is_some() {
+        bail!("content and source: use one of them for the command's input file");
+    }
     if let Some(Remove::Word(word)) = &p.remove
         && word != "keep"
     {
@@ -77,6 +124,9 @@ fn props(v: &Value) -> Result<Props> {
         let Some(test) = test else { continue };
         if test.command.is_empty() {
             bail!("{what}.command: a command, as a list of the program and its arguments");
+        }
+        if test.file.as_deref() == Some("%s") && p.content.is_none() && p.source.is_none() {
+            bail!("{what}.file: '%s' needs content or source");
         }
         if test.output.is_some() && test.file.is_some() {
             bail!("{what}.output and {what}.file: use one of them");
@@ -111,8 +161,8 @@ struct Outcome {
 }
 
 /// Run the test.
-fn passes(test: &Test) -> Result<Outcome> {
-    let out = exec(&test.command)?;
+fn passes(test: &Test, input: Option<&Input>, projected: &Value) -> Result<Outcome> {
+    let out = exec(&test.command, input)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let command = test.command.join(" ");
     let code = out.status.code();
@@ -120,34 +170,51 @@ fn passes(test: &Test) -> Result<Outcome> {
     let code_note = note("test.exitCode", json!({ "command": command, "expected": expected_code, "got": code }));
     let mut result = Outcome { ok: code == Some(expected_code), note: code_note, unverified: None };
     let ignore = test.ignore_lines.as_deref().map(|p| super::regex(p, "ignoreLines")).transpose()?;
+    // A tool may echo the private input or values from its imported copy.
+    let shown = |text: &str| if input.is_some() { "•••".to_string() } else { text.to_string() };
     let compared = match (&test.output, &test.file) {
         (Some(expected), _) => {
             let ok = normalized(&stdout, ignore.as_ref()) == normalized(expected, ignore.as_ref());
             let n = if stdout.trim().is_empty() {
-                note("test.noOutput", json!({ "command": command, "expected": expected.trim() }))
+                note("test.noOutput", json!({ "command": command, "expected": shown(expected.trim()) }))
             } else {
-                note("test.output", json!({ "command": command, "expected": expected.trim(), "got": short(stdout.trim()) }))
+                note("test.output", json!({ "command": command, "expected": shown(expected.trim()), "got": shown(&short(stdout.trim())) }))
             };
             Some((ok, n))
         }
         (None, Some(path)) => {
-            let file = common::Managed::open(path)?;
-            let params = json!({ "command": command, "path": path });
-            if file.unreadable {
-                let why = format!("can't read {} as this account to compare the output of `{command}` with it", file.name());
-                return Ok(Outcome { ok: true, note: note("file.unreadable", json!({ "path": path })), unverified: Some(why) });
-            }
-            match &file.bytes {
+            let (file_text, hidden, shown_path) = if let Some(input) = input.filter(|_| path == "%s") {
+                (Some(common::Text::decode(&input.bytes()?)?), true, input.name())
+            } else {
+                let mut file = common::Managed::open(path)?;
+                if file.unreadable {
+                    let why = format!("can't read {} as this account to compare the output of `{command}` with it", file.name());
+                    return Ok(Outcome { ok: true, note: note("file.unreadable", json!({ "path": path })), unverified: Some(why) });
+                }
+                if !projected.is_null() {
+                    file.bytes = if projected["exists"] == false {
+                        None
+                    } else if let Some(content) = projected["content"].as_str() {
+                        Some(content.as_bytes().to_vec())
+                    } else if let Some(source) = projected["source"].as_str() {
+                        Some(std::fs::read(source).with_context(|| format!("reading {source} from the collection"))?)
+                    } else {
+                        Some(file.bytes.unwrap_or_default())
+                    };
+                }
+                let text = file.bytes.as_ref().map(|_| file.text()).transpose()?;
+                (text, input.is_some() || projected["private"] == true || common::owner_only(&file.real), path.as_str())
+            };
+            let params = json!({ "command": command, "path": shown_path });
+            match file_text {
                 None => Some((false, note("test.noFile", params))),
-                Some(_) => {
-                    let (got, want) = (normalized(&stdout, ignore.as_ref()), normalized(&file.text()?.text, ignore.as_ref()));
+                Some(text) => {
+                    let (got, want) = (normalized(&stdout, ignore.as_ref()), normalized(&text.text, ignore.as_ref()));
                     if got == want {
                         Some((true, note("test.file", params)))
                     } else {
-                        // From the output to the file, as Furnish/File shows a change; only the counts
-                        // for a file only its owner may read.
                         let mut n = note("test.fileDiffers", params);
-                        n.add_diff(Some(diff::lines(&format!("{got}\n"), &format!("{want}\n"))), common::owner_only(&file.real));
+                        n.add_diff(Some(diff::lines(&format!("{got}\n"), &format!("{want}\n"))), hidden);
                         Some((false, n))
                     }
                 }
@@ -179,7 +246,7 @@ fn passes(test: &Test) -> Result<Outcome> {
             many => short(&Value::Array(many.iter().map(|v| (*v).clone()).collect()).to_string()),
         };
         let expected = test.value.as_ref().map_or("a value".to_string(), |v| short(&v.to_string()));
-        let n = note("test.json", json!({ "command": command, "path": path, "expected": expected, "got": got }));
+        let n = note("test.json", json!({ "command": command, "path": path, "expected": shown(&expected), "got": shown(&got) }));
         if result.ok {
             result = Outcome { ok, note: n, unverified: None };
         }
@@ -205,8 +272,8 @@ fn short(text: &str) -> String {
 }
 
 /// Whether a check passes; a program that isn't installed means it doesn't.
-fn passes_check(test: &Test) -> Result<bool> {
-    match passes(test) {
+fn passes_check(test: &Test, input: Option<&Input>, projected: &Value) -> Result<bool> {
+    match passes(test, input, projected) {
         Err(e) if e.chain().any(|e| e.is::<common::Missing>()) => Ok(false),
         result => Ok(result?.ok),
     }
@@ -214,24 +281,39 @@ fn passes_check(test: &Test) -> Result<bool> {
 
 /// Run a command as written in the app, a leading `~/` in its arguments expanded (see
 /// [`common::expand_arg`]). Notes and messages show it as written.
-fn exec(command: &[String]) -> Result<std::process::Output> {
-    let args = command.iter().map(|a| common::expand_arg(a)).collect::<Result<Vec<_>>>()?;
-    common::run(&args)
+fn exec(command: &[String], input: Option<&Input>) -> Result<std::process::Output> {
+    let temporary = input.filter(|_| command.iter().skip(1).any(|arg| arg == "%s"))
+        .map(Input::temporary_file).transpose()?;
+    let args = command.iter().enumerate().map(|(index, arg)| match &temporary {
+        Some((_, path)) if index > 0 && arg == "%s" => Ok(path.to_string_lossy().into_owned()),
+        _ => common::expand_arg(arg),
+    }).collect::<Result<Vec<_>>>()?;
+    let result = common::run(&args);
+    if let Some((dir, _)) = temporary {
+        dir.close().context("removing the temporary command input")?;
+    }
+    result
 }
 
-fn run(command: &[String]) -> Result<()> {
-    let out = exec(command)?;
+fn run(command: &[String], input: Option<&Input>) -> Result<()> {
+    let out = exec(command, input)?;
     if !out.status.success() {
-        bail!("`{}` exited with code {}{}", command.join(" "), out.status.code().unwrap_or(-1), common::output_text(&out));
+        let output = if input.is_some() { String::new() } else { common::output_text(&out) };
+        bail!("`{}` exited with code {}{}", command.join(" "), out.status.code().unwrap_or(-1), output);
     }
     Ok(())
 }
 
 pub fn evaluate(v: &Value) -> Result<Plan> {
+    evaluate_with_files(v, &Value::Null)
+}
+
+pub(super) fn evaluate_with_files(v: &Value, files: &Value) -> Result<Plan> {
     let p = props(v)?;
+    let input = p.content.map(Input::Content).or_else(|| p.source.map(Input::Source));
     let exist = p.exist.unwrap_or(true);
     let mut plan = Plan::new(v);
-    let (passes, test_note) = match passes(&p.test) {
+    let (passes, test_note) = match passes(&p.test, input.as_ref(), &files["test"]) {
         // Nothing to remove where the tool isn't installed.
         Err(e) if !exist && e.chain().any(|e| e.is::<common::Missing>()) => (false, None),
         result => {
@@ -242,7 +324,7 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
     };
     // Outdated: the test fails, but `present` finds the setting.
     let outdated = !passes && test_note.is_some() && match &p.present {
-        Some(present) => passes_check(present)?,
+        Some(present) => passes_check(present, input.as_ref(), &files["present"])?,
         None => false,
     };
     let there = passes || outdated;
@@ -255,7 +337,7 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
                 steps.push(note("test.present", json!({ "command": present })));
             }
             steps.push(note("run", json!({ "command": p.set.join(" ") })));
-            plan.change(steps, move || run(&p.set));
+            plan.change(steps, move || run(&p.set, input.as_ref()));
         }
         // A failing test means absent or outdated (an update waiting), so removal always runs
         // `remove`, which must therefore do nothing where there is nothing to remove. Its test
@@ -269,13 +351,36 @@ pub fn evaluate(v: &Value) -> Result<Plan> {
         }
         (false, _) if p.remove.is_some() && test_note.is_some() => {
             let remove = p.remove.and_then(|r| r.command().cloned()).unwrap_or_default();
-            plan.change(vec![note("run", json!({ "command": remove.join(" ") }))], move || run(&remove));
+            plan.change(vec![note("run", json!({ "command": remove.join(" ") }))], move || run(&remove, input.as_ref()));
             plan.recheck = false;
         }
         (false, true) => bail!("this step has no remove command, so it can't undo what it set"),
         _ => plan.steps = test_note.into_iter().collect(),
     }
     Ok(plan)
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn the_command_gets_a_private_temporary_copy() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = source_dir.path().join("my profile.p12");
+        let bytes = [0, 0xff, 1, 2];
+        fs::write(&source, bytes).unwrap();
+        let input = Input::Source(source.clone());
+        let (temporary, copy) = input.temporary_file().unwrap();
+        assert!(common::is_private(temporary.path(), true).unwrap());
+        assert!(common::is_private(&copy, false).unwrap());
+        assert_eq!(copy.file_name(), source.file_name());
+        assert_eq!(fs::read(&copy).unwrap(), bytes);
+        fs::write(&copy, [3]).unwrap();
+        drop(temporary);
+        assert!(!copy.exists());
+        assert_eq!(fs::read(source).unwrap(), bytes);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -300,6 +405,50 @@ mod tests {
         gone["_exist"] = false.into();
         (evaluate(&gone).unwrap().apply.unwrap())().unwrap();
         assert!(!marker_exists(&marker));
+    }
+
+    #[test]
+    fn command_input_is_scoped_to_each_invocation_and_diagnostics_hide_it() {
+        use std::path::Path;
+
+        let dir = tempfile::tempdir().unwrap();
+        let receipt = dir.path().join("input-path");
+        let imported = dir.path().join("tool copy");
+        let secret = "private profile content";
+        let props = json!({
+            "content": secret,
+            "test": { "command": ["cat", imported], "file": "%s" },
+            "present": { "command": ["cat", "%s"], "file": "%s" },
+            "set": ["sh", "-c", r#"echo "$1" > "$2"; cp "$1" "$3""#, "import", "%s", receipt, imported],
+            "remove": ["sh", "-c", r#"test -f "$1" && rm "$2""#, "remove", "%s", imported]
+        });
+        let plan = evaluate(&props).unwrap();
+        assert!(plan.steps.iter().any(|n| n.code == "test.present"));
+        assert_eq!(plan.steps[0].params["hidden"], true);
+        assert!(!format!("{:?}", plan.steps).contains(secret));
+        (plan.apply.unwrap())().unwrap();
+        assert!(!Path::new(fs::read_to_string(&receipt).unwrap().trim()).exists());
+        assert!(evaluate(&props).unwrap().apply.is_none());
+
+        let mut gone = props.clone();
+        gone["_exist"] = false.into();
+        (evaluate(&gone).unwrap().apply.unwrap())().unwrap();
+        assert!(!imported.exists());
+
+        let mut fail = props.clone();
+        fail["set"] = json!(["sh", "-c", r#"echo "$1" > "$2"; cat "$1" >&2; exit 4"#, "import", "%s", receipt]);
+        let err = (evaluate(&fail).unwrap().apply.unwrap())().unwrap_err().to_string();
+        assert!(err.contains("exited with code 4") && !err.contains(secret));
+        assert!(!Path::new(fs::read_to_string(receipt).unwrap().trim()).exists());
+        fail["test"] = json!({"command":["cat", "%s"], "output":"different"});
+        assert!(!format!("{:?}", evaluate(&fail).unwrap().steps).contains(secret));
+
+        let literal = json!({"test":{"command":["echo", "%s"], "output":"%s"}, "set":["false"]});
+        assert!(evaluate(&literal).unwrap().apply.is_none());
+        assert!(check(&json!({"test":{"command":["cat"], "file":"%s"}, "set":["x"]})).is_err());
+        let mut ambiguous = props;
+        ambiguous["source"] = "vpn.ovpn".into();
+        assert!(check(&ambiguous).is_err());
     }
 
     fn marker_exists(path: &str) -> bool {

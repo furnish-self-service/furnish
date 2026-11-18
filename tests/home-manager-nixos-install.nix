@@ -15,8 +15,11 @@ let
   before = s.system { };
   after = s.system { homes.alice.apps = { inherit htop; }; };
   app = name: properties: pkgs.writeText "${name}.dsc.yaml" (builtins.toJSON {
-    metadata.furnish = { description = name; categories = [ "Test" ]; };
-    resources = [{ inherit name; type = "Furnish/NixOS"; properties = { inherit name; } // properties; }];
+    metadata.furnish = { description = name; categories = [ "Test" ]; perUser = true; };
+    resources = [
+      { inherit name; type = "Furnish/NixOS"; properties = { inherit name; onlyIfSetUp = true; } // properties; }
+      { name = "User settings"; type = "Furnish/File"; properties = { path = "~/.furnish-test"; content = "managed for this person"; }; }
+    ];
   });
 in
 pkgs.testers.runNixOSTest {
@@ -85,7 +88,12 @@ pkgs.testers.runNixOSTest {
 
     # alice installs htop: into her part of the system's apps flake; the system has it in her
     # Home Manager generation only.
+    preview = furnish("install htop --dry-run")
+    assert "Home Manager" in preview and "User settings" in preview, preview
+    machine.fail("test -e /home/alice/.furnish-test")
     furnish("install htop")
+    machine.succeed("test $(stat -c %U /home/alice/.furnish-test) = alice")
+    machine.fail("test -e /root/.furnish-test")
     assert apps() == {"version": 1, "apps": {}, "homes": {"alice": {"apps": {"htop": {"packages": ["hello"], "options": {"programs.htop.enable": True}}}}}}, apps()
     assert system() == "${after}", system()
     machine.succeed("nix-store -qR ${after} | grep -q -- -hello-")
@@ -101,6 +109,7 @@ pkgs.testers.runNixOSTest {
     # Uninstalling with another change in the repository: flake.lock stays uncommitted.
     alice('echo "# a note" >> configuration.nix')
     furnish("uninstall htop")
+    machine.fail("test -e /home/alice/.furnish-test")
     assert apps() == {"version": 1, "apps": {}}, apps()
     assert system() == "${before}", system()
     assert alice("git log -1 --format=%s").strip() == "furnish: install htop"

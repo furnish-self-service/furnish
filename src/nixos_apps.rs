@@ -200,7 +200,7 @@ fn check_in(name: &str, entry: &Entry, allowlist: &[String], place: Place) -> Re
 }
 
 /// What the resource gets and returns (DSC's JSON on stdin and stdout).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Desired {
     name: String,
@@ -407,12 +407,12 @@ fn home_dir_of(person: &Account, facts: &crate::nixos::HomeFacts) -> PathBuf {
 
 /// The person furnish acts for: in the service, who asked; else who runs furnish.
 fn person() -> Result<Account> {
-    let uid = if in_service() {
-        let requester = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok());
-        requester.context("the furnish service doesn't know who asked")?
-    } else {
-        current_uid()
-    };
+    if in_service() {
+        let uid = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok())
+            .context("the furnish service doesn't know who asked")?;
+        return lookup(uid).with_context(|| format!("no account with the requester's id {uid}"));
+    }
+    let uid = current_uid();
     Ok(lookup(uid).unwrap_or_else(|| Account {
         uid,
         gid: uid,
@@ -974,7 +974,11 @@ pub fn service_only(why: Option<&OutsideService>) -> String {
 
 /// Prints a log line for furnish (DSC passes the resource's stderr lines on).
 fn info(message: &str) {
-    eprintln!("{}", json!({ "info": message }));
+    if crate::service::in_service() {
+        crate::engine::emit_log("info", message.to_string());
+    } else {
+        eprintln!("{}", json!({ "info": message }));
+    }
 }
 
 /// A command as the configuration's owner: their ids (no other groups), home and name.
@@ -1241,22 +1245,68 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
         }
         "set" => {
             if !in_desired_state {
-                // A changed app first leaves where it was, if it goes elsewhere now.
-                let place = match &current {
-                    Some((p, _)) if !desired.exist => *p,
-                    _ => choose(&desired, &person)?,
-                };
-                if let Some((was, _)) = &current
-                    && *was != place
-                {
-                    put(*was, &Desired { exist: false, ..desired.clone() }, &person)?;
-                }
-                put(place, &desired, &person)?;
+                set(&desired, &person, current.as_ref().map(|(p, _)| *p))?;
             }
             Ok(state(&desired.name, find(&desired.name, &person)?.as_ref()))
         }
         _ => bail!("usage: get|test|set [--what-if]"),
     }
+}
+
+/// A selector into a preset app. The service derives the properties itself. The fingerprint
+/// prevents applying a different declaration if the checkout changed, or the app is held.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ServiceStep {
+    pub app: String,
+    pub values: serde_json::Map<String, Value>,
+    pub step: String,
+    pub uninstall: bool,
+    pub fingerprint: String,
+}
+
+fn fingerprint(desired: &Desired) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    Ok(STANDARD.encode(Sha256::digest(serde_json::to_vec(desired)?)))
+}
+
+/// Run a step whose properties DSC evaluated from the service's own preset collection. The
+/// requester uid comes from the authenticated connection, and all normal allowlists still apply.
+pub(crate) fn apply_service_step(properties: &Value, expected: &str) -> Result<()> {
+    let desired: Desired = serde_json::from_value(properties.clone())?;
+    if !in_service() || fingerprint(&desired)? != expected {
+        bail!("the requested NixOS step differs from the current preset app");
+    }
+    let person = person()?;
+    let current = find(&desired.name, &person)?;
+    if current.as_ref().map(|(place, entry)| desired.exist && *entry == desired.entry(*place)).unwrap_or(!desired.exist) {
+        return Ok(());
+    }
+    set(&desired, &person, current.map(|(p, _)| p))
+}
+
+/// A changed app first leaves its previous place. Delegate the whole transition before any
+/// local change if it involves a system rebuild, so refusal leaves a standalone install intact.
+fn set(desired: &Desired, person: &Account, current: Option<Place>) -> Result<()> {
+    let place = match current {
+        Some(p) if !desired.exist => p,
+        _ => choose(desired, person)?,
+    };
+    if !in_service() && (place != Place::HomeStandalone || current.is_some_and(|p| p != Place::HomeStandalone)) {
+        let outside = std::env::var(OUTSIDE_SERVICE).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+        if let Some(mut route) = outside.filter(|v| v["reason"] == "perUser" && v["step"].is_string()) {
+            route["fingerprint"] = fingerprint(desired)?.into();
+            let step = serde_json::from_value(route)?;
+            crate::engine::capture_logs(|line| eprintln!("{}", json!({(line.level): line.message})));
+            return crate::service::run(&crate::service::Request::NixosStep { step, install_into: own_install_into() }, |_| {});
+        }
+        let why = std::env::var(OUTSIDE_SERVICE).ok().and_then(|v| serde_json::from_str(&v).ok());
+        bail!("{}", service_only(why.as_ref()));
+    }
+    if let Some(was) = current && was != place {
+        put(was, &Desired { exist: false, ..desired.clone() }, person)?;
+    }
+    put(place, desired, person)
 }
 
 /// Installs or removes an app in one place.

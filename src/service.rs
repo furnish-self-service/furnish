@@ -65,6 +65,8 @@ pub enum Request {
         #[serde(default)]
         install_into: Option<String>,
     },
+    /// Only this Furnish/NixOS step of a preset per-user app needs a system rebuild.
+    NixosStep { step: crate::nixos_apps::ServiceStep, install_into: Option<String> },
     Uninstall { app: String },
     Reinstall {
         app: String,
@@ -423,13 +425,23 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             let values = accept(&app, &values)?;
             operation(&|report| app.install_here(&values, which.clone(), report), install_into.as_deref())
         }
+        Request::NixosStep { step, install_into } => {
+            let app = app(&step.app)?;
+            operation(&|_| app.apply_nixos_step(&step), install_into.as_deref())
+        }
         Request::Uninstall { app: key } => {
             let app = app(&key)?;
+            if app.per_user(&app.installed_values()) {
+                bail!("{} installs into your user account, which furnish removes without the service", app.id);
+            }
             operation(&|report| app.uninstall(report), None)
         }
         Request::Reinstall { app: key, values, install_into } => {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
+            if app.per_user(&app.installed_values()) {
+                bail!("{} was installed into your user account, which furnish removes without the service", app.id);
+            }
             operation(&|report| app.reinstall_with(&values, report), install_into.as_deref())
         }
         Request::Stop { force } => {
