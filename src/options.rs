@@ -122,13 +122,24 @@ pub fn collection_language(dir: &Path) -> String {
 
 /// Options an app's DSC document declares (`parameters` section).
 pub fn app_declarations(doc: &Value) -> BTreeMap<String, Declaration> {
+    let mut declarations = raw_app_declarations(doc);
+    for declaration in declarations.values_mut() {
+        if let Some(default) = declaration.default.as_mut() {
+            *default = crate::conditions::parameter_default(doc, default);
+        }
+    }
+    declarations
+}
+
+/// Author declarations without resolving defaults against this machine (e.g. for translations).
+pub(crate) fn raw_app_declarations(doc: &Value) -> BTreeMap<String, Declaration> {
     let Some(params) = doc["parameters"].as_object() else { return BTreeMap::new() };
     params
         .iter()
         .map(|(name, p)| {
             let decl = Declaration {
                 kind: p["type"].as_str().unwrap_or("string").to_string(),
-                default: p.get("defaultValue").map(|value| crate::conditions::parameter_default(doc, value)),
+                default: p.get("defaultValue").cloned(),
                 label: None,
                 description: p["description"].as_str().map(String::from),
                 allowed_values: p["allowedValues"].as_array().cloned().unwrap_or_default(),
@@ -345,7 +356,7 @@ pub fn set(target: &str, name: &str, value: Option<Value>, declaration: &Declara
     crate::settings::set("parameters", serde_json::to_value(all)?)
 }
 
-fn check(name: &str, value: &Value, d: &Declaration) -> Result<()> {
+pub(crate) fn check(name: &str, value: &Value, d: &Declaration) -> Result<()> {
     let fits = match d.kind.as_str() {
         "bool" => value.is_boolean(),
         "int" => value.is_i64(),

@@ -331,6 +331,13 @@ struct ProgressEvent {
     progress: engine::Progress,
 }
 
+#[derive(Clone, Serialize)]
+struct OperationRevision<'a> {
+    key: &'a str,
+    event: &'static str,
+    revision: Option<String>,
+}
+
 #[derive(Clone)]
 enum Action {
     Install(catalog::Which),
@@ -356,6 +363,14 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
     let running = tray::Running::start(&handle).ok_or("furnish is quitting")?;
     let result = blocking(move || furnish::reports::with_trigger(trigger, || {
         let app = catalog::find_app(&key)?;
+        let record_revision = |revision| {
+            let _ = handle.emit("furnish://progress", OperationRevision { key: &key, event: "revision", revision });
+        };
+        let target = match &action {
+            Action::Install(which) => which,
+            Action::Reinstall | Action::Uninstall => &catalog::Which::Shown,
+        };
+        record_revision(app.operation_revision(target));
         let report = |progress| {
             let _ = handle.emit("furnish://progress", ProgressEvent { key: key.clone(), progress });
         };
@@ -364,6 +379,7 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
                 Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && app.held.is_none() => {
                     let automatic = furnish::settings::for_collection(&app.collection).settings.fallback == furnish::settings::Fallback::Automatic;
                     let Some(version) = app.previous_version().ok().filter(|_| automatic) else { return Err(err) };
+                    record_revision(Some(version.commit.clone()));
                     app.install_version(catalog::Which::Previous, report)?;
                     Ok(Some(FellBack { date: version.date, error: format!("{err:#}") }))
                 }

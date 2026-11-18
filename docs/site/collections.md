@@ -834,7 +834,44 @@ furnish-check:
     - furnish check
 ```
 
-The preview evaluates `context().os.family` for each system. It marks a step `(depends on host)` when its result depends on the target computer's distribution or available package managers. Other details, such as the system version, come from the computer running `furnish check`.
+The preview evaluates `context().os.family` for each system. It marks a step `(depends on host)` when its result depends on the target computer's distribution or available package managers. Reads of other `context()` fields also depend on the target computer.
+
+### Check target profiles in CI
+
+Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. List the native managers available on the target in Furnish’s priority order: `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix` on Unix, or `winget` on Windows. Include a collection manager's ID when its script and prerequisites are available on that target.
+
+For example, an admin can verify which package implements a step named `Editor` and which dependency applies to developers:
+
+```yaml
+profiles:
+  developer-laptop:
+    family: Linux
+    distribution: cachyos
+    distributionLike: [arch]
+    packageManagers: [pacman, nix]
+    options: { role: developer }   # collection.yaml parameters
+    appOptions:
+      editor: { plugins: true }    # DSC parameters declared by this app
+    expect:
+      editor:
+        dependencies: [developer-tools]
+        steps: [Editor]
+        skipped: ["Install on Windows"]
+        packages:
+          Editor: { manager: pacman, name: code }
+```
+
+The report lists each active dependency, the install steps in execution order, the package selection and the condition behind each skip. Active dependencies include optional dependencies users can select. An applicable package step lists a missing prerequisite when its manager is absent from the profile. A preceding dependency may supply it during installation. Omit `expect` to inspect the decisions first. Each field you include checks the entire list or package map for that app. An empty list asserts that no entries apply. A mismatch prints the expected and actual values and exits with status 1. Defaults come from the collection and app documents. Supply option values for the choices you want to exercise.
+
+The family preview reports a dependency cycle as an error when its conditions hold together on one system. A cycle that depends on unresolved host facts produces a warning. Profiles check the graph again with their concrete facts and options. Profile assertions cover install-time selection. Windows profiles skip `Furnish/NixOS` steps marked `onlyIfSetUp`. On Unix those steps depend on the target’s NixOS or Home Manager configuration, so the checker reports that it cannot determine them. A condition or package expression that needs a live machine fact outside the profile, such as an environment variable, produces a diagnostic.
+
+The [two-profile example](https://github.com/furnish-self-service/furnish/blob/main/docs/examples/target-profiles.yaml) runs against Furnish's test collection:
+
+```sh
+furnish check tests/fixtures/collection --profiles docs/examples/target-profiles.yaml
+```
+
+In the GitHub Action, pass the file with `with: { profiles: targets.yaml }`.
 
 ## Private repositories
 

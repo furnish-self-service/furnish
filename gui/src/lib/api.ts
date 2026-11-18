@@ -115,6 +115,8 @@ export interface Step {
   details: string[];
   /** The same as notes to translate (furnish's configuration resources): `plan.note.<code>`. */
   notes?: { code: string; params: Record<string, unknown> }[];
+  /** The manager and package name chosen for this operation. */
+  selectionNotes?: { code: string; params: Record<string, unknown>; english: string }[];
   changes: { property: string; before: unknown; after: unknown }[];
 }
 
@@ -135,6 +137,7 @@ export const abort = () => invoke<void>('abort');
 export const forceStop = () => invoke<void>('force_stop');
 
 export type Progress = { key: string } & (
+  | { event: 'revision'; revision: string | null }
   | { event: 'planned'; steps: Step[] }
   | { event: 'started'; index: number; atMs: number }
   | { event: 'finished'; index: number; atMs: number; durationMs: number; outcome: Outcome }

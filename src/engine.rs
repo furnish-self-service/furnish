@@ -849,6 +849,9 @@ pub struct Step {
     /// (`_metadata.furnish`): `{code, params}`, see resources/note.rs.
     #[serde(default)]
     pub notes: Vec<Value>,
+    /// How a package selected its manager and name, alongside its provider's own preview.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selection_notes: Vec<SelectionNote>,
     /// Properties that would change, other than presence (`_exist`).
     pub changes: Vec<Change>,
 }
@@ -862,6 +865,13 @@ pub enum Action {
     Nothing,
     /// Its `condition` excludes it on this machine, or it isn't needed here (`onlyIfSetUp`).
     Skipped,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SelectionNote {
+    pub code: String,
+    pub params: serde_json::Map<String, Value>,
+    pub english: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1060,7 +1070,7 @@ pub(crate) fn apply_nixos_step(doc: &Value, request: &crate::nixos_apps::Service
 
 /// DSC's order: document order, except that a dependency runs right before the first
 /// resource that needs it.
-fn invocation_order(resources: &[Value]) -> Result<Vec<usize>> {
+pub(crate) fn invocation_order(resources: &[Value]) -> Result<Vec<usize>> {
     fn visit(i: usize, resources: &[Value], order: &mut Vec<usize>, path: &mut Vec<usize>) -> Result<()> {
         if order.contains(&i) {
             return Ok(());
@@ -1164,7 +1174,7 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
             Some(why) => vec![format!("Not needed here: {why}")],
             None => resource["condition"].as_str().map(|c| format!("Not on this system: {c}")).into_iter().collect(),
         };
-        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, notes: vec![], changes: vec![] }
+        Step { name: name.clone(), kind: kind.clone(), action: Action::Skipped, details, notes: vec![], selection_notes: vec![], changes: vec![] }
     };
     if !applies_here(resource, doc) {
         return Ok(skipped());
@@ -1180,7 +1190,7 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
         Err(DscError::NotImplemented(_)) => {
             let mut details = vec![NO_PREVIEW.to_string()];
             details.extend(property_lines(&resource["properties"]));
-            return Ok(Step { name, kind, action: Action::Change, details, notes: vec![], changes: vec![] });
+            return Ok(Step { name, kind, action: Action::Change, details, notes: vec![], selection_notes: vec![], changes: vec![] });
         }
         Err(e) => return Err(e.into()),
     };
@@ -1203,6 +1213,11 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
     };
     let other = r.metadata.as_ref().map(|m| &m.other);
     let notes = other.and_then(|m| m.get("furnish")).and_then(Value::as_array).cloned().unwrap_or_default();
+    let selection_notes = if kind.eq_ignore_ascii_case("Furnish/Package") {
+        other.and_then(|m| m.get("furnishPackageSelection")).cloned().map(serde_json::from_value).transpose()?.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let action = reported_action(&kind, r.metadata.as_ref(), &before, &after, false);
     if let Some(path) = after["path"].as_str().and_then(comparison_path)
         && (action != Action::Nothing || files.contains_key(&path))
@@ -1235,7 +1250,7 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
             files.remove(&path);
         }
     }
-    Ok(Step { name, kind, action, details, notes, changes: changes(&before, &after) })
+    Ok(Step { name, kind, action, details, notes, selection_notes, changes: changes(&before, &after) })
 }
 
 /// One line per property, `name: value`, shortened to a line's length.

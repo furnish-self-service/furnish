@@ -1668,13 +1668,18 @@ impl App {
             _ if self.recorded_values().is_some() => "update",
             _ => "install",
         };
-        let version = match &which {
+        let version = self.operation_revision(&which);
+        crate::reports::operation(event, self, version, || self.install_values(self.installed_values(), which, report))
+    }
+
+    /// The target revision at dispatch, including pinned versions and explicit fallbacks.
+    pub fn operation_revision(&self, which: &Which) -> Option<String> {
+        match which {
             Which::Previous => self.previous_version().ok().map(|v| v.commit),
             Which::Version(commit) => Some(commit.clone()),
             Which::Shown if self.held.is_some() => self.held.as_ref().map(|h| h.commit.clone()),
             _ => self.collection_handle().head().ok(),
-        };
-        crate::reports::operation(event, self, version, || self.install_values(self.installed_values(), which, report))
+        }
     }
 
     /// Install with these values: through the furnish service, or here.

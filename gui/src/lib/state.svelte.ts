@@ -1,9 +1,9 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import { SvelteSet } from 'svelte/reactivity';
 import * as api from './api';
-import { defaultDependencies, planInstall, releaseDependents, type Queued } from './install-queue';
+import { defaultDependencies, needsRetry, planInstall, releaseDependents, type Queued } from './install-queue';
 export { defaultDependencies, type Queued } from './install-queue';
-import { completedActivity, historyLimit, interruptedDependents, isKit, kitItemActive, readHistory, recordProgress, trimHistory, writeHistory, type ActivityEntry, type KitActivity, type Run } from './activity-history';
+import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
 import { StatusCache } from './status-cache';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
 import { applyBranding, type Branding } from './brand';
@@ -64,6 +64,7 @@ export const store = $state({
   /** Step progress of the current or last install/update/uninstall per app (this session only). */
   runs: {} as Record<string, Run>,
   recent: [] as ActivityEntry[],
+  retrying: {} as Record<string, boolean>,
   /** Operations waiting for the running one to finish, in order. */
   queue: [] as Queued[],
   /** Installs that failed in this session, and the earlier version that may work. */
@@ -117,17 +118,20 @@ function initializeActivity(dataDir: string) {
   if (current.length) writeHistory(dataDir, store.recent);
 }
 
-function startRun(app: AppInfo, kind: Run['kind'], trigger: api.Trigger) {
+function startRun(app: AppInfo, kind: Run['kind'], trigger: api.Trigger, action: Queued['action'], commit?: string) {
   store.logs[app.key] = [];
   store.runs[app.key] = {
-    id: crypto.randomUUID(), name: appName(app), kind, trigger, startedAt: Date.now(), steps: [], phaseStart: 0,
+    id: crypto.randomUUID(), name: appName(app), kind, trigger, action, commit,
+    collectionRevision: store.collections.find(c => c.name === app.collection)?.revision,
+    startedAt: Date.now(), steps: [], phaseStart: 0,
   };
   const run = store.runs[app.key];
+  if (activeRequest?.key === app.key) activeRequest.runId = run.id;
   if (kind !== 'uninstall') {
     // Version-specific installs can also repair a blocked prerequisite.
-    kitItemRetried(app.key);
-    for (const kit of store.recent.filter(isKit)) {
-      const item = kit.items.find(i => i.key === app.key && i.state === 'queued');
+    groupItemRetried(app.key);
+    for (const group of store.recent.filter(isGroup)) {
+      const item = group.items.find(i => i.key === app.key && i.state === 'queued');
       if (item) {
         item.state = 'running';
         item.runId = run.id;
@@ -141,30 +145,30 @@ function endRun(key: string, run: Run, result: NonNullable<Run['result']>) {
   run.finishedAt = Date.now();
   run.result = result;
   const entry = completedActivity(key, run, store.logs[key]);
-  let ownedByKit = false;
-  for (const kit of store.recent.filter(isKit)) {
-    const item = kit.items.find(i => i.runId === run.id);
+  let ownedByGroup = false;
+  for (const group of store.recent.filter(isGroup)) {
+    const item = group.items.find(i => i.runId === run.id);
     if (!item) continue;
-    ownedByKit ||= !!item.ownsJob;
+    ownedByGroup ||= !!item.ownsJob;
     item.state = result;
     item.attempts = [entry, ...item.attempts].slice(0, historyLimit);
     delete item.runId;
     delete item.waitingFor;
-    kit.updatedAt = run.finishedAt;
+    group.updatedAt = run.finishedAt;
   }
-  if (!ownedByKit) store.recent.unshift(entry);
+  if (!ownedByGroup) store.recent.unshift(entry);
   saveActivity();
 }
 
 function saveActivity() {
-  for (const kit of store.recent.filter(isKit)) {
-    for (const item of kit.items) {
+  for (const group of store.recent.filter(isGroup)) {
+    for (const item of group.items) {
       if (item.state !== 'queued') continue;
       const job = store.queue.find(q => q.key === item.key);
       if (job) item.waitingFor = [...job.prerequisites];
     }
   }
-  const time = (entry: ActivityEntry) => isKit(entry) ? entry.updatedAt : entry.summary.finishedAt;
+  const time = (entry: ActivityEntry) => isGroup(entry) ? entry.updatedAt : entry.summary.finishedAt;
   store.recent = trimHistory([...store.recent].sort((a, b) => time(b) - time(a)));
   if (historyProfile) writeHistory(historyProfile, store.recent);
 }
@@ -321,13 +325,13 @@ export async function checkStatus(key: string): Promise<boolean> {
     verifiedKeys.add(key);
     // A live check can also observe a prerequisite installed outside Furnish.
     if (check.status === 'installed' && !isPending(key) && store.queue.some(q => q.prerequisites.includes(key))) {
-      kitPrerequisiteAvailable(key);
+      groupPrerequisiteAvailable(key);
       releaseDependents(store.queue, key);
       pump();
     }
     const revision = revisions.get(key);
     if (revision) cache?.write(key, revision, check, checkedAt);
-    installRequiredUpdate(key);
+    if (!store.retrying[key]) installRequiredUpdate(key);
     return true;
   } catch (error) {
     if (current()) {
@@ -373,7 +377,7 @@ export const requiredUpdate = (key: string) => store.status[key] === 'needsUpdat
 async function runOperation(app: AppInfo, action: Queued['action'], trigger: api.Trigger, commit?: string): Promise<boolean> {
   const installs = action !== 'uninstall' && action !== 'reinstall';
   const kind: Run['kind'] = installs ? (store.status[app.key] === 'needsUpdate' ? 'update' : 'install') : action;
-  const run = startRun(app, kind, trigger);
+  const run = startRun(app, kind, trigger, action, commit);
   store.busy[app.key] = action === 'uninstall' ? 'uninstall' : 'install';
   delete store.failed[app.key];
   let cancelled = false;
@@ -440,7 +444,15 @@ export function availableAppUpdates(): AppInfo[] {
 }
 
 export function updateAllApps() {
-  for (const app of availableAppUpdates()) install(app);
+  const apps = availableAppUpdates();
+  if (!apps.length) return;
+  store.recent.unshift({
+    kind: 'updates', id: crypto.randomUUID(), updatedAt: Date.now(),
+    items: apps.map(app => ({ key: app.key, name: appName(app), selected: true, state: 'queued', attempts: [] })),
+  });
+  const group = store.recent[0] as ActivityGroup;
+  for (const app of apps) queueGroupApp(group, app);
+  saveActivity();
 }
 
 /**
@@ -823,10 +835,12 @@ export async function changeSettings(change: Partial<Settings>) {
 
 /** Install the selected dependencies before their dependent, joining work already underway. */
 export function install(app: AppInfo, chosen = defaultDependencies(app), trigger: api.Trigger = 'user', onMember?: (key: string, scheduled: boolean) => void) {
-  return scheduleInstall(app, chosen, 'install', trigger, onMember);
+  return scheduleInstall(app, chosen, { action: 'install', trigger }, onMember);
 }
 
-function scheduleInstall(app: AppInfo, chosen: string[], action: 'install' | 'reinstall', trigger: api.Trigger, onMember?: (key: string, scheduled: boolean) => void) {
+type InstallRequest = Pick<Queued, 'trigger' | 'commit' | 'updateOnly'> & { action: Exclude<Queued['action'], 'uninstall'> };
+
+function scheduleInstall(app: AppInfo, chosen: string[], request: InstallRequest, onMember?: (key: string, scheduled: boolean) => void) {
   const pending = activeRequest ? [activeRequest, ...store.queue] : store.queue;
   const plan = planInstall(app, chosen, store.apps, pending, key => isInstalled(key) || store.status[key] === 'unavailable');
   if (plan.error) {
@@ -839,8 +853,9 @@ function scheduleInstall(app: AppInfo, chosen: string[], action: 'install' | 're
     for (const key of plan.members) onMember(key, scheduled.has(key));
   }
   for (const job of plan.installs) {
-    if (store.queue.some(waiting => waiting.prerequisites.includes(job.key))) kitItemRetried(job.key);
-    store.queue.push({ ...job, trigger, action: job.key === app.key ? action : 'install' });
+    if (store.queue.some(waiting => waiting.prerequisites.includes(job.key))) groupItemRetried(job.key);
+    const operation: InstallRequest = job.key === app.key ? request : { action: 'install', trigger: request.trigger };
+    store.queue.push({ ...job, ...operation });
   }
   pump();
   return true;
@@ -848,7 +863,7 @@ function scheduleInstall(app: AppInfo, chosen: string[], action: 'install' | 're
 
 /** Reinstall using the new options after their selected prerequisites succeed. */
 export function reinstall(app: AppInfo) {
-  scheduleInstall(app, defaultDependencies(app), 'reinstall', 'user');
+  scheduleInstall(app, defaultDependencies(app), { action: 'reinstall', trigger: 'user' });
 }
 
 /** Set an option for a collection or an app (`collection/app`); `null` goes back to the inherited value. */
@@ -892,6 +907,7 @@ export async function answerQuestions(answers: { collection: string; name: strin
 async function reloadApps() {
   try {
     [store.apps, store.collections] = await Promise.all([api.listApps(), api.listCollections()]);
+    return true;
   } catch (e) {
     toast('error', t('toast.loadApps'), message(e));
   }
@@ -925,7 +941,7 @@ export function uninstall(app: AppInfo) {
   enqueue(app.key, 'uninstall');
 }
 
-let activeRequest = $state<Queued>();
+let activeRequest = $state<Queued & { runId?: string }>();
 let pumping = false;
 
 function enqueue(key: string, action: Queued['action'], trigger: api.Trigger = 'user', commit?: string) {
@@ -937,13 +953,13 @@ function enqueue(key: string, action: Queued['action'], trigger: api.Trigger = '
 export function dequeue(key: string) {
   store.queue = store.queue.filter(q => q.key !== key);
   autoInstalling.delete(key);
-  kitItemDequeued(key);
+  groupItemDequeued(key);
 }
 
 export function clearQueue() {
   for (const q of store.queue) {
     autoInstalling.delete(q.key);
-    kitItemDequeued(q.key);
+    groupItemDequeued(q.key);
   }
   store.queue = [];
 }
@@ -952,8 +968,33 @@ export function clearQueue() {
 export const queueBlocker = (job: Queued) => job.prerequisites.find(key => !isPending(key)) ?? job.prerequisites[0];
 
 export function retryPrerequisite(key: string) {
-  const app = appByKey(key);
-  if (app && !isPending(key)) install(app);
+  const [group] = groupsWaitingFor(key);
+  if (group) return retryGroupItem(group, key);
+  return retryOperation(key, 'install', 'install');
+}
+
+/** Recheck bulk updates at the head of the queue. Another operation or the
+ * package manager may already have updated or removed the app while it waited. */
+async function updateStillNeeded(app: AppInfo) {
+  const key = app.key;
+  const checked = await checkStatus(key);
+  if (checked && store.status[key] === 'needsUpdate') return true;
+  if (!checked || store.status[key] === 'blocked') {
+    const run = startRun(app, 'update', 'user', 'install');
+    run.error = store.statusErrors[key] ?? store.reasons[key];
+    endRun(key, run, 'failed');
+    return false;
+  }
+  for (const group of store.recent.filter(isGroup)) {
+    const item = group.items.find(i => i.key === key && i.state === 'queued');
+    if (item) {
+      item.state = group.kind === 'kit' && isInstalled(key) ? 'done' : 'skipped';
+      group.updatedAt = Date.now();
+    }
+  }
+  if (isInstalled(key)) releaseDependents(store.queue, key);
+  saveActivity();
+  return false;
 }
 
 /** Pick the first runnable operation. A blocked branch keeps its place while
@@ -969,13 +1010,17 @@ async function pump() {
       activeRequest = next;
       const app = appByKey(next.key);
       const canRun = next.trigger === 'user' || verifiedKeys.has(next.key);
+      if (app && next.updateOnly && !(await updateStillNeeded(app))) {
+        activeRequest = undefined;
+        continue;
+      }
       if (app && canRun && (next.trigger !== 'autoInstall' || verifiedInstall(app))) {
         const ok = await runOperation(app, next.action, next.trigger, next.commit);
         if (ok && next.action !== 'uninstall') releaseDependents(store.queue, next.key);
         if (next.trigger === 'update' && !ok) declinedUpdates.add(next.key);
       } else {
         autoInstalling.delete(next.key);
-        kitItemDequeued(next.key);
+        groupItemDequeued(next.key);
       }
       activeRequest = undefined;
       await recheckBlocked();
@@ -1076,12 +1121,12 @@ export function defaultUninstall(kit: KitInfo) {
 }
 
 /** Attach the same queued/running operation to every kit that requested it. */
-function trackKitItem(kit: KitActivity, key: string, scheduled: boolean) {
-  let item = kit.items.find(i => i.key === key);
+function trackGroupItem(group: ActivityGroup, key: string, scheduled: boolean) {
+  let item = group.items.find(i => i.key === key);
   if (!item) {
     const app = appByKey(key);
-    kit.items.push({ key, name: app ? appName(app) : key, selected: false, state: 'queued', attempts: [] });
-    item = kit.items[kit.items.length - 1];
+    group.items.push({ key, name: app ? appName(app) : key, selected: false, state: 'queued', attempts: [] });
+    item = group.items[group.items.length - 1];
   }
   if (!scheduled) {
     // Joining a blocked install can introduce a prerequisite which already failed.
@@ -1089,10 +1134,10 @@ function trackKitItem(kit: KitActivity, key: string, scheduled: boolean) {
     item.state = previous?.result === 'failed' ? 'failed' : 'cancelled';
     return;
   }
-  // Another selected app in this kit can reach the same prerequisite.
-  if (item.ownsJob === undefined || !kitItemActive(item)) item.ownsJob = !isPending(key);
+  // Another selected app in this group can reach the same prerequisite.
+  if (item.ownsJob === undefined || !itemActive(item)) item.ownsJob = !isPending(key);
   const live = store.runs[key];
-  if (activeRequest?.key === key && live) {
+  if (activeRequest?.key === key && live && activeRequest.runId === live.id) {
     if (live.result) {
       // The engine has finished but its post-operation status refresh is still pending.
       item.state = live.result;
@@ -1108,43 +1153,45 @@ function trackKitItem(kit: KitActivity, key: string, scheduled: boolean) {
   }
 }
 
-function kitsWaitingFor(key: string) {
+function groupsWaitingFor(key: string) {
   const dependents = store.queue.filter(job => job.prerequisites.includes(key));
-  return store.recent.filter(isKit).filter(kit => kit.items.some(i =>
-    kitItemActive(i) && dependents.some(job => job.key === i.key)) && kit.items.some(i => i.key === key));
+  return store.recent.filter(isGroup).filter(group => group.items.some(i =>
+    itemActive(i) && dependents.some(job => job.key === i.key)) && group.items.some(i => i.key === key));
 }
 
-/** A prerequisite retried from any entry point still belongs to its waiting kits. */
-function kitItemRetried(key: string) {
-  for (const kit of kitsWaitingFor(key)) trackKitItem(kit, key, true);
+/** A prerequisite retried from any entry point still belongs to its waiting groups. */
+function groupItemRetried(key: string) {
+  for (const group of groupsWaitingFor(key)) trackGroupItem(group, key, true);
 }
 
 /** A live check can satisfy a prerequisite installed outside this request. */
-function kitPrerequisiteAvailable(key: string) {
-  const groups = kitsWaitingFor(key);
-  for (const kit of groups) {
-    const item = kit.items.find(i => i.key === key)!;
-    item.state = 'done';
-    kit.updatedAt = Date.now();
+function groupPrerequisiteAvailable(key: string) {
+  const groups = groupsWaitingFor(key);
+  for (const group of groups) {
+    const item = group.items.find(i => i.key === key)!;
+    item.state = group.kind === 'updates' && item.selected ? 'skipped' : 'done';
+    group.updatedAt = Date.now();
   }
   if (groups.length) saveActivity();
 }
 
-function kitItemDequeued(key: string) {
-  for (const kit of store.recent.filter(isKit)) {
-    const item = kit.items.find(i => i.key === key && i.state === 'queued');
+function groupItemDequeued(key: string) {
+  for (const group of store.recent.filter(isGroup)) {
+    const item = group.items.find(i => i.key === key && i.state === 'queued');
     if (item) {
       item.state = 'cancelled';
-      kit.updatedAt = Date.now();
+      group.updatedAt = Date.now();
     }
   }
   saveActivity();
 }
 
-function queueKitApp(kit: KitActivity, app: AppInfo) {
-  const queued = install(app, defaultDependencies(app), 'user', (key, scheduled) => trackKitItem(kit, key, scheduled));
+function queueGroupApp(group: ActivityGroup, app: AppInfo) {
+  const queued = scheduleInstall(app, defaultDependencies(app),
+    { action: 'install', trigger: 'user', updateOnly: group.kind === 'updates' },
+    (key, scheduled) => trackGroupItem(group, key, scheduled));
   if (!queued) {
-    const item = kit.items.find(i => i.key === app.key);
+    const item = group.items.find(i => i.key === app.key);
     if (item) item.state = 'failed';
   }
   return queued;
@@ -1159,7 +1206,7 @@ export function installKit(kit: KitInfo, keys: string[]) {
     return;
   }
   const selected = new Set(keys);
-  const items: KitActivity['items'] = [];
+  const items: ActivityGroup['items'] = [];
   for (const { key } of kit.items) {
     if (!selected.delete(key) || pendingUninstall(key)) continue;
     const app = appByKey(key);
@@ -1167,11 +1214,11 @@ export function installKit(kit: KitInfo, keys: string[]) {
       state: !app ? 'failed' : isInstalled(key) ? 'done' : 'queued', attempts: [] });
   }
   if (!items.length) return;
-  store.recent.unshift({ id: crypto.randomUUID(), key: kit.key, name: kitName(kit), updatedAt: Date.now(), items });
-  const group = store.recent[0] as KitActivity;
+  store.recent.unshift({ kind: 'kit', id: crypto.randomUUID(), key: kit.key, name: kitName(kit), updatedAt: Date.now(), items });
+  const group = store.recent[0] as ActivityGroup;
   for (const item of group.items.filter(i => i.selected && i.state === 'queued')) {
     const app = appByKey(item.key);
-    if (app) queueKitApp(group, app);
+    if (app) queueGroupApp(group, app);
   }
   saveActivity();
 }
@@ -1179,18 +1226,22 @@ export function installKit(kit: KitInfo, keys: string[]) {
 /** The queue is session-only. Reattach a saved dependent to its prerequisite without
  *  restarting other interrupted or cancelled jobs. Respect today's catalog and reuse
  *  any install that is already underway. */
-function restoreKitDependent(kit: KitActivity, item: KitActivity['items'][number]) {
+async function restoreDependent(group: ActivityGroup, item: ActivityGroup['items'][number]) {
   const app = appByKey(item.key);
-  if (!app || store.status[item.key] === 'unavailable') return;
-  if (!isPending(item.key) && verifiedKeys.has(item.key) && isInstalled(item.key)) {
-    item.state = 'done';
-    return;
+  if (!app || item.state !== 'interrupted') return;
+  const updateOnly = group.kind === 'updates' && item.selected;
+  if (!isPending(item.key)) {
+    if (!(await checkStatus(item.key))) return;
+    const status = store.status[item.key];
+    if (status === 'error' || status === 'unavailable') return;
+    if (!needsRetry('install', updateOnly, status, app)) {
+      item.state = updateOnly ? 'skipped' : 'done';
+      return;
+    }
+    if (!(await checkRetryDependencies(app))) return;
   }
   const pending = activeRequest ? [activeRequest, ...store.queue] : store.queue;
   const selected = defaultDependencies(app);
-  for (const key of item.waitingFor ?? []) {
-    if (!selected.includes(key) && app.dependencies.some(dep => dep.key === key)) selected.push(key);
-  }
   const plan = planInstall(app, selected, store.apps, pending, key => isInstalled(key) || store.status[key] === 'unavailable');
   if (plan.error) {
     item.state = 'failed';
@@ -1198,30 +1249,118 @@ function restoreKitDependent(kit: KitActivity, item: KitActivity['items'][number
     return;
   }
   for (const key of plan.members) {
-    if (key === item.key || pending.some(job => job.key === key)) trackKitItem(kit, key, true);
-    else if (!kit.items.some(i => i.key === key)) {
+    if (key === item.key || pending.some(job => job.key === key)) trackGroupItem(group, key, true);
+    else if (!group.items.some(i => i.key === key)) {
       const dependency = appByKey(key);
-      kit.items.push({ key, name: dependency ? appName(dependency) : key, selected: false, state: 'interrupted', attempts: [] });
+      group.items.push({ key, name: dependency ? appName(dependency) : key, selected: false, state: 'interrupted', attempts: [] });
     }
   }
   // Only this dependent is being resumed. Its other outstanding edges still wait
   // for their prerequisites to be verified or explicitly retried.
   const job = plan.installs.find(j => j.key === item.key);
-  if (job) store.queue.push({ ...job, trigger: 'user', action: 'install' });
+  if (job) store.queue.push({ ...job, trigger: 'user', action: 'install', updateOnly });
   pump();
 }
 
-export function retryKitItem(kit: KitActivity, key: string) {
-  const item = kit.items.find(i => i.key === key);
-  const app = appByKey(key);
-  if (!app || !item || !['cancelled', 'failed', 'interrupted'].includes(item.state) || isPending(key)
-    || store.status[key] === 'unavailable') return;
-  kit.updatedAt = Date.now();
-  const interrupted = interruptedDependents(kit, key);
-  if (queueKitApp(kit, app)) {
-    for (const dependent of interrupted) restoreKitDependent(kit, dependent);
+/** Check the live dependency tree chosen by today's options. A failed status
+ * check must never fall back to the cached "installed" result for a retry. */
+async function checkRetryDependencies(app: AppInfo, seen = new Set<string>()): Promise<boolean> {
+  const key = app.key;
+  if (seen.has(key)) return true; // the install planner reports cycles
+  seen.add(key);
+  if (app.unanswered.length) {
+    askQuestions(true);
+    toast('info', t('action.answerFirst'), appName(app));
+    return false;
   }
-  saveActivity();
+  const chosen = defaultDependencies(app);
+  if (store.status[key] === 'blocked' && (store.required[key] || !chosen.length)) {
+    toast('error', appName(app), t('action.needs', { what: store.reasons[key] ?? t('common.missingTool') }));
+    return false;
+  }
+  for (const child of chosen) {
+    if (seen.has(child) || isPending(child)) continue;
+    const dependency = appByKey(child);
+    if (!dependency) {
+      toast('error', t('queue.missing', { detail: child }));
+      return false;
+    }
+    if (!(await checkStatus(child))) {
+      toast('error', appName(dependency), store.statusErrors[child]);
+      return false;
+    }
+    if (store.status[child] === 'unavailable') {
+      if (!app.dependencies.some(dep => dep.key === child && dep.required)) continue;
+      toast('error', appName(dependency), t('app.status.unavailable'));
+      return false;
+    }
+    if (isInstalled(child)) continue;
+    if (!(await checkRetryDependencies(dependency, seen))) return false;
+  }
+  return true;
+}
+
+/** Re-plan against the current catalog, with fresh status and options. Only a
+ * chosen version's commit is reused; never replay saved commands or values. */
+async function retryOperation(key: string, kind: Run['kind'], action: Queued['action'], group?: ActivityGroup, commit?: string) {
+  if (isPending(key) || store.retrying[key]) return;
+  store.retrying[key] = true;
+  try {
+    if (!(await reloadApps())) return;
+    const app = appByKey(key);
+    if (!app || isPending(key)) return;
+    if (!(await checkStatus(key))) {
+      toast('error', appName(app), store.statusErrors[key]);
+      return;
+    }
+    if (isPending(key)) return;
+    const item = group?.items.find(i => i.key === key);
+    const interrupted = group ? interruptedDependents(group, key) : [];
+    const status = store.status[key];
+    if (status === 'error' || status === 'unavailable') return;
+    const needed = needsRetry(action, kind === 'update', status, app, commit);
+    if (!needed) {
+      if (item) item.state = group?.kind === 'updates' ? 'skipped' : 'done';
+      toast('info', t('activity.noLongerNeeded', { app: appName(app) }));
+    } else if (action === 'uninstall') {
+      if (store.unremovable[key]) toast('info', t('app.cantUninstall', { collection: app.collection }));
+      else uninstall(app);
+    } else {
+      if (!(await checkRetryDependencies(app))) return;
+      if (isPending(key)) return;
+      const queued = scheduleInstall(app, defaultDependencies(app),
+        { action, trigger: 'user', commit, updateOnly: kind === 'update' && action === 'install' },
+        group ? (member, scheduled) => trackGroupItem(group, member, scheduled) : undefined);
+      if (!queued) {
+        if (item) item.state = 'failed';
+        return;
+      }
+    }
+    if (group) {
+      for (const dependent of interrupted) await restoreDependent(group, dependent);
+    }
+  } finally {
+    delete store.retrying[key];
+    if (group) {
+      group.updatedAt = Date.now();
+      saveActivity();
+    }
+  }
+}
+
+export function retryActivity(summary: Summary) {
+  if (summary.result !== 'failed') return;
+  return retryOperation(summary.key, summary.kind, summary.action ?? (summary.kind === 'update' ? 'install' : summary.kind), undefined, summary.commit);
+}
+
+export function retryGroupItem(group: ActivityGroup, key: string) {
+  const item = group.items.find(i => i.key === key);
+  if (!item || !['cancelled', 'failed', 'interrupted'].includes(item.state)) return;
+  return retryOperation(key, group.kind === 'updates' && item.selected ? 'update' : 'install', 'install', group);
+}
+
+export async function retryFailed(group: ActivityGroup) {
+  for (const item of group.items.filter(i => i.state === 'failed')) await retryGroupItem(group, item.key);
 }
 
 /** Queue uninstalling the chosen items, in reverse kit order (later items may build on earlier). */

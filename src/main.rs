@@ -139,6 +139,9 @@ enum Command {
         /// The collection's directory
         #[arg(default_value = ".")]
         dir: std::path::PathBuf,
+        /// YAML target profiles and optional expected steps, dependencies and packages
+        #[arg(long, value_name = "FILE")]
+        profiles: Option<std::path::PathBuf>,
     },
     /// The DSC resource Furnish/NixOS (DSC runs it; see src/nixos_apps.rs)
     #[command(hide = true)]
@@ -589,7 +592,7 @@ fn run(command: Command) -> Result<()> {
         Command::Option(cmd) => option(cmd),
         Command::Reports => reports(),
         Command::SelfUpdate { check } => self_update(check),
-        Command::Check { dir } => check(&dir),
+        Command::Check { dir, profiles } => check(&dir, profiles.as_deref()),
         Command::Settings { update_on_launch, update_interval, auto_update, no_auto_update, load_aware_updates, collections, reporting, report_hostname, fallback_language, self_update, nixos } => {
             nixos.apply()?;
             if let Some(v) = self_update {
@@ -1179,9 +1182,9 @@ fn upgrade(all: bool) -> Result<()> {
 }
 
 /// `furnish check`: one line per app and kit, its findings below it, a summary; errors fail.
-fn check(dir: &std::path::Path) -> Result<()> {
+fn check(dir: &std::path::Path, profiles: Option<&std::path::Path>) -> Result<()> {
     use furnish::check::Severity;
-    let items = furnish::check::collection(dir)?;
+    let items = furnish::check::collection_with_profiles(dir, profiles)?;
     let width = items.iter().map(|i| i.name.len()).max().unwrap_or(0);
     for item in &items {
         let worst = item.findings.iter().map(|f| f.severity).max();
@@ -1196,6 +1199,9 @@ fn check(dir: &std::path::Path) -> Result<()> {
             .map(|(system, runs)| if runs.is_empty() { format!("{system}: –") } else { format!("{system}: {}", runs.join(", ")) })
             .collect();
         println!("{symbol} {:width$}  {}{}", item.name, item.kind, if systems.is_empty() { String::new() } else { format!("  {}", systems.join(" · ")) });
+        for detail in &item.details {
+            println!("    {detail}");
+        }
         for finding in &item.findings {
             let label = if finding.severity == Severity::Error { "error" } else { "warning" };
             println!("    {label}: {}", finding.message);
@@ -1432,6 +1438,9 @@ fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
             Action::Skipped => "  skipped",
         };
         println!("\n  {label:<16} {}  ({})", step.name, step.kind);
+        for note in &step.selection_notes {
+            println!("  {:<16} {}", "", note.english);
+        }
         for detail in &step.details {
             println!("  {:<16} {detail}", "");
         }

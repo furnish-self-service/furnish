@@ -120,7 +120,9 @@ switch ($Operation) {
     let calls = root.join("calls");
     run(&["check", &url], true);
     assert!(!calls.exists());
-    run(&["install", "managed/tools", "--dry-run"], true);
+    let plan = run(&["install", "managed/tools", "--dry-run"], true);
+    assert!(plan.contains("The app selects the collection’s company script manager"), "{plan}");
+    assert!(plan.contains("Package name company-tool comes from the mapping for company"), "{plan}");
     let preview = fs::read_to_string(&calls).unwrap();
     assert!(preview.lines().any(|op| op == "what-if"), "{preview}");
     assert!(!preview.lines().any(|op| op == "set"));

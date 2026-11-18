@@ -15,7 +15,12 @@ const UNIX_MANAGERS: [(&str, &str); 6] =
     [("pacman", "pacman"), ("apt", "apt-get"), ("dnf", "dnf"), ("zypper", "zypper"), ("brew", "brew"), ("nix", "nix")];
 
 pub(crate) fn supported_manager(name: &str) -> bool {
-    name == "winget" || UNIX_MANAGERS.iter().any(|(manager, _)| *manager == name)
+    native_manager_priority(name).is_some()
+}
+
+/// Native discovery iterates UNIX_MANAGERS in this order. Windows only uses winget.
+pub(crate) fn native_manager_priority(name: &str) -> Option<usize> {
+    if name == "winget" { Some(0) } else { UNIX_MANAGERS.iter().position(|(manager, _)| *manager == name) }
 }
 
 pub(crate) fn valid_distribution_id(word: &str) -> bool {

@@ -52,6 +52,10 @@ impl Definition {
         Ok(())
     }
 
+    pub(crate) fn supports_platform(&self, windows: bool) -> bool {
+        self.interpreter.is_some() || extension(Path::new(&self.script)) == if windows { "ps1" } else { "sh" }
+    }
+
     fn path(&self, root: &Path) -> Result<PathBuf> {
         let path = root.join(&self.script);
         let real = path
@@ -172,7 +176,7 @@ fn paths(source: &Value, verify_checkout: bool) -> Result<BTreeMap<String, Scrip
     let mut available = BTreeMap::new();
     for (id, def) in crate::options::package_managers(&dir)? {
         let file = def.path(&dir)?;
-        if def.requires_command.as_deref().is_some_and(|c| which::which(c).is_err()) {
+        if !def.supports_platform(cfg!(windows)) || def.requires_command.as_deref().is_some_and(|c| which::which(c).is_err()) {
             continue;
         }
         let interpreter = match def.interpreter {
@@ -188,8 +192,7 @@ fn paths(source: &Value, verify_checkout: bool) -> Result<BTreeMap<String, Scrip
                 }
                 Some(path)
             }
-            None if extension(&file) == (if cfg!(windows) { "ps1" } else { "sh" }) => None,
-            None => continue,
+            None => None,
         };
         available.insert(id, Script { path: file, interpreter });
     }

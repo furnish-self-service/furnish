@@ -5,6 +5,7 @@
   import type { AppInfo, Step } from './api';
   import type { Run, RunStep } from './activity-history';
   import { store, appName, externalNote } from './state.svelte';
+  import { stepProse } from './step-prose';
   import { describeCondition } from './conditions';
   import { t, terror, tparts, parts, formatTime, formatDuration, formatDate } from './i18n.svelte';
   import { dictionaries, type Key } from './i18n.ts';
@@ -33,7 +34,6 @@
 
   let preview = $state<Step[] | null>(null);
   let error = $state<string | null>(null);
-  let loading = $state(false);
 
   // Load the preview when it is shown, and again after the app's state changed.
   $effect(() => {
@@ -41,13 +41,14 @@
     const uninstall = mode === 'uninstall';
     status; // dependency: refresh after install/uninstall
     if (uninstall && unremovable) return; // nothing to preview, see the note below
-    loading = true;
+    let current = true;
+    preview = null;
     error = null;
-    api
-      .plan(app.key, uninstall)
-      .then((s) => (preview = s))
-      .catch((e) => ((error = String(e)), (preview = null)))
-      .finally(() => (loading = false));
+    api.plan(app.key, uninstall).then(
+      (steps) => { if (current) preview = steps; },
+      (reason) => { if (current) error = String(reason); },
+    );
+    return () => { current = false; };
   });
 
   // A clock for the running step's duration.
@@ -85,7 +86,8 @@
   }
   /** Skipped steps carry "Not on this system: <condition>". */
   function skipReason(detail: string) {
-    const condition = detail.match(/^Not on this system: (.+)$/)?.[1];
+    const prefix = 'Not on this system: ';
+    const condition = detail.startsWith(prefix) && detail.slice(prefix.length);
     return condition ? { text: describeCondition(condition) ?? t('plan.conditionFalse'), condition } : null;
   }
   /** A Furnish/NixOS step with onlyIfSetUp where its configuration isn't set up:
@@ -158,7 +160,9 @@
 
 {#snippet marked(text: string, strongClass = '')}{#each parts(text) as p}{#if p.tag}<strong class={strongClass}>{p.text}</strong>{:else}{p.text}{/if}{/each}{/snippet}
 
-{#snippet sentence(n: Note)}{#each noteParts(n) as part}{#if part.tag}<code class="inline">{part.text}</code>{:else}{part.text}{/if}{/each}{#if showCounts(n)}<span class="counts" title={t('plan.diff.counts', { added: n.params.added as number, removed: n.params.removed as number })}>{#if n.params.added}<span class="plus">+{n.params.added}</span>{/if}{#if n.params.added && n.params.removed}{' '}{/if}{#if n.params.removed}<span class="minus">−{n.params.removed}</span>{/if}</span>{/if}{/snippet}
+{#snippet prose(text: string)}{#each stepProse(text) as part}{#if part.code}<code class="inline">{part.text}</code>{:else}{part.text}{/if}{/each}{/snippet}
+
+{#snippet sentence(n: Note)}{#each noteParts(n) as part}{#if part.tag}<code class="inline">{part.text}</code>{:else}{@render prose(part.text)}{/if}{/each}{#if showCounts(n)}<span class="counts" title={t('plan.diff.counts', { added: n.params.added as number, removed: n.params.removed as number })}>{#if n.params.added}<span class="plus">+{n.params.added}</span>{/if}{#if n.params.added && n.params.removed}{' '}{/if}{#if n.params.removed}<span class="minus">−{n.params.removed}</span>{/if}</span>{/if}{/snippet}
 
 {#snippet diffTable(n: Note)}
   <div class="difftable">
@@ -242,7 +246,7 @@
   {:else if !preview}
     <p class="muted">{t('plan.preparing')}</p>
   {:else}
-    <p class="summary" class:stale={loading}>
+    <p class="summary">
       {@render marked(
         changing === 0
           ? t('plan.changeNothing', { subject: t(`plan.subject.${previewKind}`, { app: name }) })
@@ -273,6 +277,9 @@
             <span class="name">{step.name}</span>
             <span class="type">{step.type}</span>
           </div>
+          {#each step.selectionNotes ?? [] as n}
+            <p class="detail">{#if known(n)}{@render sentence(n)}{:else}{@render prose(n.english)}{/if}</p>
+          {/each}
           {#if step.notes?.length && step.notes.every(known)}
             {#each step.notes as n}
               {#if n.code === 'run'}
@@ -305,7 +312,8 @@
             {@const skip = skipReason(detail)}
             {@const unneeded = notNeeded(detail)}
             {#if skip}
-              <p class="detail">{t('plan.notForSystem', { reason: skip.text })} <span class="type">{skip.condition}</span></p>
+              <p class="detail">{t('plan.notForSystem', { reason: skip.text })}</p>
+              <code class="condition">{skip.condition}</code>
             {:else if unneeded}
               <p class="detail">{t('plan.notNeeded', { reason: unneeded })}</p>
             {:else if c}
@@ -314,7 +322,7 @@
                 <code>{c.cmd}</code>
               </div>
             {:else}
-              <p class="detail">{detail}</p>
+              <p class="detail">{@render prose(detail)}</p>
             {/if}
           {/each}
           {/if}
@@ -347,6 +355,7 @@
 <style>
   .plan {
     margin-top: 0.75rem;
+    container-type: inline-size;
   }
   .switch {
     display: inline-flex;
@@ -373,9 +382,6 @@
     margin: 1rem 0 0.75rem;
     line-height: 1.5;
     transition: opacity 0.15s;
-  }
-  .stale {
-    opacity: 0.5;
   }
   .muted {
     color: var(--muted);
@@ -437,7 +443,6 @@
     background: transparent;
     border-style: dashed;
     border-left-style: solid;
-    opacity: 0.75;
   }
   /* Live view: upcoming steps recede, the current one stands out. */
   .live li.pending, .live li.notRun {
@@ -504,7 +509,9 @@
   }
   .badge {
     flex: none;
-    min-width: 5.6rem;
+    width: 6.75rem;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
     padding: 0.2rem 0.6rem;
     border-radius: 999px;
     text-align: center;
@@ -528,6 +535,7 @@
   }
   .name {
     font-weight: 650;
+    overflow-wrap: anywhere;
   }
   .type {
     font: 0.75rem var(--font-mono);
@@ -536,6 +544,8 @@
   .detail {
     margin: 0;
     font-size: 0.9rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
     color: var(--ink-soft);
   }
   .command {
@@ -557,13 +567,25 @@
     color: #d5e5e3;
     overflow-wrap: anywhere;
   }
-  /* A value moves to the next line as a whole rather than breaking at the line's end. */
-  .detail code.inline {
-    display: inline-block;
-    max-width: 100%;
-    font: 0.82em var(--font-mono);
+  .inline,
+  .condition {
+    padding: 0.08em 0.34em;
+    border: 1px solid var(--line);
+    border-radius: 0.32em;
+    background: var(--canvas);
     color: var(--ink);
+    font: 0.9em/1.5 var(--font-mono);
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .condition {
+    justify-self: start;
+    max-width: 100%;
+    padding: 0.25em 0.55em;
+    color: var(--ink-soft);
+    font-size: 0.8rem;
   }
   /* A file step's diff: collapsed under the step's sentence. */
   /* The browser's own disclosure triangle, at the size of the app's other ones (AppDetail's
@@ -678,6 +700,11 @@
     gap: 0.15rem;
     font-size: 0.8rem;
     font-variant-numeric: tabular-nums;
+  }
+  @container (max-width: 32rem) {
+    .steps li { flex-wrap: wrap; gap: 0.4rem 0.6rem; }
+    .steps .body { flex-basis: 100%; order: 1; }
+    .timing { margin-inline-start: auto; }
   }
   .result {
     font-weight: 650;
