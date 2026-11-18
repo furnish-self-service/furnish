@@ -1279,6 +1279,10 @@ impl Collection {
     pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
+        anyhow::ensure!(doc.is_object(), "the app document must be an object");
+        for (field, value) in [("metadata", &doc["metadata"]), ("metadata.furnish", &doc["metadata"]["furnish"])] {
+            anyhow::ensure!(value.is_null() || value.is_object(), "{field} must be an object");
+        }
         crate::script_managers::attach(self, &mut doc)?;
         if doc["variables"].get(crate::conditions::HOST).is_some() {
             bail!("DSC variable '{}' is supplied by furnish and cannot be redeclared", crate::conditions::HOST);
@@ -2628,6 +2632,20 @@ mod tests {
             fs::write(dir.join(path), contents).unwrap();
         }
         (Collection { name: "c".into(), dir: dir.clone(), managed: false }, dir)
+    }
+
+    #[test]
+    fn invalid_metadata_is_rejected_before_stamping_the_app() {
+        let (mut collection, dir) = collection_with(&[("apps/app.dsc.yaml", "")]);
+        collection.managed = true;
+        let path = dir.join("apps/app.dsc.yaml");
+        for (input, expected) in [
+            ("false", "app document"), ("metadata: false", "metadata must"), ("metadata: { furnish: 1 }", "metadata.furnish must"),
+        ] {
+            fs::write(&path, input).unwrap();
+            assert!(collection.load_app(&path).err().unwrap().to_string().contains(expected));
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

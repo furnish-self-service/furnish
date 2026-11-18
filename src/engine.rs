@@ -1087,9 +1087,7 @@ pub(crate) fn apply_nixos_step(doc: &Value, request: &crate::nixos_apps::Service
         // other than the fingerprinted packages-only declaration, including script managers.
         // DSC still checks the actual step condition and validates/evaluates the properties.
         let resource = &mut step["resources"][0];
-        if let Some(resource) = resource.as_object_mut() {
-            resource.remove("directives");
-        }
+        anyhow::ensure!(resource["directives"]["requireAdapter"].is_null(), "a delegated Nix package must use the built-in resource");
         resource["metadata"][crate::nixos_apps::PACKAGE_FINGERPRINT] = request.fingerprint.clone().into();
         let result = configurator(&step)?.invoke_set(true)?;
         anyhow::ensure!(result.results.len() == 1, "the requested Nix package does not apply here");
