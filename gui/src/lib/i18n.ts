@@ -87,10 +87,9 @@ export function warningText(w: SettingsWarning): [Key, Params] {
   return [`settings.warning.${code}`, params];
 }
 
-/** furnish's own messages that reach the app in English inside an error (a resource's failure):
- *  the reasons src/nixos_apps.rs `service_only` gives. Each English entry is the backend's text
- *  with its values as `{name}`. */
-const knownErrors: Key[] = ['error.nixos.notPreset', 'error.nixos.perUser', 'error.nixos.serviceOff'];
+/** Furnish resource errors that DSC includes in a longer diagnostic. Each English entry
+ *  matches the backend's text, with placeholders for values such as a process name. */
+const knownErrors: Key[] = ['error.nixos.notPreset', 'error.nixos.perUser', 'error.nixos.serviceOff', 'error.file.requiresClosed'];
 
 /** An error text with the known messages in it in the language; the rest stays as it is. */
 export function knownError(lang: Lang, text: string): string {
@@ -100,7 +99,7 @@ export function knownError(lang: Lang, text: string): string {
     const pattern = template
       .split(/\{\w+\}/)
       .map((piece) => piece.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join("([^'\\n]+?)");
+      .join('([^\\r\\n]+?)');
     text = text.replace(new RegExp(pattern, 'g'), (...m) =>
       translate(lang, key, Object.fromEntries(names.map((name, i) => [name, m[i + 1]]))),
     );

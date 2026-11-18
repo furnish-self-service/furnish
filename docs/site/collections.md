@@ -319,10 +319,26 @@ The resources that write files have these properties in common:
 | Property | Meaning |
 |---|---|
 | `_exist` | `false` removes the file, or the resource's part of it |
+| `requiresClosed` | Names of application executables that must be closed before this file changes |
 | `backup` | `true` keeps a copy of the file before each change, named `<file>.<date and time in UTC>~` |
 | `validate` | A command that checks the new file before it replaces the old one, with `'%s'` for its path, for example `[ssh, -G, -F, '%s', git.acme.example]`. If it exits with another code than 0, the step fails and the file stays as it was |
 | `mode` | The file's mode on macOS and Linux, for example `'640'` |
 | `private` | `true`: only the user may open the file. On Windows, its access list grants only the user access and inherits nothing; on macOS and Linux, its mode is 600 |
+
+Some desktop apps keep their settings in memory and save them again on exit. Use `requiresClosed` on a `Furnish/File`, `Furnish/Line`, `Furnish/Block`, or `Furnish/Value` step that edits one of these files. For example, a Linux collection for an editor whose executable is named `notes-desktop` could include this step:
+
+```yaml
+- name: Disable the editor’s update reminders
+  type: Furnish/Value
+  properties:
+    path: ~/.config/notes-desktop/settings.json
+    format: json
+    location: $.showUpdateReminders
+    value: false
+    requiresClosed: [notes-desktop]
+```
+
+Use executable names, such as `notes-desktop`, for processes visible to the account applying the change. The Furnish service can see applications in other users’ sessions. If the file needs to change while the editor is running, Furnish asks the user to quit it and retry. For an app in the system tray, use its Quit action. A step whose settings already match can finish while the app stays open.
 
 `mode` and `private` are part of the desired state: a file that someone made readable for others shows as an available update, and installing again restores them. A step without them leaves the mode as it is, so for a file that several `Furnish/Value`, `Furnish/Line` or `Furnish/Block` steps edit, `private: true` on one of them is enough. Steps that give the same file different modes would undo each other, so furnish refuses such an app when it loads it. Uninstalling never changes the mode, and these three resources never delete the file: it may hold the user's own settings.
 

@@ -48,6 +48,17 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "requiresClosed": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/\\\\:*?\\[\\]\\x00-\\x1F\\x7F]+$",
+            "not": { "enum": [".", ".."] }
+          },
+          "description": "Executable basenames that must be closed before changing this file. On Windows, case and the .exe suffix are optional."
+        },
         "path": {
           "type": "string",
           "description": "The file's path: absolute or starting with ~/"

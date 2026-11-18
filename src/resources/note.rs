@@ -44,6 +44,7 @@ impl Note {
             "dir.keep" => format!("Keep {}: it isn't empty", s("path")),
             "mode" => format!("Set the mode of {} to {}", s("path"), s("mode")),
             "private" => format!("Make {} accessible only to you", s("path")),
+            "file.requiresClosed" => format!("Close {} before changing this file", s("names")),
             "file.create" => format!("Create {} ({} {})", s("path"), s("lines"), if s("lines") == "1" { "line" } else { "lines" }),
             "file.copy" => format!("Copy {} to {}", s("source"), s("path")),
             "file.write" => format!("Change {} ({} lines added, {} removed)", s("path"), s("added"), s("removed")),

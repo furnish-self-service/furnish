@@ -7,6 +7,7 @@
 //! change that set would make (see [`Plan`]). test reports the desired state when there is no
 //! change, and set changes only then, so test and set can't disagree.
 
+mod closed_apps;
 mod command;
 pub(crate) mod common;
 pub mod diff;
@@ -22,6 +23,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
+use closed_apps::ClosedApps;
 use common::{Managed, Missing, Text, WriteOptions};
 use note::{Note, note};
 
@@ -99,7 +101,7 @@ fn run(args: &[String]) -> Result<String> {
         return crate::package_names::run(&props, op, what_if);
     }
     let files = props.get_mut("_metadata").and_then(Value::as_object_mut).and_then(|m| m.remove("furnishComparisonFiles"));
-    let plan = if kind == "command" && what_if && op == "set" {
+    let mut plan = if kind == "command" && what_if && op == "set" {
         command::evaluate_with_files(&props, files.as_ref().unwrap_or(&Value::Null))?
     } else {
         evaluate(kind, &props)?
@@ -125,6 +127,10 @@ fn run(args: &[String]) -> Result<String> {
         }
         "set" if what_if => {
             let mut after = plan.after;
+            if plan.apply.is_some() && plan.unverified.is_none() && let Some(names) = props["requiresClosed"].as_array() {
+                let names = names.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
+                plan.steps.insert(0, note("file.requiresClosed", json!({ "names": names })));
+            }
             // whatIf for the CLI and logs, furnish for the GUI (translated there).
             let english: Vec<String> = plan.steps.iter().map(Note::english).collect();
             let notes: Vec<Value> = plan.steps.iter().map(|n| json!({ "code": n.code, "params": n.params })).collect();
@@ -248,6 +254,10 @@ pub fn check(kind: &str, props: &Value) -> Result<()> {
         return crate::package_names::validate(props);
     }
     let Some((_, name, _)) = TYPES.iter().find(|(t, _, _)| t.eq_ignore_ascii_case(kind)) else { return Ok(()) };
+    if let Some(guard) = props.get("requiresClosed") {
+        anyhow::ensure!(matches!(*name, "file" | "block" | "line" | "value"), "requiresClosed is only supported on file-editing resources");
+        closed_apps::check_property(guard)?;
+    }
     let Some(props) = literal(props) else { return Ok(()) };
     match *name {
         "directory" => parse::<DirectoryProps>(&props).and_then(|p| p.check()),
@@ -421,6 +431,8 @@ fn directory(props: &Value) -> Result<Plan> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileProps {
+    #[serde(default, rename = "requiresClosed")]
+    requires_closed: ClosedApps,
     path: String,
     content: Option<String>,
     source: Option<String>,
@@ -469,7 +481,7 @@ fn file(props: &Value) -> Result<Plan> {
     let p: FileProps = parse(props)?;
     p.check()?;
     let mut plan = Plan::new(props);
-    let file = Managed::open(&p.path)?;
+    let file = Managed::open_guarded(&p.path, p.requires_closed)?;
     if file.unreadable {
         return Ok(unreadable(plan, &file, exist(p.exist)));
     }
@@ -526,6 +538,7 @@ fn file(props: &Value) -> Result<Plan> {
         plan.change(all, move || common::write(&file, &bytes, &options));
     } else if !steps.is_empty() {
         plan.change(steps, move || {
+            file.check_before_change()?;
             if let Some(mode) = options.mode {
                 common::set_mode(&file.real, mode)?;
             }
@@ -565,6 +578,7 @@ fn text_change(plan: &mut Plan, file: Managed, text: Text, new: String, options:
     if new == text.text {
         if !perms.is_empty() {
             plan.change(perms, move || {
+                file.check_before_change()?;
                 if let Some(mode) = options.mode {
                     common::set_mode(&file.real, mode)?;
                 }
@@ -603,6 +617,8 @@ enum InsertProp {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlockProps {
+    #[serde(default, rename = "requiresClosed")]
+    requires_closed: ClosedApps,
     path: String,
     content: String,
     comment: Option<String>,
@@ -640,7 +656,7 @@ fn block(props: &Value) -> Result<Plan> {
     let insert = p.check()?;
     let app = p.app.as_deref().context("app is missing: furnish sets it to <collection>/<app> when it loads the app")?;
     let mut plan = Plan::new(props);
-    let file = Managed::open(&p.path)?;
+    let file = Managed::open_guarded(&p.path, p.requires_closed)?;
     if file.unreadable {
         return Ok(unreadable(plan, &file, exist(p.exist)));
     }
@@ -664,6 +680,8 @@ fn block(props: &Value) -> Result<Plan> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LineProps {
+    #[serde(default, rename = "requiresClosed")]
+    requires_closed: ClosedApps,
     path: String,
     line: String,
     #[serde(rename = "match")]
@@ -729,7 +747,7 @@ fn line(props: &Value) -> Result<Plan> {
     let p: LineProps = parse(props)?;
     let line = p.check()?;
     let mut plan = Plan::new(props);
-    let file = Managed::open(&p.path)?;
+    let file = Managed::open_guarded(&p.path, p.requires_closed)?;
     if file.unreadable {
         return Ok(unreadable(plan, &file, exist(p.exist)));
     }
@@ -762,6 +780,8 @@ fn line(props: &Value) -> Result<Plan> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValueProps {
+    #[serde(default, rename = "requiresClosed")]
+    requires_closed: ClosedApps,
     path: String,
     format: Option<value::Format>,
     location: String,
@@ -809,7 +829,7 @@ fn value(props: &Value) -> Result<Plan> {
     let merge = p.merge.unwrap_or_default();
     let exist = exist(p.exist);
     let mut plan = Plan::new(props);
-    let file = Managed::open(&p.path)?;
+    let file = Managed::open_guarded(&p.path, p.requires_closed)?;
     if file.unreadable {
         return Ok(unreadable(plan, &file, exist));
     }

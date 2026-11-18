@@ -98,3 +98,12 @@ test('the reasons furnish gives for not changing the NixOS configuration are tra
   assert.equal(knownError('nl', perUser), translate('nl', 'error.nixos.perUser', { app: 'acme-ssh' }));
   assert.equal(knownError('de', 'something else'), 'something else');
 });
+
+test('DSC-wrapped close-and-retry errors preserve the named applications', () => {
+  const prefix = "Command: Resource '/usr/local/bin/furnish-gui' [exit code 2] furnish: ";
+  const names = "Acme's Desktop, Cache Helper";
+  const backend = `${prefix}Close ${names}, then retry this change\n`;
+  const translated = knownError('de', backend);
+  assert.equal(translated, prefix + translate('de', 'error.file.requiresClosed', { names }) + '\n');
+  assert.ok(translated.includes(names) && translated !== backend);
+});
