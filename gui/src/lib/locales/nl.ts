@@ -16,6 +16,10 @@ export const nl: Record<keyof typeof en, Entry> = {
   'nav.collectionUpdates': { one: '{n} collectie heeft een update', other: '{n} collecties hebben een update' },
   'nav.settings': 'Instellingen',
   'nav.selfUpdate': 'Er is een nieuwe versie van {brand}',
+  'catalog.scanProgress': "{done} van {total} apps gecontroleerd",
+  'catalog.scanFailures': "Apps die niet konden worden gecontroleerd: {n}",
+  'catalog.noUpdatesFound': "Geen updates gevonden voor de gecontroleerde apps.",
+  'catalog.settingUp': "Je collecties worden ingesteld…",
   'catalog.checking': 'Controleren…',
   'catalog.checkForUpdates': 'Controleren op updates',
   'catalog.postponed': 'Updates uitgesteld: {reason}',
@@ -66,6 +70,10 @@ export const nl: Record<keyof typeof en, Entry> = {
 
   // ActionButton.svelte
   'action.stopping': 'Stoppen…',
+  'status.check': "Status controleren",
+  'status.retry': "Opnieuw controleren",
+  'status.lastKnown': "Laatst bekende status: {state}",
+  'status.checkedAt': "Laatst bevestigd op {time}",
   'action.status': 'Status onbekend',
   'action.answerFirst': 'Eerst beantwoorden',
   'action.needs': 'Vereist {what}',
@@ -104,6 +112,11 @@ export const nl: Record<keyof typeof en, Entry> = {
 
   // Activity.svelte
   'activity.title': 'Activiteit',
+  'activity.recent': "Recente activiteit",
+  'activity.trigger.user': "Door jou gestart",
+  'activity.trigger.update': "Automatische update",
+  'activity.trigger.autoInstall': "Installatie door je organisatie",
+  'activity.failedStep': "Mislukte stap: {step}",
   'activity.now': 'Nu',
   'activity.nothingRunning': 'Er loopt niets. Installaties, updates en verwijderingen die u start, verschijnen hier.',
   'activity.upNext': 'Hierna',

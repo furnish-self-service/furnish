@@ -148,7 +148,9 @@
       <ul class="rows">
         <li class="status">
           <span class="text" aria-live="polite">
-            {#if store.autoUpdate.running}
+            {#if store.scan.running}
+              <span class="label">{t('catalog.scanProgress', { done: store.scan.checked, total: store.scan.total })}</span>
+            {:else if store.autoUpdate.running}
               <span class="label">{t('settings.checking')}</span>
             {:else if store.autoUpdate.error}
               <span class="label failed">{t('settings.lastFailed')}</span>
@@ -168,7 +170,7 @@
             {/if}
           </span>
           <span class="control">
-            <button class="secondary" disabled={store.autoUpdate.running} onclick={checkForUpdates}>{t('settings.checkNow')}</button>
+            <button class="secondary" disabled={store.autoUpdate.running || store.scan.running || store.loading} onclick={checkForUpdates}>{t('settings.checkNow')}</button>
           </span>
         </li>
         <li class="row">

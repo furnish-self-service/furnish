@@ -16,6 +16,10 @@ export const pl: Record<keyof typeof en, Entry> = {
   'nav.collectionUpdates': { one: '{n} kolekcja ma aktualizację', few: '{n} kolekcje mają aktualizację', many: '{n} kolekcji ma aktualizację', other: '{n} kolekcji ma aktualizację' },
   'nav.settings': 'Ustawienia',
   'nav.selfUpdate': 'Dostępna jest nowa wersja aplikacji {brand}',
+  'catalog.scanProgress': "Sprawdzone aplikacje: {done} z {total}",
+  'catalog.scanFailures': "Liczba aplikacji, których nie udało się sprawdzić: {n}",
+  'catalog.noUpdatesFound': "Nie znaleziono aktualizacji wśród sprawdzonych aplikacji.",
+  'catalog.settingUp': "Konfigurowanie kolekcji…",
   'catalog.checking': 'Sprawdzanie…',
   'catalog.checkForUpdates': 'Sprawdź aktualizacje',
   'catalog.postponed': 'Aktualizacje odłożone: {reason}',
@@ -66,6 +70,10 @@ export const pl: Record<keyof typeof en, Entry> = {
 
   // ActionButton.svelte
   'action.stopping': 'Zatrzymywanie…',
+  'status.check': "Sprawdź stan",
+  'status.retry': "Sprawdź ponownie",
+  'status.lastKnown': "Ostatni znany stan: {state}",
+  'status.checkedAt': "Ostatnie potwierdzenie: {time}",
   'action.status': 'Stan nieznany',
   'action.answerFirst': 'Najpierw odpowiedz',
   'action.needs': 'Wymaga: {what}',
@@ -104,6 +112,11 @@ export const pl: Record<keyof typeof en, Entry> = {
 
   // Activity.svelte
   'activity.title': 'Aktywność',
+  'activity.recent': "Ostatnia aktywność",
+  'activity.trigger.user': "Na Twoje żądanie",
+  'activity.trigger.update': "Aktualizacja automatyczna",
+  'activity.trigger.autoInstall': "Instalacja zlecona przez organizację",
+  'activity.failedStep': "Nieudany krok: {step}",
   'activity.now': 'Teraz',
   'activity.nothingRunning': 'Nic nie jest uruchomione. Tutaj pojawiają się rozpoczęte przez Ciebie instalacje, aktualizacje i odinstalowania.',
   'activity.upNext': 'Następne',

@@ -16,6 +16,10 @@ export const fr: Record<keyof typeof en, Entry> = {
   'nav.collectionUpdates': { one: '{n} collection a une mise à jour', other: '{n} collections ont une mise à jour' },
   'nav.settings': 'Paramètres',
   'nav.selfUpdate': 'Une nouvelle version de {brand} est disponible',
+  'catalog.scanProgress': "Applications vérifiées : {done} sur {total}",
+  'catalog.scanFailures': "Applications dont la vérification a échoué : {n}",
+  'catalog.noUpdatesFound': "Aucune mise à jour trouvée parmi les applications vérifiées.",
+  'catalog.settingUp': "Configuration de vos collections…",
   'catalog.checking': 'Vérification…',
   'catalog.checkForUpdates': 'Rechercher des mises à jour',
   'catalog.postponed': 'Mises à jour reportées : {reason}',
@@ -66,6 +70,10 @@ export const fr: Record<keyof typeof en, Entry> = {
 
   // ActionButton.svelte
   'action.stopping': 'Arrêt…',
+  'status.check': "Vérifier l’état",
+  'status.retry': "Réessayer",
+  'status.lastKnown': "Dernier état connu : {state}",
+  'status.checkedAt': "Dernière vérification réussie : {time}",
   'action.status': 'État inconnu',
   'action.answerFirst': 'Répondre d’abord',
   'action.needs': 'Nécessite {what}',
@@ -104,6 +112,11 @@ export const fr: Record<keyof typeof en, Entry> = {
 
   // Activity.svelte
   'activity.title': 'Activité',
+  'activity.recent': "Activité récente",
+  'activity.trigger.user': "À votre demande",
+  'activity.trigger.update': "Mise à jour automatique",
+  'activity.trigger.autoInstall': "Installation par votre organisation",
+  'activity.failedStep': "Étape en échec : {step}",
   'activity.now': 'En cours',
   'activity.nothingRunning': 'Aucune opération en cours. Les installations, mises à jour et désinstallations que vous lancez s’affichent ici.',
   'activity.upNext': 'À suivre',

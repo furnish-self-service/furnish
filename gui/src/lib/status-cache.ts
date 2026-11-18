@@ -32,6 +32,12 @@ function valid(v: unknown): v is AppCheck {
     && (v.external === null || external(v.external)) && (v.required === null || required(v.required));
 }
 
+export interface SavedCheck {
+  check: AppCheck;
+  /** Older cache records predate this field. */
+  checkedAt: number | null;
+}
+
 export class StatusCache {
   private prefix: string;
 
@@ -39,18 +45,22 @@ export class StatusCache {
     this.prefix = 'furnish.appStatus.v1:' + JSON.stringify(dataDir) + ':';
   }
 
-  read(key: string, revision: string): AppCheck | undefined {
+  read(key: string, revision: string): SavedCheck | undefined {
     try {
       const raw = localStorage.getItem(this.prefix + key);
       if (raw === null) return;
       const entry = JSON.parse(raw);
-      if (entry?.revision === revision && valid(entry.check)) return entry.check;
+      if (entry?.revision === revision && valid(entry.check)) {
+        const time = entry.checkedAt;
+        const checkedAt = Number.isSafeInteger(time) && time > 0 && time <= 8.64e15 ? time : null;
+        return { check: entry.check, checkedAt };
+      }
     } catch { /* Unavailable storage or an incomplete entry: use the live check. */ }
   }
 
-  write(key: string, revision: string, check: AppCheck) {
+  write(key: string, revision: string, check: AppCheck, checkedAt: number) {
     try {
-      localStorage.setItem(this.prefix + key, JSON.stringify({ revision, check }));
+      localStorage.setItem(this.prefix + key, JSON.stringify({ revision, check, checkedAt }));
     } catch { /* Checking works even when the webview cannot save data. */ }
   }
 
