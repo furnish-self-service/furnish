@@ -179,7 +179,7 @@ export interface CollectionInfo {
   /** Data URL of the avatar for dark mode (`iconDark`). */
   iconDark: string | null;
   /** History kept, downloads and falling back, and which of them the organization sets. */
-  settings: { settings: CollectionSettings; locked: (keyof CollectionSettings)[] };
+  settings: { settings: CollectionSettings; locked: (keyof CollectionSettings)[]; trackingSource: 'default' | 'user' | 'policy' | 'endpoint'; trackingError?: string | null };
   /** The language of the collection's own texts. */
   language: string;
   /** Its translations (`locales/<lang>.yaml`) by language tag. */
@@ -188,7 +188,10 @@ export interface CollectionInfo {
   updateAvailable: boolean;
 }
 
+export type Tracking = { mode: 'default' } | { mode: 'branch'; name: string } | { mode: 'tag'; pattern: string; order?: 'version' | 'newest' };
+
 export interface CollectionSettings {
+  tracking: Tracking;
   /** Commits of history to keep; 0: all. */
   checkoutDepth: number;
   /** Download file contents when needed: installer files when their app is installed. */
@@ -317,9 +320,11 @@ export const setCollectionSetting = (name: string, key: keyof CollectionSettings
 export const setOption = (target: string, name: string, value: unknown) =>
   invoke<void>('set_option', { target, name, value });
 export const listCollections = () => invoke<CollectionInfo[]>('list_collections');
+/** Classify an add-form address locally, using the same parser as add_collection. */
+export const isFurnishAddress = (input: string) => invoke<boolean>('is_furnish_address', { input });
 /** A git collection, or an organization's furnish address (furnish.myorg.tld): all its collections. */
-export const addCollection = (url: string, name: string | null, username?: string, password?: string) =>
-  invoke<CollectionInfo[]>('add_collection', { url, name, username: username || null, password: password || null });
+export const addCollection = (url: string, name: string | null, username?: string, password?: string, tracking: Tracking | null = null) =>
+  invoke<CollectionInfo[]>('add_collection', { url, name, username: username || null, password: password || null, tracking });
 /** The organization's furnish addresses this computer knows, and whether the user is signed in. */
 export interface Endpoint {
   origin: string;

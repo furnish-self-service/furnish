@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 fn serve(doc: Arc<Mutex<Option<String>>>, repos: Option<PathBuf>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let discovery = json!({"issuer":origin,"authorization_endpoint":format!("{origin}/authorize"),"token_endpoint":format!("{origin}/token")}).to_string();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let mut reader = BufReader::new(&stream);
@@ -44,6 +45,8 @@ fn serve(doc: Arc<Mutex<Option<String>>>, repos: Option<PathBuf>) -> String {
                     Some(body) => ok(body.as_bytes()),
                     None => status("503 Service Unavailable"),
                 }
+            } else if path == "/.well-known/openid-configuration" {
+                ok(discovery.as_bytes())
             } else if path.starts_with("/limited.git") {
                 status("429 Too Many Requests")
             } else if let (Some(repos), Some(file)) = (&repos, path.strip_prefix("/git/")) {
@@ -157,6 +160,21 @@ fn a_user_added_endpoint_is_fetched_again_and_a_bad_setting_spoils_nothing() {
     assert!(stderr(&out).contains("isn't served by the endpoint itself") && stderr(&out).contains("keeping the saved description"));
     assert_eq!(read(&saved)["description"]["settings"], v2["settings"]);
 
+    // Invalid or newer selectors cannot replace a working release track with the default branch.
+    let mut tagged = v2.clone();
+    tagged["collections"][0]["tracking"] = json!({"mode":"tag", "pattern":"^v[0-9]+$"});
+    *doc.lock().unwrap() = Some(tagged.to_string());
+    let out = env.furnish(&["collection", "update"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    for invalid in [json!({"mode":"channel", "name":"next"}), json!({"mode":"tag", "pattern":"["}), Value::Null] {
+        let mut bad = tagged.clone();
+        bad["collections"][0]["tracking"] = invalid;
+        *doc.lock().unwrap() = Some(bad.to_string());
+        let out = env.furnish(&["collection", "update"]);
+        assert!(stderr(&out).contains("keeping the saved description"), "{}", stderr(&out));
+        assert_eq!(read(&saved)["description"]["collections"], tagged["collections"]);
+    }
+
     // The endpoint doesn't answer: the saved one stays, without a warning.
     *doc.lock().unwrap() = None;
     let out = env.furnish(&["collection", "update"]);
@@ -207,6 +225,89 @@ fn repository(repos: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
     bare
 }
 
+#[cfg(unix)]
+#[test]
+fn service_updates_from_its_own_fresh_or_last_valid_endpoint_description() {
+    use std::{io::Read, os::unix::net::UnixStream, process::{Child, Stdio}, time::{Duration, Instant}};
+    struct Service(Child);
+    impl Drop for Service {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let repos = root.join("repos");
+    fs::create_dir(&repos).unwrap();
+    let bare = repository(&repos, "tools", &[("channel", "main")]);
+    let work = repos.join("tools.work");
+    git(&work, &["checkout", "-qb", "stable"]);
+    fs::write(work.join("channel"), "stable").unwrap();
+    git(&work, &["add", "channel"]);
+    git(&work, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "stable"]);
+    git(&work, &["push", "-q", &bare.to_string_lossy(), "stable"]);
+    git(&bare, &["update-server-info"]);
+    let doc = Arc::new(Mutex::new(None));
+    let origin = serve(doc.clone(), Some(repos));
+    let description = |branch: &str| json!({
+        "name":"Test","clientId":"test","issuer":origin,"settings":{"blobsOnDemand":false},
+        "collections":[{"name":"tools","url":format!("{origin}/git/tools.git"),"tracking":{"mode":"branch","name":branch}}]
+    });
+    let system = root.join("system");
+    let endpoints = system.join("endpoints");
+    fs::create_dir_all(&endpoints).unwrap();
+    let stem = origin.replace("://", "_").replace(':', "_");
+    fs::write(endpoints.join(format!("{stem}.token")), json!({
+        "issuer":origin,"client_id":"test","token_endpoint":format!("{origin}/token"),
+        "id_token":"id","access_token":"access","refresh_token":"refresh","expires_at":4_000_000_000u64
+    }).to_string()).unwrap();
+    let policy = root.join("policy.json");
+    fs::write(&policy, json!({"service":{},"endpoints":[origin]}).to_string()).unwrap();
+    *doc.lock().unwrap() = Some(description("main").to_string());
+    let socket = root.join("service.sock");
+    let mut service = Service(Command::new(env!("CARGO_BIN_EXE_furnish")).arg("service")
+        .env("FURNISH_SOCKET",&socket).env("FURNISH_SYSTEM_DIR",&system).env("FURNISH_POLICY_FILE",policy)
+        .env("FURNISH_TOKEN_STORE","file").env("HOME",root).stdout(Stdio::null()).spawn().unwrap());
+    let until = Instant::now() + Duration::from_secs(30);
+    while !socket.exists() {
+        assert!(service.0.try_wait().unwrap().is_none() && Instant::now() < until, "service failed to start");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let channel = system.join("collections/tools/channel");
+    assert_eq!(fs::read_to_string(&channel).unwrap(), "main");
+    // The caller's sign-in sets up the shared preset; a personal copy would be invisible
+    // in the catalog and could follow a different source from the service's checkout.
+    let personal = root.join("personal");
+    fs::create_dir_all(personal.join("endpoints")).unwrap();
+    fs::copy(endpoints.join(format!("{stem}.token")), personal.join("endpoints").join(format!("{stem}.token"))).unwrap();
+    fs::remove_dir_all(system.join("collections/tools")).unwrap();
+    let add = Command::new(env!("CARGO_BIN_EXE_furnish")).args(["collection", "add", &origin])
+        .env("FURNISH_DATA_DIR", &personal).env("FURNISH_SYSTEM_DIR", &system).env("FURNISH_POLICY_FILE", root.join("policy.json"))
+        .env("FURNISH_SOCKET", &socket).env("FURNISH_TOKEN_STORE", "file").env("HOME", root).output().unwrap();
+    assert!(add.status.success(), "{}", stderr(&add));
+    assert_eq!(fs::read_to_string(&channel).unwrap(), "main");
+    assert!(!personal.join("collections/tools").exists());
+    // A client can request an update by name but cannot supply a branch or description.
+    let update = || {
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        writeln!(stream, "{}", json!({"update":{"collection":"tools","headers":{origin.clone(): "Authorization: Bearer id"}}})).unwrap();
+        let mut replies = String::new();
+        stream.read_to_string(&mut replies).unwrap();
+        assert!(replies.lines().any(|line| serde_json::from_str::<Value>(line).unwrap()["updated"].is_object()), "{replies}");
+    };
+    *doc.lock().unwrap() = Some(description("stable").to_string());
+    update();
+    assert_eq!(fs::read_to_string(&channel).unwrap(), "stable");
+    let saved = endpoints.join(format!("{stem}.json"));
+    assert_eq!(read(&saved)["description"]["collections"], description("stable")["collections"]);
+    // The description is unavailable but Git still serves the last valid source.
+    *doc.lock().unwrap() = None;
+    update();
+    assert_eq!(fs::read_to_string(channel).unwrap(), "stable");
+}
+
 #[test]
 fn failed_collection_updates_leave_a_private_local_log_with_reporting_off() {
     let temp = tempfile::tempdir().unwrap();
@@ -250,6 +351,14 @@ fn collections_an_endpoint_lists_later_are_added_by_the_rules_for_adding() {
     for name in ["acme", "tools", "mine", "it", "gone", "later"] {
         repository(&repos, name, &plain);
     }
+    // The endpoint's release branch and its default branch have different content.
+    let tools_work = repos.join("tools.work");
+    git(&tools_work, &["checkout", "-qb", "stable"]);
+    fs::write(tools_work.join("release-channel"), "stable").unwrap();
+    git(&tools_work, &["add", "release-channel"]);
+    git(&tools_work, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "release"]);
+    git(&tools_work, &["push", "-q", &repos.join("tools.git").to_string_lossy(), "stable"]);
+    git(&repos.join("tools.git"), &["update-server-info"]);
     let question = "parameters:\n  role:\n    type: string\n    required: true\n    label: What do you work on?\n";
     repository(&repos, "asks", &[("collection.yaml", question)]);
     repository(&repos, "answered", &[("collection.yaml", question)]);
@@ -264,7 +373,11 @@ fn collections_an_endpoint_lists_later_are_added_by_the_rules_for_adding() {
     let origin = serve(doc.clone(), Some(repos.clone()));
     let issuer = format!("{origin}/idp");
     let description = |names: &[&str]| {
-        let collections: Vec<_> = names.iter().map(|n| json!({"name": n, "url": format!("{origin}/git/{n}.git")})).collect();
+        let collections: Vec<_> = names.iter().map(|n| {
+            let mut c = json!({"name": n, "url": format!("{origin}/git/{n}.git")});
+            if *n == "tools" { c["tracking"] = json!({"mode":"branch","name":"stable"}); }
+            c
+        }).collect();
         // Dumb HTTP has no partial clones; the address sets that for its own collections.
         json!({"name": "Acme", "issuer": issuer, "clientId": "furnish", "collections": collections,
                "settings": {"blobsOnDemand": false}, "parameters": {"answered": {"role": "design"}}})
@@ -299,6 +412,14 @@ fn collections_an_endpoint_lists_later_are_added_by_the_rules_for_adding() {
     assert!(list.lines().any(|l| l.contains("mine-own")), "the person's 'mine' stays theirs");
     assert!(list.lines().any(|l| l.starts_with("it ") && l.contains("managed")), "the preset stays the preset");
 
+    assert_eq!(fs::read_to_string(collections.join("tools/release-channel")).unwrap(), "stable");
+    // The same endpoint can change the policy default after its initial offer.
+    let mut changed = description(&["acme", "tools", "asks", "answered", "mine", "it"]);
+    changed["collections"][1]["tracking"] = json!({"mode": "default"});
+    *doc.lock().unwrap() = Some(changed.to_string());
+    update();
+    assert!(!collections.join("tools/release-channel").exists());
+
     // Removed on purpose: not added again, also after the address stops listing it for a while.
     assert!(env.furnish(&["collection", "remove", "tools"]).status.success());
     let (stdout, _) = update();
@@ -324,4 +445,41 @@ fn collections_an_endpoint_lists_later_are_added_by_the_rules_for_adding() {
     assert_eq!(read(&saved)["added"], 42);
 
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn newest_tag_on_authenticated_dumb_http_uses_the_published_release() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let repos = root.join("repos");
+    let env = Env { data: root.join("data"), policy: root.join("policy.json"), root: root.to_owned() };
+    let endpoints = env.data.join("endpoints");
+    fs::write(&env.policy, "{}").unwrap();
+    fs::create_dir_all(&endpoints).unwrap();
+    let bare = repository(&repos, "tools", &[("collection.yaml", "{}\n"), ("channel", "release")]);
+    let work = repos.join("tools.work");
+    git(&work, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "tag.gpgSign=false", "tag", "-a", "v1", "-m", "release"]);
+    fs::write(work.join("channel"), "development").unwrap();
+    git(&work, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "development"]);
+    git(&work, &["push", "-q", "--tags", &bare.to_string_lossy(), "main"]);
+    git(&bare, &["update-server-info"]);
+
+    let doc = Arc::new(Mutex::new(None));
+    let origin = serve(doc.clone(), Some(repos));
+    let url = format!("{origin}/git/tools.git");
+    let issuer = format!("{origin}/idp");
+    let description = json!({"name":"Acme","issuer":issuer,"clientId":"furnish","settings":{"blobsOnDemand":false},
+        "collections":[{"name":"tools","url":url,"tracking":{"mode":"tag","pattern":"^v[0-9]+$","order":"newest"}}]});
+    let stem = origin.replace("://", "_").replace(':', "_");
+    fs::write(endpoints.join(format!("{stem}.json")), json!({"origin":origin,"description":description,"added":42}).to_string()).unwrap();
+    fs::write(endpoints.join(format!("{stem}.token")), json!({"issuer":issuer,"client_id":"furnish","token_endpoint":format!("{issuer}/token"),
+        "id_token":"id","access_token":"access","expires_at":4_000_000_000u64}).to_string()).unwrap();
+    *doc.lock().unwrap() = Some(description.to_string());
+
+    let out = env.furnish(&["collection", "add", &url, "--name", "tools"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(fs::read_to_string(env.data.join("collections/tools/channel")).unwrap(), "release");
+    let out = env.furnish(&["collection", "update", "tools"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(fs::read_to_string(env.data.join("collections/tools/channel")).unwrap(), "release");
 }

@@ -80,6 +80,39 @@ On Windows, the update is the .msi, which installs for all users. Windows asks f
 { "settings": { "fallbackLanguage": { "value": "de", "locked": true } } }
 ```
 
+## Release branches and tags
+
+Each collection follows its remote’s default branch until a tracking rule selects another branch or a set of release tags. A named branch follows every new commit on that branch. Tag tracking lets you merge changes throughout the week and publish them to users by tagging the release commit.
+
+To publish stable releases such as `v1.4.0` and `v1.10.2`, put a tracking rule on the preset in the machine policy:
+
+```json
+{
+  "collections": {
+    "preset": [{
+      "name": "acme",
+      "url": "https://github.com/acme/it-apps.git",
+      "tracking": { "mode": "tag", "pattern": "^v[0-9]+[.][0-9]+[.][0-9]+$", "order": "version" }
+    }]
+  }
+}
+```
+
+For a staging collection, use `{ "mode": "branch", "name": "staging" }`. Use `{ "mode": "default" }` to follow the remote’s default branch explicitly. Patterns use Rust regular expressions against the short tag name, such as `v1.4.0`. Anchor the pattern with `^` and `$` to match the entire name.
+
+When several tags match, choose how Furnish ranks them.
+
+| `order` | Which tag wins |
+| --- | --- |
+| `version` (default) | The highest semantic version at the end of the tag name. For example, `v1.10.0` wins over `v1.10.0-rc.2` and `v1.9.9`. Versioned tags take precedence. Other names use natural ordering, so `build-10` follows `build-9`. |
+| `newest` | The latest tagger date for an annotated tag or commit date for a lightweight tag. A newly published patch for an older release can win. Equal dates use version ordering. |
+
+Furnish caches tag dates by Git object ID. The first date-based check may download tag and commit metadata for multiple releases. Older Git servers that only serve static files can require downloading the matching tags’ history and file contents. Git records when an annotated tag was created. Use annotated tags if you want to release an existing commit today and have today count as its release date.
+
+Endpoint administrators can put the same `tracking` object in an individual `collections` entry in `furnish.json`. People who add the endpoint themselves can override its default for their personal checkout. A machine-policy preset, including a collection from an endpoint named in policy, uses the organization’s rule for its shared checkout. Its tracking control is locked. For a personal collection, administrators can supply a default or a lock through `collectionSettings.<name>.tracking`, using the existing `value` and `locked` fields.
+
+The rule applies to the first checkout, update notifications and manual or automatic updates. A missing branch or a pattern with no matching tag produces an error and an existing checkout stays usable. Collections that require signed commits still verify the selected commit, including the commit an annotated tag points to. With trusted keys configured, the selected revision must also descend from the installed revision. Publish maintenance lines as separate collections if their histories diverge.
+
 ## Disk use and earlier versions
 
 Each person's computer keeps a git copy of every collection. Five settings decide how much of it, what happens when an install fails, and whether people can choose an earlier version of an app. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.

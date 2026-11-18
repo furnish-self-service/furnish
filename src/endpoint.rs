@@ -68,6 +68,12 @@ pub struct Collection {
     pub name: String,
     /// Its git URL, at the endpoint.
     pub url: String,
+    #[serde(default, deserialize_with = "collection_tracking", skip_serializing_if = "Option::is_none")]
+    pub tracking: Option<crate::settings::Tracking>,
+}
+
+fn collection_tracking<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<crate::settings::Tracking>, D::Error> {
+    crate::settings::Tracking::deserialize(d).map(Some)
 }
 
 fn default_token() -> String {
@@ -252,6 +258,9 @@ pub fn fetch(origin: &str) -> Result<Description> {
     let not_furnish = || format!("{} isn't a furnish address (no {url})", host(origin));
     let mut response = http().get(&url).call().map_err(|e| anyhow::Error::new(e).context(Unreachable(not_furnish())))?;
     let description: Description = response.body_mut().read_json().with_context(not_furnish)?;
+    if description.settings.contains_key("tracking") {
+        bail!("{}: set tracking on the individual entries in collections", host(origin));
+    }
     for c in &description.collections {
         if !c.url.starts_with(&format!("{origin}/")) {
             bail!("{}: collection {} isn't served by the endpoint itself ({})", host(origin), c.name, c.url);
@@ -323,6 +332,7 @@ pub fn offered(origin: &str) -> Vec<String> {
 
 /// Remember that furnish added these collections of an endpoint, or found them there already.
 pub fn mark_offered(origin: &str, names: &[String]) -> Result<()> {
+    let _lock = description_lock(origin)?;
     let Some(mut cached) = read_cached(origin) else { return Ok(()) };
     let offered = cached.offered.get_or_insert_with(Vec::new);
     for name in names {
@@ -330,12 +340,36 @@ pub fn mark_offered(origin: &str, names: &[String]) -> Result<()> {
             offered.push(name.clone());
         }
     }
-    crate::auth::write_private(&file(origin, "json"), (serde_json::to_string_pretty(&cached)? + "\n").as_bytes())?;
+    write_description(&file(origin, "json"), &cached)?;
     Ok(())
 }
 
 fn read_cached(origin: &str) -> Option<Cached> {
     fs::read_to_string(file(origin, "json")).ok().and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// Before changing a shared checkout, consult the machine's endpoint again. A client's
+/// refreshed cache lives under its own data directory and is never authoritative here.
+pub(crate) fn refresh_managed_source(name: &str) -> Result<()> {
+    let native = crate::policy::load_native();
+    let policy = crate::policy::with_known_endpoints(native.clone(), known());
+    let preset = policy.collections.preset.iter().find(|p| p.name == name)
+        .with_context(|| format!("'{name}' is no longer a managed collection"))?;
+    if native.collections.preset.iter().any(|p| p.name == name)
+        && (preset.tracking.is_some() || native.collection_settings.get(name).is_some_and(|s| s.contains_key("tracking")))
+    {
+        return Ok(());
+    }
+    let Some(origin) = native.endpoints.iter().filter_map(|e| self::origin(e)).find(|o| preset.url.starts_with(&format!("{o}/"))) else {
+        return Ok(());
+    };
+    if let Err(err) = discover(&origin) {
+        if read_cached(&origin).is_none() {
+            return Err(err).context("no saved managed endpoint description");
+        }
+        eprintln!("warning: {err:#}; keeping the saved description");
+    }
+    Ok(())
 }
 
 /// The collections an endpoint counts as offered after saving a new description: those saved
@@ -347,8 +381,15 @@ fn offered_before(old: Option<&Cached>) -> Vec<String> {
     })
 }
 
-fn remember(origin: &str, description: &Description) -> Result<()> {
+fn description_lock(origin: &str) -> Result<fs::File> {
     private_dir(&dir())?;
+    let lock = crate::auth::open_private(&file(origin, "lock"), false)?;
+    lock.lock().context("locking endpoint description")?;
+    Ok(lock)
+}
+
+fn remember(origin: &str, description: &Description) -> Result<()> {
+    let _lock = description_lock(origin)?;
     let path = file(origin, "json");
     let old = read_cached(origin);
     // Another identity provider or client: the sign-in from the old one goes (see `Tokens`).
@@ -358,7 +399,18 @@ fn remember(origin: &str, description: &Description) -> Result<()> {
     let offered = Some(offered_before(old.as_ref()));
     let added = old.map_or_else(now, |c| c.added);
     let cached = Cached { origin: origin.to_string(), description: description.clone(), added, offered };
-    crate::auth::write_private(&path, (serde_json::to_string_pretty(&cached)? + "\n").as_bytes())?;
+    write_description(&path, &cached)?;
+    Ok(())
+}
+
+/// The cache controls the next checkout's source. A failed write must leave its prior
+/// complete description intact, including when another process is reading it.
+fn write_description(path: &std::path::Path, cached: &Cached) -> Result<()> {
+    let mut file = tempfile::NamedTempFile::new_in(dir())?;
+    serde_json::to_writer_pretty(&mut file, cached)?;
+    file.write_all(b"\n")?;
+    file.as_file().sync_all()?;
+    file.persist(path).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
 

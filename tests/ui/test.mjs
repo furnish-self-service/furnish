@@ -64,6 +64,15 @@ const isOpen = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/prope
 const button = (label) => `//button[normalize-space()='${label}']`;
 // A sidebar entry; Collections may carry a count after its name.
 const nav = (label) => `//nav//button[starts-with(normalize-space(), '${label}')]`;
+
+async function setLoadAwareUpdates(enabled) {
+  await click(nav('Settings'));
+  const toggle = "//label[contains(., 'Wait while this computer is busy')]//input";
+  await waitFor('load-aware update setting', () => find(toggle));
+  if (await prop(toggle, 'checked') !== enabled) await click(toggle);
+  await waitFor(`load-aware updates ${enabled ? 'enabled' : 'disabled'}`,
+    () => (JSON.parse(log('data/settings.json')).loadAwareUpdates ?? true) === enabled);
+}
 const card = (app) => `//article[.//h3[normalize-space()='${app}']]`;
 // Extra screenshots of states worth seeing, next to the final one.
 const snap = async (name) =>
@@ -405,6 +414,7 @@ const steps = [
     if (!existsSync(`${workDir}/pkgs/hyperfine`)) throw new Error('cancel removed the prerequisite');
   }],
   ['updates install automatically, except for apps where that is turned off', async () => {
+    await setLoadAwareUpdates(false);
     writeFileSync(`${workDir}/pkgs/hyperfine.new`, '2.0\n');
     writeFileSync(`${workDir}/pkgs/extras.new`, '2.0\n');
     await click(button('Discover'));
@@ -418,6 +428,7 @@ const steps = [
     if (log('pkgs/extras').trim() === '2.0') throw new Error('extras was updated although turned off');
   }],
   ['automatic updates wait while the computer is busy, unless that is turned off', async () => {
+    await setLoadAwareUpdates(true);
     // Real CPU load from outside furnish: a busy loop on every core for 45 s.
     spawnSync('docker', ['exec', '-d', container, 'sh', '-c',
       'for i in $(seq $(nproc)); do timeout 45 sh -c "while :; do :; done" & done; wait']);
@@ -427,9 +438,7 @@ const steps = [
     await click(button('Check for updates'));
     await waitFor('update postponed', async () => (await text("//*[contains(@class,'postponed')]")).includes('busy (CPU'), 20000);
     if (log('pkgs/hyperfine').trim() === '3.0') throw new Error('updated although the computer was busy');
-    await click(nav('Settings'));
-    await click("//label[contains(., 'Wait while this computer is busy')]//input");
-    await waitFor('setting saved', () => log('data/settings.json').includes('"loadAwareUpdates": false'));
+    await setLoadAwareUpdates(false);
     await waitFor('hyperfine updated now', () => log('pkgs/hyperfine').trim() === '3.0', 30000);
   }],
   ['Update all queues updates hidden by search and respects automatic-update preferences', async () => {
@@ -558,9 +567,21 @@ const steps = [
     await click("//summary[contains(., 'Options for all fixture apps')]");
     await waitFor('collection option shown', async () => (await text("//details[contains(@class,'copts')]")).includes('Install just for me'));
   }],
-  ['collections: add a repository, see its apps, remove it again', async () => {
+  ['collections: clone a release tag, switch to a branch, and resume the default source', async () => {
     await click(nav('Collections'));
-    await typeInto("//input[@placeholder='git@github.com:your-org/apps.git']", `${workDir}/second`);
+    const url = "//input[@placeholder='git@github.com:your-org/apps.git']";
+    await typeInto(url, 'https://furnish.example.test');
+    await waitFor('organization address inherits its offered sources', async () =>
+      !(await prop(button('Add collection'), 'disabled')) && !(await findAll("//form/details[summary[normalize-space()='Git update source']]")).length);
+    await wd('POST', s(`/element/${await find(url)}/clear`), {});
+    await typeInto(url, `${workDir}/second`);
+    const addSource = "//form/details[summary[normalize-space()='Git update source']]";
+    await click(`${addSource}/summary`);
+    await click(`${addSource}//select/option[@value='tag']`);
+    await typeInto(`${addSource}//input`, '^release-[0-9]+$');
+    const order = "//select[option[@value='newest']]";
+    if ((await prop(`${addSource}${order}`, 'value')) !== 'version') throw new Error('tag ordering did not default to highest version');
+    await click(`${addSource}${order}/option[@value='newest']`);
     await click(button('Add collection'));
     await waitFor('second collection listed', () => find("//li[.//*[normalize-space()='second']]"), 30000);
     // Its required question comes up right away, as a dropdown with labels.
@@ -569,6 +590,44 @@ const steps = [
     await click("//dialog[@open]//select[@data-question='role']/option[normalize-space()='Design']");
     await click("//dialog[@open]//button[normalize-space()='Save answers']");
     await waitFor('answer saved', () => /"second":\s*\{\s*"role":\s*"design"/.test(log('data/settings.json')));
+    const row = "//li[.//*[normalize-space()='second']]";
+    const tracking = `${row}//details[@data-tracking='second']`;
+    const revision = (ref) => {
+      const git = spawnSync('git', ['-C', `${workDir}/second`, 'rev-parse', `${ref}^{commit}`], { encoding: 'utf8' });
+      if (git.status !== 0) throw new Error(git.stderr);
+      return git.stdout.trim();
+    };
+    const expectSource = (ref, choice) => waitFor(`collection source ${ref}`, async () => {
+      if (await prop(`${tracking}//select[1]`, 'disabled')) return false;
+      const displayed = (await prop(`${row}/span[contains(concat(' ', normalize-space(@class), ' '), ' rev ')]`, 'textContent')).trim();
+      const expected = revision(ref);
+      const source = await text(`${tracking}//p[contains(@class,'current')]`);
+      if (!expected.startsWith(displayed) || !displayed || !source.includes(choice))
+        throw new Error(`expected ${ref} (${expected}) and ${choice}, saw '${displayed}' and '${source}'`);
+      return true;
+    });
+    await click(`${tracking}/summary`);
+    await expectSource('release-1', 'Most recent tag');
+    const savedOrder = () => JSON.parse(log('data/settings.json')).collections.second.tracking.order ?? 'version';
+    if (savedOrder() !== 'newest' || (await prop(`${tracking}${order}`, 'value')) !== 'newest')
+      throw new Error('newest tag order did not survive the catalog reload');
+    await click(`${tracking}${order}/option[@value='version']`);
+    await click(`${tracking}${button('Apply and update')}`);
+    await expectSource('release-2', 'Highest version');
+    if (savedOrder() !== 'version') throw new Error('highest version order was not saved');
+    const input = `${tracking}//input`;
+    await wd('POST', s(`/element/${await find(input)}/clear`), {});
+    await typeInto(input, '[');
+    await click(`${tracking}${button('Apply and update')}`);
+    await waitFor('invalid pattern has a visible explanation', async () => (await text(`${tracking}//*[@role='alert']`)).trim().length > 0);
+    await expectSource('release-2', '^release-[0-9]+$');
+    await click(`${tracking}//select/option[@value='branch']`);
+    await typeInto(input, 'stable');
+    await click(`${tracking}${button('Apply and update')}`);
+    await expectSource('stable', 'stable');
+    await click(`${tracking}//select/option[@value='inherit']`);
+    await click(`${tracking}${button('Apply and update')}`);
+    await expectSource('HEAD', 'Furnish default');
     await click("//li[.//*[normalize-space()='second']]//button[normalize-space()='Remove']");
     await click("//button[contains(@class,'danger') and normalize-space()='Remove']");
     await waitFor('second collection gone', async () => !(await findAll("//li[.//*[normalize-space()='second']]")).length);
@@ -646,6 +705,10 @@ const steps = [
     const row = "//li[.//*[normalize-space()='fixture']]";
     if (!(await text(row)).includes('Managed by your organization')) throw new Error('not marked managed');
     if ((await findAll(`${row}//button[normalize-space()='Remove']`)).length) throw new Error('Remove offered');
+    const tracking = `${row}//details[@data-tracking='fixture']`;
+    await click(`${tracking}/summary`);
+    if (!(await text(tracking)).includes('Organization policy') || !(await text(tracking)).includes('Locked') || (await findAll(`${tracking}//select`)).length)
+      throw new Error('policy update source is not shown as locked');
   }],
   ["reports: the organization's setting shows and can't be changed", async () => {
     await click(nav('Settings'));

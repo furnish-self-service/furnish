@@ -2,6 +2,9 @@
 //! user's own choices in `settings.json` in the data directory, except where the policy locks a
 //! setting. The user's file only holds what the user changed, so policy defaults keep applying.
 
+mod tracking;
+pub use tracking::{TagOrder, Tracking, TrackingSource, tracking_for, tracking_for_change};
+
 use std::fs;
 
 use anyhow::{Context, Result, bail};
@@ -145,7 +148,7 @@ pub enum Fallback {
 }
 
 /// The settings that apply per collection.
-pub const PER_COLLECTION: [&str; 5] = ["checkoutDepth", "blobsOnDemand", "fallback", "fallbackMaxAgeDays", "chooseVersion"];
+pub const PER_COLLECTION: [&str; 6] = ["checkoutDepth", "blobsOnDemand", "fallback", "fallbackMaxAgeDays", "chooseVersion", "tracking"];
 
 /// The settings for one collection, in effect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +159,8 @@ pub struct CollectionSettings {
     pub fallback: Fallback,
     pub fallback_max_age_days: u32,
     pub choose_version: bool,
+    #[serde(default)]
+    pub tracking: Tracking,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -164,6 +169,9 @@ pub struct CollectionEffective {
     pub settings: CollectionSettings,
     /// Setting names users can't change for this collection.
     pub locked: Vec<String>,
+    pub tracking_source: TrackingSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracking_error: Option<String>,
 }
 
 impl Default for Settings {
@@ -259,7 +267,8 @@ pub fn set(key: &str, value: Value) -> Result<()> {
         bail!("'{key}' is set by your organization");
     }
     check_value(key, &value).with_context(|| format!("invalid value for '{key}'"))?;
-    let mut choices = user_choices();
+    let _lock = choices_lock()?;
+    let mut choices = read_choices()?;
     choices.insert(key.to_string(), value);
     write_choices(&choices)
 }
@@ -276,7 +285,8 @@ fn set_os_specific(policy: &Policy, os: &str, name: &str, value: Value) -> Resul
     if policy_leaf(policy, os, name).is_some_and(|e| e.locked) {
         bail!("'{key}' is set by your organization");
     }
-    let mut choices = user_choices();
+    let _lock = choices_lock()?;
+    let mut choices = read_choices()?;
     let mut all = choices.get("osSpecific").and_then(Value::as_object).cloned().unwrap_or_default();
     let mut system = all.get(os).and_then(Value::as_object).cloned().unwrap_or_default();
     if value.is_null() {
@@ -353,12 +363,27 @@ pub fn check_os_value(os: &str, name: &str, value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn write_choices(choices: &Map<String, Value>) -> Result<()> {
+/// Serializes read-modify-write operations across desktop and CLI processes.
+fn choices_lock() -> Result<fs::File> {
     let dir = data_dir();
     fs::create_dir_all(&dir)?;
+    let file = crate::auth::open_private(&dir.join(".settings.lock"), false)?;
+    file.lock().context("locking Furnish settings")?;
+    Ok(file)
+}
+
+fn write_choices(choices: &Map<String, Value>) -> Result<()> {
+    use std::io::Write;
+    let dir = data_dir();
     let path = dir.join("settings.json");
-    // Option values may be personal: only the user can read them.
-    crate::auth::write_private(&path, (serde_json::to_string_pretty(choices)? + "\n").as_bytes()).with_context(|| format!("writing {}", path.display()))
+    // The temporary file is private and on the same filesystem. Readers see either
+    // the previous settings or the complete new document, including after a crash.
+    let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+    serde_json::to_writer_pretty(&mut temp, choices)?;
+    temp.write_all(b"\n")?;
+    temp.as_file().sync_all()?;
+    temp.persist(&path).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
 }
 
 /// The settings for one collection: the policy's value for the collection if it is locked; a
@@ -376,6 +401,9 @@ pub fn collection_merge(policy: &Policy, choices: &Map<String, Value>, name: &st
     let mut values = Map::new();
     let mut locked = Vec::new();
     for key in PER_COLLECTION {
+        if key == "tracking" {
+            continue; // Has no global setting and is scoped to the collection's remote URL.
+        }
         let policy_value = theirs.and_then(|t| t.get(key));
         // An invalid value counts as not set, so it doesn't spoil the collection's other settings.
         let valid = |v: &&Value| check_value(key, v).is_ok();
@@ -390,11 +418,27 @@ pub fn collection_merge(policy: &Policy, choices: &Map<String, Value>, name: &st
         }
         values.insert(key.to_string(), value.unwrap_or(&defaults[key]).clone());
     }
-    let settings = serde_json::from_value(Value::Object(values)).unwrap_or_else(|err| {
+    let mut settings: CollectionSettings = serde_json::from_value(Value::Object(values)).unwrap_or_else(|err| {
         eprintln!("warning: ignoring invalid settings for collection '{name}': {err}");
         serde_json::from_value(defaults).expect("the general settings contain the collection settings")
     });
-    CollectionEffective { settings, locked }
+    let preset = policy.collections.preset.iter().find(|p| p.name == name);
+    let local_url = preset.is_none().then(|| crate::policy::local_remote(name)).flatten();
+    let url = preset.map(|p| p.url.as_str()).or(local_url.as_deref()).unwrap_or("");
+    let result = tracking::resolve(policy, choices, name, url, preset.is_some(), None);
+    let (tracking_source, tracking_error) = match result {
+        Ok(value) => {
+            if value.locked { locked.push("tracking".into()); }
+            settings.tracking = value.value;
+            (value.source, None)
+        }
+        Err(err) => {
+            let forced = preset.is_some() || theirs.and_then(|s| s.get("tracking")).is_some_and(|e| e.locked);
+            if forced { locked.push("tracking".into()); }
+            (if forced { TrackingSource::Policy } else { TrackingSource::Default }, Some(format!("{err:#}")))
+        }
+    };
+    CollectionEffective { settings, locked, tracking_source, tracking_error }
 }
 
 /// Change one setting for one collection; `null` removes the user's value.
@@ -403,10 +447,11 @@ pub fn set_for_collection(name: &str, key: &str, value: Value) -> Result<()> {
         bail!("'{key}' isn't a setting per collection (those are {})", PER_COLLECTION.join(", "));
     }
     let policy = crate::policy::load();
-    if collection_merge(&policy, &user_choices(), name).locked.iter().any(|k| k == key) {
+    let _lock = choices_lock()?;
+    let mut choices = read_choices()?;
+    if collection_merge(&policy, &choices, name).locked.iter().any(|k| k == key) {
         bail!("'{key}' is set by your organization for collection '{name}'");
     }
-    let mut choices = user_choices();
     let mut collections = choices.get("collections").and_then(Value::as_object).cloned().unwrap_or_default();
     let mut own = collections.get(name).and_then(Value::as_object).cloned().unwrap_or_default();
     if value.is_null() {
@@ -420,16 +465,34 @@ pub fn set_for_collection(name: &str, key: &str, value: Value) -> Result<()> {
     write_choices(&choices)
 }
 
+/// A future checkout with this name can point at a different repository.
+pub(crate) fn forget_tracking(name: &str) -> Result<()> {
+    let _lock = choices_lock()?;
+    let mut choices = read_choices()?;
+    let Some(collections) = choices.get_mut("collections").and_then(Value::as_object_mut) else { return Ok(()) };
+    let Some(own) = collections.get_mut(name).and_then(Value::as_object_mut) else { return Ok(()) };
+    if own.remove("tracking").is_none() { return Ok(()); }
+    if own.is_empty() { collections.remove(name); }
+    if collections.is_empty() { choices.remove("collections"); }
+    write_choices(&choices)
+}
+
 /// The user's own choices (only the settings they changed).
 pub fn user_choices() -> Map<String, Value> {
-    let path = data_dir().join("settings.json");
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Map::new();
-    };
-    serde_json::from_str(&text).unwrap_or_else(|err| {
-        eprintln!("warning: ignoring {}: {err}", path.display());
+    read_choices().unwrap_or_else(|err| {
+        eprintln!("warning: ignoring your settings: {err:#}");
         Map::new()
     })
+}
+
+fn read_choices() -> Result<Map<String, Value>> {
+    let path = data_dir().join("settings.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(err) => return Err(err).with_context(|| format!("reading {}", path.display())),
+    };
+    serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// Defaults ← policy values ← user choices (unless locked). Each value counts on its own: one
@@ -492,6 +555,9 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
 
 /// Whether a value is valid for a setting, on its own (the other settings at their defaults).
 pub fn check_value(key: &str, value: &Value) -> Result<()> {
+    if key == "tracking" {
+        return Tracking::parse(value).map(|_| ());
+    }
     if let Some((os, name)) = os_specific_key(key) {
         return check_os_value(os, name, value);
     }

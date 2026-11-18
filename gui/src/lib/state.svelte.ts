@@ -403,7 +403,6 @@ async function runOperation(app: AppInfo, action: Queued['action'], trigger: api
   } finally {
     autoInstalling.delete(app.key);
     endRun(app.key, run, cancelled ? 'cancelled' : !ok ? 'failed' : run.fallbackDate ? 'fallback' : 'done');
-    delete store.busy[app.key];
     // Which options the app is installed with changed (they decide whether a reinstall is offered).
     if (ok) await reloadApps();
     await checkStatus(app.key);
@@ -1015,9 +1014,14 @@ async function pump() {
         continue;
       }
       if (app && canRun && (next.trigger !== 'autoInstall' || verifiedInstall(app))) {
-        const ok = await runOperation(app, next.action, next.trigger, next.commit);
-        if (ok && next.action !== 'uninstall') releaseDependents(store.queue, next.key);
-        if (next.trigger === 'update' && !ok) declinedUpdates.add(next.key);
+        try {
+          const ok = await runOperation(app, next.action, next.trigger, next.commit);
+          if (ok && next.action !== 'uninstall') releaseDependents(store.queue, next.key);
+          if (next.trigger === 'update' && !ok) declinedUpdates.add(next.key);
+        } finally {
+          // Expose Install again only when the queue can accept another request for this app.
+          delete store.busy[next.key];
+        }
       } else {
         autoInstalling.delete(next.key);
         groupItemDequeued(next.key);

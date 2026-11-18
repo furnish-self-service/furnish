@@ -85,6 +85,8 @@ Updates only run while furnish runs. So furnish starts when you sign in, with it
 
 ![The Settings page with its Startup and Updates sections.](images/settings.webp)
 
+Open **Collections** and expand a collection’s update source to choose the remote default branch, another branch, or release tags with names matching a regular expression. For example, `^v[0-9]+[.][0-9]+[.][0-9]+$` follows stable version tags. Choose the highest matching version, or choose the newest by date if a newly tagged maintenance release should take precedence. Saving checks the rule against the repository and applies the selected revision. The control shows who selected the rule and whether your organization has locked it.
+
 When a collection has changed on its server but furnish hasn't brought the change in yet, for example between checks or because checking is turned off, the sidebar shows a count next to Collections, and the Collections page marks the collection with Update available. Its Update button brings the change in. furnish only asks the server for its newest commit for this, without downloading or changing anything, and shows nothing while it is offline. With checking set to Never and When furnish starts turned off, furnish doesn't contact the servers on its own, and the mark only changes after Check now or Update.
 
 On GNOME, tray icons only show with the AppIndicator extension. Without a tray, closing the window quits furnish. If furnish started at sign-in, open it from the app list to see its window.

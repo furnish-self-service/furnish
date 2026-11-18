@@ -397,7 +397,10 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             if !c.managed {
                 bail!("'{collection}' isn't a collection your organization provides");
             }
-            return match crate::auth::with_headers(headers, || c.update()) {
+            return match crate::auth::with_headers(headers, || {
+                crate::endpoint::refresh_managed_source(&collection)?;
+                c.update()
+            }) {
                 Ok((old, new)) => Ok(Reply::Updated { old, new }),
                 Err(err) if trusted() => Err(err),
                 Err(err) => {

@@ -17,7 +17,9 @@ if [ "${1:-}" != --inside ]; then
         for r in apps other; do git init -q --bare /srv/git/$r.git; done
         mkdir -p /tmp/w && cd /tmp/w && git init -q -b main && mkdir apps &&
         printf "metadata:\n  furnish:\n    description: Private app\nresources: []\n" > apps/private.dsc.yaml &&
-        git add -A && git -c user.name=t -c user.email=t@t commit -qm private && git push -q /srv/git/apps.git main &&
+        git add -A && git -c user.name=t -c user.email=t@t commit -qm private &&
+        git tag v1.0.0 && git -c user.name=t -c user.email=t@t tag -a v1.0.1 -m released &&
+        git push -q /srv/git/apps.git main --tags &&
         git --git-dir=/srv/git/apps.git symbolic-ref HEAD refs/heads/main &&
         chown -R www-data /srv/git && git config --system --add safe.directory "*" && cp /key.pub /home/git/.ssh/authorized_keys && chown -R git /home/git/.ssh &&
         ln -s /srv/git /home/git/git && chown -h git /home/git/git && chmod -R a+rX /srv/git &&
@@ -48,6 +50,8 @@ as "test ! -s /home/user/data/git-credentials.json || ! grep -q alice /home/user
 as "echo s3cret-token | furnish collection add $url --name h --username alice --password-stdin >/dev/null" || fail "couldn't add with credentials"
 as "furnish list" | grep -q "private" && ok "HTTPS with username and token" || fail "app missing"
 as "furnish collection update h >/dev/null" && ok "updates use the kept credentials" || fail "update failed"
+as "furnish collection settings h --tag-pattern '^v1' --tag-order newest >/dev/null" || fail "private release tag lookup failed"
+as "furnish collection update h >/dev/null" && ok "tag dates and release updates use the kept credentials" || fail "private tag update failed"
 as "grep -rq s3cret-token /home/user/data/collections/h/.git/config" && fail "the token is in the repository's config" || ok "the token isn't in the repository's config"
 [ "$(as 'stat -c %a /home/user/data/git-credentials.json')" = 600 ] && ok "the credential file is readable only by its owner" || fail "credential file permissions"
 

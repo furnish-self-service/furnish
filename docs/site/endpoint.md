@@ -55,6 +55,8 @@ Edit `furnish.json`: your organization's name, the issuer, the client ID, one en
 
 @include packaging/endpoint/furnish.json
 
+For a collection that should update only on a release, add `"tracking": { "mode": "tag", "pattern": "^v[0-9]+[.][0-9]+[.][0-9]+$" }` to its `collections` entry. A team following a release branch can use `"tracking": { "mode": "branch", "name": "release" }`. [Release branches and tags](admins.md#release-branches-and-tags) describes selection and policy precedence.
+
 The fields and what furnish accepts in them are in [Sign-in without a VPN](admins.md#sign-in-without-a-vpn), which also says what happens when you add a collection or take one out. furnish fetches `furnish.json` again whenever it updates all collections, so a change reaches everyone who added the address.
 
 `docker-compose.yml` holds what every proxy uses: oauth2-proxy, which checks tokens for the proxies that ask it, and the OpenTelemetry Collector, which receives the reports. Each proxy has its own folder with its configuration and a second compose file.
