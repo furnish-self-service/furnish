@@ -1,4 +1,5 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
+import { SvelteSet } from 'svelte/reactivity';
 import * as api from './api';
 import { defaultDependencies, planInstall, releaseDependents, type Queued } from './install-queue';
 export { defaultDependencies, type Queued } from './install-queue';
@@ -205,7 +206,7 @@ let reportedCatalog = 0;
 let cache: StatusCache | undefined;
 const revisions = new Map<string, string>();
 // Cached values are for display. Automatic updates and inventory use live checks.
-const verifiedKeys = new Set<string>();
+const verifiedKeys = new SvelteSet<string>();
 const pendingChecks = new Map<string, symbol>();
 
 export function loadAll(): Promise<void> {
@@ -432,6 +433,14 @@ export function visibleApps(view: View, query: string): AppInfo[] {
   // Updates: required security updates first.
   if (view.page === 'updates') apps.sort((a, b) => Number(requiredUpdate(b.key)) - Number(requiredUpdate(a.key)));
   return apps;
+}
+
+export function availableAppUpdates(): AppInfo[] {
+  return visibleApps({ page: 'updates' }, '').filter(app => verifiedKeys.has(app.key) && !isPending(app.key));
+}
+
+export function updateAllApps() {
+  for (const app of availableAppUpdates()) install(app);
 }
 
 /**

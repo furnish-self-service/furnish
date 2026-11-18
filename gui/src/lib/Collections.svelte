@@ -110,7 +110,7 @@
     <div class="toolbar">
       <h2>{t('collections.count', { n: store.collections.length })}</h2>
       <button class="secondary" disabled={working !== null} onclick={() => update('*')}>
-        {working === '*' ? t('collections.updating') : t('collections.updateAll')}
+        {working === '*' ? t('collections.updating') : t('common.updateAll')}
       </button>
     </div>
     <ul>
