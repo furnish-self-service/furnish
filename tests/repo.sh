@@ -18,6 +18,6 @@ case "$image" in
         zypper -n -q --gpg-auto-import-keys install furnish >/dev/null" ;;
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac
-docker run --rm --network host "$image" sh -c "set -e
+sh "$(dirname "$0")/distro-container.sh" "$image" "
 $steps
-furnish --version && echo 'repository OK on $image'"
+furnish --version && echo 'repository OK on $image'" --network host
