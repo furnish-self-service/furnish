@@ -214,3 +214,50 @@ fn file_resources_guard_each_mutation_and_allow_noops() {
     }
     drop(app);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn shared_electron_blocks_only_the_running_package() {
+    // A shell copied under a shared runtime's basename gives the kernel real /proc
+    // entries with the same executable and argument layout as the packaged launchers.
+    // Each fixture's first operand is its package; the script stays alive until EOF.
+    fn launch(exe: &Path, archive: &Path, later_argument: &Path) -> CachedApp {
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(archive, "echo ready\nread -r line\nexit 0\n").unwrap();
+        let mut child = Command::new(exe).arg(archive).arg(later_argument)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut ready = String::new();
+        BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut ready).unwrap();
+        assert_eq!(ready, "ready\n");
+        CachedApp(child)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let product = format!("Notes-{}", root.file_name().unwrap().to_str().unwrap());
+    let wanted = product.to_ascii_lowercase();
+    let native = root.join("electron");
+    let versioned = root.join("electron43");
+    let decoy = root.join("unrelated-runtime");
+    for exe in [&native, &versioned, &decoy] {
+        fs::copy("/bin/sh", exe).unwrap();
+    }
+    let nix = root.join("opt").join(&product).join("resources/app.asar");
+    let arch = root.join("lib").join(&wanted).join("app.asar");
+    let other = root.join("lib/AnotherApp/app.asar");
+    let _other = launch(&native, &other, &nix);
+    let _decoy = launch(&decoy, &arch, &nix);
+    let settings = root.join("settings.json");
+    let props = json!({"path":settings,"location":"$.enabled","value":true,"requiresClosed":[wanted]});
+    let set = |success| furnish(root, &["dsc-resource", "value", "set"], Some(&props), success);
+
+    for (exe, target) in [(&native, &nix), (&versioned, &arch)] {
+        fs::write(&settings, "{}").unwrap();
+        let process = launch(exe, target, &other);
+        assert_blocked(&set(false), &wanted);
+        assert_eq!(fs::read(&settings).unwrap(), b"{}");
+        drop(process);
+        set(true);
+        assert_eq!(read_settings(&settings)["enabled"], true);
+    }
+}
