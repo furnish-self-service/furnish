@@ -26,10 +26,12 @@ export interface AppInfo {
   source: string;
   /** Apps installed first: required ones always, optional ones if the user keeps them selected. */
   dependencies: Item[];
+  /** Required apps for the installed options, used to explain an uninstall. */
+  installedRequirements: string[];
   /** Options the app declares, with their current values. */
   options: Option[];
-  /** Installed with other option values than the current ones: a reinstall applies them. */
-  optionsDiffer: boolean;
+  /** Options that would change on reinstall, mapped to their recorded installed values. */
+  optionChanges: Record<string, unknown>;
   /** Recommended for this user (the collection decides, e.g. by role). */
   recommended: boolean;
   /** Names of required collection options nobody answered yet: installing waits for them. */

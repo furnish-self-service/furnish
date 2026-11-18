@@ -52,7 +52,7 @@ export function recordProgress(run: Run, p: Progress) {
   row.outcome = p.outcome;
 }
 
-interface Summary {
+export interface Summary {
   id: string;
   key: string;
   name: string;
@@ -95,18 +95,105 @@ function isSummary(v: unknown): v is Summary {
     && (s.fallbackDate === null || typeof s.fallbackDate === 'string');
 }
 
+export type KitItemState = 'queued' | 'running' | Result | 'interrupted';
+
+export interface KitItem {
+  key: string;
+  name: string;
+  /** Other items are prerequisites added by the install planner. */
+  selected: boolean;
+  state: KitItemState;
+  attempts: RecentActivity[];
+  /** Outstanding prerequisites of this request when its queue entry was last saved. */
+  waitingFor?: string[];
+  /** Current session only: a shared pre-existing job also keeps its own Activity row. */
+  ownsJob?: boolean;
+  runId?: string;
+}
+
+export interface KitActivity {
+  id: string;
+  key: string;
+  name: string;
+  updatedAt: number;
+  items: KitItem[];
+}
+
+export type ActivityEntry = RecentActivity | KitActivity;
+export function isKit(entry: ActivityEntry): entry is KitActivity {
+  return 'items' in entry;
+}
+export const kitItemActive = (item: KitItem) => item.state === 'queued' || item.state === 'running';
+export const kitItemDone = (item: KitItem) => item.state === 'done' || item.state === 'fallback';
+
+/** Retry only the branch interrupted behind the repaired prerequisite. Failed,
+ *  explicitly cancelled and independently interrupted apps require their own retry. */
+export function interruptedDependents(kit: KitActivity, repaired: string): KitItem[] {
+  const resumed = new Set([repaired]);
+  const items: KitItem[] = [];
+  for (const key of resumed) {
+    for (const item of kit.items) {
+      if (item.state === 'interrupted' && !resumed.has(item.key) && item.waitingFor?.includes(key)) {
+        resumed.add(item.key);
+        items.push(item);
+      }
+    }
+  }
+  return items;
+}
+
+/** Never discard a user request while one of its apps still waits for a prerequisite. */
+export function trimHistory(entries: ActivityEntry[]) {
+  let finished = 0;
+  return entries.filter(e => (isKit(e) && e.items.some(kitItemActive)) || ++finished <= historyLimit);
+}
+
+function readKit(record: Record<string, unknown>): KitActivity | undefined {
+  if (typeof record.id !== 'string' || typeof record.key !== 'string' || typeof record.name !== 'string'
+    || typeof record.updatedAt !== 'number' || !Number.isFinite(new Date(record.updatedAt).getTime())
+    || !Array.isArray(record.items)) return;
+  const items: KitItem[] = [];
+  for (const item of record.items) {
+    if (!item || typeof item.key !== 'string' || typeof item.name !== 'string' || typeof item.selected !== 'boolean'
+      || !['queued', 'running', 'done', 'failed', 'cancelled', 'fallback', 'interrupted'].includes(item.state)
+      || !Array.isArray(item.attempts) || (item.waitingFor !== undefined &&
+        (!Array.isArray(item.waitingFor) || !item.waitingFor.every((key: unknown) => typeof key === 'string')))) return;
+    items.push({
+      key: item.key, name: item.name, selected: item.selected,
+      state: kitItemActive(item) ? 'interrupted' : item.state,
+      waitingFor: item.waitingFor,
+      attempts: item.attempts.filter(isSummary).slice(0, historyLimit).map((summary: Summary) => ({ summary })),
+    });
+  }
+  if (items.length) return { id: record.id, key: record.key, name: record.name, updatedAt: record.updatedAt, items };
+}
+
 const storageKey = (dataDir: string) => 'furnish.activity.v1:' + dataDir;
 
-export function readHistory(dataDir: string): RecentActivity[] {
+export function readHistory(dataDir: string): ActivityEntry[] {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(storageKey(dataDir)) ?? '[]');
-    if (Array.isArray(saved)) return saved.filter(isSummary).slice(0, historyLimit).map(summary => ({ summary }));
+    if (!Array.isArray(saved)) return [];
+    const entries: ActivityEntry[] = [];
+    for (const value of saved) {
+      if (isSummary(value)) entries.push({ summary: value });
+      else if (value?.kind === 'kit') {
+        const kit = readKit(value);
+        if (kit) entries.push(kit);
+      }
+    }
+    return trimHistory(entries);
   } catch { /* Private or damaged storage: this session still has history. */ }
   return [];
 }
 
-export function writeHistory(dataDir: string, entries: RecentActivity[]) {
+export function writeHistory(dataDir: string, entries: ActivityEntry[]) {
   try {
-    localStorage.setItem(storageKey(dataDir), JSON.stringify(entries.slice(0, historyLimit).map(entry => entry.summary)));
+    const saved = trimHistory(entries).map(e => isKit(e) ? {
+      kind: 'kit', id: e.id, key: e.key, name: e.name, updatedAt: e.updatedAt,
+      items: e.items.map(({ key, name, selected, state, attempts, waitingFor }) =>
+        ({ key, name, selected, state, waitingFor, attempts: attempts.map(a => a.summary) })),
+    } : e.summary);
+    localStorage.setItem(storageKey(dataDir), JSON.stringify(saved));
   } catch { /* Storage may be full or disabled. */ }
 }

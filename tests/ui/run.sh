@@ -44,6 +44,9 @@ case "\$1" in
        printf 'Repository      : extra\nName            : %s\nVersion         : %s\nDescription     : fake\n' "\$2" "\$v" ;;
   -S) sleep 2  # slow enough to observe live progress
       for p do :; done  # the package: the last argument
+      if [ -f "$work/fail-once-\$p" ]; then
+        rm "$work/fail-once-\$p"; echo "error: failed to install \$p" >&2; exit 1
+      fi
       [ "\$p" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
       if [ -f "$work/pkgs/\$p.new" ]; then mv "$work/pkgs/\$p.new" "$work/pkgs/\$p"; else echo 1.0 > "$work/pkgs/\$p"; fi
       if [ "\$p" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
@@ -109,6 +112,12 @@ resources:
     type: Furnish/Package
     properties:
       name: fresh
+YAML
+cat > "$work/origin-src/kits/recovery.yaml" <<'YAML'
+description: Two apps for testing a partially successful kit install
+items:
+  - { app: fresh, required: true }
+  - { app: toolbox, required: true }
 YAML
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm fresh
 git -C "$work/origin-src" push -q "$work/origin.git" HEAD

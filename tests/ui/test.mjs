@@ -120,7 +120,20 @@ const steps = [
   ['a missing tool shows what is needed; prerequisites install first', async () => {
     await waitFor('brew-only shows what it needs', async () => (await text(card('brew-only'))).includes('Needs Homebrew'));
     if ((await findAll(`${card('brew-only')}${button('Install')}`)).length) throw new Error('blocked app offers Install');
-    await click(`${card('brewed')}${button('Install')}`); // brewed requires the homebrew app
+    writeFileSync(`${workDir}/deny`, '');
+    try {
+      await click(`${card('brewed')}${button('Install')}`);
+      await click(nav('Activity'));
+      await waitFor('brewed is waiting for its cancelled prerequisite', () => find(button('Retry homebrew')));
+    } finally {
+      rmSync(`${workDir}/deny`, { force: true });
+    }
+    await click(button('Discover'));
+    await click(`${card('renamed')}${button('Install')}`);
+    await waitFor('unrelated install completes', () => existsSync(`${workDir}/pkgs/renamed`), 30000);
+    await click(nav('Activity'));
+    await click(button('Retry homebrew'));
+    await click(button('Discover'));
     await waitFor('homebrew installed', () => find(`${card('homebrew')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('brewed installed', () => find(`${card('brewed')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('brew-only installable now', () => find(`${card('brew-only')}${button('Install')}`));
@@ -308,6 +321,18 @@ const steps = [
       if (!t.includes(s)) throw new Error(`missing ${s}`);
     }
   }],
+  ['uninstall confirmation names the installed app and kit that require the selection', async () => {
+    await click(button('Discover'));
+    await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
+    await click(button('Uninstall'));
+    const impact = "//div[contains(@class,'impact')]";
+    await waitFor('app and kit impact', async () => {
+      const message = await text(impact);
+      return message.includes('devtool') && message.includes('starter');
+    });
+    await click(button('Cancel'));
+    if (!existsSync(`${workDir}/pkgs/hyperfine`)) throw new Error('cancel removed the prerequisite');
+  }],
   ['updates install automatically, except for apps where that is turned off', async () => {
     writeFileSync(`${workDir}/pkgs/hyperfine.new`, '2.0\n');
     writeFileSync(`${workDir}/pkgs/extras.new`, '2.0\n');
@@ -393,6 +418,21 @@ const steps = [
     if (existsSync(`${workDir}/pkgs/cli-tool`)) throw new Error('installed system-wide');
     await choose('No');
     await waitFor('app value changed', () => log('data/settings.json').includes('"userInstall": false'));
+    const change = "//table[contains(@class,'changes')]//tr[th[normalize-space()='Install just for me']]";
+    await waitFor('installed and proposed values', async () =>
+      (await text(`${change}/td[1]`)) === 'Yes' && (await text(`${change}/td[2]`)).includes('App setting')
+        && (await text(`${change}/td[2]`)).startsWith('No'));
+    await choose('Same as the collection');
+    await waitFor('inherited proposal attributed to its collection', async () =>
+      (await text(`${change}/td[2]`)).includes('From collection fixture'));
+    // Its saved user install still requires Homebrew until this reinstall applies the change.
+    await click(button('Discover'));
+    await click(`${card('homebrew')}//button[@aria-label='Open homebrew']`);
+    await click(button('Uninstall'));
+    await waitFor('impact uses installed options', async () => (await text("//div[contains(@class,'impact')]")).includes('cli-tool'));
+    await click(button('Cancel'));
+    await click(button('Discover'));
+    await click(`${card('cli-tool')}//button[@aria-label='Open cli-tool']`);
     await click(button('Reinstall with these options'));
     await waitFor('moved to a system-wide install', () => existsSync(`${workDir}/pkgs/cli-tool`) && !existsSync(`${workDir}/brew-pkgs/cli-tool`), 30000);
     await waitFor('banner gone', async () => !(await findAll(button('Reinstall with these options'))).length);
@@ -582,6 +622,27 @@ const steps = [
     } finally {
       writeFileSync(`${workDir}/policy.json`, policy);
     }
+  }],
+  ['Activity groups a partial kit install and retries the failed member', async () => {
+    await click(button('Discover'));
+    await click("//button[@aria-label='Open kit recovery']");
+    writeFileSync(`${workDir}/fail-once-toolbox-b`, '');
+    await click(button('Install 2 apps'));
+    await click(nav('Activity'));
+    const group = "//li[contains(@class,'kit-history')][.//summary[contains(., 'recovery')]]";
+    await waitFor('one of two installed', async () => (await text(`${group}//summary`)).includes('1 of 2 installed'), 30000);
+    await click(`${group}//summary`);
+    const retry = `${group}${button('Retry toolbox')}`;
+    await waitFor('toolbox failure is actionable', () => find(retry));
+    const freshInstalls = () => log('pkexec.log').split('\n').filter(line => line.includes('pacman -S') && line.endsWith('fresh')).length;
+    const before = freshInstalls();
+    if (before !== 1) throw new Error(`fresh installs before retry: ${before}`);
+    await click(retry);
+    await waitFor('same kit request completes', async () => (await text(`${group}//summary`)).includes('2 of 2 installed'), 30000);
+    if ((await findAll(group)).length !== 1 || freshInstalls() !== before) throw new Error('retry duplicated the kit or its successful app');
+    await startSession();
+    await click(nav('Activity'));
+    await waitFor('kit result survives a restart', async () => (await text(`${group}//summary`)).includes('2 of 2 installed'));
   }],
 ];
 

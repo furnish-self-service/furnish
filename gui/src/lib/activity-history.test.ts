@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completedActivity, historyLimit, readHistory, recordProgress, writeHistory, type Run } from './activity-history.ts';
+import { completedActivity, historyLimit, interruptedDependents, isKit, readHistory, recordProgress, trimHistory, writeHistory, type KitActivity, type Run } from './activity-history.ts';
 
 const operation = (): Run => ({ id: 'r', name: 'VPN', trigger: 'autoInstall', kind: 'reinstall', startedAt: 0, steps: [], phaseStart: 0 });
 const plan = (name: string) => ({
@@ -46,6 +46,7 @@ test('recent history is bounded and profile-specific, with only summary fields s
   assert.doesNotMatch([...files.values()][0], /private|Furnish\/Command/);
   const restored = readHistory('/first');
   assert.equal(restored.length, historyLimit);
+  assert.ok(!isKit(restored[0]));
   assert.equal(restored[0].summary.failedStep, 'Configure VPN');
   assert.equal(restored[0].details, undefined);
   assert.deepEqual(readHistory('/second'), []);
@@ -60,4 +61,64 @@ test('a command failure before any step and a cancelled operation preserve their
   assert.equal(completedActivity('work/vpn', run, []).summary.failedStep, null);
   run.result = 'cancelled';
   assert.equal(completedActivity('work/vpn', run, []).summary.result, 'cancelled');
+});
+
+test('kit summaries retain earlier attempts and mark unfinished members interrupted after restart', () => {
+  const files = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key: string) => files.get(key) ?? null,
+    setItem: (key: string, raw: string) => files.set(key, raw),
+  } });
+  const run = operation();
+  recordProgress(run, plan('Configure VPN'));
+  recordProgress(run, finished('private failure details'));
+  Object.assign(run, { result: 'failed', finishedAt: 20 });
+  const attempt = completedActivity('work/vpn', run, [{ level: 'output', message: 'private stdout' }]);
+  const kit: KitActivity = {
+    id: 'one-request', key: 'work/tools', name: 'Tools', updatedAt: 21, items: [
+      { key: 'work/editor', name: 'Editor', selected: true, state: 'done', attempts: [] },
+      { key: 'work/vpn', name: 'VPN', selected: true, state: 'running', runId: 'retry', ownsJob: true, attempts: [attempt] },
+      { key: 'work/helper', name: 'Helper', selected: false, state: 'queued', waitingFor: ['work/vpn'], attempts: [] },
+    ],
+  };
+  writeHistory('p', [kit, attempt]);
+  const raw = [...files.values()][0];
+  assert.doesNotMatch(raw, /private|phaseStart|runId|ownsJob/);
+  const [restored, standalone] = readHistory('p');
+  assert.ok(isKit(restored));
+  assert.equal(restored.id, kit.id);
+  assert.deepEqual(restored.items.map(i => i.state), ['done', 'interrupted', 'interrupted']);
+  assert.deepEqual(interruptedDependents(restored, 'work/vpn').map(i => i.key), ['work/helper']);
+  assert.deepEqual(restored.items.map(i => i.selected), [true, true, false]);
+  assert.equal(restored.items[1].attempts[0].summary.failedStep, 'Configure VPN');
+  assert.equal(restored.items[1].attempts[0].details, undefined);
+  assert.ok(!isKit(standalone));
+  assert.equal(standalone.summary.id, run.id);
+});
+
+test('active kit requests remain tracked while newer unrelated activity exceeds the history limit', () => {
+  const run = operation();
+  Object.assign(run, { result: 'done', finishedAt: 20 });
+  const recent = Array.from({ length: historyLimit + 2 }, () => completedActivity('work/app', run, []));
+  const kit: KitActivity = {
+    id: 'active', key: 'work/kit', name: 'Kit', updatedAt: 0,
+    items: [{ key: 'work/app', name: 'App', selected: true, state: 'queued', attempts: [] }],
+  };
+  assert.equal(trimHistory([...recent, kit]).at(-1), kit);
+  kit.items[0].state = 'done';
+  assert.equal(trimHistory([...recent, kit]).includes(kit), false);
+});
+
+test('a restored retry follows the saved prerequisite edges and preserves cancelled and unrelated branches', () => {
+  const item = (key: string, state: KitActivity['items'][number]['state'], waitingFor: string[] = []) =>
+    ({ key, name: key, selected: true, state, waitingFor, attempts: [] });
+  const group: KitActivity = {
+    id: 'kit', key: 'work/kit', name: 'Kit', updatedAt: 0, items: [
+      item('app', 'interrupted', ['tool']), item('other', 'interrupted'),
+      item('tool', 'interrupted', ['bootstrap']), item('bootstrap', 'failed'),
+      item('cancelled', 'cancelled', ['bootstrap']), item('done', 'done', ['bootstrap']),
+      item('unrelated child', 'interrupted', ['cancelled']),
+    ],
+  };
+  assert.deepEqual(interruptedDependents(group, 'bootstrap').map(i => i.key), ['tool', 'app']);
 });

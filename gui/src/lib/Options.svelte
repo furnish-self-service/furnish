@@ -2,21 +2,17 @@
   // Options (DSC parameters) of an app or a collection. Each one either follows the level above
   // (app → collection → default) or has the user's own value; the admin policy can lock it.
   import type { Option } from './api';
-  import { setOption, optionLabel, optionDescription, choiceLabel } from './state.svelte';
+  import { setOption, optionLabel, optionDescription, optionValueLabel } from './state.svelte';
   import { t } from './i18n.svelte';
 
   let { target, options, scope }: { target: string; options: Option[]; scope: 'app' | 'collection' } = $props();
 
-  const show = (v: unknown) =>
-    v === true ? t('common.yes') : v === false ? t('common.no') : v == null ? t('options.notSet') : String(v);
   // A dropdown: the declared values with their labels, or yes/no.
   const collection = $derived(target.split('/')[0]);
   const choices = (o: Option) =>
     o.choices.length
-      ? o.choices.map((c) => ({ value: c.value, label: choiceLabel(collection, o, c.value, c.label) }))
+      ? o.choices.map((c) => ({ value: c.value, label: optionValueLabel(collection, o, c.value, c.label) }))
       : o.type === 'bool' ? [{ value: true, label: t('common.yes') }, { value: false, label: t('common.no') }] : [];
-  /** A value as the user knows it: its label if it has one. */
-  const shown = (o: Option, v: unknown) => choices(o).find((c) => c.value === v)?.label ?? show(v);
 
   /** What the option follows when the user has no value of their own here. */
   function inherited(o: Option) {
@@ -24,7 +20,7 @@
     // With an own value set, the value it would fall back to isn't known here.
     if (o.missing) return t('common.choose');
     if (o.ownValue != null) return what;
-    return t(o.source === 'policy' ? 'options.inheritedFromOrg' : 'options.inherited', { what, value: shown(o, o.value) });
+    return t(o.source === 'policy' ? 'options.inheritedFromOrg' : 'options.inherited', { what, value: optionValueLabel(collection, o, o.value) });
   }
 
   /** `raw` is JSON from a select, or the text of an input; empty goes back to the inherited value. */
@@ -42,7 +38,7 @@
         {#if optionDescription(collection, o)}<span class="desc">{optionDescription(collection, o)}</span>{/if}
       </label>
       {#if o.locked}
-        <span class="value">{shown(o, o.value)} <span class="org">{t('common.setByOrg')}</span></span>
+        <span class="value">{optionValueLabel(collection, o, o.value)} <span class="org">{t('common.setByOrg')}</span></span>
       {:else if choices(o).length}
         <select
           id="opt-{target}-{o.name}"
@@ -51,7 +47,7 @@
           onchange={(e) => change(o, e.currentTarget.value, true)}
         >
           <option value="">{inherited(o)}</option>
-          {#each choices(o) as c}<option value={JSON.stringify(c.value)}>{c.label ?? show(c.value)}</option>{/each}
+          {#each choices(o) as c}<option value={JSON.stringify(c.value)}>{c.label}</option>{/each}
         </select>
       {:else}
         <input
