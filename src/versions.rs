@@ -97,7 +97,8 @@ fn prune(dir: &Path, records: &BTreeMap<String, Record>) {
         let name = collection.file_name().to_string_lossy().into_owned();
         for version in fs::read_dir(collection.path()).into_iter().flatten().flatten() {
             let commit = version.file_name().to_string_lossy().into_owned();
-            if !held.iter().any(|(c, h)| *c == name && *h == commit) {
+            // Running version checks own their temporary snapshots and remove them when done.
+            if !commit.starts_with(".preview-") && !held.iter().any(|(c, h)| *c == name && *h == commit) {
                 let _ = fs::remove_dir_all(version.path());
             }
         }

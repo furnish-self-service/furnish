@@ -13,6 +13,7 @@ pub mod nixos;
 pub mod nixos_apps;
 pub mod options;
 mod package_names;
+mod script_managers;
 pub(crate) mod platform;
 pub mod policy;
 pub mod reports;

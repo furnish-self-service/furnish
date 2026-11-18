@@ -878,9 +878,20 @@ impl Collection {
         if !applies {
             return app;
         }
-        let version = version_dir(dir, &self.name, &held.commit);
-        let earlier = Collection { name: self.name.clone(), dir: version.clone(), managed: self.managed };
-        match earlier.load_app(&version.join(&relative)) {
+        let load = || {
+            let mut version = version_dir(dir, &self.name, &held.commit);
+            if self.managed && let Err(err) = self.extract_scripts(&held.commit, &version) {
+                // The service owns its snapshots. If an old one needs a script, a regular
+                // user's status check can read the same revision from a private copy.
+                let denied = err.chain().filter_map(|e| e.downcast_ref::<std::io::Error>()).any(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+                if !denied || *dir != system_dir() || *dir == data_dir() { return Err(err); }
+                version = version_dir(&data_dir(), &self.name, &held.commit);
+                self.extract(&held.commit, &relative, &app.installed_values(), &version)?;
+            }
+            let file = version.join(&relative);
+            Collection { name: self.name.clone(), dir: version, managed: self.managed }.load_app(&file)
+        };
+        match load() {
             Ok(mut earlier) => {
                 crate::required::carry(&app.doc, &mut earlier.doc);
                 app.doc = earlier.doc;
@@ -963,24 +974,98 @@ impl Collection {
         cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
     }
 
-    /// Write files of `commit` to `into`: `collection.yaml`, the app's file, and the installer
-    /// files it uses with these values.
-    fn extract(&self, commit: &str, relative: &str, values: &serde_json::Map<String, Value>, into: &Path) -> Result<()> {
-        let write = |file: &str| -> Result<()> {
-            let target = into.join(file);
-            fs::create_dir_all(target.parent().unwrap_or(into))?;
-            // --filters: what a checkout writes, e.g. the file itself for one in Git LFS.
-            let spec = format!("{commit}:{}", file.replace('\\', "/"));
-            let contents = git_bytes(Some(&self.dir), &["cat-file", "--filters", "--end-of-options", &spec])?;
-            Ok(fs::write(target, contents)?)
-        };
-        if self.blob(commit, "collection.yaml").is_some() {
-            write("collection.yaml")?;
+    /// Materialize a revision file once. Snapshots at one commit are shared by apps,
+    /// so publish whole files atomically and leave files belonging to other apps in place.
+    fn write_revision_file(&self, commit: &str, file: &str, into: &Path) -> Result<()> {
+        let root = into.canonicalize()?;
+        if root.starts_with(self.dir.canonicalize()?) {
+            bail!("a version snapshot must be outside the current checkout");
         }
-        write(relative)?;
+        if !Path::new(file).components().all(|c| matches!(c, Component::Normal(n) if !n.eq_ignore_ascii_case(".git"))) {
+            bail!("invalid path in version snapshot: {file}");
+        }
+        let target = root.join(file);
+        let parent = target.parent().context("revision file needs a parent")?;
+        let ancestor = parent.ancestors().find(|dir| dir.is_dir()).context("missing snapshot directory")?;
+        if ancestor.canonicalize()? != ancestor { bail!("version snapshot traverses a symlink: {file}"); }
+        fs::create_dir_all(parent)?;
+        if parent.canonicalize()? != parent {
+            bail!("version snapshot traverses a symlink: {file}");
+        }
+        if let Ok(info) = fs::symlink_metadata(&target) {
+            if !info.is_file() { bail!("expected a regular file in the version snapshot: {file}"); }
+            return Ok(());
+        }
+        // --filters returns checkout bytes, including Git LFS contents when configured.
+        let spec = format!("{commit}:{}", file.replace('\\', "/"));
+        let contents = git_bytes(Some(&self.dir), &["cat-file", "--filters", "--end-of-options", &spec])?;
+        let builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::PermissionsExt;
+            let mut builder = builder;
+            builder.permissions(fs::Permissions::from_mode(0o666)); // creation still respects the account's umask
+            builder
+        };
+        let mut temp = builder.tempfile_in(parent)?;
+        temp.write_all(&contents)?;
+        match temp.persist_noclobber(&target) {
+            Ok(_) => Ok(()),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists && fs::symlink_metadata(&target)?.is_file() => Ok(()),
+            Err(e) => Err(e.error.into()),
+        }
+    }
+
+    /// The Git blob identifies the exact regular-file script selected by this commit.
+    fn script_blob(&self, commit: &str, file: &str) -> Result<String> {
+        let entry = git(Some(&self.dir), &["--literal-pathspecs", "ls-tree", "--end-of-options", commit, "--", file])?;
+        if !(entry.starts_with("100644 blob ") || entry.starts_with("100755 blob ")) {
+            bail!("package manager script '{file}' must be a regular file in this revision");
+        }
+        Ok(entry.split_whitespace().nth(2).context("missing script blob ID")?.into())
+    }
+
+    fn extract_scripts(&self, commit: &str, into: &Path) -> Result<()> {
+        // A persisted hold supplies the commit, including when the cache predates script support.
+        if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|c| c.is_ascii_hexdigit()) {
+            bail!("invalid version commit '{commit}'");
+        }
+        if !into.join("collection.yaml").exists() && self.blob(commit, "collection.yaml").is_some() {
+            self.write_revision_file(commit, "collection.yaml", into)?;
+        }
+        for def in crate::options::package_managers(into)?.values() {
+            if !fs::symlink_metadata(into.join(&def.script)).is_ok_and(|m| m.is_file()) {
+                self.script_blob(commit, &def.script)?;
+                self.write_revision_file(commit, &def.script, into)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Include declarations and their script contents in required-version decision memoization.
+    fn manager_blobs(&self, commit: &str) -> Result<Vec<String>> {
+        if !self.managed { return Ok(vec![]); }
+        let Some(manifest) = self.blob(commit, "collection.yaml") else { return Ok(vec![]) };
+        let bytes = git_bytes(Some(&self.dir), &["cat-file", "--filters", "--end-of-options", &format!("{commit}:collection.yaml")])?;
+        let managers = crate::options::package_managers_from_yaml(&bytes)?;
+        let mut blobs = vec![manifest];
+        for def in managers.values() { blobs.push(self.script_blob(commit, &def.script)?); }
+        Ok(blobs)
+    }
+
+    /// Write missing files from the chosen commit, including the collection's scripts and
+    /// the installers the app uses with these values.
+    fn extract(&self, commit: &str, relative: &str, values: &serde_json::Map<String, Value>, into: &Path) -> Result<()> {
+        fs::create_dir_all(into)?;
+        if self.managed {
+            self.extract_scripts(commit, into)?;
+        } else if !into.join("collection.yaml").exists() && self.blob(commit, "collection.yaml").is_some() {
+            self.write_revision_file(commit, "collection.yaml", into)?;
+        }
+        self.write_revision_file(commit, relative, into)?;
         let earlier = Collection { name: self.name.clone(), dir: into.to_path_buf(), managed: self.managed };
         for file in earlier.load_app(&into.join(relative))?.missing_installers(values) {
-            write(&file)?;
+            self.write_revision_file(commit, &file, into)?;
         }
         Ok(())
     }
@@ -1063,6 +1148,7 @@ impl Collection {
     pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
+        crate::script_managers::attach(self, &mut doc)?;
         if doc["variables"].get(crate::conditions::HOST).is_some() {
             bail!("DSC variable '{}' is supplied by furnish and cannot be redeclared", crate::conditions::HOST);
         }
@@ -1265,9 +1351,21 @@ fn short(commit: &str) -> &str {
     commit.get(..10).unwrap_or(commit)
 }
 
-/// Windows canonical paths start with \\?\, which installers like msiexec reject.
-fn plain_path(path: PathBuf) -> PathBuf {
-    path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(path)
+/// Normal Windows paths for tools such as Windows PowerShell and msiexec.
+/// Preserve the network root when converting a verbatim UNC path.
+pub(crate) fn plain_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(text) = path.to_str() {
+        if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{share}").into();
+        }
+        if let Some(drive) = text.strip_prefix(r"\\?\")
+            && matches!(Path::new(drive).components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_)))
+        {
+            return drive.into();
+        }
+    }
+    path
 }
 
 /// Delete a copy git left behind.
@@ -1338,7 +1436,7 @@ impl App {
                 let mut values = crate::options::values(&crate::options::resolve_collection(&self.collection, &shared));
                 values.extend(self.current_values());
                 // An unanswered option makes the expression fail: not recommended (yet).
-                crate::options::condition_holds(expr, &values).unwrap_or(false)
+                crate::conditions::holds_for(&self.doc, expr, &values).unwrap_or(false)
             }
             _ => false,
         }
@@ -1370,7 +1468,7 @@ impl App {
     pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
         match &self.doc["metadata"]["furnish"]["perUser"] {
             Value::Bool(b) => *b,
-            Value::String(expr) => crate::options::condition_holds(expr, values).unwrap_or_else(|err| {
+            Value::String(expr) => crate::conditions::holds_for(&self.doc, expr, values).unwrap_or_else(|err| {
                 eprintln!("warning: {}: perUser: {err:#}", self.id);
                 false
             }),
@@ -1465,7 +1563,7 @@ impl App {
             .iter()
             .filter(|d| match &d.condition {
                 None => true,
-                Some(c) => crate::options::condition_holds(c, values).unwrap_or_else(|err| {
+                Some(c) => crate::conditions::holds_for(&self.doc, c, values).unwrap_or_else(|err| {
                     eprintln!("warning: {}: dependency {} condition: {err:#}", self.id, d.app);
                     false
                 }),
@@ -1667,7 +1765,7 @@ impl App {
                 _ => None,
             };
             let Some(file) = file else { continue };
-            let applies = resource["condition"].as_str().is_none_or(|c| crate::options::condition_holds(c, values).unwrap_or(true));
+            let applies = resource["condition"].as_str().is_none_or(|c| crate::conditions::holds_for(&self.doc, c, values).unwrap_or(true));
             // Paths of files not checked out start from the canonical directory (file_in_repo_later).
             let base = self.collection_dir.canonicalize().map(plain_path).unwrap_or_else(|_| self.collection_dir.clone());
             if applies && !Path::new(file).is_file()
@@ -1803,7 +1901,7 @@ impl App {
         if !current.resources_here().iter().any(|r| r["properties"].get(crate::required::PROPERTY).is_some()) {
             return Ok(());
         }
-        let key = file.map(|mut file| {
+        let key = if let Some(mut file) = file {
             crate::required::carry(&current.doc, &mut file);
             let decisive: Vec<Value> = file["resources"]
                 .as_array()
@@ -1818,20 +1916,22 @@ impl App {
                     r
                 })
                 .collect();
-            serde_json::to_string(&decisive).unwrap_or_default()
-        });
+            Some(serde_json::to_string(&(decisive, collection.manager_blobs(&version.commit)?))?)
+        } else { None };
         if let Some(earlier) = key.as_ref().and_then(|k| judged.get(k)) {
             return earlier.clone().map_err(|e| anyhow::anyhow!(e));
         }
-        let scratch = env::temp_dir().join(format!("furnish-version-{}", unique()));
+        let versions = data_dir().join("versions").join(&self.collection);
+        fs::create_dir_all(&versions)?;
+        let scratch = tempfile::Builder::new().prefix(".preview-").tempdir_in(&versions)?;
         let result = (|| {
-            let earlier = self.earlier_at(version, values, &scratch)?;
+            let earlier = self.earlier_at(version, values, scratch.path())?;
             if let Some(required) = crate::engine::check(&earlier.doc_for(values))?.required.filter(|r| r.target.is_none()) {
                 bail!("the version of {} from {} has no acceptable version: needs {}", self.id, version.date, required.summary);
             }
             Ok(())
         })();
-        let _ = fs::remove_dir_all(&scratch);
+
         if let Some(key) = key {
             judged.insert(key, result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}")));
         }
@@ -1933,13 +2033,7 @@ impl App {
         let collection = self.collection_handle();
         let relative = self.relative_path();
         let dir = dir.to_path_buf();
-        if !dir.join(&relative).exists() {
-            let _ = fs::remove_dir_all(&dir);
-            if let Err(err) = collection.extract(&version.commit, &relative, values, &dir) {
-                let _ = fs::remove_dir_all(&dir);
-                return Err(err.context(format!("getting the version from {}", version.date)));
-            }
-        }
+        collection.extract(&version.commit, &relative, values, &dir).with_context(|| format!("getting the version from {}", version.date))?;
         let file = dir.join(&relative);
         let mut earlier = Collection { name: self.collection.clone(), dir, managed: self.managed }.load_app(&file)?;
         crate::required::carry(&self.current()?.doc, &mut earlier.doc);
@@ -2557,6 +2651,58 @@ mod tests {
         }
         let collection = Collection { name: format!("history-test-{}", unique()), dir: dir.clone(), managed: false };
         (collection, dir, commits)
+    }
+
+    #[test]
+    fn held_packages_restore_scripts_from_their_own_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("checkout");
+        fs::create_dir_all(repo.join("apps")).unwrap();
+        fs::create_dir_all(repo.join("managers")).unwrap();
+        let collection = Collection { name: "org".into(), dir: repo.clone(), managed: true };
+        let relative = "apps/tool.dsc.yaml";
+        let app = "resources:\n  - { name: tool, type: Furnish/Package, properties: { name: tool, packageManager: local } }";
+        fs::write(repo.join(relative), app).unwrap();
+        fs::write(repo.join("apps/other.dsc.yaml"), app).unwrap();
+        fs::write(repo.join("collection.yaml"),
+            "packageManagers:\n  local: {script: 'managers/tool[1].sh'}\n  windows: {script: managers/tool.ps1}\n").unwrap();
+        fs::write(repo.join("managers/tool[1].sh"), "old Unix").unwrap();
+        fs::write(repo.join("managers/tool.ps1"), "old Windows").unwrap();
+        git(Some(&repo), &["init", "-q"]).unwrap();
+        let commit = |message: &str| {
+            git(Some(&repo), &["add", "."]).unwrap();
+            git(Some(&repo), &["-c", "user.name=Test", "-c", "user.email=test@example.org", "-c", "commit.gpgsign=false", "commit", "-qm", message]).unwrap();
+            collection.head().unwrap()
+        };
+        let old = commit("first manager");
+        fs::write(repo.join("managers/tool[1].sh"), "new Unix").unwrap();
+        let new = commit("updated manager without changing app or declarations");
+        assert_ne!(collection.manager_blobs(&old).unwrap(), collection.manager_blobs(&new).unwrap());
+        let snapshot = version_dir(temp.path(), "org", &old);
+        let values = serde_json::Map::new();
+        collection.extract(&old, "apps/other.dsc.yaml", &values, &snapshot).unwrap();
+        collection.extract(&old, relative, &values, &snapshot).unwrap();
+        assert!(snapshot.join("apps/other.dsc.yaml").is_file(), "apps share the snapshot");
+        assert_eq!(fs::read_to_string(snapshot.join("managers/tool.ps1")).unwrap(), "old Windows");
+
+        // A complete service snapshot may be read-only. Leave even its timestamps alone.
+        let ps = snapshot.join("managers/tool.ps1");
+        let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        fs::File::options().write(true).open(&ps).unwrap().set_modified(timestamp).unwrap();
+        collection.extract(&old, relative, &values, &snapshot).unwrap();
+        assert_eq!(fs::metadata(&ps).unwrap().modified().unwrap(), timestamp);
+
+        // A hold created before scripts were extracted. Loading it reuses its files and
+        // reads its missing script at the recorded commit, even though the checkout moved on.
+        fs::remove_file(snapshot.join("managers/tool[1].sh")).unwrap();
+        let app = collection.load_app(&repo.join(relative)).unwrap();
+        let held = crate::versions::Held { commit: old, failed: collection.blob("HEAD", relative).unwrap(), ..Default::default() };
+        let record = crate::versions::Record { held: Some(held.clone()), ..Default::default() };
+        let records = [(BTreeMap::from([(app.key(), record)]), temp.path().to_path_buf())];
+        assert_eq!(collection.with_hold(app, &records).held, Some(held));
+        assert_eq!(fs::read_to_string(snapshot.join("managers/tool[1].sh")).unwrap(), "old Unix");
+        assert_eq!(fs::read_to_string(repo.join("managers/tool[1].sh")).unwrap(), "new Unix");
+        assert_eq!(collection.head().unwrap(), new);
     }
 
     #[test]

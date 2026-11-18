@@ -11,9 +11,11 @@ use serde_json::{Map, Value, json};
 
 pub(crate) const HOST: &str = "furnish.host";
 
-pub(crate) fn host() -> Value {
+fn host(doc: &Value) -> Result<Value> {
     let distro = crate::platform::distribution();
-    json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": crate::platform::package_managers()})
+    let mut managers: Vec<String> = crate::platform::package_managers().into_iter().map(str::to_owned).collect();
+    managers.extend(crate::script_managers::available(doc)?.into_keys());
+    Ok(json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": managers}))
 }
 
 fn context(values: &Map<String, Value>) -> Context {
@@ -71,29 +73,33 @@ pub(crate) fn supply_host(doc: &Value, context: &mut Context) -> Result<()> {
         }
     }
     if needs_host(doc, &mut None)? {
-        context.variables.insert(HOST.into(), host());
+        context.variables.insert(HOST.into(), host(doc)?);
     }
     Ok(())
 }
 
-fn execute(expr: &str, mut context: Context) -> Result<Value> {
+fn execute(doc: &Value, expr: &str, mut context: Context) -> Result<Value> {
     if expression_uses_host(expr, &mut None)? {
-        context.variables.insert(HOST.into(), host());
+        context.variables.insert(HOST.into(), host(doc)?);
     }
     Ok(Statement::new()?.parse_and_execute(expr, &context)?)
 }
 
 pub fn holds(expr: &str, values: &Map<String, Value>) -> Result<bool> {
-    Ok(execute(expr, context(values))? == Value::Bool(true))
+    holds_for(&Value::Null, expr, values)
+}
+
+pub(crate) fn holds_for(doc: &Value, expr: &str, values: &Map<String, Value>) -> Result<bool> {
+    Ok(execute(doc, expr, context(values))? == Value::Bool(true))
 }
 
 /// Resolve author-supplied DSC parameter defaults before Furnish uses them in its
 /// own metadata and resource filtering. DSC reports invalid defaults on validation.
-pub(crate) fn parameter_default(value: &Value) -> Value {
+pub(crate) fn parameter_default(doc: &Value, value: &Value) -> Value {
     let Some(expr) = value.as_str().filter(|s| s.starts_with('[')) else { return value.clone() };
     let mut ctx = Context::new();
     ctx.process_mode = ProcessMode::ParametersDefault;
-    execute(expr, ctx).unwrap_or_else(|_| value.clone())
+    execute(doc, expr, ctx).unwrap_or_else(|_| value.clone())
 }
 
 /// An OS-family preview has no concrete package managers or Linux distribution.

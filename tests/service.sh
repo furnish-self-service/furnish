@@ -62,6 +62,39 @@ git config --global user.email admin@example.com
 git config --global gpg.format ssh
 git config --global user.signingkey /root/signing
 cp -r /src/tests/fixtures/collection /srv/org
+mkdir -p /srv/org/managers
+cat >> /srv/org/collection.yaml <<'YAML'
+packageManagers:
+  company: { script: managers/company.pl, interpreter: perl }
+YAML
+cat > /srv/org/managers/company.pl <<'PERL'
+use strict;
+use warnings;
+use JSON::PP;
+my $op = shift;
+my $request = decode_json(<STDIN>);
+my $marker = '/var/fake-pkgs/script-package';
+my $want = $request->{_exist};
+my $exists = -e $marker;
+if ($op eq 'set' && $want != !!$exists) {
+    if ($want) {
+        open(my $file, '>', $marker) or die $!;
+        print $file "$0\n";
+        close($file) or die $!;
+    } else { unlink($marker) or die $!; }
+}
+my $have = $op eq 'what-if' ? $want : -e $marker;
+my %state = (name => $request->{name}, _exist => $have ? JSON::PP::true : JSON::PP::false);
+$state{_inDesiredState} = $want == !!$have ? JSON::PP::true : JSON::PP::false if $op eq 'test';
+print encode_json(\%state);
+PERL
+cat > /srv/org/apps/script-package.dsc.yaml <<'YAML'
+resources:
+  - name: Organization package
+    type: Furnish/Package
+    condition: "[contains(variables('furnish.host').packageManagers, 'company')]"
+    properties: { name: script-package, packageManager: company }
+YAML
 cat > /srv/org/apps/mixed.dsc.yaml <<'YAML'
 metadata:
   furnish:
@@ -134,6 +167,15 @@ if [ -d /dsc ]; then
     as alice furnish install dsc-file || { cat /tmp/service.log; fail "alice couldn't install dsc-file"; }
     [ "$(cat /etc/furnish-dsc-test)" = furnish ] && [ "$(stat -c %U /etc/furnish-dsc-test)" = root ] || fail "File/Content didn't run as root"
 fi
+
+echo "== collection manager runs from the service's signed checkout"
+as alice furnish install org/script-package --dry-run >/dev/null || fail "could not preview the collection manager"
+[ ! -e /var/fake-pkgs/script-package ] || fail "preview changed system state"
+as alice furnish install org/script-package || { cat /tmp/service.log; fail "script package install failed"; }
+[ "$(stat -c %U /var/fake-pkgs/script-package)" = root ] || fail "script did not install as the service"
+[ "$(cat /var/fake-pkgs/script-package)" = /var/lib/furnish/collections/org/managers/company.pl ] || fail "wrong script checkout"
+as alice furnish uninstall org/script-package || fail "script package uninstall failed"
+[ ! -e /var/fake-pkgs/script-package ] || fail "script package is still installed"
 
 echo "== others are refused"
 if out=$(as bob furnish uninstall hyperfine 2>&1); then fail "bob uninstalled"; fi

@@ -119,6 +119,43 @@ Many tools are also installed some other way: with npm or pip, with the vendor's
 
 On macOS, Homebrew packages also recognize vendor-installed apps without a `command`. For example, a package named `viscosity` recognizes `/Applications/Viscosity.app` as installed outside furnish. Furnish checks the app bundles named by the cask in `/Applications` and `~/Applications`. These apps satisfy dependencies and keep their original update and uninstall method.
 
+#### Package managers supplied by a collection
+
+An admin-preset collection can ship a package manager for a system Furnish does not handle itself. Commit the script to the collection and give it a name in `collection.yaml`. The name is local to that collection. Furnish runs `.sh` with `/bin/sh` on Unix and `.ps1` with Windows PowerShell on Windows. For another language, set `interpreter` to an executable name, such as `python3` for a script named `managers/company.py`. That manager is available wherever Furnish finds the interpreter.
+
+```yaml
+packageManagers:
+  apk:
+    script: managers/apk.sh
+    requiresCommand: apk
+```
+
+`requiresCommand` is optional. When specified, Furnish checks for the executable on `PATH` before advertising the manager in `variables('furnish.host').packageManagers`. A step can then select it explicitly:
+
+```yaml
+- name: Install ripgrep on Alpine
+  type: Furnish/Package
+  condition: "[contains(variables('furnish.host').packageManagers, 'apk')]"
+  properties:
+    name: ripgrep
+    packageManager: apk
+```
+
+With no explicit selection, Furnish tries its built-in managers first. If none are present and exactly one collection manager is available, it uses that manager. If several are available, set `packageManager` on the step. The same `namesByDistribution` and `namesByManager` rules apply whichever manager handles it.
+
+The script receives one operation as its first argument and one UTF-8 JSON object on stdin. For example, an install request might contain `{"name":"ripgrep","packageManager":"apk","_exist":true}`. Return one JSON object on stdout containing the resolved `name` and boolean `_exist`. Send progress and diagnostic messages to stderr. A nonzero exit fails the operation.
+
+| Operation | What the script does |
+|---|---|
+| `get` | Read the current state. Include `version` when known. |
+| `test` | Read the current state and include `_inDesiredState`, a boolean indicating whether it satisfies the request. |
+| `what-if` | Return the expected state without making changes. Put human-readable steps in `_metadata.whatIf` to show them in the preview. |
+| `set` | Apply the request idempotently and report the resulting state. Install or update for `_exist: true`, remove for `false`. |
+
+For apps with [required versions](#required-versions), Furnish sends `reportVersions` (`latest` or `all`) when examining available versions. Return `latestVersion`, `versionScheme`, and `via`, and set `supportsVersionPin: true` if the tool can install an exact version. For such a manager, return `availableVersions` when asked for all. If the request includes `targetVersion`, install that exact version or return an error.
+
+`furnish check` validates manager declarations and their script files without running them. Only the owning preset collection can use its scripts. A system install runs from the service's copy of that collection. A per-user install runs under that user's account. The [Alpine example](https://github.com/furnish-self-service/furnish/blob/main/docs/examples/apk.sh) shows the complete script.
+
 ### Furnish/Installer
 
 Installs a `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe` from the collection or a vendor download. To ship the installer in the collection, set `file` to its path. Git LFS works for large files.

@@ -818,10 +818,10 @@ pub fn applies_here(resource: &Value, doc: &Value) -> bool {
         .into_iter()
         .flatten()
         .filter_map(|(name, p)| {
-            p.get("defaultValue").map(|value| (name.clone(), crate::conditions::parameter_default(value)))
+            p.get("defaultValue").map(|value| (name.clone(), crate::conditions::parameter_default(doc, value)))
         })
         .collect();
-    crate::options::condition_holds(condition, &values).unwrap_or(true)
+    crate::conditions::holds_for(doc, condition, &values).unwrap_or(true)
 }
 
 /// Install an app, or bring it up to date.
@@ -1292,6 +1292,7 @@ fn configurator(doc: &Value) -> Result<Configurator> {
     crate::resource_env::refresh();
     crate::nixos_apps::pass_outside_service(doc);
     let mut doc = doc.clone();
+    crate::script_managers::stamp(&mut doc);
     // furnish's own property for required versions (see `crate::required`); DSC doesn't know it.
     crate::required::strip(&mut doc["resources"]);
     // DSC would discover resources again while running, after `ensure_own_resources` checked

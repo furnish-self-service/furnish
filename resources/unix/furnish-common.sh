@@ -150,6 +150,7 @@ version_state() {
     [ -n "$reportVersions" ] || return 0
     load_versions
     printf ',"versionScheme":%s,"via":%s' "$(json "$scheme")" "$(json "$via")"
+    [ "$pin" != true ] || printf ',"supportsVersionPin":true'
     [ -z "$offered" ] || printf ',"latestVersion":%s' "$(json "$offered")"
     [ "$reportVersions" = all ] || return 0
     _list= _sep=
