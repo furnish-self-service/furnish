@@ -237,10 +237,14 @@ sc=$FURNISH_DATA_DIR/collections/signed
 gpg -q --batch --passphrase '' --quick-gen-key 'Someone <someone@example.com>' ed25519 sign never 2>/dev/null
 cd /tmp/signed && echo 3 > notes.txt && git add -A && git -c gpg.format=openpgp -c user.signingkey=someone@example.com commit -qS -m "gpg signed" && cd /
 git -C /tmp/signed verify-commit HEAD 2>/dev/null || fail "test setup: git doesn't accept the GnuPG signature itself"
+out=$(furnish collection update signed --dry-run 2>&1) && fail "preview accepted an OpenPGP-signed commit"
+echo "$out" | grep -q "SSH signatures only" || fail "unexpected preview signature error: $out"
 out=$(furnish collection update signed 2>&1) && fail "an OpenPGP-signed commit was accepted"
 echo "$out" | grep -q "SSH signatures only" || fail "unexpected message: $out"
 [ "$(git -C "$sc" rev-parse HEAD)" = "$signed2" ] || fail "moved to the OpenPGP-signed commit"
 cd /tmp/signed && git reset -q --hard "$signed1" && cd /
+out=$(furnish collection update signed --dry-run 2>&1) && fail "preview accepted an earlier signed commit"
+echo "$out" | grep -q "doesn't follow the current one" || fail "unexpected preview ancestry error: $out"
 out=$(furnish collection update signed 2>&1) && fail "went back to an earlier signed commit"
 echo "$out" | grep -q "doesn't follow the current one" || fail "unexpected message: $out"
 [ "$(git -C "$sc" rev-parse HEAD)" = "$signed2" ] || fail "moved back"

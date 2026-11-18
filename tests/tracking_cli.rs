@@ -89,3 +89,62 @@ fn cli_adds_a_release_and_switches_tracks_without_losing_the_previous_checkout_o
     assert_eq!(head(), renamed);
     assert!(cli(root, &["collection", "settings", "work"], true).contains("remote default branch"));
 }
+
+#[test]
+fn preview_compares_releases_and_guards_reviewed_adoption() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let repo = root.join("upstream");
+    fs::create_dir_all(repo.join("apps")).unwrap();
+    git(&repo, &["init", "--initial-branch=main"]);
+    let app = |id: &str, steps: &str| fs::write(repo.join(format!("apps/{id}.dsc.yaml")), format!("resources:\n{steps}")).unwrap();
+    let step = |name: &str| format!("  - name: {name}\n    type: Furnish/Package\n    properties: {{name: {name}}}\n");
+    let commit = |msg| {
+        git(&repo, &["add", "-A"]);
+        git(&repo, &["commit", "-m", msg]);
+        git(&repo, &["rev-parse", "HEAD"])
+    };
+    app("editor", &(step("core") + &step("old-plugin")));
+    app("obsolete", &step("old-app"));
+    app("prefs", "  - name: Preferences\n    type: Furnish/File\n    properties: {path: /etc/preferences, source: files/prefs}\n");
+    fs::create_dir_all(repo.join("files")).unwrap();
+    fs::write(repo.join("files/prefs"), "a private value").unwrap();
+    let initial = commit("stable");
+    git(&repo, &["tag", "-a", "v1", "-m", "first"]);
+    cli(root, &["collection", "add", repo.to_str().unwrap(), "--name", "work", "--tag-pattern", "^v[0-9]+$"], true);
+    let checkout = root.join("data/collections/work");
+    let head = || git(&checkout, &["rev-parse", "HEAD"]);
+    let options = root.join("data/installed.json");
+    let records = r#"{"work/editor":{"secret":"keep this secret"},"work/prefs":{}}"#;
+    fs::write(&options, records).unwrap();
+
+    git(&repo, &["switch", "-c", "staging"]);
+    app("editor", &(step("core").replace("name: core}", "name: core-plus}") + &step("new-plugin")));
+    fs::remove_file(repo.join("apps/obsolete.dsc.yaml")).unwrap();
+    app("new-app", &step("unexecuted"));
+    fs::write(repo.join("files/prefs"), "another private value").unwrap();
+    let candidate = commit("staged");
+    let staged = cli(root, &["collection", "update", "work", "--dry-run", "--branch", "staging"], true);
+    for needle in ["refs/heads/staging", &initial, "(v1)", &candidate, "editor: changed · recorded as installed",
+        "install step changed: core", "install step removed: old-plugin", "install step added: new-plugin",
+        "new-app: added", "obsolete: removed", "prefs: changed · recorded as installed", "step changed: Preferences", "files/prefs"] {
+        assert!(staged.contains(needle), "missing {needle}: {staged}");
+    }
+    assert!(!staged.contains("private value") && !staged.contains("keep this secret"));
+    assert_eq!(head(), initial);
+    assert_eq!(fs::read_to_string(checkout.join("files/prefs")).unwrap(), "a private value");
+    assert_eq!(fs::read_to_string(&options).unwrap(), records);
+    assert!(cli(root, &["collection", "update", "--dry-run"], true).contains("Already at the selected revision"));
+
+    git(&repo, &["tag", "-a", "v2", "-m", "second"]);
+    let published = cli(root, &["collection", "update", "work", "--dry-run"], true);
+    assert!(published.contains("refs/tags/v2") && published.contains("(v2)"));
+    fs::write(repo.join("notes"), "newer").unwrap();
+    let newer = commit("third");
+    git(&repo, &["tag", "v3"]);
+    let refused = cli(root, &["collection", "update", "work", "--reviewed", &initial, &candidate], false);
+    assert!(refused.contains("preview the update again"), "{refused}");
+    assert_eq!(head(), initial);
+    cli(root, &["collection", "update", "work", "--reviewed", &initial, &newer], true);
+    assert_eq!(head(), newer);
+}

@@ -394,6 +394,10 @@ fn records(dir: &Path) -> BTreeMap<String, Map<String, Value>> {
     fs::read_to_string(dir.join("installed.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 
+pub(crate) fn recorded_apps(dir: &Path) -> std::collections::BTreeSet<String> {
+    records(dir).into_keys().collect()
+}
+
 /// The option values an app (`collection/app`) was installed with, if furnish installed it.
 pub fn installed_with(dir: &Path, app_key: &str) -> Option<Map<String, Value>> {
     records(dir).remove(app_key)

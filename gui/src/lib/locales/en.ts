@@ -2,6 +2,21 @@
 // `{ one, other }` picks the plural by `n`; `<b>…</b>` marks text shown in bold.
 export const en = {
   // App.svelte: navigation and the catalog pages
+  'release.heading': "Preview collection update",
+  'release.loading': "Comparing releases…",
+  'release.refresh': "Refresh comparison",
+  'release.current': "Current revision",
+  'release.candidate': "Candidate revision",
+  'release.added': "Added",
+  'release.removed': "Removed",
+  'release.changed': "Changed",
+  'release.recorded': "Recorded as installed",
+  'release.held': "Held version",
+  'release.uninstall': "Uninstall step",
+  'release.noApps': "No direct app changes found.",
+  'release.files': "Other collection files ({n})",
+  'release.scope': "This compares declared steps. Conditions, options, held app versions and shared files can change what runs. Installation labels come from Furnish’s records.",
+  'release.apply': "Apply reviewed revision",
   'nav.sections': 'Sections',
   'nav.home': '{brand}, go to Discover',
   'nav.discover': 'Discover',

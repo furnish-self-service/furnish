@@ -83,6 +83,8 @@ pub enum Request {
         #[serde(default)]
         headers: BTreeMap<String, String>,
     },
+    PreviewCollection { collection: String, #[serde(default)] headers: BTreeMap<String, String> },
+    ApplyReviewed { collection: String, reviewed: crate::catalog::ReviewedRevisions, #[serde(default)] headers: BTreeMap<String, String> },
     EnsurePresets {
         #[serde(default)]
         headers: BTreeMap<String, String>,
@@ -97,6 +99,7 @@ enum Reply {
     Progress(Progress),
     Log { level: String, message: String },
     Updated { old: String, new: String },
+    CollectionPreview(crate::catalog::CollectionPreview),
     Problems(Vec<String>),
     Versions(Vec<crate::catalog::Version>),
     Done,
@@ -124,8 +127,24 @@ pub fn run(request: &Request, mut report: impl FnMut(Progress)) -> Result<()> {
     }
 }
 
+pub fn preview_collection(collection: &str) -> Result<crate::catalog::CollectionPreview> {
+    let request = Request::PreviewCollection { collection: collection.into(), headers: preset_headers() };
+    match call(&request, &mut |_| {})? {
+        Reply::CollectionPreview(comparison) => Ok(comparison),
+        other => bail!("unexpected answer from the furnish service: {other:?}"),
+    }
+}
+
 pub fn update(collection: &str) -> Result<(String, String)> {
-    let request = Request::Update { collection: collection.into(), headers: preset_headers() };
+    update_reviewed(collection, None)
+}
+
+pub(crate) fn update_reviewed(collection: &str, reviewed: Option<&crate::catalog::ReviewedRevisions>) -> Result<(String, String)> {
+    let headers = preset_headers();
+    let request = match reviewed {
+        Some(reviewed) => Request::ApplyReviewed { collection: collection.into(), reviewed: reviewed.clone(), headers },
+        None => Request::Update { collection: collection.into(), headers },
+    };
     match call(&request, &mut |_| {})? {
         Reply::Updated { old, new } => Ok((old, new)),
         other => bail!("unexpected answer from the furnish service: {other:?}"),
@@ -380,6 +399,23 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
     // Every user may set up and update the preset collections (the app of each user does), but
     // only those allowed to install see why it failed; the details go to the service's log.
     let trusted = || authorize(false).is_ok();
+    let updated = |(old, new)| Reply::Updated { old, new };
+    let collection_request = |name: &str, headers, verb: &str, action: &dyn Fn(&crate::catalog::Collection) -> Result<Reply>| {
+        let collection = crate::catalog::get(name)?;
+        if !collection.managed {
+            bail!("'{name}' isn't a collection your organization provides");
+        }
+        match crate::auth::with_headers(headers, || {
+            crate::endpoint::refresh_managed_source(name)?;
+            action(&collection)
+        }) {
+            Err(err) if !trusted() => {
+                eprintln!("warning: {verb} {name}: {err:#}");
+                bail!(HIDDEN.replace("{what}", &format!("{verb} '{name}'")))
+            }
+            result => result,
+        }
+    };
     match request {
         // Fetching with the user's sign-in: the service only ever installs what it fetched.
         Request::EnsurePresets { headers } => {
@@ -392,22 +428,14 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             }
             return Ok(Reply::Problems(vec![HIDDEN.replace("{what}", "set up your organization's collections")]));
         }
+        Request::PreviewCollection { collection, headers } => {
+            return collection_request(&collection, headers, "preview", &|c| c.preview_update(None).map(Reply::CollectionPreview));
+        }
+        Request::ApplyReviewed { collection, headers, reviewed } => {
+            return collection_request(&collection, headers, "update", &|c| c.update_reviewed(Some(&reviewed)).map(updated));
+        }
         Request::Update { collection, headers } => {
-            let c = crate::catalog::get(&collection)?;
-            if !c.managed {
-                bail!("'{collection}' isn't a collection your organization provides");
-            }
-            return match crate::auth::with_headers(headers, || {
-                crate::endpoint::refresh_managed_source(&collection)?;
-                c.update()
-            }) {
-                Ok((old, new)) => Ok(Reply::Updated { old, new }),
-                Err(err) if trusted() => Err(err),
-                Err(err) => {
-                    eprintln!("warning: updating {collection}: {err:#}");
-                    bail!(HIDDEN.replace("{what}", &format!("update '{collection}'")))
-                }
-            };
+            return collection_request(&collection, headers, "update", &|c| c.update().map(updated));
         }
         // Reading, like updating: every user may see which versions there are.
         Request::Versions { app: key } => {
@@ -451,7 +479,7 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             if force { engine::force_stop() } else { engine::abort() }
             Ok(Reply::Done)
         }
-        Request::Update { .. } | Request::EnsurePresets { .. } | Request::Versions { .. } => unreachable!("answered above"),
+        Request::Update { .. } | Request::PreviewCollection { .. } | Request::ApplyReviewed { .. } | Request::EnsurePresets { .. } | Request::Versions { .. } => unreachable!("answered above"),
     }
 }
 

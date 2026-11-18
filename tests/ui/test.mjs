@@ -122,6 +122,39 @@ const steps = [
     await waitFor('Activity retains the login instruction', async () => (await text(history)).includes(after));
     await click(nav('Discover'));
   }],
+  ['previewing a collection update shows how an installed app would change', async () => {
+    const git = (dir, ...args) => {
+      const result = spawnSync('git', ['-C', `${workDir}/${dir}`, ...args], { encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    const checkout = 'data/collections/fixture';
+    const current = git(checkout, 'rev-parse', 'HEAD');
+    const appPath = 'apps/session-notice.dsc.yaml';
+    const definition = readFileSync(`${workDir}/origin-src/${appPath}`, 'utf8');
+    writeFileSync(`${workDir}/origin-src/${appPath}`, definition.replace('name: Session setup', 'name: Refreshed session setup'));
+    git('origin-src', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'Rename the installed session setup step', '--', appPath);
+    const candidate = git('origin-src', 'rev-parse', 'HEAD');
+    git('origin-src', 'tag', 'release-preview-test', candidate);
+    git('origin-src', 'push', '-q', `${workDir}/origin.git`, 'HEAD', 'refs/tags/release-preview-test');
+
+    await click(nav('Collections'));
+    const panel = "//details[@data-release-preview='fixture']";
+    await click(`${panel}/summary`);
+    await waitFor('current and candidate releases and their changed steps', async () => {
+      const preview = await text(panel);
+      const expected = [current.slice(0, 7), candidate.slice(0, 7), 'release-preview-test', 'session-notice',
+        'Recorded as installed', 'Removed · Session setup', 'Added · Refreshed session setup'];
+      return expected.every((part) => preview.includes(part));
+    }, 30000);
+    if (git(checkout, 'rev-parse', 'HEAD') !== current || log('session-notice') !== 'ready') {
+      throw new Error('opening a preview changed the checkout or its installed app');
+    }
+    await snap('collection-release-preview');
+    await click(`${panel}//button[normalize-space()='Apply reviewed revision']`);
+    await waitFor('applying the reviewed revision', () => git(checkout, 'rev-parse', 'HEAD') === candidate);
+    await click(nav('Discover'));
+  }],
   ['a Nix installation shows its flake update instructions and skips the release feed', async () => {
     const requests = () => (log('feed.log').match(/GET \/latest\.json /g) ?? []).length;
     // The regular install has checked this feed, so this also verifies that the counter is live.

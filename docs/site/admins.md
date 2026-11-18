@@ -113,6 +113,18 @@ Endpoint administrators can put the same `tracking` object in an individual `col
 
 The rule applies to the first checkout, update notifications and manual or automatic updates. A missing branch or a pattern with no matching tag produces an error and an existing checkout stays usable. Collections that require signed commits still verify the selected commit, including the commit an annotated tag points to. With trusted keys configured, the selected revision must also descend from the installed revision. Publish maintenance lines as separate collections if their histories diverge.
 
+### Review a candidate before publishing a stable tag
+
+On a personal review checkout at the production release, compare a staged branch without changing the configured update source or checkout:
+
+```sh
+furnish collection update work --dry-run --branch staging
+```
+
+For a particular tag, use an anchored selector such as `--tag-pattern '^v1[.]5[.]0-rc[.]1$'`. Furnish fetches the Git objects it needs, compares both versions’ declarations and identifies steps with changed file inputs. It leaves app installations and the working tree in place. The comparison shows collection definitions for this release pair, so a local app hold, an option or a host condition may give an individual device a different plan.
+
+Machine-managed collections and collections with locked tracking compare against the organization’s selected ref. An administrator can configure a separate staging preset to review its updates under the same signature policy. After publishing the tag, `furnish collection update work --dry-run` shows the release the production checkout would adopt. Pass its two full commit IDs to `furnish collection update work --reviewed CURRENT CANDIDATE` to guard against changes since the review.
+
 ## Disk use and earlier versions
 
 Each person's computer keeps a git copy of every collection. Five settings decide how much of it, what happens when an install fails, and whether people can choose an earlier version of an app. Set them in `settings` for all collections and in `collectionSettings` for one; a value set for a collection wins over a locked general one.

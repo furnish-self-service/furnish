@@ -740,9 +740,14 @@ fn auto_install_done(app: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn update_collection(name: String) -> CmdResult<Revisions> {
+async fn preview_collection_update(name: String) -> CmdResult<catalog::CollectionPreview> {
+    blocking(move || catalog::get(&name)?.preview_update(None)).await
+}
+
+#[tauri::command]
+async fn update_collection(name: String, reviewed: Option<catalog::ReviewedRevisions>) -> CmdResult<Revisions> {
     blocking(move || {
-        let updated = catalog::get(&name)?.update();
+        let updated = catalog::get(&name)?.update_reviewed(reviewed.as_ref());
         std::thread::spawn(furnish::reports::send);
         let (old, new) = updated?;
         Ok(Revisions { old, new })
@@ -934,6 +939,7 @@ fn main() -> std::process::ExitCode {
             link_preview,
             add_endpoint,
             update_collection,
+            preview_collection_update,
             check_collection_servers,
             data_dir,
             remove_collection

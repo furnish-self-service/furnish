@@ -226,6 +226,10 @@ echo "== unsigned commits are refused"
 old=$(git -C /var/lib/furnish/collections/org rev-parse HEAD)
 echo "# unsigned" >> /srv/org/apps/hyperfine.dsc.yaml
 git -C /srv/org commit -q -a --no-gpg-sign -m unsigned
+if out=$(as alice furnish collection update org --dry-run 2>&1); then fail "preview accepted an unsigned commit"; fi
+echo "$out" | grep -q "isn't signed" || fail "unexpected preview error: $out"
+if out=$(as bob furnish collection update org --dry-run 2>&1); then fail "preview accepted an unsigned commit for bob"; fi
+echo "$out" | grep -q "details in its log" || fail "unexpected preview error for bob: $out"
 if out=$(as alice furnish collection update org 2>&1); then fail "unsigned commit accepted"; fi
 echo "$out" | grep -q "isn't signed" || fail "unexpected error: $out"
 echo "== users who may not install don't see why an update failed; the service's log does"
@@ -235,7 +239,11 @@ if echo "$out" | grep -q "isn't signed"; then fail "bob sees the details: $out";
 grep -q "isn't signed" /tmp/service.log || fail "details not in the service's log"
 [ "$(git -C /var/lib/furnish/collections/org rev-parse HEAD)" = "$old" ] || fail "moved to the unsigned commit"
 git -C /srv/org commit -q --amend -S -m signed
-as alice furnish collection update org >/dev/null || fail "signed commit refused"
+candidate=$(git -C /srv/org rev-parse HEAD)
+out=$(as alice furnish collection update org --dry-run) || fail "preview refused the signed commit"
+echo "$out" | grep -q "hyperfine: changed · recorded as installed" || fail "preview missed the service installation: $out"
+[ "$(git -C /var/lib/furnish/collections/org rev-parse HEAD)" = "$old" ] || fail "preview adopted the signed commit"
+as alice furnish collection update org --reviewed "$old" "$candidate" >/dev/null || fail "reviewed signed commit refused"
 
 echo "== choosing a version through the service; only signed ones; the policy can turn it off"
 short() { echo "$1" | cut -c1-7; }
