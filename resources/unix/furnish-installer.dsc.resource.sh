@@ -1,5 +1,5 @@
 #!/bin/sh
-# Furnish/Installer: install an installer file shipped in the collection (Linux: .deb, .rpm;
+# Furnish/Installer: install a collection file or a SHA-256-pinned download (Linux: .deb, .rpm;
 # macOS: .pkg, .dmg). furnish passes `file` as an absolute path inside the collection.
 # DSC passes the resource properties as env vars: $file, $packageId (.pkg), $app (.dmg), $_exist,
 # and from furnish's required versions $reportVersions and $targetVersion (see furnish-common.sh):
@@ -7,12 +7,33 @@
 set -eu
 . "$(dirname "$0")/furnish-common.sh"
 
-[ -n "${file:-}" ] || fail 10 "property file is required"
-# Echo back every identifying property: DSC's test compares each desired property with the state.
-identity=$(json_member file "$file")
+# DSC compares each desired property with the returned state. Keep the collection's
+# identity even when an installer is downloaded into furnish's content-addressed cache.
+if [ -n "${url:-}" ]; then
+    [ -z "${file:-}" ] && [ -n "${sha256:-}" ] || fail 10 "use either file or url with sha256"
+    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && [ "${_exist:-true}" = true ]; then
+        file=$("$FURNISH_EXE" dsc-resource installer-download fetch)
+    else
+        file=$("$FURNISH_EXE" dsc-resource installer-download lookup)
+        # Only real removal can act on an identity read from the cache. Verify
+        # those bytes too; an explicit receipt or app bundle needs no file.
+        if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && [ -f "$file" ]; then
+            case "$file" in
+            *.dmg) ;;
+            *.pkg) [ -n "${packageId:-}" ] || file=$("$FURNISH_EXE" dsc-resource installer-download fetch) ;;
+            *) file=$("$FURNISH_EXE" dsc-resource installer-download fetch) ;;
+            esac
+        fi
+    fi
+    identity="$(json_member url "$url"),$(json_member sha256 "$sha256")"
+    path=${url%%\?*}; subject=${path##*/}
+else
+    [ -n "${file:-}" ] && [ -z "${sha256:-}" ] || fail 10 "use either file or url with sha256"
+    identity=$(json_member file "$file")
+    subject=$(basename "$file")
+fi
 [ -n "${packageId:-}" ] && identity="$identity,$(json_member packageId "$packageId")"
 [ -n "${app:-}" ] && identity="$identity,$(json_member app "$app")"
-subject=$(basename "$file")
 case "$file" in
 *.deb) scheme=dpkg ;;
 *.rpm) scheme=rpm ;;
@@ -21,17 +42,30 @@ esac
 
 # A link could point anywhere outside the collection; test -L also holds for a dangling one.
 [ -L "$file" ] && fail 10 "installer is a symbolic link: $file"
-if [ ! -f "$file" ]; then
+# An explicit receipt ID or app bundle identifies a remote macOS installation even
+# before the installer is cached, including for offline status and removal.
+known_without_file=false
+if [ -n "${url:-}" ]; then
+    case "$file" in
+    *.pkg) [ -z "${packageId:-}" ] || known_without_file=true ;;
+    *.dmg) [ -z "${app:-}" ] || known_without_file=true ;;
+    esac
+fi
+if [ ! -f "$file" ] && ! "$known_without_file"; then
     # Left out of the checkout (blobsOnDemand): furnish downloads it when the app is installed.
     # Until then the app counts as not installed, and only an actual install needs the file.
-    [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && fail 10 "installer not found: $file"
+    if [ "${1:-}" = set ] && [ "${2:-}" != --what-if ] && { [ -z "${url:-}" ] || [ "${_exist:-true}" = true ]; }; then
+        fail 10 "installer not found: $file"
+    fi
     installed_version() { :; }
-    admin=true via="its installer" install_desc="download $subject from the collection, then install it"
+    admin=true via="its installer"
+    if [ -n "${url:-}" ]; then install_desc="download $subject and verify its SHA-256, then install it"
+    else install_desc="download $subject from the collection, then install it"; fi
     furnish_main "$@"
     exit
 fi
 # Without git-lfs, an LFS-tracked file is a small text pointer instead of the installer.
-if head -c 64 "$file" | grep -q '^version https://git-lfs'; then
+if [ -z "${url:-}" ] && head -c 64 "$file" | grep -q '^version https://git-lfs'; then
     missing "git-lfs to download $subject (install it, then update the collection)"
 fi
 
@@ -79,12 +113,67 @@ case "$file" in
     ;;
 *.pkg)
     command -v installer >/dev/null 2>&1 || missing "macOS for .pkg installers"
+    if [ -n "${url:-}" ] && [ -f "$file" ] && { [ "${_exist:-true}" = true ] || [ -z "${packageId:-}" ]; }; then
+        # macOS tar reads flat package archives. A productbuild distribution stores
+        # a PackageInfo inside each component; xmllint accepts exactly one document.
+        metadata=$(tar -xOf "$file" '*PackageInfo' 2>/dev/null |
+            xmllint --nonet --xpath 'concat(/pkg-info/@identifier,"|",/pkg-info/@version)' - 2>/dev/null) || metadata=
+        inferred=${metadata%%|*}
+        case $inferred in ''|-*|*[!A-Za-z0-9._-]*) inferred= ;; esac
+        if [ -z "${packageId:-}" ]; then
+            [ -n "$inferred" ] || fail 10 "set packageId for $subject: no single package receipt could be identified"
+            packageId=$inferred
+        fi
+        if [ "$packageId" = "$inferred" ]; then
+            pkg_version=${metadata#*|}
+            latest_version() { echo "$pkg_version"; }
+            newer_version() { [ -n "$pkg_version" ] && [ "$pkg_version" != "$(installed_version)" ] && echo "$pkg_version"; }
+        fi
+    fi
     [ -n "${packageId:-}" ] || fail 10 ".pkg installers need the property packageId (see: pkgutil --pkgs)"
     via=installer
     installed_version() { pkgutil --pkg-info "$packageId" 2>/dev/null | sed -n 's/^version: //p'; }
     do_install() { run_step installer -pkg "$file" -target /; }
-    # macOS has no uninstaller for .pkg: remove the files it installed, then its receipt.
-    do_remove() { run_step sh -c 'pkgutil --only-files --files "$1" | (cd / && tr "\n" "\0" | xargs -0 rm -f) && pkgutil --forget "$1"' sh "$packageId"; }
+    # pkgutil lists paths relative to the receipt's install location (Homebrew: /opt/homebrew).
+    # Unlink one leaf from its checked physical directory, so symlinked parents cannot redirect it.
+    do_remove() {
+        run_step /usr/bin/perl -MCwd=getcwd -e '
+            use strict;
+            use warnings;
+            my $id = shift;
+            my $tool = "/usr/sbin/pkgutil";
+            $ENV{LC_ALL} = "C";
+            open my $info, "-|", $tool, "--pkg-info", $id or die "reading receipt: $!";
+            my ($volume, $location);
+            while (<$info>) {
+                chomp;
+                $volume = $1 if /^volume: (.*)$/;
+                $location = $1 if /^location: (.*)$/;
+            }
+            close $info or die "could not read receipt for $id";
+            die "invalid receipt location for $id" unless defined $volume && $volume eq "/" && defined $location;
+            my @dirs = grep { length } split m{/}, $location;
+            die "invalid receipt location for $id" if grep { /[[:cntrl:]]/ || $_ eq ".." || $_ eq "." } @dirs;
+            my $root = "/" . join("/", @dirs);
+            chdir $root and getcwd() eq $root or die "cannot verify receipt directory $root";
+            open my $list, "-|", $tool, "--only-files", "--files", $id or die "listing receipt files: $!";
+            my @files = <$list>;
+            close $list or die "could not list receipt files for $id";
+            chomp @files;
+            for (@files) {
+                s{^(?:\./)+}{};
+                die "invalid path in receipt for $id" if !length || m{^/|(?:^|/)\.{1,2}(?:/|$)|[[:cntrl:]]};
+            }
+            for my $entry (@files) {
+                my ($dir, $leaf) = $entry =~ m{^(?:(.*)/)?([^/]+)$} or die "invalid receipt entry";
+                my $parent = defined $dir ? ($root eq "/" ? "/" : "$root/") . $dir : $root;
+                next unless -d $parent;
+                chdir $parent and getcwd() eq $parent or die "cannot verify receipt directory $parent";
+                unlink "./$leaf" or die "removing $entry: $!" if -e "./$leaf" || -l "./$leaf";
+            }
+            exec $tool, "--forget", $id or die "forgetting $id: $!";
+        ' "$packageId"
+    }
     install_desc="installer -pkg $file -target /" remove_desc="remove the files of $packageId, then pkgutil --forget $packageId"
     ;;
 *.dmg)

@@ -358,20 +358,17 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
                 findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
             }
         }
-        if kind == "Furnish/Installer" {
-            match r["properties"]["file"].as_str() {
-                None => findings.push(error(format!("{name}: Furnish/Installer needs properties.file"))),
-                Some(file) => {
-                    let path = PathBuf::from(file);
-                    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-                    if !INSTALLER_TYPES.contains(&extension.as_str()) {
-                        findings.push(error(format!("{name}: {file}: not an installer furnish knows (.deb, .rpm, .pkg, .dmg, .msi, .exe)")));
-                    }
-                    // load_app made the path absolute; it may not be checked out (blobs_on_demand).
-                    if !path.is_file() && !in_repository(dir, &path) {
-                        findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
-                    }
-                }
+        if kind == "Furnish/Installer"
+            && let Some(file) = r["properties"]["file"].as_str()
+        {
+            let path = PathBuf::from(file);
+            let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            if !INSTALLER_TYPES.contains(&extension.as_str()) {
+                findings.push(error(format!("{name}: {file}: not an installer furnish knows (.deb, .rpm, .pkg, .dmg, .msi, .exe)")));
+            }
+            // load_app made the path absolute; it may not be checked out (blobs_on_demand).
+            if !path.is_file() && !in_repository(dir, &path) {
+                findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
             }
         }
     }

@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/Installer",
-  "description": "Install an installer file from the collection (.deb, .rpm, .pkg, .dmg)",
+  "description": "Install a collection file or a SHA-256-pinned download (.deb, .rpm, .pkg, .dmg)",
   "version": "0.1.0",
   "get": {
     "executable": "furnish-installer.dsc.resource.sh",
@@ -42,19 +42,26 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Installer",
       "type": "object",
-      "required": [
-        "file"
-      ],
       "additionalProperties": false,
       "properties": {
         "file": {
           "type": "string",
           "description": "Installer file, relative to the collection root"
         },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Download URL for an installer; requires sha256"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9A-Fa-f]{64}$",
+          "description": "SHA-256 digest of the downloaded installer"
+        },
         "packageId": {
           "type": "string",
           "pattern": "^[A-Za-z0-9._-]+$",
-          "description": ".pkg: the package identifier (pkgutil --pkgs)"
+          "description": ".pkg: the package receipt identifier (pkgutil --pkgs); optional for a download with one component"
         },
         "app": {
           "type": "string",
@@ -134,7 +141,27 @@
           "readOnly": true,
           "description": "With reportVersions: what installs it"
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "url": false,
+            "sha256": false
+          }
+        },
+        {
+          "required": [
+            "url",
+            "sha256"
+          ],
+          "properties": {
+            "file": false
+          }
+        }
+      ]
     }
   }
 }
