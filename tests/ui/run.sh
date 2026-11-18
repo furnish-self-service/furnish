@@ -123,6 +123,25 @@ git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c 
 git -C "$work/origin-src" push -q "$work/origin.git" HEAD
 repo_from_fixture "$work/second"
 
+# Install a launcher in the package search path. Keep its command and actions distinguishable
+# from the defaults so the desktop override must use the installed package's entry.
+mkdir -p "$work/system-share/applications" "$work/user-share"
+cat > "$work/system-share/applications/furnish.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=furnish
+Name[de]=Paketverwaltung
+Icon=furnish-gui
+Exec=/usr/local/bin/furnish-gui %u
+MimeType=x-scheme-handler/furnish;
+StartupWMClass=furnish
+Actions=Hidden;
+
+[Desktop Action Hidden]
+Name=Start in tray
+Exec=/usr/local/bin/furnish-gui --hidden
+DESKTOP
+
 # An admin policy: the fixture collection is managed, the update interval locked, the app branded.
 cat > "$work/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}, "reporting": {"value": "errors", "locked": true}},
@@ -146,7 +165,7 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 [ -d "$dsc_dir" ] || dsc_mount=$work:/nonexistent:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e XDG_DATA_HOME="$work/user-share" -e XDG_DATA_DIRS="$work/system-share:/usr/local/share:/usr/share" -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
 

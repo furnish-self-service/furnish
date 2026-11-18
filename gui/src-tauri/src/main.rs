@@ -4,6 +4,8 @@
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
 mod app_icon;
+#[cfg(target_os = "linux")]
+mod desktop_entry;
 mod autostart;
 mod selfupdate;
 mod tray;
