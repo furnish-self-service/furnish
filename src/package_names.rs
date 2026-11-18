@@ -94,6 +94,12 @@ fn powershell_script(path: &Path) -> Result<Command> {
     use std::{ffi::OsString, os::windows::ffi::OsStringExt};
     use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 
+    let argument = crate::catalog::plain_path(path.to_owned());
+    // Definition::path verified the canonical target. Win32 normalization of the
+    // PowerShell argument must still select that same file (including on shares).
+    if argument != path {
+        ensure!(argument.canonicalize()?.as_path() == path, "PowerShell cannot address the validated script {}", path.display());
+    }
     let mut directory = vec![0u16; 260];
     loop {
         // SAFETY: the API takes a writable buffer and its capacity in UTF-16 code units.
@@ -104,7 +110,7 @@ fn powershell_script(path: &Path) -> Result<Command> {
         if size < directory.len() {
             let executable = PathBuf::from(OsString::from_wide(&directory[..size])).join(r"WindowsPowerShell\v1.0\powershell.exe");
             let mut cmd = Command::new(executable);
-            cmd.args(["-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(path);
+            cmd.args(["-NoLogo", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]).arg(argument);
             return Ok(cmd);
         }
         directory.resize(size + 1, 0);

@@ -1351,9 +1351,21 @@ fn short(commit: &str) -> &str {
     commit.get(..10).unwrap_or(commit)
 }
 
-/// Windows canonical paths start with \\?\, which installers like msiexec reject.
-fn plain_path(path: PathBuf) -> PathBuf {
-    path.to_string_lossy().strip_prefix(r"\\?\").map(PathBuf::from).unwrap_or(path)
+/// Normal Windows paths for tools such as Windows PowerShell and msiexec.
+/// Preserve the network root when converting a verbatim UNC path.
+pub(crate) fn plain_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(text) = path.to_str() {
+        if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{share}").into();
+        }
+        if let Some(drive) = text.strip_prefix(r"\\?\")
+            && matches!(Path::new(drive).components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_)))
+        {
+            return drive.into();
+        }
+    }
+    path
 }
 
 /// Delete a copy git left behind.
