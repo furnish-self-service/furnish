@@ -1208,7 +1208,7 @@ impl ResourceCommand {
 fn resource(action: &str, what_if: bool) -> ExitCode {
     match resource_inner(action, what_if) {
         Ok(out) => {
-            println!("{out}");
+            crate::cli_println!("{out}");
             ExitCode::SUCCESS
         }
         Err(e) if e.is::<Missing>() => {

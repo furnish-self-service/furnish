@@ -386,6 +386,7 @@ jobs:
         with:
           shared-key: release
       - run: cargo build --release
+      - run: cargo test --release --locked --test cli_pipe
       - if: runner.os == 'Windows'
         run: winget --version
       # A real .msi for the Furnish/Installer test (macOS builds .pkg/.dmg inside the test).
