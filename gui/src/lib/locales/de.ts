@@ -323,6 +323,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.notNeeded.nix': 'auf diesem Computer ist Nix nicht installiert',
   'plan.notNeeded.home': 'Home Manager ist für Sie nicht eingerichtet',
   'plan.notNeeded.system': 'die NixOS-Konfiguration ist nicht für furnish eingerichtet',
+  'error.file.requiresClosed': "Schließe {names} und versuche es dann erneut",
   'error.nixos.serviceOff': "nur der furnish-Dienst ändert die NixOS-Konfiguration: bitten Sie Ihren Administrator, ihn einzuschalten (services.furnish.service.enable)",
   'error.nixos.notPreset': "nur der furnish-Dienst ändert die NixOS-Konfiguration, und er installiert nur die Apps vorgegebener Sammlungen. Die Sammlung '{collection}' ist nicht vorgegeben: bitten Sie Ihren Administrator, sie vorzugeben (services.furnish.policy.collections.preset) oder ihre furnish-Adresse in die Richtlinie aufzunehmen (services.furnish.policy.endpoints) und, falls Sie kein Administrator sind, services.furnish.policy.service.allowedGroup auf eine Ihrer Gruppen zu setzen",
   'error.nixos.perUser': "nur der furnish-Dienst ändert die NixOS-Konfiguration, und {app} wird für jede Person einzeln installiert (perUser), daher führt furnish die Schritte als Sie aus",

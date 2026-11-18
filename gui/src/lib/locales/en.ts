@@ -322,6 +322,7 @@ export const en = {
   'plan.notNeeded.nix': "Nix isn't installed on this computer",
   'plan.notNeeded.home': "Home Manager isn't set up for you",
   'plan.notNeeded.system': "the NixOS configuration isn't set up for furnish",
+  'error.file.requiresClosed': "Close {names}, then retry this change",
   'error.nixos.serviceOff': "only the furnish service changes the NixOS configuration: ask your administrator to turn it on (services.furnish.service.enable)",
   'error.nixos.notPreset': "only the furnish service changes the NixOS configuration, and it installs only the apps of preset collections. The collection '{collection}' isn't preset: ask your administrator to preset it (services.furnish.policy.collections.preset) or to list its furnish address in the policy (services.furnish.policy.endpoints), and, unless you're an administrator, to set services.furnish.policy.service.allowedGroup to a group you're in",
   'error.nixos.perUser': "only the furnish service changes the NixOS configuration, and {app} installs for each person (perUser), so furnish runs its steps as you",

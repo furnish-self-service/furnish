@@ -342,6 +342,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.notNeeded.nix': 'Nix nie jest zainstalowany na tym komputerze',
   'plan.notNeeded.home': 'Home Manager nie jest skonfigurowany dla tego użytkownika',
   'plan.notNeeded.system': 'konfiguracja NixOS nie jest przygotowana dla furnish',
+  'error.file.requiresClosed': "Zamknij {names} i spróbuj ponownie",
   'error.nixos.serviceOff': "tylko usługa furnish zmienia konfigurację NixOS: poproś administratora o jej włączenie (services.furnish.service.enable)",
   'error.nixos.notPreset': "tylko usługa furnish zmienia konfigurację NixOS, a instaluje wyłącznie aplikacje z kolekcji predefiniowanych. Kolekcja '{collection}' nie jest predefiniowana: poproś administratora o jej predefiniowanie (services.furnish.policy.collections.preset) albo o dodanie jej adresu furnish do zasad (services.furnish.policy.endpoints), a jeśli nie jesteś administratorem, także o ustawienie services.furnish.policy.service.allowedGroup na grupę, do której należysz",
   'error.nixos.perUser': "tylko usługa furnish zmienia konfigurację NixOS, a {app} instaluje się osobno dla każdej osoby (perUser), więc furnish wykonuje jej kroki jako ty",

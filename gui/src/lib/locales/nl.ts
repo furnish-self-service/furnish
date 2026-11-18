@@ -325,6 +325,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.notNeeded.nix': 'Nix is niet op deze computer geïnstalleerd',
   'plan.notNeeded.home': 'Home Manager is niet voor u ingesteld',
   'plan.notNeeded.system': 'de NixOS-configuratie is niet ingesteld voor furnish',
+  'error.file.requiresClosed': "Sluit {names} en probeer het opnieuw",
   'error.nixos.serviceOff': "alleen de furnish-service wijzigt de NixOS-configuratie: vraag uw beheerder om die in te schakelen (services.furnish.service.enable)",
   'error.nixos.notPreset': "alleen de furnish-service wijzigt de NixOS-configuratie, en die installeert alleen de apps van vooraf ingestelde collecties. De collectie '{collection}' is niet vooraf ingesteld: vraag uw beheerder om die vooraf in te stellen (services.furnish.policy.collections.preset) of het furnish-adres ervan in het beleid op te nemen (services.furnish.policy.endpoints), en, als u geen beheerder bent, services.furnish.policy.service.allowedGroup in te stellen op een groep waarin u zit",
   'error.nixos.perUser': "alleen de furnish-service wijzigt de NixOS-configuratie, en {app} wordt per persoon geïnstalleerd (perUser), dus voert furnish de stappen uit als u",
