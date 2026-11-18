@@ -27,14 +27,40 @@ impl Drop for CachedApp {
     }
 }
 
+fn fixture_binary(source: &Path, destination: &Path) {
+    #[cfg(target_os = "linux")]
+    if fs::hard_link(source, destination).is_ok() {
+        return;
+    }
+    fs::copy(source, destination).unwrap();
+}
+
+fn spawn_fixture(command: &mut Command) -> Child {
+    // A concurrent fork can briefly inherit the writable fd of a cross-filesystem
+    // fixture copy. Linux releases it on exec. Retry only that transient error.
+    #[cfg(target_os = "linux")]
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match command.spawn() {
+                Ok(child) => return child,
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("could not start fixture {command:?}: {error}"),
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    command.spawn().unwrap()
+}
+
 fn start_app(executable: &Path, settings: &Path) -> CachedApp {
-    let mut child = Command::new(executable)
+    let mut child = spawn_fixture(Command::new(executable)
         .args(["--exact", "cached_settings_survive_relaunch", "--nocapture"])
         .env(FIXTURE_SETTINGS, settings)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stdout(Stdio::piped()));
     let reader = BufReader::new(child.stdout.as_mut().unwrap());
     assert!(reader.lines().any(|line| line.unwrap().contains("fixture settings loaded")));
     CachedApp(child)
@@ -81,7 +107,7 @@ fn fixture_executable(root: &Path) -> (String, PathBuf) {
         root.file_name().unwrap().to_string_lossy().trim_start_matches('.')
     );
     let path = root.join(format!("{name}{}", env::consts::EXE_SUFFIX));
-    fs::copy(env::current_exe().unwrap(), &path).unwrap();
+    fixture_binary(&env::current_exe().unwrap(), &path);
     (name, path)
 }
 
@@ -224,8 +250,8 @@ fn shared_electron_blocks_only_the_running_package() {
     fn launch(exe: &Path, archive: &Path, later_argument: &Path) -> CachedApp {
         fs::create_dir_all(archive.parent().unwrap()).unwrap();
         fs::write(archive, "echo ready\nread -r line\nexit 0\n").unwrap();
-        let mut child = Command::new(exe).arg(archive).arg(later_argument)
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut child = spawn_fixture(Command::new(exe).arg(archive).arg(later_argument)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()));
         let mut ready = String::new();
         BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut ready).unwrap();
         assert_eq!(ready, "ready\n");
@@ -239,8 +265,9 @@ fn shared_electron_blocks_only_the_running_package() {
     let native = root.join("electron");
     let versioned = root.join("electron43");
     let decoy = root.join("unrelated-runtime");
+    let shell = fs::canonicalize("/bin/sh").unwrap();
     for exe in [&native, &versioned, &decoy] {
-        fs::copy("/bin/sh", exe).unwrap();
+        fixture_binary(&shell, exe);
     }
     let nix = root.join("opt").join(&product).join("resources/app.asar");
     let arch = root.join("lib").join(&wanted).join("app.asar");
