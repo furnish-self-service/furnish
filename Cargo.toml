@@ -9,6 +9,7 @@ repository = "https://github.com/furnish-self-service/furnish"
 
 [workspace]
 members = [".", "gui/src-tauri"]
+exclude = ["vendor/tree-sitter-dscexpression"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -32,9 +33,12 @@ similar = "2.7.0"
 sysinfo = "0.38.4"
 tempfile = "3"
 toml_edit = "0.25.19"
+tree-sitter = "0.27.2"
+tree-sitter-dscexpression = { path = "vendor/tree-sitter-dscexpression" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 ureq = { version = "3.5.2", features = ["json", "platform-verifier"] }
+which = "8.0.6"
 yaml-edit = { version = "0.3.6", default-features = false }
 
 # dsc-lib's grammar crate is generated at build time upstream; use our vendored, pre-generated copy.
@@ -58,5 +62,5 @@ libc = "0.2"
 
 [target."cfg(windows)".dependencies]
 windows-service = "0.8.1"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 winreg = "0.56.0"

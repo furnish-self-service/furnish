@@ -1,4 +1,8 @@
 # The same package has another name with some package managers (e.g. code / vscode).
+parameters:
+  pacmanPackage:
+    type: string
+    defaultValue: renamed
 metadata:
   furnish:
     description: A package named differently per package manager
@@ -9,5 +13,6 @@ resources:
     condition: "[not(equals(context().os.family, 'Windows'))]"
     properties:
       name: renamed-generic
-      pacmanName: renamed
-      nixName: renamed-nix
+      namesByManager:
+        pacman: "[parameters('pacmanPackage')]"
+        nix: renamed-nix

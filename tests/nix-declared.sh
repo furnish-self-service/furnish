@@ -45,7 +45,7 @@ app() {  # id, then extra properties
 app jq 'name: jq'
 app hello 'name: hello'
 # The attribute's last part isn't the package's name: furnish asks nixpkgs (nodejs_22 → nodejs).
-app node 'name: node, nixName: nodejs_22'
+app node 'name: node, namesByManager: { nix: nodejs_22 }'
 app ripgrep 'name: ripgrep'
 cd /tmp/org && git init -q && git add -A && git commit -qm apps
 furnish collection add /tmp/org --name org >/dev/null

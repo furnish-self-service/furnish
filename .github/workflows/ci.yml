@@ -412,7 +412,7 @@ jobs:
     env:
       # The commit of github.com/furnish-self-service/self-service-example to test. To bump it,
       # set the commit you want (git ls-remote <url> main) and check that this job passes.
-      EXAMPLE_REF: 7820ce1f86b6094e718456adff0d4f4ea28daa4e
+      EXAMPLE_REF: 8bac89d0fbce2804c63181afa25a90a2b284c96c
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2

@@ -112,7 +112,7 @@ pub fn app_declarations(doc: &Value) -> BTreeMap<String, Declaration> {
         .map(|(name, p)| {
             let decl = Declaration {
                 kind: p["type"].as_str().unwrap_or("string").to_string(),
-                default: p.get("defaultValue").cloned(),
+                default: p.get("defaultValue").map(crate::conditions::parameter_default),
                 label: None,
                 description: p["description"].as_str().map(String::from),
                 allowed_values: p["allowedValues"].as_array().cloned().unwrap_or_default(),
@@ -415,22 +415,7 @@ pub fn accept(resolved: &[Resolved], requested: &Map<String, Value>) -> Result<M
 }
 
 /// Whether a dependency's `condition` (a DSC expression) holds for these option values.
-pub fn condition_holds(condition: &str, values: &Map<String, Value>) -> Result<bool> {
-    use dsc_lib::configure::{config_doc::DataType, context::Context};
-    let mut context = Context::new();
-    for (name, value) in values {
-        let kind = match value {
-            Value::Bool(_) => DataType::Bool,
-            Value::Number(_) => DataType::Int,
-            Value::Array(_) => DataType::Array,
-            Value::Object(_) => DataType::Object,
-            _ => DataType::String,
-        };
-        context.parameters.insert(name.clone(), (value.clone(), kind));
-    }
-    let result = dsc_lib::parser::Statement::new()?.parse_and_execute(condition, &context)?;
-    Ok(result == Value::Bool(true))
-}
+pub use crate::conditions::holds as condition_holds;
 
 #[cfg(test)]
 mod tests {

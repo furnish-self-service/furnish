@@ -10,7 +10,8 @@ resources:
     type: Furnish/Package
     condition: "[equals(context().os.family, 'Windows')]"
     properties:
-      name: sharkdp.hyperfine
+      name: hyperfine
+      namesByManager: { winget: sharkdp.hyperfine }
   - name: hyperfine
     type: Furnish/Package
     condition: "[not(equals(context().os.family, 'Windows'))]"

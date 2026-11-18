@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod catalog;
 pub mod check;
+mod conditions;
 mod diagnostics;
 pub mod endpoint;
 pub mod engine;
@@ -11,6 +12,8 @@ pub mod locale;
 pub mod nixos;
 pub mod nixos_apps;
 pub mod options;
+mod package_names;
+pub(crate) mod platform;
 pub mod policy;
 pub mod reports;
 pub mod resources;

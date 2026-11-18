@@ -86,7 +86,8 @@ graphical_authorization() {
     rc=0
     pkexec "$@" || rc=$?
     if [ "$rc" = 126 ] || [ "$rc" = 127 ]; then
-        echo '{"warn":"administrator rights were not granted"}' >&2
+        # The same exit code from the package manager itself is a regular failure.
+        echo "furnish: Cancelled: administrator rights were not granted" >&2
         exit 12
     fi
     return "$rc"
@@ -98,7 +99,11 @@ graphical_authorization() {
 # non-interactive shells start background jobs with SIGINT ignored.
 WATCH='stop=$1; shift; "$@" & pid=$!
 while kill -0 "$pid" 2>/dev/null; do
-    if [ -n "$stop" ] && [ -e "$stop" ]; then kill -TERM "$pid"; wait "$pid"; exit 13; fi
+    if [ -n "$stop" ] && [ -e "$stop" ]; then
+        kill -TERM "$pid"; wait "$pid"
+        echo "furnish: Cancelled: stopped by the user" >&2
+        exit 13
+    fi
     sleep 0.3
 done
 wait "$pid"'

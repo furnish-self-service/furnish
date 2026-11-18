@@ -46,8 +46,7 @@ pub struct Item {
     /// For optional items: preselected when the user installs.
     #[serde(default = "yes")]
     pub selected: bool,
-    /// Only for dependencies: a DSC expression over the app's options, e.g.
-    /// "[parameters('userInstall')]"; the dependency applies only when it is true.
+    /// A dependency applies when this DSC expression over the host and app parameters is true.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
 }
@@ -1064,6 +1063,9 @@ impl Collection {
     pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
+        if doc["variables"].get(crate::conditions::HOST).is_some() {
+            bail!("DSC variable '{}' is supplied by furnish and cannot be redeclared", crate::conditions::HOST);
+        }
         if doc.get("$schema").is_none() {
             // DSC requires it; don't make every app author repeat it.
             doc["$schema"] = DSC_SCHEMA.into();

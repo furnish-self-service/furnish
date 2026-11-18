@@ -1,5 +1,5 @@
 # Furnish/Package on Windows: manage a package with winget.
-# DSC passes the resource properties as env vars: $env:name (a winget package ID), $env:command
+# The native resource passes its resolved $env:name (a winget package ID), $env:command
 # (optional: a program the package provides), $env:_exist,
 # and from furnish's required versions (furnish compares, this script reports and obeys):
 #   reportVersions   latest or all: every state also has version (if known), versionScheme, via,
@@ -27,12 +27,9 @@ $target = $env:targetVersion
 if ($report -and $report -cnotin 'latest', 'all') { [Console]::Error.WriteLine((@{ error = "reportVersions must be latest or all: $report" } | ConvertTo-Json -Compress)); exit 10 }
 if ($target -and $target.StartsWith('-')) { [Console]::Error.WriteLine((@{ error = "targetVersion starts with '-': $target" } | ConvertTo-Json -Compress)); exit 10 }
 if ($target -and $target -cnotmatch '^[A-Za-z0-9.+~:_^-]+$') { [Console]::Error.WriteLine((@{ error = "targetVersion has characters a version can't have: $target" } | ConvertTo-Json -Compress)); exit 10 }
-# SYSTEM (the furnish service) doesn't have winget on its PATH: use App Installer's copy.
-if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    $found = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue |
-        Sort-Object { [version]($_.Directory.Name -split '_')[1] } | Select-Object -Last 1
-    if ($found) { Set-Alias winget $found.FullName }
-}
+# Furnish resolves the same executable for collection conditions and package operations.
+# Under SYSTEM this can be the native App Installer package outside PATH.
+if ($env:FURNISH_WINGET) { Set-Alias winget $env:FURNISH_WINGET }
 $haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
 
 $common = @('--exact', '--id', $name, '--accept-source-agreements', '--disable-interactivity')
@@ -110,7 +107,7 @@ function Find-Program {
     return $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 }
 function Write-State([string]$Version, [string[]]$WhatIf, $InDesiredState) {
-    $state = [ordered]@{ name = $name; _exist = [bool]$Version }
+    $state = [ordered]@{ name = $name; packageManager = 'winget'; _exist = [bool]$Version }
     if ($outside) { $state.managedBy = 'other'; $state.path = $outside }
     if ($report -and -not $outside) {
         if ($Version -and $Version -ne '?') { $state.version = $Version }

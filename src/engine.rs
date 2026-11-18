@@ -34,7 +34,6 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
     ("furnish-authorize.applescript", include_str!("../resources/unix/furnish-authorize.applescript")),
     ("furnish-homebrew.sh", include_str!("../resources/unix/furnish-homebrew.sh")),
     ("furnish-nix.sh", include_str!("../resources/unix/furnish-nix.sh")),
-    ("furnish-package.dsc.resource.json", include_str!("../resources/unix/furnish-package.dsc.resource.json")),
     ("furnish-package.dsc.resource.sh", include_str!("../resources/unix/furnish-package.dsc.resource.sh")),
     ("furnish-installer.dsc.resource.json", include_str!("../resources/unix/furnish-installer.dsc.resource.json")),
     ("furnish-installer.dsc.resource.sh", include_str!("../resources/unix/furnish-installer.dsc.resource.sh")),
@@ -43,10 +42,6 @@ const BUNDLED_RESOURCES: &[(&str, &str)] = &[
 ];
 #[cfg(windows)]
 const BUNDLED_RESOURCES: &[(&str, &str)] = &[
-    (
-        "furnish-package.dsc.resource.json",
-        include_str!("../resources/windows/furnish-package.dsc.resource.json"),
-    ),
     (
         "furnish-package.dsc.resource.ps1",
         include_str!("../resources/windows/furnish-package.dsc.resource.ps1"),
@@ -276,11 +271,7 @@ impl External {
 fn external(states: &[Tested]) -> Option<External> {
     states.iter().find_map(|t| {
         let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager" | "other"))?;
-        // DSC's desired state holds the resource's properties; the Nix name only if Nix installed it.
-        let nix_name = if by == "other" { &Value::Null } else { &t.desired["nixName"] };
-        let package = [nix_name, &t.desired["name"], &t.actual["name"]]
-            .into_iter()
-            .find_map(|v| v.as_str().filter(|s| !s.is_empty()))?;
+        let package = t.actual["name"].as_str()?;
         let text = |key: &str| t.actual[key].as_str().map(String::from);
         Some(External { by: by.to_string(), package: package.to_string(), configuration: text("declaredIn"), path: text("path") })
     })
@@ -827,13 +818,7 @@ pub fn applies_here(resource: &Value, doc: &Value) -> bool {
         .into_iter()
         .flatten()
         .filter_map(|(name, p)| {
-            let value = match &p["defaultValue"] {
-                // `options::apply` escapes a leading `[` as `[[`, as DSC expects.
-                Value::String(s) if s.starts_with("[[") => Value::String(s[1..].to_string()),
-                Value::Null => return None,
-                v => v.clone(),
-            };
-            Some((name.clone(), value))
+            p.get("defaultValue").map(|value| (name.clone(), crate::conditions::parameter_default(value)))
         })
         .collect();
     crate::options::condition_holds(condition, &values).unwrap_or(true)
@@ -1315,6 +1300,7 @@ fn configurator(doc: &Value) -> Result<Configurator> {
         directives.remove("resourceDiscovery");
     }
     let mut configurator = Configurator::new(&doc.to_string(), ProgressFormat::None)?;
+    crate::conditions::supply_host(&doc, &mut configurator.context)?;
     configurator.set_context(None)?;
     Ok(configurator)
 }
@@ -1419,8 +1405,8 @@ mod tests {
     #[test]
     fn packages_installed_outside_furnish_say_where_from() {
         let nixos = external(&[tested(
-            json!({"name": "node", "nixName": "nodejs_22"}),
-            json!({"name": "node", "_exist": true, "managedBy": "nixos", "declaredIn": "/etc/nixos"}),
+            json!({"name": "node", "namesByManager": {"nix": "nodejs_22"}}),
+            json!({"name": "nodejs_22", "_exist": true, "managedBy": "nixos", "declaredIn": "/etc/nixos"}),
         )])
         .unwrap();
         assert_eq!(nixos.summary(), "in your NixOS configuration (/etc/nixos)");
@@ -1428,7 +1414,7 @@ mod tests {
         assert_eq!(nixos.refusal("node"), "node is in your NixOS configuration (/etc/nixos): remove nodejs_22 there");
 
         let other = external(&[tested(
-            json!({"name": "claude-code", "nixName": "claude-code-bin", "command": "claude"}),
+            json!({"name": "claude-code", "namesByManager": {"nix":"claude-code-bin"}, "command": "claude"}),
             json!({"name": "claude-code", "_exist": true, "managedBy": "other", "path": "/opt/homebrew/bin/claude"}),
         )])
         .unwrap();

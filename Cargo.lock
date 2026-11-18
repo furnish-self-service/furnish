@@ -1832,7 +1832,10 @@ dependencies = [
  "toml_edit 0.25.19+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-dscexpression",
  "ureq",
+ "which",
  "windows-service",
  "windows-sys 0.61.2",
  "winreg",
@@ -6316,6 +6319,7 @@ name = "tree-sitter-dscexpression"
 version = "1.0.0"
 dependencies = [
  "cc",
+ "tree-sitter",
  "tree-sitter-language",
 ]
 

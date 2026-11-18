@@ -1,9 +1,9 @@
-//! furnish's resources for configuration: `Furnish/Directory`, `Furnish/File`, `Furnish/Block`,
+//! furnish's package and configuration resources: `Furnish/Package`, `Furnish/Directory`, `Furnish/File`, `Furnish/Block`,
 //! `Furnish/Line`, `Furnish/Value` and `Furnish/Command`. They run inside the furnish program:
 //! their manifests (written by `engine::init`) call it as `furnish dsc-resource <type> <get|test|set>`,
 //! with the properties as JSON on stdin.
 //!
-//! Each resource has one function that looks at the system and returns its state and the
+//! Each configuration resource has one function that looks at the system and returns its state and the
 //! change that set would make (see [`Plan`]). test reports the desired state when there is no
 //! change, and set changes only then, so test and set can't disagree.
 
@@ -29,7 +29,8 @@ use note::{Note, note};
 pub const COMMAND: &str = "dsc-resource";
 
 /// The resource types, their names on the command line, and their manifests.
-pub const TYPES: [(&str, &str, &str); 6] = [
+pub const TYPES: [(&str, &str, &str); 7] = [
+    ("Furnish/Package", "package", include_str!("../../resources/config/furnish-package.dsc.resource.json")),
     ("Furnish/Directory", "directory", include_str!("../../resources/config/furnish-directory.dsc.resource.json")),
     ("Furnish/File", "file", include_str!("../../resources/config/furnish-file.dsc.resource.json")),
     ("Furnish/Block", "block", include_str!("../../resources/config/furnish-block.dsc.resource.json")),
@@ -91,6 +92,9 @@ fn run(args: &[String]) -> Result<String> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let mut props: Value = serde_json::from_str(&input).context("the properties on stdin aren't JSON")?;
+    if kind == "package" {
+        return crate::package_names::run(&props, op, what_if);
+    }
     let files = props.get_mut("_metadata").and_then(Value::as_object_mut).and_then(|m| m.remove("furnishComparisonFiles"));
     let plan = if kind == "command" && what_if && op == "set" {
         command::evaluate_with_files(&props, files.as_ref().unwrap_or(&Value::Null))?
@@ -220,6 +224,9 @@ fn evaluate(kind: &str, props: &Value) -> Result<Plan> {
 /// `furnish check` and loading report mistakes before anything runs. Properties with DSC
 /// expressions are left to DSC and the resource.
 pub fn check(kind: &str, props: &Value) -> Result<()> {
+    if kind.eq_ignore_ascii_case(crate::catalog::PACKAGE_TYPE) {
+        return crate::package_names::validate(props);
+    }
     let Some((_, name, _)) = TYPES.iter().find(|(t, _, _)| t.eq_ignore_ascii_case(kind)) else { return Ok(()) };
     let Some(props) = literal(props) else { return Ok(()) };
     match *name {
