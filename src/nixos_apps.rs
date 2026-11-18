@@ -1178,10 +1178,34 @@ fn state(name: &str, found: Option<&(Place, Entry)>) -> Value {
     }
 }
 
+/// Arguments DSC passes to either the CLI or the desktop executable for Furnish/NixOS.
+#[derive(clap::Parser)]
+#[command(name = "nixos-resource")]
+pub struct ResourceCommand {
+    action: String,
+    #[arg(long)]
+    what_if: bool,
+}
+
+impl ResourceCommand {
+    /// The desktop app has no general CLI parser. Recognize the same resource invocation
+    /// before initializing GTK or the Tauri single-instance handler.
+    pub fn from_desktop_args() -> Option<Self> {
+        use clap::Parser as _;
+        let mut args = std::env::args_os().skip(1);
+        let command = args.next()?;
+        (command == "nixos-resource").then(|| Self::parse_from(std::iter::once(command).chain(args)))
+    }
+
+    pub fn run(&self) -> ExitCode {
+        resource(&self.action, self.what_if)
+    }
+}
+
 /// `furnish nixos-resource get|test|set [--what-if]`: the resource Furnish/NixOS (its manifest
 /// runs furnish-nixos.dsc.resource.sh, which runs this). Errors as furnish's sh resources do:
 /// exit 11 for a missing part of the setup, a plain line on stderr otherwise.
-pub fn resource(action: &str, what_if: bool) -> ExitCode {
+fn resource(action: &str, what_if: bool) -> ExitCode {
     match resource_inner(action, what_if) {
         Ok(out) => {
             println!("{out}");

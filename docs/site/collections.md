@@ -144,6 +144,8 @@ This suits a step that helps another step where Home Manager manages a file. Whe
 
 `programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself. Home Manager's `allowedOptions` needs `programs.ssh.includes`.
 
+On uninstall, a `Line` with `accept` leaves an exact match in a file linked by Home Manager to its generation in the Nix store. The `Furnish/NixOS` step removes the option. With a switch the activated generation updates the file, and with a rebuild for boot the active file stays as it is until activation. In an ordinary SSH config, the `Line` step removes the exact include and keeps other lines.
+
 ### Required versions
 
 `Furnish/Package` and `Furnish/Installer` take `versions`, a list of the versions that are acceptable. When a security fix comes out, list the fixed versions, and furnish updates the computers that have an older one:

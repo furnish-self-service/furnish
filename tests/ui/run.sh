@@ -95,6 +95,13 @@ flaky flaky; flaky broken
 required() {
     printf 'metadata: { furnish: { description: %s, categories: [Test] } }\nresources:\n  - name: %s\n    type: Furnish/Package\n    properties: { name: %s, versions: [%s] }\n' "$3" "$1" "$1" "$2" > "$work/origin-src/apps/$1.dsc.yaml"
 }
+# An absent NixOS entry can be previewed on any Linux runner without a Nix installation.
+cat > "$work/origin-src/apps/nixos-preview.dsc.yaml" <<'YAML'
+resources:
+  - name: NixOS entry
+    type: Furnish/NixOS
+    properties: { name: gui-preview, _exist: false }
+YAML
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"
@@ -155,7 +162,7 @@ JSON
 mkdir -p "$work/feed"
 echo '{"version": "99.0.0", "notes": "https://example.org/notes", "platforms": {}}' > "$work/feed/latest.json"
 FEED_PORT=$((DRIVER_PORT + 2))
-python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 --directory "$work/feed" >/dev/null 2>&1 &
+python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 --directory "$work/feed" >"$work/feed.log" 2>&1 &
 feed_server=$!
 trap 'kill $feed_server 2>/dev/null || true; cleanup' EXIT
 
@@ -168,6 +175,9 @@ docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -
     -e XDG_DATA_HOME="$work/user-share" -e XDG_DATA_DIRS="$work/system-share:/usr/local/share:/usr/share" -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
     -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
+
+# A second launch path lets the suite exercise a Nix-managed installation of the same binary.
+docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
 if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container"; then

@@ -71,19 +71,51 @@ const AUTOSTART = '/tmp/.config/autostart/furnish.desktop';
 const autostartEntry = () => spawnSync('docker', ['exec', container, 'cat', AUTOSTART], { encoding: 'utf8' }).stdout;
 
 /** Start furnish (again: a new WebDriver session is a new process). */
-async function startSession() {
+async function startSession(application = '/usr/local/bin/furnish-gui') {
   if (session) await wd('DELETE', s('')).catch(() => {});
   session = null;
   session = (
     await waitFor('tauri-driver', () =>
       wd('POST', '/session', {
-        capabilities: { alwaysMatch: { 'tauri:options': { application: '/usr/local/bin/furnish-gui' } } },
+        capabilities: { alwaysMatch: { 'tauri:options': { application } } },
       }),
     )
   ).sessionId;
 }
 
 const steps = [
+  ['Steps previews the NixOS resource in the desktop app', async () => {
+    await click(`${card('nixos-preview')}//button[@aria-label='Open nixos-preview']`);
+    const panel = "//details[summary[contains(., 'Steps')]]";
+    await click(`${panel}/summary`);
+    await waitFor('NixOS removal preview', async () => (await text(panel)).includes('change nothing'));
+    await click(`${panel}//button[normalize-space()='Install']`);
+    await waitFor('NixOS install preview', async () => (await text(panel)).includes('Installing nixos-preview'));
+    await click(nav('Discover'));
+  }],
+  ['a Nix installation shows its flake update instructions and skips the release feed', async () => {
+    const requests = () => (log('feed.log').match(/GET \/latest\.json /g) ?? []).length;
+    // The regular install has checked this feed, so this also verifies that the counter is live.
+    await waitFor('release request from the regular install', () => requests() > 0);
+    await wd('DELETE', s(''));
+    session = null;
+    const before = requests();
+
+    await startSession('/nix/store/fixture-furnish/bin/furnish-gui');
+    await click(nav('Settings'));
+    await waitFor('flake update guidance in About', () => find("//section[@aria-labelledby='about-title']//code[.='nix flake update']"));
+    if ((await findAll("//*[@id='self-update-mode']")).length) throw new Error('Nix installs offer a release update setting');
+
+    // Exercise the same native command the launch and interval checks use, and await its answer.
+    const status = await wd('POST', s('/execute/async'), {
+      script: "const done = arguments[arguments.length - 1]; window.__TAURI_INTERNALS__.invoke('check_self_update', { download: false }).then(done, e => done(String(e)))",
+      args: [],
+    });
+    if (status.method !== 'nix' || status.mode !== 'off' || status.available || requests() !== before) {
+      throw new Error(`Nix updater: ${JSON.stringify(status)}, ${requests() - before} release requests`);
+    }
+    await startSession();
+  }],
   ['the organization branding: name, logo and colors', async () => {
     // The logo ships with the preset collection, which the app clones on launch.
     await waitFor('logo from the collection', async () => (await prop("//nav/button[contains(@class,'brand')]//img", 'src')).startsWith('data:image/svg'), 30000);
@@ -645,8 +677,15 @@ const steps = [
     await click(button('Install 2 apps'));
     await click(nav('Activity'));
     const group = "//li[contains(@class,'kit-history')][.//summary[contains(., 'recovery')]]";
-    await waitFor('one of two installed', async () => (await text(`${group}//summary`)).includes('1 of 2 installed'), 30000);
-    await click(`${group}//summary`);
+    const summary = `${group}/details/summary`;
+    await waitFor('partial kit result names the failed member', async () => {
+      const result = await text(summary);
+      return result.includes('1 of 2 installed') && result.includes("Couldn't install toolbox");
+    }, 30000);
+    await waitFor('expand kit result', async () => {
+      if (!(await prop(`${group}/details`, 'open'))) await click(summary);
+      return prop(`${group}/details`, 'open');
+    });
     const retry = `${group}${button('Retry toolbox')}`;
     await waitFor('toolbox failure is actionable', () => find(retry));
     const freshInstalls = () => log('pkexec.log').split('\n').filter(line => line.includes('pacman -S') && line.endsWith('fresh')).length;

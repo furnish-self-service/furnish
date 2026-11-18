@@ -181,6 +181,12 @@ pkgs.testers.runNixOSTest {
     listed = machine.succeed("su - bob -c 'furnish list'")
     assert any(l.startswith("✓  acme-ssh") for l in listed.splitlines()), listed
 
+    machine.succeed("su - bob -c 'echo HashKnownHosts yes >> ~/.ssh/config'")
+    out = machine.succeed("su - bob -c 'furnish uninstall acme-ssh --dry-run' 2>&1")
+    assert "- remove         SSH include " in out, out
+    machine.succeed("su - bob -c 'furnish uninstall acme-ssh' 2>&1")
+    assert machine.succeed("cat /home/bob/.ssh/config").strip() == "HashKnownHosts yes"
+
     # alice wants apps in the NixOS configuration: her setting is in ~/data, which the service
     # can't see; furnish sends it with the request. A packages-only app then goes there, which
     # isn't set up on this computer.
@@ -199,5 +205,12 @@ pkgs.testers.runNixOSTest {
     machine.succeed("nix-store --check-validity ${nixpkgs.outPath} ${h.homeManager.outPath} ${furnish.outPath}")
     alice("nix build .#homeConfigurations.alice.activationPackage >&2")
     assert alice("readlink result").strip() == "${ssh}"
+
+    # Removing the app from a combined Include keeps alice's own entry after activation.
+    out = furnish("uninstall acme-ssh --dry-run")
+    assert "= nothing to do  SSH include " in out, out
+    furnish("uninstall acme-ssh")
+    config = machine.succeed("cat /home/alice/.ssh/config")
+    assert "~/.ssh/own.conf" in config and "${include}" not in config, config
   '';
 }

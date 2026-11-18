@@ -142,11 +142,7 @@ enum Command {
     },
     /// The DSC resource Furnish/NixOS (DSC runs it; see src/nixos_apps.rs)
     #[command(hide = true)]
-    NixosResource {
-        action: String,
-        #[arg(long)]
-        what_if: bool,
-    },
+    NixosResource(furnish::nixos_apps::ResourceCommand),
 }
 
 /// Where the NixOS configuration is (`furnish settings`, NixOS only).
@@ -448,8 +444,8 @@ fn main() -> ExitCode {
         return ExitCode::from(code);
     }
     let cli = Cli::parse();
-    if let Command::NixosResource { action, what_if } = &cli.command {
-        return furnish::nixos_apps::resource(action, *what_if);
+    if let Command::NixosResource(resource) = &cli.command {
+        return resource.run();
     }
     if matches!(cli.command, Command::Service { action: None }) {
         // The service keeps its collections, resources and records in the system directory.
@@ -504,7 +500,7 @@ fn run(command: Command) -> Result<()> {
             println!("✓ Removed the furnish service");
             Ok(())
         }
-        Command::NixosResource { .. } => unreachable!("run before anything else"),
+        Command::NixosResource(_) => unreachable!("run before anything else"),
         Command::List => list(),
         Command::Login { endpoint } => {
             let origin = endpoint_origin(&endpoint)?;
@@ -706,13 +702,20 @@ fn print_self_update(mode: furnish::settings::SelfUpdate, org: &str) {
     };
     let installed = if method == selfupdate::Method::Other { String::new() } else { format!(", installed with {}", method.name()) };
     println!("furnish:           {current}{installed}");
+    if method == selfupdate::Method::Nix {
+        println!("new versions:      {}", arrives(method));
+        return;
+    }
     println!("new versions:      {mode_text}{org}");
     if mode == SelfUpdate::Off {
         return;
     }
-    match selfupdate::check(current) {
-        Ok(Some(available)) => println!("                   furnish {} is available. {}", available.version, arrives(method)),
-        Ok(None) => println!("                   this is the newest version"),
+    match selfupdate::published(current) {
+        Ok(Some(manifest)) => match manifest.newer_than(current) {
+            Some(available) => println!("                   furnish {} is available. {}", available.version, arrives(method)),
+            None => println!("                   this is the newest version"),
+        },
+        Ok(None) => println!("                   no stable release has been published"),
         Err(err) => println!("                   couldn't check for a newer version: {err:#}"),
     }
 }
@@ -728,7 +731,14 @@ fn self_update(check_only: bool) -> Result<()> {
     }
     let method = selfupdate::detect();
     let current = selfupdate::current();
-    let manifest = selfupdate::fetch(&selfupdate::feed_url(current))?;
+    if method == selfupdate::Method::Nix {
+        println!("furnish {current} is managed by Nix. {}", arrives(method));
+        return Ok(());
+    }
+    let Some(manifest) = selfupdate::published(current)? else {
+        println!("No stable release of furnish has been published.");
+        return Ok(());
+    };
     let Some(available) = manifest.newer_than(current) else {
         println!("✓ furnish {current} is the newest version");
         return Ok(());
