@@ -1,7 +1,7 @@
 //! The window's title and icon, and the macOS Dock icon, follow the branding: its name and logo,
 //! else furnish's own. Windows shows the window icon in the title bar, taskbar and Alt+Tab. On
 //! Linux, X11 taskbars show it; Wayland compositors and app menus take the icon from the installed
-//! furnish.desktop, which stays furnish's. macOS windows have no icon; the Dock icon set here
+//! furnish.desktop and its per-user branding override. macOS windows have no icon; the Dock icon set here
 //! lasts while furnish runs.
 
 use std::{fs, path::PathBuf, sync::Mutex, time::SystemTime};
@@ -50,6 +50,11 @@ pub fn refresh(app: &AppHandle, name: &str) {
             eprintln!("warning: can't change the window icon: {err:#}");
         }
     }
+    #[cfg(target_os = "linux")]
+    if let Err(err) = crate::desktop_entry::refresh(&glib::user_data_dir(), &glib::system_data_dirs(), name, rgba.as_deref()) {
+        eprintln!("warning: can't update the desktop entry: {err:#}");
+        return;
+    }
     #[cfg(target_os = "macos")]
     dock::set(app, rgba);
     *shown = Some(key);
@@ -57,7 +62,7 @@ pub fn refresh(app: &AppHandle, name: &str) {
 
 #[cfg(target_os = "macos")]
 mod dock {
-    use super::SIZE;
+    use super::png;
 
     /// The Dock icon from SIZE x SIZE RGBA; `None`: the app bundle's icon again.
     pub fn set(app: &tauri::AppHandle, rgba: Option<Vec<u8>>) {
@@ -73,14 +78,16 @@ mod dock {
         });
     }
 
-    fn png(rgba: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
-        let mut out = Vec::new();
-        let mut encoder = png::Encoder::new(&mut out, SIZE, SIZE);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(rgba)?;
-        writer.finish()?;
-        Ok(out)
-    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn png(rgba: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, SIZE, SIZE);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(rgba)?;
+    writer.finish()?;
+    Ok(out)
 }

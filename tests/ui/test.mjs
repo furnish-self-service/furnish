@@ -66,6 +66,7 @@ const snap = async (name) =>
   writeFileSync(screenshot.replace(/\.png$/, `-${name}.png`), Buffer.from(await wd('GET', s('/screenshot')), 'base64'));
 const log = (file) => (existsSync(`${workDir}/${file}`) ? readFileSync(`${workDir}/${file}`, 'utf8') : '');
 // The sign-in entry furnish writes (HOME=/tmp in the container).
+const LAUNCHER = 'user-share/applications/furnish.desktop';
 const AUTOSTART = '/tmp/.config/autostart/furnish.desktop';
 const autostartEntry = () => spawnSync('docker', ['exec', container, 'cat', AUTOSTART], { encoding: 'utf8' }).stdout;
 
@@ -93,6 +94,20 @@ const steps = [
       script: "return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()", args: [],
     });
     if (accent !== '#e30613') throw new Error(`accent: ${accent}`);
+  }],
+  ['the Linux launcher uses the organization name and icon with the package command and actions', async () => {
+    const entry = await waitFor('branded package launcher', () => {
+      const entry = log(LAUNCHER);
+      return entry.includes('Name=Acme Apps\n') && entry;
+    });
+    for (const line of ['Exec=/usr/local/bin/furnish-gui %u', 'MimeType=x-scheme-handler/furnish;', 'StartupWMClass=furnish', 'Actions=Hidden;', '[Desktop Action Hidden]', 'Exec=/usr/local/bin/furnish-gui --hidden']) {
+      if (!entry.split('\n').includes(line)) throw new Error(`missing package entry line: ${line}`);
+    }
+    if (entry.includes('Name[de]=Paketverwaltung')) throw new Error('the localized package name shadows the branding');
+    const icon = entry.match(/^Icon=(.+)$/m)?.[1];
+    if (!icon?.startsWith(`${workDir}/user-share/`) || readFileSync(icon).subarray(1, 4).toString() !== 'PNG') {
+      throw new Error(`launcher icon is not a PNG in the user data directory: ${icon}`);
+    }
   }],
   ['Discover recommends apps for the role; cards show the collection avatar', async () => {
     // The policy answers the fixture collection's role question: developer.
@@ -643,6 +658,34 @@ const steps = [
     await startSession();
     await click(nav('Activity'));
     await waitFor('kit result survives a restart', async () => (await text(`${group}//summary`)).includes('2 of 2 installed'));
+  }],
+  ['the Linux launcher follows policy changes and preserves a personal entry', async () => {
+    const policyPath = `${workDir}/policy.json`;
+    const original = readFileSync(policyPath, 'utf8');
+    const policy = JSON.parse(original);
+    const oldIcon = log(LAUNCHER).match(/^Icon=(.+)$/m)?.[1];
+    if (!oldIcon || !existsSync(oldIcon)) throw new Error('branded icon missing before policy update');
+    const personal = '[Desktop Entry]\nType=Application\nName=My launcher\nExec=furnish-gui --hidden\n';
+    try {
+      policy.branding = { name: 'Updated Apps' };
+      writeFileSync(policyPath, JSON.stringify(policy));
+      await startSession();
+      await waitFor('name-only branding', () => log(LAUNCHER).includes('Name=Updated Apps\n') && log(LAUNCHER).includes('Icon=furnish-gui\n') && !existsSync(oldIcon));
+
+      delete policy.branding;
+      writeFileSync(policyPath, JSON.stringify(policy));
+      await startSession();
+      await waitFor('system launcher restored', () => !existsSync(`${workDir}/${LAUNCHER}`));
+      if (!log('system-share/applications/furnish.desktop').includes('Name[de]=Paketverwaltung\n')) throw new Error('package launcher was edited');
+
+      writeFileSync(`${workDir}/${LAUNCHER}`, personal);
+      writeFileSync(policyPath, original);
+      await startSession();
+      await waitFor('personal entry while organization branding is active', async () => (await wd('GET', s('/title'))) === 'Acme Apps');
+      if (log(LAUNCHER) !== personal) throw new Error('personal launcher changed');
+    } finally {
+      writeFileSync(policyPath, original);
+    }
   }],
 ];
 
