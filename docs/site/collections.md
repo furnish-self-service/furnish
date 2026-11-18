@@ -108,7 +108,7 @@ Installs a package with the system's package manager: winget on Windows; on macO
 | `packageManager` | Use this package manager, not the first one found |
 | `namesByDistribution` | Package names keyed by Linux distribution ID, including IDs used by your organization |
 | `namesByManager` | Package names keyed by package manager, such as `brew`, `pacman` or `winget` |
-| `nixpkgs` | The flake to install Nix packages from (default: the registry's `nixpkgs`) |
+| `nixpkgs` | An explicit flake for a Nix profile install. Profile installs default to the registry’s `nixpkgs`. Declarative installs use the configuration’s locked nixpkgs. |
 | `command` | A program the package provides, for example `claude`. If the package manager doesn't have the package but the program is there, the app shows as installed outside furnish |
 | `versions` | The versions that are acceptable (see [Required versions](#required-versions)) |
 
@@ -126,6 +126,8 @@ Furnish first looks up the Linux distribution's `ID` from `os-release`, then eac
       brew: company-cli
       winget: Acme.CompanyTools
 ```
+
+When this step selects Nix on a machine with a configured Furnish apps input, the resolved package name is an attribute of the configuration’s nixpkgs, such as `jq` or `kdePackages.kdenlive`. Furnish can use the same step for NixOS or Home Manager. Supply `nixpkgs` or `versions` when the app must use a particular source or release. Those steps use a Nix profile. [NixOS configuration](admins.md#installing-apps-into-the-configuration)
 
 When migrating an existing collection, move each per-manager property into `namesByManager`. For example, replace `pacmanName: libreoffice-fresh` with `namesByManager: { pacman: libreoffice-fresh }`.
 

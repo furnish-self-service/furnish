@@ -15,6 +15,7 @@
 let
   s = import ./nixos-apps/systems.nix { inherit pkgs nixpkgs nixosModule furnish; };
   before = s.system { };
+  greeting = s.system { greeting.packages = [ "hello" ]; };
   htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
   after = s.system { inherit htop; };
   app = name: properties: pkgs.writeText "${name}.dsc.yaml" (builtins.toJSON {
@@ -43,7 +44,7 @@ pkgs.testers.runNixOSTest {
       experimental-features = [ "nix-command" "flakes" ];
       substituters = lib.mkForce [ ];
     };
-    virtualisation.additionalPaths = [ before after ];
+    virtualisation.additionalPaths = [ before after greeting ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''
@@ -66,6 +67,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed(
         "git config --global user.name t && git config --global user.email t@t",
         "mkdir -p /srv/org/apps",
+        "cp ${import ./nixos-apps/ordinary-package.nix { inherit pkgs; }} /srv/org/apps/greeting.dsc.yaml",
         "cp ${app "htop" htop} /srv/org/apps/htop.dsc.yaml",
         "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
@@ -79,6 +81,19 @@ pkgs.testers.runNixOSTest {
     out = machine.succeed("su - alice -c 'furnish settings'")
     print(out)
     assert "add to its flake.nix" not in out, out
+
+    # An ordinary package selected Nix and resolved its nixpkgs name through namesByManager.
+    # rebuild=boot leaves the running system alone; inspect the generation selected for next boot.
+    profiles = alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true")
+    alice("furnish install greeting")
+    assert list(apps().values()) == [{"packages": ["hello"], "options": {}}], apps()
+    assert system() == "${greeting}", system()
+    assert alice("git log -1 --format=%s").strip() == "furnish: install hello"
+    machine.succeed("${greeting}/sw/bin/hello")
+    assert alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true") == profiles
+    assert any(line.startswith("✓  greeting") for line in alice("furnish list").splitlines())
+    alice("furnish uninstall greeting")
+    assert apps() == {} and system() == "${before}", apps()
 
     # alice installs htop: through the service, which rebuilds as alice and commits flake.lock.
     print(machine.succeed("su - alice -c 'furnish install htop' 2>&1"))

@@ -224,7 +224,12 @@ use_nix() {
 }extra-experimental-features = nix-command flakes"
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
-    if [ "$(id -u)" = 0 ]; then profile="--profile $shared"; else profile=""; fi
+    if [ "$(id -u)" = 0 ] || [ "$read_shared_profile" = true ]; then
+        profile="--profile $shared" other_profile="" other_path=${HOME:-/root}/.nix-profile
+        [ -e "$other_path" ] || other_path=${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/nix/profiles/profile
+    else
+        profile="" other_profile="--profile $shared" other_path=$shared
+    fi
     # The declarative roots don't change while furnish runs: look once (needs the final $name).
     prepare() {
         nix_lookup "$name"
@@ -234,11 +239,20 @@ use_nix() {
         nixos) cant_remove="$subject is in your NixOS configuration${declared_in:+ ($declared_in)}: remove it there" ;;
         home-manager) cant_remove="$subject is in your Home Manager configuration${declared_in:+ ($declared_in)}: remove it there" ;;
         esac
+        # Both profiles are visible, but this process may change only the one it installs into.
+        if [ -z "$declared_by" ] && [ -e "$other_path" ] && [ -z "$(version_in "$profile")" ]; then
+            declared_version=$(version_in "$other_profile")
+            if [ -n "$declared_version" ]; then
+                declared_by=other
+                cant_remove="$subject is installed in the other Nix profile ($other_path): remove it there"
+            fi
+        fi
     }
     # Where it comes from: nixos, home-manager or profile (nix profile, the user's or the shared one).
     extra_state() {
         if [ -n "$declared_by" ]; then
             printf ',"managedBy":"%s"' "$declared_by"
+            [ "$declared_by" != other ] || printf ',%s' "$(json_member path "$other_path")"
             [ -z "$declared_in" ] || printf ',%s' "$(json_member declaredIn "$declared_in")"
         elif [ -n "$1" ]; then printf ',"managedBy":"profile"'
         fi
@@ -249,14 +263,12 @@ use_nix() {
     version_in() {
         nix profile list $1 --json 2>/dev/null | tr '{,' '\n\n' | grep -q "^\"$entry\":" || return 0
         path=$(nix profile list $1 --json | grep -o "/nix/store/[a-z0-9]*-$entry-[^\"]*" | head -n1)
-        echo "${path##*-"$entry"-}"
+        if [ -z "$path" ]; then echo '?'; else echo "${path##*-"$entry"-}"; fi
     }
     # Declared, or installed for this user or for everyone.
     installed_version() {
         [ -n "$declared_by" ] && { echo "$declared_version"; return; }
-        v=$(version_in "")
-        [ -n "$v" ] || { [ -e "$shared" ] && v=$(version_in "--profile $shared"); }
-        echo "$v"
+        version_in "$profile"
     }
     do_install() { run_step nix profile install $profile "$ref#$name"; }
     do_remove() { run_step nix profile remove $profile "$entry"; }
@@ -288,6 +300,12 @@ use_nix() {
         echo "$available"
     }
 }
+
+# A regular user may preview the service's profile, but may never mutate it.
+read_shared_profile=false
+if [ "${FURNISH_NIX_SERVICE_PROFILE:-}" = 1 ] && { [ "${1:-}" != set ] || [ "${2:-}" = --what-if ]; }; then
+    read_shared_profile=true
+fi
 
 need=
 case "${packageManager:-}" in

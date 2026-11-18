@@ -171,13 +171,66 @@ fn plain_name(s: &str, extra: &str) -> bool {
         })
 }
 
+fn explicit_name(name: &str) -> bool {
+    plain_name(name, "") && !name.contains('.')
+}
+
+// A separate namespace from Furnish/NixOS names, including for dotted Nix attributes.
+const PACKAGE: &str = "furnishNixPackage";
+/// The client reads the shared profile when the service would perform the installation.
+pub(crate) const SERVICE_PROFILE: &str = "furnishNixServiceProfile";
+
+fn package_key(name: &str) -> bool {
+    let mut parts = name.split(':');
+    let digest = |s: &str| s.len() == 43 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
+    parts.next() == Some("package") && parts.next().is_some_and(digest) && parts.next().is_some_and(digest) && parts.next().is_none()
+}
+
+/// Stamp stable ownership before the engine splits the document or strips version constraints.
+/// The collection may name a step, but cannot provide another app's ownership key.
+pub(crate) fn stamp_packages(doc: &mut Value, app: &str) -> Result<()> {
+    fn component(bytes: &[u8]) -> String {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        use sha2::{Digest, Sha256};
+        URL_SAFE_NO_PAD.encode(Sha256::digest(bytes))
+    }
+    fn visit(resources: &mut Value, app_hash: &str, path: &mut Vec<String>, removal: bool) -> Result<()> {
+        for r in resources.as_array_mut().into_iter().flatten() {
+            path.push(r["name"].as_str().unwrap_or_default().to_owned());
+            if r["type"] == crate::catalog::PACKAGE_TYPE {
+                let step_hash = component(&serde_json::to_vec(path)?);
+                anyhow::ensure!(r["metadata"].is_null() || r["metadata"].is_object(), "invalid metadata on package step {path:?}");
+                let versioned = r["properties"].get(crate::required::PROPERTY).is_some();
+                if let Some(metadata) = r["metadata"].as_object_mut() {
+                    metadata.remove(PACKAGE_FINGERPRINT);
+                }
+                r["metadata"][PACKAGE] = json!({
+                    "key": format!("package:{app_hash}:{step_hash}"), "versioned": versioned, "removal": removal
+                });
+            }
+            if let Some(children) = r["properties"].get_mut("resources") {
+                visit(children, app_hash, path, removal)?;
+            }
+            path.pop();
+        }
+        Ok(())
+    }
+    let hash = component(app.as_bytes());
+    visit(&mut doc["resources"], &hash, &mut Vec::new(), false)?;
+    if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {
+        visit(steps, &hash, &mut Vec::new(), true)?;
+    }
+    Ok(())
+}
+
 /// Checks an app's entry: package and option names, and each option against the allowlist.
 pub fn check(name: &str, entry: &Entry, allowlist: &[String]) -> Result<()> {
+    anyhow::ensure!(explicit_name(name), "invalid Furnish/NixOS resource name '{name}'");
     check_in(name, entry, allowlist, Place::System)
 }
 
 fn check_in(name: &str, entry: &Entry, allowlist: &[String], place: Place) -> Result<()> {
-    if !plain_name(name, "") || name.contains('.') {
+    if !(explicit_name(name) || package_key(name) && entry.packages.len() == 1 && entry.options.is_empty()) {
         bail!("'{name}' isn't a name for a Furnish/NixOS resource (letters, digits, _ and -)");
     }
     for p in &entry.packages {
@@ -480,16 +533,24 @@ pub fn ensure_home_apps(dir: &Path) -> Result<()> {
 /// Where the app is now, if anywhere: the system's apps, the person's part of them, or the
 /// person's own apps.
 fn find(name: &str, person: &Account) -> Result<Option<(Place, Entry)>> {
+    Ok(find_entry(person, |apps| Ok(apps.get_key_value(name)))?.map(|(place, _, entry)| (place, entry)))
+}
+
+fn find_entry(
+    person: &Account, lookup: impl Fn(&BTreeMap<String, Entry>) -> Result<Option<(&String, &Entry)>>,
+) -> Result<Option<(Place, String, Entry)>> {
     let system = read_apps(Path::new(APPS_DIR))?;
-    if let Some(e) = system.apps.get(name) {
-        return Ok(Some((Place::System, e.clone())));
+    if let Some((k, e)) = lookup(&system.apps)? {
+        return Ok(Some((Place::System, k.clone(), e.clone())));
     }
-    if let Some(e) = system.homes.get(&person.name).and_then(|h| h.apps.get(name)) {
-        return Ok(Some((Place::HomeNixos, e.clone())));
+    if let Some(home) = system.homes.get(&person.name)
+        && let Some((k, e)) = lookup(&home.apps)?
+    {
+        return Ok(Some((Place::HomeNixos, k.clone(), e.clone())));
     }
     let Some(dir) = own_apps_dir(person) else { return Ok(None) };
     let own = read_apps_as(person, &dir)?;
-    Ok(own.apps.get(name).map(|e| (Place::HomeStandalone, e.clone())))
+    Ok(lookup(&own.apps)?.map(|(k, e)| (Place::HomeStandalone, k.clone(), e.clone())))
 }
 
 /// The person's own local flake, where their configuration points (`None`: it points nowhere).
@@ -644,7 +705,8 @@ fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<
 fn commit(mut commit: Command, dir: &Path, clean: bool, desired: &Desired) {
     if clean {
         let verb = if desired.exist { "install" } else { "uninstall" };
-        commit.arg("-C").arg(dir).args(["commit", "-q", "-m", &format!("furnish: {verb} {}", desired.name), "--", "flake.lock"]);
+        let label = if package_key(&desired.name) { desired.packages.first().unwrap_or(&desired.name) } else { &desired.name };
+        commit.arg("-C").arg(dir).args(["commit", "-q", "-m", &format!("furnish: {verb} {label}"), "--", "flake.lock"]);
         match run(commit, "git commit") {
             Ok(_) => info(&format!("Committed flake.lock in {}", dir.display())),
             Err(e) => eprintln!("{}", json!({ "warn": format!("flake.lock changed, commit it yourself: {e:#}") })),
@@ -1234,8 +1296,13 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
     let desired: Desired = serde_json::from_str(&input).context("reading the resource's properties")?;
+    anyhow::ensure!(explicit_name(&desired.name), "invalid Furnish/NixOS resource name");
     let person = person()?;
     let current = find(&desired.name, &person)?;
+    operate(&desired, &person, current, action, what_if, &desired.name)
+}
+
+fn operate(desired: &Desired, person: &Account, current: Option<(Place, Entry)>, action: &str, what_if: bool, label: &str) -> Result<Value> {
     let in_desired_state = match &current {
         Some((place, entry)) => desired.exist && *entry == desired.entry(*place),
         None => !desired.exist,
@@ -1251,21 +1318,21 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
             // Installing: where it would go (or stays); removing: where it is.
             let place = match &current {
                 Some((p, _)) if !desired.exist || in_desired_state => *p,
-                _ if desired.exist => choose(&desired, &person)?,
+                _ if desired.exist => choose(desired, person)?,
                 _ => Place::System,
             };
             let mut s = state(&desired.name, desired.exist.then(|| (place, desired.entry(place))).as_ref());
             let what = place.what();
             let step = match (in_desired_state, desired.exist) {
-                (true, true) => format!("{} is in {what}", desired.name),
-                (true, false) => format!("{} is not in {what}", desired.name),
-                (false, true) => format!("Add {} to {what} and rebuild it", desired.name),
-                (false, false) => format!("Remove {} from {what} and rebuild it", desired.name),
+                (true, true) => format!("{label} is in {what}"),
+                (true, false) => format!("{label} is not in {what}"),
+                (false, true) => format!("Add {label} to {what} and rebuild it"),
+                (false, false) => format!("Remove {label} from {what} and rebuild it"),
             };
             let mut lines = vec![json!(step)];
             if desired.exist && !in_desired_state {
                 let allowlist = match place {
-                    Place::HomeStandalone => HomeTarget::find(&person)?.allowlist,
+                    Place::HomeStandalone => HomeTarget::find(person)?.allowlist,
                     p => Target::here()?.allowlist(p, &person.name),
                 };
                 if let Err(e) = check_in(&desired.name, &desired.entry(place), &allowlist, place) {
@@ -1277,12 +1344,95 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
         }
         "set" => {
             if !in_desired_state {
-                set(&desired, &person, current.as_ref().map(|(p, _)| *p))?;
+                set(desired, person, current.as_ref().map(|(p, _)| *p))?;
             }
-            Ok(state(&desired.name, find(&desired.name, &person)?.as_ref()))
+            Ok(state(&desired.name, find(&desired.name, person)?.as_ref()))
         }
         _ => bail!("usage: get|test|set [--what-if]"),
     }
+}
+
+/// The service stamps this on its verified, reconstructed package step. The only operation
+/// permitted with it is the identical declarative change; no other backend may run.
+pub(crate) const PACKAGE_FINGERPRINT: &str = "furnishNixPackageFingerprint";
+
+/// Whether a package operation belongs to the configuration. Probe the native backend only
+/// when the selected destination is ready, to respect an existing profile or external command.
+pub(crate) fn package(
+    props: &Value, attr: &str, action: &str, what_if: bool, probe: impl FnOnce() -> Result<Value>,
+) -> Result<Option<Value>> {
+    let metadata = &props["_metadata"][PACKAGE];
+    let Some(key) = metadata["key"].as_str().filter(|s| package_key(s)) else { return Ok(None) };
+    let person = person()?;
+    let exist = props["_exist"].as_bool().unwrap_or(true);
+    let prefix = key.rsplit_once(':').expect("validated key").0;
+    let found = find_entry(&person, |apps| {
+        if let Some(entry) = apps.get_key_value(key)
+            && (exist || metadata["removal"] != true || entry.1.packages.as_slice() == [attr])
+        {
+            return Ok(Some(entry));
+        }
+        // An explicitly authored uninstall step can have a different DSC name. It may
+        // remove only this app's unambiguous declaration of this exact attribute.
+        if exist || metadata["removal"] != true {
+            return Ok(None);
+        }
+        let mut entries = apps.iter().filter(|(k, e)| package_key(k) && k.rsplit_once(':').is_some_and(|(app, _)| app == prefix)
+            && e.options.is_empty() && e.packages.len() == 1 && e.packages[0] == attr);
+        let entry = entries.next();
+        anyhow::ensure!(entries.next().is_none(), "multiple declarations of {attr} in this app; use the original step name for removal");
+        Ok(entry)
+    })?;
+    let mut desired = Desired { name: key.into(), packages: vec![attr.into()], exist, ..Default::default() };
+    let current = found.map(|(place, name, entry)| {
+        desired.name = name;
+        (place, entry)
+    });
+    if let Some((_, entry)) = &current {
+        anyhow::ensure!(entry.options.is_empty() && entry.packages.len() == 1,
+            "the existing configuration entry for {attr} does not match a Furnish package declaration");
+    }
+    let constrained = metadata["versioned"] == true || props.get("nixpkgs").is_some() || props.get("targetVersion").is_some();
+    if constrained {
+        if current.is_none() {
+            return Ok(None);
+        }
+        if exist && action == "set" {
+            bail!("{attr} is installed in the configuration; uninstall it before changing its Nix source or version requirements");
+        }
+    }
+    if current.is_none() {
+        match choose(&desired, &person) {
+            Ok(_) => {}
+            Err(e) if e.is::<Missing>() => return Ok(None),
+            Err(e) => return Err(e),
+        }
+    }
+    let expected = props["_metadata"][PACKAGE_FINGERPRINT].as_str();
+    if let Some(expected) = expected {
+        anyhow::ensure!(in_service() && fingerprint(&desired)? == expected, "the requested Nix package differs from the current preset app");
+    }
+    let observed = probe()?;
+    if current.is_none() && observed["_exist"] == true {
+        return Ok(None);
+    }
+    // When an alias changes, do not claim or replace a package already installed elsewhere.
+    let changed_attr = current.as_ref().is_some_and(|(_, entry)| entry.packages != desired.packages);
+    if changed_attr && exist && action == "set" && observed["_exist"] == true {
+        bail!("{attr} is already installed separately; uninstall the app's previous declaration before changing its package");
+    }
+    let result = operate(&desired, &person, current, action, what_if, attr)?;
+    let mut state = json!({"name":attr, "packageManager":"nix", "_exist":result["_exist"]});
+    if result["_exist"] == true && !changed_attr && matches!(observed["managedBy"].as_str(), Some("nixos" | "home-manager")) && observed["version"].is_string() {
+        state["version"] = observed["version"].clone();
+    }
+    for member in ["_inDesiredState", "_metadata"] {
+        if let Some(v) = result.get(member) { state[member] = v.clone(); }
+    }
+    if constrained && exist && action == "test" {
+        state["_inDesiredState"] = false.into();
+    }
+    Ok(Some(state))
 }
 
 /// A selector into a preset app. The service derives the properties itself. The fingerprint
@@ -1306,7 +1456,7 @@ fn fingerprint(desired: &Desired) -> Result<String> {
 /// requester uid comes from the authenticated connection, and all normal allowlists still apply.
 pub(crate) fn apply_service_step(properties: &Value, expected: &str) -> Result<()> {
     let desired: Desired = serde_json::from_value(properties.clone())?;
-    if !in_service() || fingerprint(&desired)? != expected {
+    if !explicit_name(&desired.name) || !in_service() || fingerprint(&desired)? != expected {
         bail!("the requested NixOS step differs from the current preset app");
     }
     let person = person()?;
@@ -1352,6 +1502,38 @@ fn put(place: Place, desired: &Desired, person: &Account) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn package_keys_follow_the_app_and_step_across_revisions() {
+        let raw = json!({
+            "resources": [
+                {"type":"Furnish/Package", "name":"first", "properties":{"name":"a"}, "metadata": {
+                    (PACKAGE): {"key":"another-app"}, (PACKAGE_FINGERPRINT):"forged"
+                }},
+                {"type":"Furnish/Package", "name":"second", "properties":{"name":"a", "versions":[">=1"]}}
+            ],
+            "metadata":{"furnish":{"uninstall":[{"type":"Furnish/Package","name":"first","properties":{"name":"a","_exist":false}}]}}
+        });
+        let stamp = |mut doc: Value, app| {
+            stamp_packages(&mut doc, app).unwrap();
+            doc
+        };
+        let a = stamp(raw.clone(), "org/one");
+        let b = stamp(raw.clone(), "org/two");
+        let key = &a["resources"][0]["metadata"][PACKAGE]["key"];
+        assert!(package_key(key.as_str().unwrap()));
+        assert!(!explicit_name(key.as_str().unwrap()));
+        assert!(a["resources"][0]["metadata"].get(PACKAGE_FINGERPRINT).is_none());
+        assert_ne!(key, &b["resources"][0]["metadata"][PACKAGE]["key"]);
+        assert_ne!(key, &a["resources"][1]["metadata"][PACKAGE]["key"]);
+        let removal = &a["metadata"]["furnish"]["uninstall"][0]["metadata"][PACKAGE];
+        assert_eq!(key, &removal["key"]);
+        assert_eq!(removal["removal"], true);
+        assert_eq!(a["resources"][1]["metadata"][PACKAGE]["versioned"], true);
+        let mut changed = raw;
+        changed["resources"][0]["properties"]["name"] = "namespace.new".into();
+        assert_eq!(key, &stamp(changed, "org/one")["resources"][0]["metadata"][PACKAGE]["key"]);
+    }
 
     #[test]
     fn allowed_options_match_part_by_part() {

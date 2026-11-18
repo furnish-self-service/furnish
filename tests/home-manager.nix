@@ -18,6 +18,7 @@
 let
   h = import ./home-manager/homes.nix { inherit pkgs nixpkgs homeManagerModule furnish; };
   before = h.home { };
+  greeting = h.home { greeting.packages = [ "hello" ]; };
   htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
   hello = app "hello" { packages = [ "hello" ]; };
   after = h.home { inherit htop; };
@@ -68,7 +69,7 @@ pkgs.testers.runNixOSTest {
       substituters = lib.mkForce [ ];
     };
     # Building takes nothing. Evaluating needs nixpkgs, Home Manager, furnish and crane.
-    virtualisation.additionalPaths = [ before after ssh nixpkgs.outPath h.homeManager.outPath furnish.outPath furnish.inputs.crane.outPath ];
+    virtualisation.additionalPaths = [ before after greeting ssh nixpkgs.outPath h.homeManager.outPath furnish.outPath furnish.inputs.crane.outPath ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''
@@ -97,6 +98,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed(
         "git config --global user.name t && git config --global user.email t@t",
         "mkdir -p /srv/org/apps",
+        "cp ${import ./nixos-apps/ordinary-package.nix { inherit pkgs; }} /srv/org/apps/greeting.dsc.yaml",
         "cp ${app "htop" { inherit (htop) packages; homeOptions = htop.options; }} /srv/org/apps/htop.dsc.yaml",
         "cp ${app "git" { homeOptions."programs.git.enable" = true; }} /srv/org/apps/git.dsc.yaml",
         "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
@@ -120,6 +122,16 @@ pkgs.testers.runNixOSTest {
     out = furnish("settings")
     assert "home-apps.url" not in out, out
     assert "Apps go into:        your Home Manager configuration (automatic)" in out, out
+
+    # No special resource type is required for a package in standalone Home Manager.
+    furnish("install greeting")
+    assert list(apps().values()) == [{"packages": ["hello"], "options": {}}], apps()
+    assert generation() == "${greeting}", generation()
+    alice("hello")
+    machine.fail("test -e /nix/var/nix/profiles/furnish/bin/hello")
+    furnish("uninstall greeting")
+    assert not apps() and generation() == "${before}", apps()
+    alice("! command -v hello")
 
     # Installing htop, through the service: only furnish/home-apps changes in flake.lock, the
     # generation has hello and htop, and flake.lock is committed, all as alice.

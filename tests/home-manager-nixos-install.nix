@@ -13,6 +13,7 @@ let
   s = import ./home-manager/nixos-systems.nix { inherit pkgs nixpkgs nixosModule furnish; inherit (h) homeManager; };
   htop = { packages = [ "hello" ]; options."programs.htop.enable" = true; };
   before = s.system { };
+  greeting = s.system { homes.alice.apps.greeting.packages = [ "hello" ]; };
   after = s.system { homes.alice.apps = { inherit htop; }; };
   app = name: properties: pkgs.writeText "${name}.dsc.yaml" (builtins.toJSON {
     metadata.furnish = { description = name; categories = [ "Test" ]; perUser = true; };
@@ -41,7 +42,7 @@ pkgs.testers.runNixOSTest {
       experimental-features = [ "nix-command" "flakes" ];
       substituters = lib.mkForce [ ];
     };
-    virtualisation.additionalPaths = [ before after h.homeManager.outPath ];
+    virtualisation.additionalPaths = [ before after greeting h.homeManager.outPath ];
     virtualisation.memorySize = 4096;
   };
   testScript = ''
@@ -71,6 +72,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed(
         "git config --global user.name t && git config --global user.email t@t",
         "mkdir -p /srv/org/apps",
+        "cp ${import ./nixos-apps/ordinary-package.nix { inherit pkgs; perUser = true; }} /srv/org/apps/greeting.dsc.yaml",
         "cp ${app "htop" { inherit (htop) packages; homeOptions = htop.options; }} /srv/org/apps/htop.dsc.yaml",
         "cp ${app "git" { homeOptions."programs.git.enable" = true; }} /srv/org/apps/git.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
@@ -85,6 +87,22 @@ pkgs.testers.runNixOSTest {
     out = furnish("settings")
     assert "Apps go into:        your Home Manager configuration (automatic)" in out, out
     assert "add to" not in out, out
+
+    # The same ordinary package belongs to alice's Home Manager generation on this computer.
+    profiles = alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true")
+    preview = furnish("install greeting --dry-run")
+    assert "Home Manager" in preview and "nix profile install" not in preview, preview
+    assert apps() == {"version": 1, "apps": {}}, apps()
+    furnish("install greeting")
+    values = apps()
+    assert values["apps"] == {} and set(values["homes"]) == {"alice"}, values
+    assert list(values["homes"]["alice"]["apps"].values()) == [{"packages": ["hello"], "options": {}}], values
+    assert system() == "${greeting}", system()
+    machine.fail("test -e ${greeting}/sw/bin/hello")
+    assert alice("readlink -f ~/.nix-profile /nix/var/nix/profiles/furnish || true") == profiles
+    assert any(line.startswith("✓  greeting") for line in furnish("list").splitlines())
+    furnish("uninstall greeting")
+    assert apps() == {"version": 1, "apps": {}} and system() == "${before}", apps()
 
     # alice installs htop: into her part of the system's apps flake; the system has it in her
     # Home Manager generation only.
