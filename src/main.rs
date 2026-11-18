@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use furnish::{catalog, engine, engine::Status};
+use furnish::{catalog, cli_println as println, engine, engine::Status};
 
 /// Self-service app catalog: install apps your organization curated in git.
 #[derive(Parser)]
@@ -1075,8 +1075,14 @@ fn ask_unanswered(collection: &catalog::Collection) -> Result<()> {
             println!("  {}) {}", i + 1, c.label.as_deref().unwrap_or(&value));
         }
         loop {
-            print!("{}> ", if r.declaration.kind == "bool" && r.choices.is_empty() { "(yes/no) " } else { "" });
-            std::io::stdout().flush()?;
+            let hint = if r.declaration.kind == "bool" && r.choices.is_empty() { "(yes/no) " } else { "" };
+            let mut stdout = std::io::stdout();
+            if let Err(err) = write!(stdout, "{hint}> ").and_then(|()| stdout.flush()) {
+                if err.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(err.into());
+            }
             let mut line = String::new();
             if std::io::stdin().lock().read_line(&mut line)? == 0 {
                 return Ok(());

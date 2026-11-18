@@ -61,7 +61,7 @@ pub fn dispatch() -> Option<u8> {
     }
     Some(match run(&args[1..]) {
         Ok(out) => {
-            println!("{out}");
+            crate::cli_println!("{out}");
             0
         }
         // Plain text and an exit code the manifests don't map, so DSC keeps the line in its

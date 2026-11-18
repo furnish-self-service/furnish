@@ -19,3 +19,17 @@ pub mod resource_env;
 pub mod service;
 pub mod settings;
 pub mod versions;
+
+/// Print a line of CLI output. A reader such as `head` can close stdout while the
+/// command still has work to finish or an operation error to report on stderr.
+#[macro_export]
+macro_rules! cli_println {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        if let Err(err) = writeln!(std::io::stdout().lock(), $($arg)*)
+            && err.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            panic!("failed printing to stdout: {err}");
+        }
+    }};
+}

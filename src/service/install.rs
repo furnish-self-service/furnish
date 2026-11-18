@@ -235,7 +235,7 @@ mod homebrew {
             let _ = fs::remove_file(RULE);
             bail!("sudo's configuration is invalid with the Homebrew rule; removed it again");
         }
-        println!("✓ The service runs Homebrew as {owner}, who may now use sudo without a password ({RULE})");
+        crate::cli_println!("✓ The service runs Homebrew as {owner}, who may now use sudo without a password ({RULE})");
         Ok(())
     }
 
