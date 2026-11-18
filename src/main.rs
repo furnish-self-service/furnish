@@ -289,6 +289,36 @@ fn print_nixos(s: &furnish::nixos::Setup) {
     println!("Apps go into:        {into} ({why})");
 }
 
+/// The remote revisions eligible for a collection update.
+#[derive(clap::Args)]
+struct TrackingArgs {
+    /// Follow the repository's default branch, including a future default-branch rename
+    #[arg(long, conflicts_with_all = ["branch", "tag_pattern"])]
+    default_branch: bool,
+    /// Follow the tip of this branch
+    #[arg(long, value_name = "NAME", conflicts_with = "tag_pattern")]
+    branch: Option<String>,
+    /// Only update to releases whose Git tag name matches this regular expression
+    #[arg(long, value_name = "REGEX")]
+    tag_pattern: Option<String>,
+    /// Choose the highest matching version (default) or the newest tag by date
+    #[arg(long, value_enum, requires = "tag_pattern")]
+    tag_order: Option<furnish::settings::TagOrder>,
+}
+
+impl TrackingArgs {
+    fn selection(self) -> Option<furnish::settings::Tracking> {
+        use furnish::settings::Tracking;
+        if let Some(name) = self.branch {
+            Some(Tracking::Branch { name })
+        } else if let Some(pattern) = self.tag_pattern {
+            Some(Tracking::Tag { pattern, order: self.tag_order.unwrap_or_default() })
+        } else {
+            self.default_branch.then_some(Tracking::Default)
+        }
+    }
+}
+
 /// Settings that can differ per collection (`furnish collection settings`).
 #[derive(clap::Args)]
 struct CollectionSettingsArgs {
@@ -411,6 +441,8 @@ enum CollectionCommand {
         /// Defaults to the last part of the URL
         #[arg(long)]
         name: Option<String>,
+        #[command(flatten)]
+        tracking: TrackingArgs,
         /// Answer one of the collection's options, e.g. --option role=developer (repeatable;
         /// required ones not given are asked for)
         #[arg(long = "option", value_name = "NAME=VALUE")]
@@ -430,11 +462,16 @@ enum CollectionCommand {
     Update { name: Option<String> },
     /// Remove a collection (installed apps stay installed)
     Remove { name: String },
-    /// Show or change settings for one collection (history kept, downloads, falling back)
+    /// Show or change the update source, download settings, and fallback behavior for a collection
     Settings {
         name: String,
         #[command(flatten)]
         settings: CollectionSettingsArgs,
+        #[command(flatten)]
+        tracking: TrackingArgs,
+        /// Remove your tracking choice and use the collection's configured default
+        #[arg(long, conflicts_with_all = ["default_branch", "branch", "tag_pattern"])]
+        inherit_tracking: bool,
         /// Use the general settings again (`furnish settings`)
         #[arg(long)]
         reset: bool,
@@ -868,7 +905,8 @@ fn collection_locales() -> std::collections::HashMap<String, furnish::locale::Lo
 fn collection(cmd: CollectionCommand) -> Result<()> {
     match cmd {
         // An organization's furnish address: sign in, then add all of its collections.
-        CollectionCommand::Add { url, .. } if furnish::endpoint::origin(&url).is_some() => {
+        CollectionCommand::Add { url, tracking, .. } if furnish::endpoint::origin(&url).is_some() => {
+            anyhow::ensure!(tracking.selection().is_none(), "choose a branch or tag pattern for an individual Git collection; an endpoint supplies settings for each collection");
             let origin = furnish::endpoint::origin(&url).expect("checked");
             print_preview(&furnish::endpoint::preview(&origin)?);
             let added = catalog::add_endpoint(&origin, |url| print_sign_in_url(&origin, url))?;
@@ -880,7 +918,8 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
                 println!("✓ Signed in; its collections were already added");
             }
         }
-        CollectionCommand::Add { url, name, options, username, password_stdin } => {
+        CollectionCommand::Add { url, name, tracking, options, username, password_stdin } => {
+            let tracking = tracking.selection();
             let name = name.unwrap_or_else(|| catalog::name_from_url(&url));
             let given = match (&username, password_stdin) {
                 (Some(user), true) => {
@@ -891,11 +930,11 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
                 (Some(_), false) => furnish::auth::ask_in_terminal(&url_with_user(&url, username.as_deref()))?,
                 (None, _) => None,
             };
-            let collection = match catalog::add(&url, &name, given.as_ref().map(|(u, p)| (u.as_str(), p.as_str()))) {
+            let collection = match catalog::add_with_tracking(&url, &name, given.as_ref().map(|(u, p)| (u.as_str(), p.as_str())), tracking.as_ref()) {
                 // The server wants a login: ask like git does (its helpers, then the terminal).
                 Err(err) if given.is_none() && err.is::<furnish::auth::CredentialsRequired>() => {
                     let (user, password) = furnish::auth::ask_in_terminal(&url)?.ok_or(err)?;
-                    catalog::add(&url, &name, Some((&user, &password)))?
+                    catalog::add_with_tracking(&url, &name, Some((&user, &password)), tracking.as_ref())?
                 }
                 result => result?,
             };
@@ -951,11 +990,12 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
             catalog::remove(&name)?;
             println!("✓ Removed '{name}'. Apps installed from it stay installed.");
         }
-        CollectionCommand::Settings { name, settings, reset } => {
+        CollectionCommand::Settings { name, settings, tracking, inherit_tracking, reset } => {
+            let tracking = tracking.selection();
             let collection = catalog::get(&name)?;
             if reset {
                 for key in furnish::settings::PER_COLLECTION {
-                    if !furnish::settings::for_collection(&name).locked.iter().any(|k| k == key) {
+                    if key != "tracking" && !furnish::settings::for_collection(&name).locked.iter().any(|k| k == key) {
                         furnish::settings::set_for_collection(&name, key, serde_json::Value::Null)?;
                     }
                 }
@@ -963,12 +1003,40 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
             for (key, value) in settings.changes() {
                 furnish::settings::set_for_collection(&name, key, value)?;
             }
-            let effective = furnish::settings::for_collection(&name);
-            print_collection_settings(&effective.settings, &effective.locked);
-            if settings.checkout_depth.is_some() || settings.blobs_on_demand.is_some() {
-                // Applied when git next talks to the server.
+            let reset_tracking = reset
+                && furnish::settings::user_choices().get("collections")
+                    .and_then(|collections| collections.get(&name))
+                    .is_some_and(|choices| choices.get("tracking").is_some())
+                && !furnish::settings::for_collection(&name).locked.iter().any(|key| key == "tracking");
+            if tracking.is_some() || inherit_tracking || reset_tracking {
+                collection.set_tracking(tracking.as_ref())?;
+            } else if settings.checkout_depth.is_some() || settings.blobs_on_demand.is_some() {
                 collection.update()?;
             }
+            let effective = furnish::settings::for_collection(&name);
+            print_collection_settings(&effective.settings, &effective.locked);
+            let rule = match &effective.settings.tracking {
+                furnish::settings::Tracking::Default => "remote default branch".to_owned(),
+                furnish::settings::Tracking::Branch { name } => format!("branch {name}"),
+                furnish::settings::Tracking::Tag { pattern, order } => {
+                    let order = match order {
+                        furnish::settings::TagOrder::Version => "highest version",
+                        furnish::settings::TagOrder::Newest => "newest by date",
+                    };
+                    format!("tags matching {pattern} ({order})")
+                }
+            };
+            if let Some(error) = &effective.tracking_error {
+                anyhow::bail!("collection '{name}' has invalid update tracking: {error}");
+            }
+            let source = match effective.tracking_source {
+                furnish::settings::TrackingSource::Default => "default",
+                furnish::settings::TrackingSource::User => "set by you",
+                furnish::settings::TrackingSource::Policy => "machine policy",
+                furnish::settings::TrackingSource::Endpoint => "endpoint configuration",
+            };
+            let locked = if effective.locked.iter().any(|key| key == "tracking") { ", locked" } else { "" };
+            println!("track updates:      {rule} ({source}{locked})");
         }
     }
     Ok(())

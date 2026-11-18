@@ -256,6 +256,18 @@ echo "$out" | grep -q "$(short "$signed1")" || fail "the signed version isn't li
 echo "$out" | grep -q "$(short "$unsigned")" && fail "the unsigned version is listed: $out"
 out=$(furnish install signed/tool --version "$(short "$unsigned")" 2>&1) && fail "chose an unsigned version"
 echo "$out" | grep -q "isn't signed" || fail "unexpected message: $out"
+echo "== release tags preserve signed-commit and rollback policy"
+signed_release=$(git -C "$sc" rev-parse HEAD)
+git -C /tmp/signed tag -a v2.0.0 -m release "$signed_release"
+printf '{"collections":{"preset":[{"name":"signed","url":"file:///tmp/signed","tracking":{"mode":"tag","pattern":"^v","order":"version"}}],"trustedKeys":["%s"]}}' "$(cat /root/signing.pub)" > /etc/furnish/policy.json
+furnish collection update signed >/dev/null || fail "signed release tag was refused"
+git -C /tmp/signed tag -a v3.0.0 -m unsigned-target "$unsigned"
+out=$(furnish collection update signed 2>&1) && fail "tag for an unsigned commit was accepted"
+echo "$out" | grep -q "isn't signed" || fail "unexpected signature diagnostic: $out"
+git -C /tmp/signed tag -f v3.0.0 "$signed1" >/dev/null
+out=$(furnish collection update signed 2>&1) && fail "release tag bypassed the signed rollback policy"
+echo "$out" | grep -q "doesn't follow the current one" || fail "unexpected rollback diagnostic: $out"
+[ "$(git -C "$sc" rev-parse HEAD)" = "$signed_release" ] || fail "failed release verification changed the checkout"
 rm /etc/furnish/policy.json
 
 echo "checkout OK"

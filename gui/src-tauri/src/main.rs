@@ -511,6 +511,11 @@ fn open_licenses(app: tauri::AppHandle) -> CmdResult<()> {
 #[tauri::command]
 async fn set_collection_setting(name: String, key: String, value: serde_json::Value) -> CmdResult<()> {
     blocking(move || {
+        if key == "tracking" {
+            let tracking = serde_json::from_value::<Option<furnish::settings::Tracking>>(value)?;
+            catalog::get(&name)?.set_tracking(tracking.as_ref())?;
+            return Ok(());
+        }
         furnish::settings::set_for_collection(&name, &key, value)?;
         if matches!(key.as_str(), "checkoutDepth" | "blobsOnDemand") {
             catalog::get(&name)?.update()?; // applied when git next talks to the server
@@ -627,6 +632,11 @@ struct SignInStarted {
     origin: String,
 }
 
+#[tauri::command]
+fn is_furnish_address(input: String) -> bool {
+    furnish::endpoint::origin(&input).is_some()
+}
+
 /// Add a git collection, or an organization's furnish address (`furnish.myorg.tld`): then sign
 /// in in the browser (its URL comes as a `furnish://sign-in` event) and add all its collections.
 #[tauri::command]
@@ -636,15 +646,17 @@ async fn add_collection(
     name: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    tracking: Option<furnish::settings::Tracking>,
 ) -> CmdResult<Vec<CollectionInfo>> {
     blocking(move || {
         if let Some(origin) = furnish::endpoint::origin(&url) {
+            anyhow::ensure!(tracking.is_none(), "this furnish address supplies the update source for each of its collections");
             let added = catalog::add_endpoint(&origin, sign_in_event(&app, &origin))?;
             return added.iter().map(collection_info).collect();
         }
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| catalog::name_from_url(&url));
         let credentials = username.as_deref().filter(|u| !u.is_empty()).zip(password.as_deref());
-        Ok(vec![collection_info(&catalog::add(url.trim(), name.trim(), credentials)?)?])
+        Ok(vec![collection_info(&catalog::add_with_tracking(url.trim(), name.trim(), credentials, tracking.as_ref())?)?])
     })
     .await
 }
@@ -909,6 +921,7 @@ fn main() -> std::process::ExitCode {
             ensure_presets,
             refresh_endpoints,
             list_collections,
+            is_furnish_address,
             add_collection,
             link_preview,
             add_endpoint,

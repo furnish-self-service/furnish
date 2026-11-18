@@ -16,7 +16,7 @@ On macOS, Homebrew sets up the command when it installs furnish. If you dragged 
 | `furnish uninstall <app>` | Uninstall; for a kit, `--only` picks the apps |
 | `furnish reinstall <app>` | Apply changed options |
 | `furnish upgrade` | Install available updates (`--all` includes apps with automatic updates off) |
-| `furnish collection add <url or address>` | Add a collection, or all collections of your organization's furnish address; `--option name=value` answers a question, `--username` (with `--password-stdin` in scripts) logs in to a private HTTPS repository |
+| `furnish collection add <url or address>` | Add a Git collection, optionally with `--branch NAME` or `--tag-pattern REGEX [--tag-order version\|newest]`, or add the collections from your organization's Furnish address. `--option name=value` answers a question, `--username` (with `--password-stdin` in scripts) logs in to a private HTTPS repository |
 | `furnish login <address>`, `logout <address>` | Sign in to your organization's furnish address again, or remove the sign-in |
 | `furnish collection list`, `update`, `remove` | Manage collections |
 | `furnish option list <collection or app>` | Options, their values and where each value comes from |
@@ -24,7 +24,7 @@ On macOS, Homebrew sets up the command when it installs furnish. If you dragged 
 | `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
 | `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`). Also shows furnish's version, how it was installed and whether a new version is out; `--self-update auto\|notify\|off` sets what furnish does with new versions of itself |
 | `furnish self-update` | Install the newest version of furnish, if you installed it from the Windows or macOS download. Elsewhere it says how the new version arrives. `--check` only says whether there is one |
-| `furnish collection settings <collection>` | Download and fallback settings for one collection: `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--choose-version <bool>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
+| `furnish collection settings <collection>` | Set its update source with `--branch NAME`, `--tag-pattern REGEX [--tag-order version\|newest]`, `--default-branch`, or `--inherit-tracking`. Download and fallback settings include `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--choose-version <bool>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
 
 `-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.
 

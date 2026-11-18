@@ -55,6 +55,9 @@ pub struct Policy {
     /// Not part of the policy: endpoint settings `with_endpoints` left out, and why.
     #[serde(skip)]
     pub warnings: Vec<crate::settings::Warning>,
+    /// Derived from descriptions, keyed by both name and URL to retain the endpoint's scope.
+    #[serde(skip)]
+    pub endpoint_tracking: BTreeMap<(String, String), crate::settings::Tracking>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, serde::Serialize)]
@@ -122,6 +125,13 @@ impl Default for Collections {
 pub struct Preset {
     pub name: String,
     pub url: String,
+    /// Kept as input until checkout so one invalid selector blocks only its own collection.
+    #[serde(default, deserialize_with = "present_value")]
+    pub tracking: Option<Value>,
+}
+
+fn present_value<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Value>, D::Error> {
+    Value::deserialize(d).map(Some)
 }
 
 /// The policy, or none. An unreadable policy is reported and ignored rather than blocking furnish.
@@ -179,7 +189,8 @@ pub fn endpoints_in_effect() -> Vec<(String, crate::endpoint::Description)> {
 
 /// The git URL of a collection the user added, read from its git config (no git process: the
 /// policy is loaded often).
-fn local_remote(name: &str) -> Option<String> {
+pub(crate) fn local_remote(name: &str) -> Option<String> {
+    crate::catalog::check_name(name).ok()?;
     let config = std::fs::read_to_string(crate::catalog::data_dir().join("collections").join(name).join(".git").join("config")).ok()?;
     let mut in_origin = false;
     for line in config.lines().map(str::trim) {
@@ -230,11 +241,17 @@ pub fn with_endpoints(policy: &mut Policy, endpoints: &[(String, crate::endpoint
         if named.contains(origin) {
             for c in &d.collections {
                 if !policy.collections.preset.iter().any(|p| p.name == c.name) {
-                    policy.collections.preset.push(Preset { name: c.name.clone(), url: c.url.clone() });
+                    policy.collections.preset.push(Preset { name: c.name.clone(), url: c.url.clone(), tracking: None });
                 }
             }
         }
+        for c in &d.collections {
+            if let Some(selector) = &c.tracking {
+                policy.endpoint_tracking.entry((c.name.clone(), c.url.clone())).or_insert_with(|| selector.clone());
+            }
+        }
         for (key, value) in &d.settings {
+            if key == "tracking" { continue; } // A selector belongs to a specific collection and URL.
             let value = endpoint_setting(value);
             let default = || Entry { value: value.clone(), locked: false };
             let applies = ENDPOINT_SETTINGS.contains(&key.as_str()) || crate::settings::PER_COLLECTION.contains(&key.as_str());
@@ -335,7 +352,7 @@ mod tests {
     fn plist_and_json_mean_the_same() {
         let json: Policy = serde_json::from_str(
             r#"{"settings":{"updateIntervalMinutes":{"value":60,"locked":true}},
-                "collections":{"preset":[{"name":"acme","url":"git@example.com:acme.git"}],"usersCanAdd":false}}"#,
+                "collections":{"preset":[{"name":"acme","url":"git@example.com:acme.git","tracking":{"mode":"tag","pattern":"^v","order":"newest"}}],"usersCanAdd":false}}"#,
         )
         .unwrap();
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -344,7 +361,8 @@ mod tests {
     <key>updateIntervalMinutes</key><dict><key>value</key><integer>60</integer><key>locked</key><true/></dict>
   </dict>
   <key>collections</key><dict>
-    <key>preset</key><array><dict><key>name</key><string>acme</string><key>url</key><string>git@example.com:acme.git</string></dict></array>
+    <key>preset</key><array><dict><key>name</key><string>acme</string><key>url</key><string>git@example.com:acme.git</string>
+    <key>tracking</key><dict><key>mode</key><string>tag</string><key>pattern</key><string>^v</string><key>order</key><string>newest</string></dict></dict></array>
     <key>usersCanAdd</key><false/>
   </dict>
 </dict></plist>"#;
@@ -376,7 +394,7 @@ mod tests {
         let other = crate::endpoint::Description { collections: vec![], ..d.clone() };
         with_endpoints(&mut p, &[("https://furnish.acme.tld".into(), d), ("https://elsewhere.tld".into(), other)]);
         // Its collections are preset because the policy names it.
-        assert_eq!(p.collections.preset, [Preset { name: "acme".into(), url: "https://furnish.acme.tld/git/acme.git".into() }]);
+        assert_eq!(p.collections.preset, [Preset { name: "acme".into(), url: "https://furnish.acme.tld/git/acme.git".into(), tracking: None }]);
         // The policy's own values win; the endpoint's only fill gaps, unlocked.
         assert_eq!(p.branding.name.as_deref(), Some("Admin's"));
         assert_eq!(p.settings["updateIntervalMinutes"], Entry { value: 60.into(), locked: true });
@@ -436,13 +454,16 @@ mod tests {
     #[test]
     fn added_endpoints_dont_speak_for_others_collections() {
         let p: Policy = serde_json::from_str(r#"{"collections": {"preset": [{"name": "it", "url": "git@x:it.git"}]}}"#).unwrap();
-        let lookalike = description(serde_json::json!({
+        let mut lookalike = description(serde_json::json!({
             "collections": [{"name": "it", "url": "https://furnish-acme.tld/git/it.git"},
                             {"name": "acme", "url": "https://furnish-acme.tld/git/acme.git"},
                             {"name": "own", "url": "https://furnish-acme.tld/git/own.git"}],
             "parameters": {"it": {"a": 1}, "acme": {"a": 1}, "own": {"a": 1}},
             "autoInstall": ["it/x", "acme/x", "own/x"]
         }));
+        for c in &mut lookalike.collections {
+            c.tracking = Some(crate::settings::Tracking::Branch { name: "next".into() });
+        }
         // The user's collection "acme" comes from the real address.
         let local = |name: &str| (name == "acme").then(|| "https://furnish.acme.tld/git/acme.git".to_string());
         let mut endpoints = speaking_for_own(&p, vec![("https://furnish-acme.tld".into(), lookalike)], local);
@@ -450,6 +471,7 @@ mod tests {
         with_endpoints(&mut policy, &endpoints);
         assert_eq!(policy.auto_install, ["own/x"]);
         assert_eq!(policy.parameters.keys().collect::<Vec<_>>(), ["own"]);
+        assert_eq!(policy.endpoint_tracking.keys().collect::<Vec<_>>(), [&("own".to_string(), "https://furnish-acme.tld/git/own.git".to_string())]);
         // Without usersCanAdd, only addresses the policy names count.
         let mut locked_down = p.clone();
         locked_down.collections.users_can_add = false;

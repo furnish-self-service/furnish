@@ -129,6 +129,11 @@ YAML
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm fresh
 git -C "$work/origin-src" push -q "$work/origin.git" HEAD
 repo_from_fixture "$work/second"
+GIT_COMMITTER_DATE=2022-01-01T00:00:00Z git -C "$work/second" -c user.name=t -c user.email=t@t tag -a release-2 -m release-2
+git -C "$work/second" -c user.name=t -c user.email=t@t commit -q --allow-empty -m stable
+git -C "$work/second" branch stable
+GIT_COMMITTER_DATE=2023-01-01T00:00:00Z git -C "$work/second" -c user.name=t -c user.email=t@t tag -a release-1 -m release-1
+git -C "$work/second" -c user.name=t -c user.email=t@t commit -q --allow-empty -m development
 
 # Install a launcher in the package search path. Keep its command and actions distinguishable
 # from the defaults so the desktop override must use the installed package's entry.
@@ -152,7 +157,7 @@ DESKTOP
 # An admin policy: the fixture collection is managed, the update interval locked, the app branded.
 cat > "$work/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}, "reporting": {"value": "errors", "locked": true}},
- "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git"}]},
+ "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git", "tracking": {"mode": "default"}}]},
  "branding": {"name": "Acme Apps", "logo": "fixture/branding/logo.svg", "accent": "#e30613"},
  "parameters": {"fixture": {"role": {"value": "developer"}}}}
 JSON

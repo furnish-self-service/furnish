@@ -3,13 +3,17 @@
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::Write,
+    io::{Seek, Write},
     path::{Component, Path, PathBuf},
     process::Command,
 };
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
+
+mod tracking;
+use crate::settings::Tracking;
+use tracking::Target;
 
 const DSC_SCHEMA: &str = "https://aka.ms/dsc/schemas/v3/bundled/config/document.json";
 
@@ -258,6 +262,10 @@ pub fn name_from_url(url: &str) -> String {
 /// Add a collection the user chose; the admin policy may forbid that. `credentials`: a username
 /// and password (or access token) for an HTTPS URL, kept in the OS's credential store.
 pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<Collection> {
+    add_with_tracking(url, name, credentials, None)
+}
+
+pub fn add_with_tracking(url: &str, name: &str, credentials: Option<(&str, &str)>, requested: Option<&Tracking>) -> Result<Collection> {
     check_name(name)?;
     let policy = crate::policy::load().collections;
     if !policy.users_can_add {
@@ -269,7 +277,7 @@ pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<C
     if let Some((user, password)) = credentials {
         crate::auth::store(url, user, password)?;
     }
-    clone(url, name, false, false).inspect_err(|err| {
+    clone(url, name, false, false, requested).inspect_err(|err| {
         if credentials.is_some() && err.is::<crate::auth::CredentialsRequired>() {
             crate::auth::forget(url); // wrong ones: don't keep them
         }
@@ -289,13 +297,38 @@ pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>
         crate::endpoint::login(origin, &description, show)?;
     }
     let presets = crate::policy::load().collections.preset;
+    let mut shared = BTreeMap::new();
+    let service = crate::service::enabled();
+    for c in &description.collections {
+        check_name(&c.name)?;
+        if let Some(p) = presets.iter().find(|p| p.name == c.name) {
+            anyhow::ensure!(p.url == c.url, "'{}' is the name of a collection your organization provides", c.name);
+            if service {
+                let dir = system_dir().join("collections").join(&c.name);
+                let missing = !is_preset(&presets, &c.name, &dir);
+                shared.insert(&c.name, (dir, missing));
+            }
+        }
+    }
+    // The service fetches the preset descriptions itself. Only credentials cross the
+    // service boundary, even when the person initiates setup from an endpoint link.
+    let problems = if shared.values().any(|(_, missing)| *missing) {
+        crate::service::ensure_presets()?
+    } else {
+        Vec::new()
+    };
     let mut added = Vec::new();
     let mut present = Vec::new();
     let result = (|| -> Result<()> {
         for c in &description.collections {
-            check_name(&c.name)?;
-            if presets.iter().any(|p| p.name == c.name && p.url != c.url) {
-                bail!("'{}' is the name of a collection your organization provides", c.name);
+            if let Some((dir, missing)) = shared.get(&c.name) {
+                if *missing {
+                    anyhow::ensure!(is_preset(&presets, &c.name, dir), "could not set up shared collection '{}': {}", c.name,
+                        if problems.is_empty() { "the service did not find this preset".into() } else { problems.join(", ") });
+                    added.push(Collection { name: c.name.clone(), dir: dir.clone(), managed: true });
+                }
+                present.push(c.name.clone());
+                continue;
             }
             let dir = collections_dir().join(&c.name);
             if dir.join(".git").exists() {
@@ -307,7 +340,8 @@ pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>
                     _ => bail!("a collection named '{}' already exists", c.name),
                 }
             }
-            added.push(clone(&c.url, &c.name, preset, false)?);
+            let managed = presets.iter().any(|p| p.name == c.name);
+            added.push(clone(&c.url, &c.name, managed, false, None)?);
             present.push(c.name.clone());
         }
         Ok(())
@@ -375,7 +409,7 @@ pub fn add_new(origin: &str, description: &crate::endpoint::Description) -> (Vec
     let (mut added, mut present, mut problems) = (Vec::new(), Vec::new(), Vec::new());
     for offer in offers(&description.collections, &crate::endpoint::offered(origin), &presets, local_url) {
         match offer {
-            Offer::Add(c) => match clone(&c.url, &c.name, false, false) {
+            Offer::Add(c) => match clone(&c.url, &c.name, false, false, None) {
                 Ok(collection) => {
                     present.push(c.name.clone());
                     added.push(collection);
@@ -424,7 +458,7 @@ pub fn ensure_presets() -> Vec<String> {
         // A collection of that name from another URL (added by the user, or the policy changed
         // the URL): replaced by a fresh copy, never updated from the old URL.
         let replacing = dir.exists();
-        match clone(&preset.url, &preset.name, true, true) {
+        match clone(&preset.url, &preset.name, true, true, None) {
             Ok(_) if replacing => eprintln!("note: replaced collection '{}' with your organization's from {}", preset.name, preset.url),
             Ok(_) => {}
             Err(err) if replacing => problems.push(format!(
@@ -439,7 +473,7 @@ pub fn ensure_presets() -> Vec<String> {
 
 /// The name becomes a directory name: no separators, no `..`, no hidden dirs, nothing Windows
 /// reserves (`CON`, `NUL`, `COM1`, …, also with an extension, or a trailing `.`).
-fn check_name(name: &str) -> Result<()> {
+pub(crate) fn check_name(name: &str) -> Result<()> {
     let valid = !name.is_empty()
         && !name.starts_with('.')
         && !name.ends_with('.')
@@ -460,7 +494,7 @@ fn check_name(name: &str) -> Result<()> {
 
 /// Clone into `collections/<name>`. `replace`: a directory of that name (from another URL) is
 /// replaced once the new copy is complete.
-fn clone(url: &str, name: &str, managed: bool, replace: bool) -> Result<Collection> {
+fn clone(url: &str, name: &str, managed: bool, replace: bool, requested: Option<&Tracking>) -> Result<Collection> {
     check_name(name)?;
     fs::create_dir_all(collections_dir().join(".partial"))?;
     let _lock = lock(&collections_dir(), name)?;
@@ -473,9 +507,12 @@ fn clone(url: &str, name: &str, managed: bool, replace: bool) -> Result<Collecti
             return Ok(Collection { name: name.to_string(), dir, managed }); // another furnish just did
         }
     }
+    let tracking = crate::settings::tracking_for(name, url, managed, requested)?;
+    let target_ref = Target::resolve(None, url, &tracking)?;
     let settings = crate::settings::for_collection(name).settings;
     let depth = format!("--depth={}", settings.checkout_depth);
-    let mut args = vec!["clone", "--quiet", "--no-checkout"];
+    let branch = format!("--branch={}", target_ref.short_name());
+    let mut args = vec!["clone", "--quiet", "--no-checkout", "--single-branch", &branch];
     // A path on this computer is copied as it is, so there is nothing to download on demand; and
     // a filter would make git serve it like a remote (git-upload-pack), as whoever clones.
     if settings.blobs_on_demand && !Path::new(url).exists() {
@@ -496,18 +533,29 @@ fn clone(url: &str, name: &str, managed: bool, replace: bool) -> Result<Collecti
     let collection = Collection { name: name.to_string(), dir: staging.clone(), managed };
     let set_up = || -> Result<()> {
         git(None, &args)?;
-        // One commit, resolved once: what is verified is what gets checked out.
-        let head = git(Some(&collection.dir), &["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])?;
-        collection.verify(&head)?;
-        collection.prepare_checkout(&settings, &head, true)?;
-        // A commit id from rev-parse: no option (and git before 2.44 rejects --end-of-options here).
-        git(Some(&collection.dir), &["reset", "--quiet", "--hard", &head])?;
-        if dir.exists() {
-            let old = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
-            fs::rename(&dir, &old)?;
-            remove_repository(&old);
+        target_ref.cloned(&collection.dir, settings.checkout_depth)?;
+        collection.verify(&target_ref.commit)?;
+        collection.prepare_checkout(&settings, &target_ref.commit, true)?;
+        collection.checkout(&target_ref.commit)?;
+        let backup = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
+        let replacing = dir.exists();
+        if replacing {
+            fs::rename(&dir, &backup)?;
         }
-        Ok(fs::rename(&staging, &dir)?)
+        if let Err(err) = fs::rename(&staging, &dir) {
+            if replacing { fs::rename(&backup, &dir).context("restoring original collection after a failed replacement")?; }
+            return Err(err.into());
+        }
+        if let Some(requested) = requested
+            && let Err(err) = persist_tracking(name, Some(requested))
+        {
+            remove_repository(&dir);
+            if replacing { fs::rename(&backup, &dir).context("restoring original collection after a settings error")?; }
+            return Err(err);
+        }
+        if replacing { remove_repository(&backup); }
+        remember_remote_head(&remote_heads_file(), name, &source_key(url, &tracking), &target_ref.commit);
+        Ok(())
     };
     if let Err(err) = set_up() {
         remove_repository(&staging);
@@ -561,24 +609,45 @@ fn read_remote_heads(file: &Path) -> serde_json::Map<String, Value> {
     fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-fn remember_remote_head(file: &Path, name: &str, commit: &str) {
+fn source_key(url: &str, tracking: &Tracking) -> String {
+    cache_key(serde_json::json!([url, tracking]).to_string().as_bytes())
+}
+
+fn cache_key(input: &[u8]) -> String {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+    // Avoid writing a credential-bearing remote URL into the status cache.
+    URL_SAFE_NO_PAD.encode(Sha256::digest(input))
+}
+
+fn persist_tracking(name: &str, requested: Option<&Tracking>) -> Result<()> {
+    crate::settings::set_for_collection(name, "tracking", serde_json::to_value(requested)?)
+}
+
+fn remember_remote_head(file: &Path, name: &str, source: &str, commit: &str) {
+    edit_remote_heads(file, |heads| {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        heads.insert(name.into(), serde_json::json!({ "commit": commit, "source": source, "checkedAt": now }));
+    });
+}
+
+/// Checks of different collections run concurrently. Serialize the read/modify/write and let
+/// readers see the old or new complete cache. A cache-write failure only delays the indicator.
+fn edit_remote_heads(file: &Path, edit: impl FnOnce(&mut serde_json::Map<String, Value>)) {
+    let Some(dir) = file.parent() else { return };
+    let Ok(Some(_lock)) = lock(dir, "remote-heads") else { return };
     let mut heads = read_remote_heads(file);
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    heads.insert(name.into(), serde_json::json!({ "commit": commit, "checkedAt": now }));
-    // Losing this only loses the indicator until the next look.
-    let _ = fs::write(file, serde_json::to_vec_pretty(&heads).unwrap_or_default());
+    edit(&mut heads);
+    if let Ok(mut temp) = tempfile::NamedTempFile::new_in(dir)
+        && serde_json::to_writer_pretty(temp.as_file_mut(), &heads).is_ok() {
+        let _ = temp.persist(file);
+    }
 }
 
-fn remote_head_differs(file: &Path, name: &str, head: &str) -> bool {
-    read_remote_heads(file).get(name).and_then(|h| h["commit"].as_str()).is_some_and(|c| c != head)
-}
-
-/// The commit the server's branch points to, without downloading anything (`git ls-remote`).
-fn server_head(dir: &Path) -> Result<String> {
-    let upstream = git(Some(dir), &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])?;
-    let (remote, branch) = upstream.split_once('/').with_context(|| format!("no remote branch in '{upstream}'"))?;
-    let out = git(Some(dir), &["ls-remote", "--end-of-options", remote, &format!("refs/heads/{branch}")])?;
-    out.split_whitespace().next().map(str::to_string).with_context(|| format!("the server has no branch {branch}"))
+fn remote_head_differs(file: &Path, name: &str, source: &str, head: &str) -> bool {
+    let heads = read_remote_heads(file);
+    let Some(cached) = heads.get(name) else { return false };
+    cached["source"].as_str() == Some(source) && cached["commit"].as_str().is_some_and(|c| c != head)
 }
 
 pub fn remove(name: &str) -> Result<()> {
@@ -586,10 +655,19 @@ pub fn remove(name: &str) -> Result<()> {
     if collection.managed {
         bail!("'{name}' is provided by your organization and can't be removed");
     }
-    if let Ok(url) = collection.url() {
-        crate::auth::forget(&url);
+    let _lock = collection.lock()?;
+    let url = collection.url().ok();
+    let partial = collections_dir().join(".partial");
+    fs::create_dir_all(&partial)?;
+    let removed = partial.join(format!("{name}+{}", unique()));
+    fs::rename(&collection.dir, &removed)?;
+    if let Err(err) = crate::settings::forget_tracking(name) {
+        fs::rename(&removed, &collection.dir).context("restoring collection after its tracking setting could not be cleared")?;
+        return Err(err);
     }
-    fs::remove_dir_all(&collection.dir)?;
+    remove_repository(&removed);
+    edit_remote_heads(&remote_heads_file(), |heads| { heads.remove(name); });
+    if let Some(url) = url { crate::auth::forget(&url); }
     Ok(())
 }
 
@@ -627,27 +705,46 @@ impl Collection {
         self.file_in_repo(&crate::options::collection_icons(&self.dir).icon_dark?)
     }
 
-    /// Ask the server for its newest commit (cheap: nothing is downloaded) and remember it.
+    /// Resolve the tracked remote commit without checking out files. Date-ordered tags may
+    /// download missing tag/commit metadata; later checks reuse dates of immutable objects.
     /// Offline or failing: an error, and what was remembered stays.
     pub fn check_server(&self) -> Result<()> {
-        let commit = server_head(&self.dir)?;
-        remember_remote_head(&remote_heads_file(), &self.name, &commit);
+        let _lock = self.observation_lock()?;
+        let url = origin_url(&self.dir)?;
+        let tracking = crate::settings::tracking_for(&self.name, &url, self.managed, None)?;
+        let target = self.resolve_target(&url, &tracking, true)?;
+        remember_remote_head(&remote_heads_file(), &self.name, &source_key(&url, &tracking), &target.commit);
         Ok(())
     }
 
-    /// The server had a commit this copy hasn't checked out, when furnish last looked.
+    /// Whether the last check of the current source found a different commit. A source can
+    /// change when an endpoint, administrator or user changes the tracking preference.
     pub fn update_available(&self) -> bool {
-        self.head().is_ok_and(|head| remote_head_differs(&remote_heads_file(), &self.name, &head))
+        let Ok(url) = origin_url(&self.dir) else { return false };
+        let Ok(tracking) = crate::settings::tracking_for(&self.name, &url, self.managed, None) else { return false };
+        self.head().is_ok_and(|head| remote_head_differs(&remote_heads_file(), &self.name, &source_key(&url, &tracking), &head))
+    }
+
+    /// Apply the chosen target before persisting the user's choice. None resumes inherited tracking.
+    pub fn set_tracking(&self, requested: Option<&Tracking>) -> Result<(String, String)> {
+        let _lock = self.lock()?;
+        let url = origin_url(&self.dir)?;
+        let tracking = crate::settings::tracking_for_change(&self.name, &url, self.managed, requested)?;
+        let old = self.head()?;
+        let updated = self.update_target(&url, &tracking, false)?;
+        if let Err(err) = persist_tracking(&self.name, requested) {
+            self.checkout(&old).context("restoring the previous revision after a settings error")?;
+            return Err(err);
+        }
+        if let Ok(head) = self.head() {
+            remember_remote_head(&remote_heads_file(), &self.name, &source_key(&url, &tracking), &head);
+        }
+        Ok(updated)
     }
 
     /// Fast-forward to the latest upstream commit. Returns (old, new) revision.
     pub fn update(&self) -> Result<(String, String)> {
         let result = self.update_unreported();
-        if result.is_ok()
-            && let Ok(head) = self.head()
-        {
-            remember_remote_head(&remote_heads_file(), &self.name, &head);
-        }
         let error = result.as_ref().err().map(|e| format!("{e:#}"));
         if let Some(message) = &error
             && !crate::service::in_service()
@@ -668,30 +765,63 @@ impl Collection {
 
     fn update_unreported(&self) -> Result<(String, String)> {
         if self.managed && crate::service::enabled() {
+            let _poll = self.observation_lock()?;
+            // The service resolves its own policy. Keep the client's remote observation so
+            // update_available compares it with the checkout the service actually applied.
             return crate::service::update(&self.name);
         }
         let _lock = self.lock()?;
-        let old = self.revision()?;
-        let settings = crate::settings::for_collection(&self.name).settings;
-        let depth = format!("--depth={}", settings.checkout_depth);
-        let mut fetch = vec!["fetch", "--quiet"];
-        if settings.checkout_depth > 0 {
-            fetch.push(&depth);
-        } else if git(Some(&self.dir), &["rev-parse", "--is-shallow-repository"])? == "true" {
-            fetch.push("--unshallow");
+        let url = origin_url(&self.dir)?;
+        let tracking = crate::settings::tracking_for(&self.name, &url, self.managed, None)?;
+        self.update_target(&url, &tracking, true)
+    }
+
+    /// Serialize observations with local updates. With the service, use a per-client lock
+    /// for its own cache, since the shared repository belongs to the service.
+    fn observation_lock(&self) -> Result<Option<fs::File>> {
+        if self.managed && crate::service::enabled() {
+            let dir = data_dir();
+            fs::create_dir_all(&dir)?;
+            return lock(&dir, &format!("remote-check.{}", self.name));
         }
-        git(Some(&self.dir), &fetch)?;
-        // One commit, resolved once: what is verified is what gets checked out.
-        let new = git(Some(&self.dir), &["rev-parse", "--verify", "--end-of-options", "@{upstream}^{commit}"])?;
-        // Fetched, not applied yet: available until checked out (it may still fail the checks).
-        remember_remote_head(&remote_heads_file(), &self.name, &new);
-        self.verify(&new)?;
-        self.require_descendant(&new)?;
-        self.prepare_checkout(&settings, &new, false)?;
-        // ponytail: reset, not merge: in a shallow history git may not see that the new commit
-        // follows the old one. Collections are furnish's copies, nobody commits to them.
-        git(Some(&self.dir), &["reset", "--quiet", "--hard", &new])?; // a commit id, see clone
-        Ok((old, self.revision()?))
+        self.lock()
+    }
+
+    fn checkout(&self, commit: &str) -> Result<()> {
+        git(Some(&self.dir), &["checkout", "--quiet", "--force", "--detach", "--no-recurse-submodules", commit, "--"])?;
+        Ok(())
+    }
+
+    fn resolve_target(&self, url: &str, tracking: &Tracking, current_source: bool) -> Result<Target> {
+        Target::resolve(Some(&self.dir), "origin", tracking).inspect_err(|err| {
+            // A deleted branch or empty matching tag set invalidates an old notice. A failed
+            // network request says nothing about the server's refs, so retain that observation.
+            if current_source && err.is::<tracking::MissingRef>() {
+                let source = source_key(url, tracking);
+                edit_remote_heads(&remote_heads_file(), |heads| {
+                    if heads.get(&self.name).is_some_and(|cached| cached["source"] == source) { heads.remove(&self.name); }
+                });
+            }
+        })
+    }
+
+    fn update_target(&self, url: &str, tracking: &Tracking, current_source: bool) -> Result<(String, String)> {
+        let old = self.head()?;
+        let old_revision = self.revision()?;
+        let settings = crate::settings::for_collection(&self.name).settings;
+        let target = self.resolve_target(url, tracking, current_source)?;
+        target.fetch(&self.dir, settings.checkout_depth)?;
+        if current_source {
+            remember_remote_head(&remote_heads_file(), &self.name, &source_key(url, tracking), &target.commit);
+        }
+        self.verify(&target.commit)?;
+        self.require_descendant(&target)?;
+        let checkout = self.prepare_checkout(&settings, &target.commit, false).and_then(|()| self.checkout(&target.commit));
+        if let Err(err) = checkout {
+            self.checkout(&old).context("restoring the previous revision after checkout failed")?;
+            return Err(err);
+        }
+        Ok((old_revision, self.revision()?))
     }
 
     /// The collection's lock (see `lock`).
@@ -706,7 +836,8 @@ impl Collection {
 
     /// With trusted keys: `new` must follow the current commit. Otherwise whoever controls the
     /// server could move the collection back to an older signed commit, with its known problems.
-    fn require_descendant(&self, new: &str) -> Result<()> {
+    fn require_descendant(&self, target: &Target) -> Result<()> {
+        let new = target.commit.as_str();
         if !self.managed || crate::policy::load().collections.trusted_keys.is_empty() {
             return Ok(());
         }
@@ -717,7 +848,7 @@ impl Collection {
         }
         // A shallow history may end before the current commit: fetch the rest and look again.
         if git(Some(&self.dir), &["rev-parse", "--is-shallow-repository"])? == "true" {
-            git(Some(&self.dir), &["fetch", "--quiet", "--unshallow"])?;
+            target.fetch(&self.dir, 0)?;
             if follows() {
                 return Ok(());
             }
@@ -2252,6 +2383,10 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
 }
 
 fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
+    git_bytes_input(dir, args, None)
+}
+
+fn git_bytes_input(dir: Option<&Path>, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
     let _working = crate::load::activity(); // load-aware updates ignore furnish's own downloads
     let mut cmd = git_command();
     if let Some(dir) = dir {
@@ -2266,22 +2401,27 @@ fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     // Commands that write or read files download the contents they lack (see blobs_on_demand).
     // The command: the first argument after `-c <name>=<value>` pairs.
     let command = args.iter().enumerate().find(|(i, a)| **a != "-c" && (*i == 0 || args[i - 1] != "-c")).map(|(_, a)| *a);
-    let network = matches!(command, Some("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "reset" | "read-tree" | "cat-file"));
+    let network = matches!(command, Some("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "checkout" | "reset" | "read-tree" | "cat-file"));
     let url = if !network {
         None
-    } else if command == Some("clone") {
+    } else if command == Some("clone") || (command == Some("ls-remote") && dir.is_none()) {
         match args.iter().position(|a| *a == "--end-of-options") {
             Some(end) => args.get(end + 1).map(|a| a.to_string()),
             None => args.iter().skip(1).find(|a| !a.starts_with('-')).map(|a| a.to_string()),
         }
     } else {
-        dir.and_then(|d| {
-            let out = git_command().arg("-C").arg(d).args(["config", "--get", "remote.origin.url"]).output().ok()?;
-            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-        })
+        dir.and_then(|d| origin_url(d).ok())
     };
     if let Some(url) = &url {
         cmd.envs(crate::auth::git_env(url)?);
+    }
+    if let Some(input) = input {
+        // The tag-date fetch reads Git's dumb HTTP capability diagnostic to select its fallback.
+        cmd.env("LC_ALL", "C");
+        let mut file = tempfile::tempfile()?;
+        file.write_all(input)?;
+        file.rewind()?;
+        cmd.stdin(file);
     }
     let output = cmd.args(args).output().map_err(git_missing)?;
     if !output.status.success() {
@@ -2319,13 +2459,13 @@ mod tests {
     #[test]
     fn only_collections_an_endpoint_lists_anew_are_added_by_the_rules_for_adding() {
         use crate::endpoint::Collection as Listed;
-        let e = |name: &str| Listed { name: name.into(), url: format!("https://furnish.acme.tld/git/{name}.git") };
+        let e = |name: &str| Listed { name: name.into(), url: format!("https://furnish.acme.tld/git/{name}.git"), tracking: None };
         let listed = [e("tools"), e("removed"), e("new"), e("mine"), e("same"), e("it"), e("preset"), e("CON")];
         // Added before (and then removed by the person, or not): never again.
         let offered = ["tools".to_string(), "removed".to_string()];
         let presets = [
-            crate::policy::Preset { name: "it".into(), url: "https://git.acme.tld/it.git".into() },
-            crate::policy::Preset { name: "preset".into(), url: e("preset").url },
+            crate::policy::Preset { name: "it".into(), url: "https://git.acme.tld/it.git".into(), tracking: None },
+            crate::policy::Preset { name: "preset".into(), url: e("preset").url, tracking: None },
         ];
         let local = |name: &str| match name {
             "tools" => Some(e("tools").url),
@@ -2436,23 +2576,27 @@ mod tests {
         commit("one");
         git(None, &["clone", "-q", "--end-of-options", &origin.to_string_lossy(), &copy.to_string_lossy()]).unwrap();
         let head = || git(Some(&copy), &["rev-parse", "HEAD"]).unwrap();
-        let look = || remember_remote_head(&file, "c", &server_head(&copy).unwrap());
+        let server = || Target::resolve(Some(&copy), "origin", &Tracking::Default);
+        let look = || remember_remote_head(&file, "c", "source", &server().unwrap().commit);
+        fs::write(&file, r#"{"c":{"commit":"older","checkedAt":100}}"#).unwrap();
+        assert!(!remote_head_differs(&file, "c", "source", &head()), "a legacy notice has no verified source");
 
-        assert!(!remote_head_differs(&file, "c", &head()), "never looked");
+        assert!(!remote_head_differs(&file, "c", "source", &head()), "never looked");
         look();
-        assert!(!remote_head_differs(&file, "c", &head()), "up to date");
+        assert!(!remote_head_differs(&file, "c", "source", &head()), "up to date");
         commit("two");
         look();
-        assert!(remote_head_differs(&file, "c", &head()), "the server moved on");
-        assert!(!remote_head_differs(&file, "other", &head()), "per collection");
+        assert!(remote_head_differs(&file, "c", "source", &head()), "the server moved on");
+        assert!(!remote_head_differs(&file, "c", "another selector", &head()), "notice belonged to another source");
+        assert!(!remote_head_differs(&file, "other", "source", &head()), "per collection");
         // Offline: no answer, and what was seen before stays.
         fs::rename(&origin, dir.join("gone")).unwrap();
-        assert!(server_head(&copy).is_err());
-        assert!(remote_head_differs(&file, "c", &head()));
+        assert!(server().is_err());
+        assert!(remote_head_differs(&file, "c", "source", &head()));
         fs::rename(dir.join("gone"), &origin).unwrap();
         // Applied: the indicator goes.
         git(Some(&copy), &["pull", "-q"]).unwrap();
-        assert!(!remote_head_differs(&file, "c", &head()));
+        assert!(!remote_head_differs(&file, "c", "source", &head()));
         fs::remove_dir_all(dir).unwrap();
     }
 

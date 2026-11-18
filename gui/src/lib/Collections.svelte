@@ -1,6 +1,8 @@
 <script lang="ts">
   import * as api from './api';
   import Options from './Options.svelte';
+  import CollectionTracking from './CollectionTracking.svelte';
+  import TrackingFields from './TrackingFields.svelte';
   import CollectionSettings from './CollectionSettings.svelte';
   import { askQuestions, refreshEndpoints } from './state.svelte';
   import { store, collectionAction, updateCollections, toast } from './state.svelte';
@@ -8,6 +10,23 @@
 
   let url = $state('');
   let name = $state('');
+  let tracking = $state<api.Tracking | null>(null);
+  let showTracking = $state(false);
+  let target = $state<{ input: string; endpoint: boolean }>();
+  const address = $derived(url.trim());
+  const repository = $derived(target?.input === address && !target.endpoint);
+  $effect(() => {
+    const input = address;
+    if (!input) return;
+    let current = true;
+    api.isFurnishAddress(input).then(endpoint => {
+      if (current) target = { input, endpoint };
+    }).catch(() => {
+      // The add command validates the target again; preserve the original add flow.
+      if (current) target = { input, endpoint: false };
+    });
+    return () => { current = false; };
+  });
   let adding = $state(false);
   // HTTPS repositories that need a login: username and password (or access token).
   let username = $state('');
@@ -20,10 +39,11 @@
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
+    if (adding || !address || target?.input !== address) return;
     adding = true;
     const ok = await collectionAction(async () => {
       try {
-        const added = await api.addCollection(url, name || null, username, password);
+        const added = await api.addCollection(url, name || null, username, password, repository ? tracking : null);
         if (!added.length) return t('collections.signedInAlready');
         return t('collections.added', { names: added.map((c) => c.name).join(', ') });
       } catch (e) {
@@ -38,6 +58,8 @@
     if (ok) {
       url = name = username = password = '';
       needsLogin = false;
+      tracking = null;
+      showTracking = false;
       askQuestions(true); // the new collection's required options
     }
   }
@@ -85,8 +107,14 @@
       <span>{t('collections.name')} <em>{t('collections.optional')}</em></span>
       <input bind:value={name} placeholder={t('collections.namePlaceholder')} spellcheck="false" />
     </label>
-    <button class="primary" disabled={adding || !url.trim()}>{adding ? t('collections.adding') : t('collections.add')}</button>
-    {#if https}
+    <button class="primary" disabled={adding || !address || target?.input !== address}>{adding ? t('collections.adding') : t('collections.add')}</button>
+    {#if repository}
+      <details class="login" bind:open={showTracking}>
+        <summary>{t('tracking.heading')}</summary>
+        <TrackingFields bind:value={tracking} disabled={adding} />
+      </details>
+    {/if}
+    {#if https && repository}
       <details class="login" bind:open={needsLogin}>
         <summary>{t('collections.needsLogin')}</summary>
         <p class="explain flush">{t('collections.loginText')}</p>
@@ -159,6 +187,10 @@
               <Options target={c.name} options={c.options} scope="collection" />
             </details>
           {/if}
+          <details class="copts" data-tracking={c.name}>
+            <summary>{t('tracking.heading')}</summary>
+            <CollectionTracking collection={c} />
+          </details>
           <details class="copts">
             <summary>{t('collections.downloads')}</summary>
             <CollectionSettings collection={c} />
