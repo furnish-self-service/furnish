@@ -664,6 +664,20 @@ impl LineProps {
     }
 }
 
+/// Home Manager links a managed home file to <store>/<generation>-home-manager-files/<path>.
+/// Check the link the activation script owns, before following it to the final store object:
+/// an ordinary symlink to a Nix package is a different case.
+#[cfg(unix)]
+fn home_manager_link(path: &Path, store: &Path) -> bool {
+    let (Ok(target), Ok(store)) = (fs::read_link(path), store.canonicalize()) else { return false };
+    let Ok(relative) = target.strip_prefix(store) else { return false };
+    let mut parts = relative.components();
+    matches!(parts.next(), Some(std::path::Component::Normal(generation))
+        if generation.to_str().is_some_and(|name| name.ends_with("-home-manager-files")))
+        && matches!(parts.next(), Some(std::path::Component::Normal(_)))
+        && parts.all(|part| matches!(part, std::path::Component::Normal(_)))
+}
+
 fn line(props: &Value) -> Result<Plan> {
     let p: LineProps = parse(props)?;
     let line = p.check()?;
@@ -675,6 +689,15 @@ fn line(props: &Value) -> Result<Plan> {
     let text = file.text()?;
     let exist = exist(p.exist);
     let current = if exist { line.current(&text.text) } else { line.own(&text.text) };
+    #[cfg(unix)]
+    if !exist && line.accept.is_some() && matches!(current, Some((_, true)))
+        && home_manager_link(&common::expand(&p.path)?, Path::new("/nix/store"))
+    {
+        // Even an exact line belongs to Home Manager here; removing the option updates its
+        // generation. A rebuild for boot leaves the active home file in place until activation.
+        plan.observe("_exist", Some(true.into()), Some(true.into()));
+        return Ok(plan);
+    }
     let new = line.apply(&text.text, exist);
     plan.observe("_exist", Some(current.is_some().into()), Some(exist.into()));
     let path = file.shown.clone();
@@ -814,6 +837,26 @@ mod tests {
 
     fn path(dir: &tempfile::TempDir, name: &str) -> String {
         dir.path().join(name).to_string_lossy().into_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_links_into_a_home_manager_generation_are_owned_by_it() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        let generation = store.join("a-home-manager-files");
+        fs::create_dir_all(&generation).unwrap();
+        let ordinary = store.join("ordinary");
+        fs::write(&ordinary, "Include config.d/acme.conf").unwrap();
+        symlink(&ordinary, generation.join("config")).unwrap();
+        let home_file = dir.path().join("config");
+        symlink(generation.join("config"), &home_file).unwrap();
+        assert!(home_manager_link(&home_file, &store));
+        assert!(!home_manager_link(&ordinary, &store));
+        fs::remove_file(&home_file).unwrap();
+        symlink(&ordinary, &home_file).unwrap();
+        assert!(!home_manager_link(&home_file, &store), "a plain store link still follows normal removal");
     }
 
     #[test]

@@ -744,10 +744,13 @@ async fn remove_collection(name: String) -> CmdResult<()> {
     blocking(move || catalog::remove(&name)).await
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // DSC runs furnish's configuration resources as `furnish-gui dsc-resource …` (see engine::init).
     if let Some(code) = furnish::resources::dispatch() {
-        std::process::exit(code.into());
+        return code.into();
+    }
+    if let Some(resource) = furnish::nixos_apps::ResourceCommand::from_desktop_args() {
+        return resource.run();
     }
     // On Wayland the compositor finds the app's icon via the desktop file named like the app ID,
     // which GTK takes from the program name ("furnish-gui", the binary). The packages install
@@ -880,4 +883,5 @@ fn main() {
             tauri::RunEvent::Reopen { has_visible_windows: false, .. } => tray::show(app),
             _ => {}
         });
+    std::process::ExitCode::SUCCESS
 }

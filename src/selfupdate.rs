@@ -5,8 +5,9 @@
 //!   furnish installs new versions itself: the desktop app with Tauri's updater, `furnish
 //!   self-update` with `install` below. Both check the download's signature against
 //!   `PUBLIC_KEY` and the version the signature names before installing anything.
-//! - Installed by a package manager (Homebrew, APT, DNF or Zypper, Nix), the package manager
+//! - Installed by a package manager (Homebrew, APT, DNF or Zypper), the package manager
 //!   updates furnish; furnish only says that a new version is out and how it arrives.
+//! - Nix installations follow their flake input and skip the release feed.
 //!
 //! The `selfUpdate` setting decides: `auto` (install where furnish can), `notify` (only say so)
 //! or `off` (don't even ask the feed). Only the admin policy can lock it; furnish addresses can't
@@ -199,6 +200,9 @@ impl Probe {
 
 /// How the program at `exe` (canonical) was installed, on `os` (`std::env::consts::OS`).
 pub fn classify(exe: &Path, os: &str, probe: &Probe) -> Method {
+    if matches!(os, "linux" | "macos") && exe.starts_with("/nix/store") {
+        return Method::Nix;
+    }
     match os {
         "windows" => {
             // As text, so tests of Windows paths run anywhere.
@@ -212,7 +216,6 @@ pub fn classify(exe: &Path, os: &str, probe: &Probe) -> Method {
             Some(_) => Method::App,
             None => Method::Other,
         },
-        "linux" if exe.starts_with("/nix/store") => Method::Nix,
         "linux" => probe.package.unwrap_or(Method::Other),
         _ => Method::Other,
     }
@@ -267,6 +270,9 @@ fn rpm_owns(exe: &Path) -> bool {
 
 /// What the setting means for this installation: `auto` only installs where furnish can.
 pub fn effective(mode: SelfUpdate, method: Method) -> SelfUpdate {
+    if method == Method::Nix {
+        return SelfUpdate::Off;
+    }
     match mode {
         SelfUpdate::Auto if !method.updates_itself() => SelfUpdate::Notify,
         other => other,
@@ -325,9 +331,24 @@ pub fn fetch(url: &str) -> Result<Manifest> {
     response.body_mut().read_json().with_context(|| format!("reading {url}"))
 }
 
+/// A channel without its first release has no manifest. Other endpoints and HTTP errors
+/// remain visible, including a missing alpha feed or a misconfigured custom feed.
+pub fn published(current: &str) -> Result<Option<Manifest>> {
+    let url = feed_url(current);
+    published_result(&url, fetch(&url))
+}
+
+fn published_result(url: &str, result: Result<Manifest>) -> Result<Option<Manifest>> {
+    match result {
+        Err(err) if url == format!("{FEEDS}/stable/latest.json")
+            && matches!(err.downcast_ref::<ureq::Error>(), Some(ureq::Error::StatusCode(404))) => Ok(None),
+        result => result.map(Some),
+    }
+}
+
 /// Whether the feed for `current` has a newer version.
 pub fn check(current: &str) -> Result<Option<Available>> {
-    Ok(fetch(&feed_url(current))?.newer_than(current))
+    Ok(published(current)?.and_then(|m| m.newer_than(current)))
 }
 
 /// The feed's key for this system, as Tauri's updater names it.
@@ -463,6 +484,15 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_stable_feed_is_quiet_and_other_failures_are_reported() {
+        let missing = || Err(anyhow::Error::new(ureq::Error::StatusCode(404)).context("reading the release manifest"));
+        assert!(published_result(&format!("{FEEDS}/stable/latest.json"), missing()).unwrap().is_none());
+        assert!(published_result(&format!("{FEEDS}/alpha/latest.json"), missing()).is_err());
+        assert!(published_result("https://example.org/latest.json", missing()).is_err());
+        assert!(published_result(&format!("{FEEDS}/stable/latest.json"), Err(ureq::Error::StatusCode(500).into())).is_err());
+    }
+
+    #[test]
     fn the_feed_follows_the_channel() {
         // SAFETY: no other test reads or writes this variable.
         unsafe { std::env::remove_var("FURNISH_UPDATE_FEED") };
@@ -534,6 +564,10 @@ mod tests {
 
     #[test]
     fn auto_means_notify_where_a_package_manager_updates() {
+        assert_eq!(classify(Path::new("/nix/store/build/bin/furnish"), "macos", &Probe::default()), Method::Nix);
+        for mode in [SelfUpdate::Auto, SelfUpdate::Notify, SelfUpdate::Off] {
+            assert_eq!(effective(mode, Method::Nix), SelfUpdate::Off);
+        }
         assert_eq!(effective(SelfUpdate::Auto, Method::Msi), SelfUpdate::Auto);
         assert_eq!(effective(SelfUpdate::Auto, Method::Homebrew), SelfUpdate::Notify);
         assert_eq!(effective(SelfUpdate::Auto, Method::Other), SelfUpdate::Notify);

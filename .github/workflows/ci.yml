@@ -290,6 +290,13 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           skipPush: ${{ github.ref != 'refs/heads/main' }}
       - run: nix build -L .#furnish .#furnish-gui
+      - name: Nix installs follow the flake without querying a release feed
+        env:
+          FURNISH_UPDATE_FEED: http://127.0.0.1:1/unavailable
+        run: |
+          cli="$(nix path-info .#furnish)/bin/furnish"
+          "$cli" self-update --check | grep -F 'nix flake update'
+          "$cli" settings | grep -F 'nix flake update'
 
   git-auth:
     name: private collections (HTTPS credentials, SSH)

@@ -95,6 +95,13 @@ flaky flaky; flaky broken
 required() {
     printf 'metadata: { furnish: { description: %s, categories: [Test] } }\nresources:\n  - name: %s\n    type: Furnish/Package\n    properties: { name: %s, versions: [%s] }\n' "$3" "$1" "$1" "$2" > "$work/origin-src/apps/$1.dsc.yaml"
 }
+# An absent NixOS entry can be previewed on any Linux runner without a Nix installation.
+cat > "$work/origin-src/apps/nixos-preview.dsc.yaml" <<'YAML'
+resources:
+  - name: NixOS entry
+    type: Furnish/NixOS
+    properties: { name: gui-preview, _exist: false }
+YAML
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"
@@ -136,7 +143,7 @@ JSON
 mkdir -p "$work/feed"
 echo '{"version": "99.0.0", "notes": "https://example.org/notes", "platforms": {}}' > "$work/feed/latest.json"
 FEED_PORT=$((DRIVER_PORT + 2))
-python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 --directory "$work/feed" >/dev/null 2>&1 &
+python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 --directory "$work/feed" >"$work/feed.log" 2>&1 &
 feed_server=$!
 trap 'kill $feed_server 2>/dev/null || true; cleanup' EXIT
 
@@ -147,7 +154,7 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
-    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
+    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$binary:/nix/store/fixture-furnish/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.

@@ -93,7 +93,7 @@ When a new version of furnish is out, a dot appears next to Settings in the side
 
 If you installed furnish from the Windows or macOS download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
 
-If you installed furnish with Homebrew, the Linux package repository or Nix, About says how the new version arrives: with `brew upgrade`, with your system updates, or with `nix flake update`.
+Homebrew installations receive new versions with `brew upgrade`, and Linux repository packages receive them with system updates. Nix installations follow the flake input. Update it with `nix flake update` and rebuild your configuration. Furnish skips release-feed checks for these Nix installations.
 
 New versions of furnish, also in About, sets what furnish does: install them, only tell you, or not check. With Only tell me, Update now in About installs the version. Your organization may set this. On the command line, `furnish self-update` installs the new version and `furnish settings` shows how furnish was installed.
 

@@ -538,7 +538,12 @@
           {/if}
         </li>
       {/if}
-      {#if store.settings}
+      {#if self?.method === 'nix'}
+        <li class="row">
+          <span class="label">{t('settings.selfUpdate', { brand })}</span>
+          <span class="control value">{#each parts(how) as p}{#if p.tag}<code>{p.text}</code>{:else}{p.text}{/if}{/each}</span>
+        </li>
+      {:else if store.settings}
         <li class="row">
           <label class="text" for="self-update-mode">
             <span class="label">{t('settings.selfUpdate', { brand })}</span>

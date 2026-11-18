@@ -104,7 +104,6 @@ home() {
   home.stateVersion = "25.11";
   manual.manpages.enable = false;
   programs.ssh.enable = true;
-  programs.ssh.includes = [ "~/.ssh/own.conf" ];
   $1
 }
 EOF
@@ -142,13 +141,19 @@ test -x "$(generation)/home-path/bin/htop" || fail "htop isn't in the generation
 [ -z "$(git status --porcelain)" ] || fail "other changes: $(git status --porcelain)"
 furnish list | grep -q "✓  htop" || fail "htop not shown as installed"
 
-echo "== the ssh Include through Home Manager, in one line with our own include"
+echo "== the SSH Include belongs to Home Manager even when it is the only include"
 furnish install acme-ssh || fail "install failed"
 [ -L "$HOME/.ssh/config" ] || fail "Home Manager doesn't manage ~/.ssh/config"
-grep -E '^Include .*config\.d/acme\.conf' "$HOME/.ssh/config" | grep -q own.conf || { cat "$HOME/.ssh/config"; fail "no combined Include"; }
+grep -Fxq 'Include config.d/acme.conf' "$HOME/.ssh/config" || { cat "$HOME/.ssh/config"; fail "no exact Include"; }
 furnish list | grep -q "✓  acme-ssh" || fail "acme-ssh not shown as installed"
 
 echo "== uninstall"
+out=$(furnish uninstall acme-ssh --dry-run) || fail "include removal preview failed"
+printf '%s\n' "$out"
+printf '%s\n' "$out" | grep -q '= nothing to do  SSH include ' || fail "preview would change Home Manager's SSH config"
+furnish uninstall acme-ssh || fail "Home Manager include removal failed"
+[ -L "$HOME/.ssh/config" ] || fail "the Home Manager link was replaced"
+if grep -Fq config.d/acme.conf "$HOME/.ssh/config"; then fail "include left after activation"; fi
 furnish uninstall htop || fail "uninstall failed"
 test -e "$(generation)/home-path/bin/hello" && fail "hello is still there"
 [ "$(git log -1 --format=%s)" = "furnish: uninstall htop" ] || fail "flake.lock not committed"
