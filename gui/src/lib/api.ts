@@ -293,6 +293,8 @@ export interface SelfUpdateStatus {
   state: 'idle' | 'checking' | 'downloading' | 'ready';
   error: string | null;
 }
+export const cliLinkInstalled = () => invoke<boolean>('cli_link_installed');
+export const installCliLink = () => invoke<void>('install_cli_link');
 export const selfUpdateStatus = () => invoke<SelfUpdateStatus>('self_update_status');
 /** Ask for a newer version; `download`: fetch it now even if only notifying (Update now). */
 export const checkSelfUpdate = (download = false) => invoke<SelfUpdateStatus>('check_self_update', { download });

@@ -64,6 +64,10 @@ cargo install --path .                    # the furnish command
 cd gui && npm ci && npm run bundle        # the desktop app's installers, in target/release/bundle/
 ```
 
+### Terminal command for the macOS download
+
+Drag `furnish.app` from the disk image into Applications and open it there. In **Settings → About → Terminal command**, choose **Install**. Enter an administrator password if macOS asks, then run `furnish --version` in Terminal. The link at `/usr/local/bin/furnish` follows the app across updates. When uninstalling the app, you can remove its link with `sudo rm /usr/local/bin/furnish` after confirming that `readlink /usr/local/bin/furnish` still points into the app.
+
 ## Add a collection
 
 In the app, open Collections and enter one of these:

@@ -13,7 +13,7 @@ set -euo pipefail
 dmg=${1:?usage: $0 <dmg> <feed folder>}; feed=${2:?usage: $0 <dmg> <feed folder>}
 app=/Applications/furnish.app
 next=$(jq -r .version "$feed/latest.json" | sed 's/-alpha\./+alpha./')
-version() { "$app/Contents/MacOS/furnish" --version | sed 's/^furnish //'; }
+version() { furnish --version | sed 's/^furnish //'; }
 fail() {
     echo "FAIL: $*"
     ls -la "$app/Contents/MacOS" 2>/dev/null || true
@@ -28,6 +28,18 @@ install_dmg() {
 }
 
 install_dmg
+# The Settings → About action runs the installer from the downloaded app. A runner
+# can authorize with sudo instead of approving the macOS password dialog.
+installer="$app/Contents/Resources/install-cli.sh"
+sudo mkdir -p /usr/local/bin
+# A broken link belonging to another install must survive a conflicting setup.
+sudo ln -s "$RUNNER_TEMP/missing-furnish" /usr/local/bin/furnish
+if /bin/sh "$installer"; then fail "overwrote an existing command"; fi
+[ "$(readlink /usr/local/bin/furnish)" = "$RUNNER_TEMP/missing-furnish" ] || fail "changed an existing link"
+sudo rm /usr/local/bin/furnish
+sudo /bin/sh "$installer"
+/bin/sh "$installer" # repeating setup should work without authorization
+[ "$(command -v furnish)" = /usr/local/bin/furnish ] || fail "the Terminal command is missing"
 current=$(version)
 [ "$current" != "$next" ] || fail "the installed version is already $next"
 echo "== $(basename "$dmg") ($current) in /Applications, the feed offers $next"
@@ -108,9 +120,9 @@ sleep 2
 echo "== furnish self-update"
 install_dmg
 [ "$(version)" = "$current" ] || fail "reinstalling the .dmg left $(version)"
-"$app/Contents/MacOS/furnish" self-update
+furnish self-update
 v=$(version)
 [ "$v" = "$next" ] || fail "after furnish self-update: $v, expected $next"
 codesign --verify --deep --strict "$app" || fail "the updated app's signature doesn't verify"
 echo "✓ $current -> $v"
-"$app/Contents/MacOS/furnish" self-update --check
+furnish self-update --check

@@ -81,6 +81,8 @@ Installs a package with the system's package manager: winget on Windows; on macO
 
 Many tools are also installed some other way: with npm or pip, with the vendor's own installer, or with another package manager. With `command`, such an app shows as installed outside furnish, and furnish neither installs it a second time nor updates or removes it. furnish looks for the program on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (on Windows, in `~\.local\bin` and npm's folder in `%APPDATA%`), and never runs it. If the package manager is missing, the app shows as installed when the program is there, and as needing the package manager when it isn't.
 
+On macOS, Homebrew packages also recognize vendor-installed apps without a `command`. For example, a package named `viscosity` recognizes `/Applications/Viscosity.app` as installed outside furnish. Furnish checks the app bundles named by the cask in `/Applications` and `~/Applications`. These apps satisfy dependencies and keep their original update and uninstall method.
+
 ### Furnish/Installer
 
 Installs a file from the collection: `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe`. furnish downloads the file when someone installs an app that uses it, so a computer only stores the installers of its own apps. Git LFS works too and keeps large files out of the repository's history.

@@ -2,7 +2,10 @@
   "bundle": {
     "externalBin": ["binaries/furnish"],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "files": {
+        "Resources/install-cli.sh": "../../packaging/macos/install-cli.sh"
+      }
     }
   }
 }

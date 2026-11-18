@@ -63,6 +63,58 @@ end
 RUBY
 # The service's brew updates Homebrew, which (since 7.0) loads casks only from trusted taps.
 brew update --quiet >/dev/null && brew trust furnish/test
+# An installed vendor copy of a cask with a renamed app artifact. The package
+# resource and its dependent must recognize the bundle without a brew receipt.
+cat > "$(brew --repository)/Library/Taps/furnish/homebrew-test/Casks/furnish-vendor-demo.rb" <<'RUBY'
+cask "furnish-vendor-demo" do
+  version "1.0"
+  sha256 :no_check
+  url "https://example.invalid/furnish-vendor-demo.dmg"
+  name "Vendor Demo"
+  desc "Vendor-installed bundle fixture"
+  homepage "https://example.invalid"
+  app "Demo.app", target: "Furnish Vendor Demo.app"
+end
+RUBY
+(
+    export FURNISH_DATA_DIR="$work/vendor-data"
+    mkdir -p "$work/vendor/apps"
+    cat > "$work/vendor/apps/vendor.dsc.yaml" <<'YAML'
+resources:
+  - name: Vendor app
+    type: Furnish/Package
+    properties: { name: furnish-vendor-demo }
+YAML
+    cat > "$work/vendor/apps/client.dsc.yaml" <<'YAML'
+metadata:
+  furnish:
+    dependencies: [{ app: vendor, required: true }]
+resources:
+  - name: Client
+    type: Furnish/Package
+    properties: { name: furnish-brewdemo }
+YAML
+    git -C "$work/vendor" init -q && git -C "$work/vendor" add -A && git -C "$work/vendor" -c user.name=t -c user.email=t@t commit -qm fixture
+    "$binary" collection add "$work/vendor" --name fixture
+    "$binary" install client --dry-run | grep -q 'First, dependency vendor' || fail "missing vendor bundle did not need installing"
+    bundle="/Applications/Furnish Vendor Demo.app"
+    mkdir "$bundle"  # Only clean up the bundle created here.
+    trap 'rm -rf "$bundle"' EXIT
+    mkdir -p "$bundle/Contents"
+    cat > "$bundle/Contents/Info.plist" <<'PLIST'
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>org.example.vendor-demo</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+</dict></plist>
+PLIST
+    "$binary" list | grep -Fq "installed outside furnish: $bundle" || fail "vendor bundle was not recognized"
+    "$binary" install vendor | grep -Fq "already installed" || fail "attempted to install the vendor app"
+    plan=$("$binary" install client --dry-run)
+    case "$plan" in *'First, dependency vendor'*) fail "attempted to install the existing dependency" ;; esac
+    if "$binary" uninstall vendor; then fail "uninstalled an externally installed cask"; fi
+    [ -f "$bundle/Contents/Info.plist" ] || fail "removed the vendor app"
+)
 cat > "$work/org/apps/brewdemo.dsc.yaml" <<YAML
 metadata:
   furnish:

@@ -6,6 +6,8 @@ order: 3
 
 The `furnish` command does what the app does. `furnish --help` and `furnish <command> --help` list all options.
 
+On macOS, Homebrew sets up the command when it installs furnish. If you dragged furnish from a disk image, [enable the Terminal command in Settings](index.md#terminal-command-for-the-macos-download).
+
 | Command | What it does |
 |---|---|
 | `furnish list` | The catalog, with texts in your language (see [Translations](collections.md#translations)), and each app's state: ✓ installed, ↑ update available, · not installed, ★ recommended |

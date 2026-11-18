@@ -93,6 +93,21 @@
     }
   });
   const busy = $derived(Object.keys(store.busy).length > 0 || store.queue.length > 0);
+  const macDownload = $derived(self?.method === 'app');
+  let cliLink = $state<'idle' | 'working' | 'installed'>('working');
+  $effect(() => {
+    if (macDownload) api.cliLinkInstalled().then(linked => cliLink = linked ? 'installed' : 'idle').catch(() => cliLink = 'idle');
+  });
+  async function installCliLink() {
+    cliLink = 'working';
+    try {
+      await api.installCliLink();
+      cliLink = 'installed';
+    } catch (e) {
+      cliLink = 'idle';
+      toast('error', t('settings.cliLinkFailed'), String(e));
+    }
+  }
   function updateNow() {
     store.restartWanted = true;
     checkSelfUpdate(true);
@@ -503,6 +518,21 @@
         <li class="row">
           <span class="text"><span class="label">{t('settings.installedWith')}</span></span>
           <span class="control value" id="install-method">{methods[self.method]}</span>
+        </li>
+      {/if}
+      {#if macDownload}
+        <li class="row">
+          <span class="text">
+            <span class="label">{t('settings.cliLink')}</span>
+            <span class="desc">{t('settings.cliLinkText')}</span>
+          </span>
+          <span class="control" aria-live="polite">
+            {#if cliLink === 'installed'}
+              <code>/usr/local/bin/furnish</code>
+            {:else}
+              <button class="secondary" disabled={cliLink === 'working'} onclick={installCliLink}>{t('common.install')}</button>
+            {/if}
+          </span>
         </li>
       {/if}
       {#if self && self.mode !== 'off' && (self.available || self.error)}

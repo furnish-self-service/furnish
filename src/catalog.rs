@@ -649,12 +649,19 @@ impl Collection {
         {
             remember_remote_head(&remote_heads_file(), &self.name, &head);
         }
+        let error = result.as_ref().err().map(|e| format!("{e:#}"));
+        if let Some(message) = &error
+            && !crate::service::in_service()
+            && let Err(e) = crate::diagnostics::collection_update_failed(&data_dir(), &self.name, message)
+        {
+            eprintln!("warning: couldn't write the collection update log: {e:#}");
+        }
         crate::reports::record(crate::reports::Event {
             event: "collectionUpdate",
             outcome: if result.is_ok() { "succeeded" } else { "failed" },
             collection: Some(self.name.clone()),
             version: result.as_ref().ok().map(|(_, new)| new.clone()),
-            error: result.as_ref().err().map(|e| format!("{e:#}")),
+            error,
             ..Default::default()
         });
         result
