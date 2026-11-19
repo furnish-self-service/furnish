@@ -124,6 +124,21 @@ resources:
     type: Furnish/Value
     properties: { path: /root/preflight.json, location: '$.enabled', value: true, requiresClosed: [furnish-cache-test] }
 YAML
+# Exercise the same requester facts in metadata (service routing) and resource selection.
+cat > /srv/org/apps/nix-facts.dsc.yaml <<'YAML'
+metadata:
+  furnish:
+    perUser: "[not(variables('furnish.host').nixSetup.home)]"
+resources:
+  - name: Configured Home Manager
+    type: Furnish/File
+    condition: "[variables('furnish.host').nixSetup.home]"
+    properties: { path: /var/fake-pkgs/home-fact, content: configured }
+  - name: Shell fallback
+    type: Furnish/Line
+    condition: "[not(variables('furnish.host').nixSetup.home)]"
+    properties: { path: ~/.profile, line: 'export PATH="$HOME/.local/bin:$PATH"' }
+YAML
 if [ -d /dsc ]; then
     mkdir -p /usr/lib/furnish && cp -r /dsc /usr/lib/furnish/dsc
     printf 'metadata:\n  furnish:\n    categories: [Test]\nresources:\n  - name: file\n    type: Microsoft.Filesystem.File/Content\n    properties: {path: /etc/furnish-dsc-test, content: furnish}\n' > /srv/org/apps/dsc-file.dsc.yaml
@@ -201,6 +216,30 @@ raw '{"install":{"app":"org/hyperfine","values":{"prefix":"/tmp"}}}' | grep -q "
 raw '{"install":{"app":"org/cli-tool","values":{"userInstall":"yes"}}}' | grep -q "needs a bool" || fail "wrong type accepted"
 raw '{"install":{"app":"../../tmp/evil","values":{}}}' | grep -q '"error"' || fail "odd app name accepted"
 raw '{"install":{"app":"org/hyperfine","values":{},"doc":"x"}}' | grep -q "invalid request" || fail "unknown field accepted"
+
+echo "== module setup follows the requester on both sides of the service"
+mkdir -p /nix/store
+as alice mkdir -p /home/alice/.config/furnish /home/alice/.config/home-manager
+# A Home Manager shell initialization alone does not establish the Furnish module.
+as alice sh -c 'echo ". ~/.nix-profile/etc/profile.d/hm-session-vars.sh" > "$HOME/.profile"'
+as alice furnish install org/nix-facts || fail "could not install the shell fallback"
+grep -Fxq 'export PATH="$HOME/.local/bin:$PATH"' /home/alice/.profile || fail "missing fallback in the requesting account"
+[ ! -e /var/fake-pkgs/home-fact ] || fail "bare Nix was treated as a configured module"
+as alice furnish uninstall org/nix-facts || fail "could not remove shell fallback"
+as alice sh -c 'echo "{}" > "$HOME/.config/furnish/home-manager.json"'
+# The module marker alone is insufficient until its local input is configured.
+as alice furnish install org/nix-facts || fail "missing fallback for incomplete Home Manager setup"
+grep -Fxq 'export PATH="$HOME/.local/bin:$PATH"' /home/alice/.profile || fail "incomplete module suppressed fallback"
+as alice furnish uninstall org/nix-facts || fail "could not remove fallback for incomplete module"
+as alice tee /home/alice/.config/home-manager/flake.nix >/dev/null <<'NIX'
+{ inputs.furnish.inputs.home-apps.url = "path:/home/alice/.local/share/furnish/home-apps"; }
+NIX
+as alice furnish install org/nix-facts || { cat /tmp/service.log; fail "service ignored alice's module"; }
+[ "$(cat /var/fake-pkgs/home-fact)" = configured ] || fail "request did not use alice's destination"
+[ "$(stat -c %U /var/fake-pkgs/home-fact)" = root ] || fail "service did not execute the managed step"
+if grep -Fq '.local/bin' /home/alice/.profile; then fail "configured module used shell fallback"; fi
+as alice furnish uninstall org/nix-facts || fail "removing as the requester failed"
+[ ! -e /var/fake-pkgs/home-fact ] || fail "service used root's facts on uninstall"
 
 echo "== the service preflights guarded settings using its own read permissions"
 printf '{"enabled":false}' > /root/preflight.json

@@ -19,7 +19,12 @@ let
     metadata.furnish = { description = name; categories = [ "Test" ]; perUser = true; };
     resources = [
       { inherit name; type = "Furnish/NixOS"; properties = { inherit name; onlyIfSetUp = true; } // properties; }
-      { name = "User settings"; type = "Furnish/File"; properties = { path = "~/.furnish-test"; content = "managed for this person"; }; }
+      {
+        name = "User settings";
+        type = "Furnish/File";
+        condition = "[and(variables('furnish.host').nixSetup.system, variables('furnish.host').nixSetup.home)]";
+        properties = { path = "~/.furnish-test"; content = "managed for this person"; };
+      }
     ];
   });
 in

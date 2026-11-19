@@ -200,10 +200,13 @@ fn guarded_nix_steps_use_only_the_destinations_in_the_target_profile() {
         nix_step("system-daemon", json!({"options":{"services.example.enable":true}})),
         nix_step("portable", json!({"packages":["hello"]})),
         {"name":"ordinary", "type":"Furnish/NixOS", "properties":{"name":"ordinary"}},
-        {"name":"line-fallback", "type":"Furnish/Line", "properties":{"path":"~/.ssh/config", "line":"Include config.d/extra.conf"}}
+        {"name":"line-fallback", "type":"Furnish/Line", "condition":"[not(variables('furnish.host').nixSetup.home)]",
+         "properties":{"path":"~/.ssh/config", "line":"Include config.d/extra.conf"}},
+        {"name":"system-fact", "type":"Furnish/File", "condition":"[variables('furnish.host').nixSetup.system]",
+         "properties":{"path":"/etc/example", "content":"system"}}
     ]}));
-    let absent = "expect: {tool: {steps: [ordinary, line-fallback], skipped: [ssh-include, system-daemon, portable]}}";
-    let home = "expect: {tool: {steps: [ssh-include, portable, ordinary, line-fallback], skipped: [system-daemon]}}";
+    let absent = "expect: {tool: {steps: [ordinary, line-fallback], skipped: [ssh-include, system-daemon, portable, system-fact]}}";
+    let home = "expect: {tool: {steps: [ssh-include, portable, ordinary], skipped: [system-daemon, line-fallback, system-fact]}}";
     fs::write(&path, format!("profiles:
   debian: {{family: Linux, distribution: debian, packageManagers: [apt], {absent}}}
   mac: {{family: macOS, packageManagers: [brew, nix], {absent}}}
@@ -214,12 +217,12 @@ fn guarded_nix_steps_use_only_the_destinations_in_the_target_profile() {
     family: Linux
     packageManagers: [nix]
     nixSetup: {{system: true}}
-    expect: {{tool: {{steps: [system-daemon, portable, ordinary, line-fallback], skipped: [ssh-include]}}}}
+    expect: {{tool: {{steps: [system-daemon, portable, ordinary, line-fallback, system-fact], skipped: [ssh-include]}}}}
   nixos-home:
     family: Linux
     packageManagers: [nix]
     nixSetup: {{system: true, home: true}}
-    expect: {{tool: {{steps: [ssh-include, system-daemon, portable, ordinary, line-fallback], skipped: []}}}}
+    expect: {{tool: {{steps: [ssh-include, system-daemon, portable, ordinary, system-fact], skipped: [line-fallback]}}}}
 ")).unwrap();
     let output = check(temp.path(), &dir, Some(&path), true);
     for message in ["no NixOS or Home Manager configuration is set up in this profile", "Home Manager is not set up in this profile",

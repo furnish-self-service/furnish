@@ -370,6 +370,10 @@ impl Target {
 }
 
 impl Target {
+    fn home_enabled(&self, person: &Account) -> bool {
+        self.facts.home_manager_users.get(&person.name).is_some_and(|user| user.enable)
+    }
+
     /// The options apps may set there: the NixOS module's, or the person's from Home Manager's
     /// NixOS module, as the NixOS configuration says.
     fn allowlist(&self, place: Place, user: &str) -> Vec<String> {
@@ -433,6 +437,10 @@ impl HomeTarget {
         let Some(facts) = home_facts(person) else {
             return Err(missing("furnish's Home Manager module (services.furnish.enable in your Home Manager configuration)"));
         };
+        Self::from_facts(person, facts)
+    }
+
+    fn from_facts(person: &Account, facts: crate::nixos::HomeFacts) -> Result<HomeTarget> {
         let dir = home_dir_of(person, &facts);
         let Some(flake) = read_as(person, &dir.join("flake.nix")) else {
             return Err(missing(format!("a Home Manager configuration that is a flake ({} has no flake.nix)", dir.display())));
@@ -451,7 +459,7 @@ impl HomeTarget {
 fn home_dir_of(person: &Account, facts: &crate::nixos::HomeFacts) -> PathBuf {
     match &facts.nix.configuration {
         Some(c) => PathBuf::from(c),
-        None if !in_service() => crate::nixos::setup()
+        None if !in_service() => crate::nixos::detect(&crate::nixos::Context::here())
             .and_then(|s| s.home_manager_configuration)
             .map_or_else(|| person.home.join(".config/home-manager"), |f| f.path),
         None => person.home.join(".config/home-manager"),
@@ -559,13 +567,39 @@ fn own_apps_dir(person: &Account) -> Option<PathBuf> {
     configured_home_apps(read_as(person, &dir.join("flake.lock")).as_deref(), &read_as(person, &dir.join("flake.nix"))?)
 }
 
+/// Destinations configured for a fresh install, independently of the preferred destination.
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct NixSetup {
+    pub system: bool,
+    pub home: bool,
+}
+
+pub(crate) fn nix_setup() -> NixSetup {
+    if cfg!(windows) || !crate::nixos::nix_installed() {
+        return NixSetup::default();
+    }
+    let system = cfg!(target_os = "linux").then(Target::here).and_then(Result::ok);
+    // Home Manager belongs to the requesting account, including when a service runs as root.
+    let home = person().ok().is_some_and(|person| {
+        home_facts(&person).is_some_and(|facts| {
+            if facts.nixos_module {
+                system.as_ref().is_some_and(|target| target.home_enabled(&person))
+            } else {
+                HomeTarget::from_facts(&person, facts).is_ok()
+            }
+        })
+    });
+    NixSetup { system: system.is_some(), home }
+}
+
 /// Whether furnish can install into a place: `Missing` says what is missing.
 fn ready(place: Place, person: &Account) -> Result<()> {
     match place {
         Place::System => Target::here().map(drop),
         Place::HomeNixos => {
             let target = Target::here()?;
-            if !target.facts.home_manager_users.get(&person.name).is_some_and(|u| u.enable) {
+            if !target.home_enabled(person) {
                 return Err(missing(format!(
                     "furnish's Home Manager module for {0} (home-manager.users.{0}.services.furnish.enable in the NixOS configuration)",
                     person.name
