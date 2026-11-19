@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     sync::{
         Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::SystemTime,
 };
@@ -52,14 +52,42 @@ impl Texts {
     }
 }
 
-/// Installs, updates and uninstalls running now (see `Running`).
-static RUNNING: AtomicUsize = AtomicUsize::new(0);
-/// Quit was asked for while one ran: quit when it ends, start nothing new.
-static QUITTING: AtomicBool = AtomicBool::new(false);
+/// Serialize operation entry with quitting and restart reservations. An idle observation alone
+/// lets another install start between checking the count and handing off to the new process.
+#[derive(Default)]
+struct Activity {
+    running: usize,
+    quitting: bool,
+    restarting: bool,
+}
+static ACTIVITY: Mutex<Activity> = Mutex::new(Activity { running: 0, quitting: false, restarting: false });
 
-/// Installs, updates and uninstalls running now.
-pub fn running() -> usize {
-    RUNNING.load(Ordering::SeqCst)
+/// Held across the final build check and relaunch, or the embedded updater's installation.
+pub struct IdleRestart(Option<AppHandle>);
+impl IdleRestart {
+    pub fn reserve(app: &AppHandle) -> Option<Self> {
+        let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+        if state.running > 0 || state.quitting || state.restarting { return None; }
+        state.restarting = true;
+        Some(Self(Some(app.clone())))
+    }
+    pub fn commit(mut self) {
+        let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+        state.quitting = true;
+        state.restarting = false;
+        self.0 = None;
+    }
+}
+impl Drop for IdleRestart {
+    fn drop(&mut self) {
+        let Some(app) = &self.0 else { return };
+        let quit = {
+            let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+            state.restarting = false;
+            state.quitting
+        };
+        if quit { app.exit(0); }
+    }
 }
 
 /// A new version of furnish is downloaded: the menu offers Restart to update.
@@ -81,18 +109,21 @@ pub struct Running(AppHandle);
 
 impl Running {
     pub fn start(app: &AppHandle) -> Option<Self> {
-        RUNNING.fetch_add(1, Ordering::SeqCst);
-        if QUITTING.load(Ordering::SeqCst) {
-            RUNNING.fetch_sub(1, Ordering::SeqCst);
-            return None;
-        }
+        let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+        if state.quitting || state.restarting { return None; }
+        state.running += 1;
         Some(Running(app.clone()))
     }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if RUNNING.fetch_sub(1, Ordering::SeqCst) == 1 && QUITTING.load(Ordering::SeqCst) {
+        let quit = {
+            let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+            state.running -= 1;
+            state.running == 0 && state.quitting
+        };
+        if quit {
             self.0.exit(0);
         }
     }
@@ -100,8 +131,12 @@ impl Drop for Running {
 
 /// Quit, but never in the middle of an install: then hide the window and quit after it.
 pub fn quit(app: &AppHandle) {
-    QUITTING.store(true, Ordering::SeqCst);
-    if RUNNING.load(Ordering::SeqCst) == 0 {
+    let idle = {
+        let mut state = ACTIVITY.lock().unwrap_or_else(|e| e.into_inner());
+        state.quitting = true;
+        state.running == 0 && !state.restarting
+    };
+    if idle {
         app.exit(0);
     } else if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();

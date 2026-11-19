@@ -101,6 +101,12 @@ On GNOME, tray icons only show with the AppIndicator extension. Without a tray, 
 
 ## New versions of furnish
 
+Settings → **About** shows the version of the running desktop, including the alpha number for published releases. Expand **Build details** to see the build target and, when available, the source commit and date.
+
+The **Data folder** row opens Furnish’s local data in your file manager. On NixOS, Settings also shows the configuration folder and the generated flake under **Generated NixOS files**. Standalone Home Manager shows its own generated folder, including a custom path configured in the flake input. Choose **Open folder** next to the path to inspect its files.
+
+When a package manager replaces the desktop while it is open, Furnish offers to restart into the installed version. The offer appears once the queue is empty and active work has finished, including updates paused in Activity. Choose **Restart** to launch the installed build. This also works when a package manager rolls back a version. For a portable AppImage, automatic detection requires a FUSE-mounted image and the system’s `unsquashfs` tool. If Furnish cannot identify the replacement, quit and reopen the AppImage.
+
 When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one whenever it looks for app updates. Offline, it shows nothing.
 
 If you installed furnish from the Windows or macOS download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.

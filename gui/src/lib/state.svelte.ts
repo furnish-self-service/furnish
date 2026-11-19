@@ -6,6 +6,7 @@ export { defaultDependencies, type Queued } from './install-queue';
 import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
 import { StatusCache } from './status-cache';
 import { StatusChecks } from './status-checks';
+import { desktopRestart, type RestartState } from './desktop-restart';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
 import { applyBranding, type Branding } from './brand';
 import { setLanguage, t, terror, formatDate, lang } from './i18n.svelte';
@@ -102,6 +103,8 @@ export const store = $state({
   selfUpdate: null as api.SelfUpdateStatus | null,
   /** Restart to update was chosen: it happens once nothing is installing. */
   restartWanted: false,
+  installedDesktop: null as RestartState['installedDesktop'],
+  desktopRestart: 'idle' as RestartState['desktopRestart'],
 });
 
 api.onProgress((p) => {
@@ -449,16 +452,21 @@ async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed
   return ok ? 'done' : 'failed';
 }
 
+let collectionChanges = $state(0);
 /** Runs a collection change, then reloads the catalog. Returns true on success. */
 export async function collectionAction(work: () => Promise<string>, failure: string) {
+  if (store.desktopRestart === 'launching') return false;
+  collectionChanges++;
   try {
     toast('success', await work());
+    await loadAll();
+    return true;
   } catch (e) {
     toast('error', failure, message(e));
     return false;
+  } finally {
+    collectionChanges--;
   }
-  await loadAll();
-  return true;
 }
 
 export function visibleApps(view: View, query: string): AppInfo[] {
@@ -523,6 +531,7 @@ export async function updateCollections(): Promise<string[]> {
 const declinedUpdates = new Set<string>();
 
 let retry: ReturnType<typeof setTimeout> | undefined;
+let samplingUpdateLoad = $state(0);
 
 /** Queue updates of installed apps that have one, unless turned off for the app. With
  *  load-aware updates on, wait while the computer is busy and ask again a little later. */
@@ -542,7 +551,8 @@ async function updateApps() {
     return;
   }
   if (store.settings?.loadAwareUpdates) {
-    const load = await api.systemLoad().catch(() => null);
+    samplingUpdateLoad++;
+    const load = await api.systemLoad().catch(() => null).finally(() => samplingUpdateLoad--);
     if (load?.busy) {
       store.autoUpdate.postponed = load.busy;
       retry = setTimeout(updateApps, load.retryAfterSeconds * 1000);
@@ -558,7 +568,7 @@ async function updateApps() {
 /** Pull collections, look for app updates (package managers learn about them on their own),
  *  and install those that are due. Runs on launch, on the interval and from "Check for updates". */
 export async function checkForUpdates() {
-  if (store.autoUpdate.running) return;
+  if (store.autoUpdate.running || store.desktopRestart === 'launching') return;
   store.autoUpdate.running = true;
   const catalogAtStart = catalogLoad;
   const catalogWasChecking = !!latestLoad && (store.loading || store.scan.running);
@@ -597,32 +607,67 @@ export function setAutoUpdate(key: string, on: boolean) {
 // --- furnish's own updates
 
 let selfCheckedAt = 0;
+let checkingSelfUpdate = $state(0);
 /** Ask for a newer furnish (one small request; offline it says nothing). At start, with the
  *  update interval and from Check now; at most once a minute. */
 export async function checkSelfUpdate(download = false) {
+  if (store.installedDesktop || store.desktopRestart !== 'idle') return;
   if (!download && Date.now() - selfCheckedAt < 60_000) return;
   selfCheckedAt = Date.now();
-  store.selfUpdate = await api.checkSelfUpdate(download).catch(() => store.selfUpdate);
+  checkingSelfUpdate++;
+  try {
+    store.selfUpdate = await api.checkSelfUpdate(download).catch(() => store.selfUpdate);
+  } finally {
+    checkingSelfUpdate--;
+  }
   maybeApplySelfUpdate();
 }
 
-const idle = () => !Object.keys(store.busy).length && !store.queue.length;
+const idle = () => !activeRequest && !Object.keys(store.busy).length && !store.queue.length;
+let startupComplete = $state(false);
+let applyingSelfUpdate = $state(false);
+
+// A queued request can leave the list before its prerequisite checks report it as busy.
+export const desktopIdle = () => idle() && startupComplete && !pumping && !applyingSelfUpdate
+  && !checkingSelfUpdate && !samplingUpdateLoad && !collectionChanges && !store.autoUpdate.running && !store.loading && !store.scan.running
+  && !Object.keys(store.retrying).length && !Object.keys(store.checkingStatus).length
+  && store.selfUpdate?.state !== 'downloading';
+
+const installedUpdate = desktopRestart(store, desktopIdle, api.desktopUpdateStatus, api.restartDesktop);
+export const checkInstalledDesktop = installedUpdate.refresh;
+export async function restartInstalledDesktop() {
+  try {
+    const result = await installedUpdate.restart();
+    if (result === 'postponed') await checkInstalledDesktop();
+    if (result === 'unavailable' || (result === 'postponed' && !store.installedDesktop)) {
+      toast('info', t('desktop.noRestart'));
+    } else if (result === 'busy' || result === 'postponed') {
+      toast('info', t('desktop.retryRestart'));
+    }
+  } catch (e) {
+    toast('error', t('desktop.restartFailed', { brand: store.brand.name }), message(e));
+  }
+}
 
 /** Install a downloaded furnish once nothing is installing: when Restart to update was chosen,
  *  or (automatic updates) while the window is closed to the tray. */
 export async function maybeApplySelfUpdate() {
   const s = store.selfUpdate;
-  if (s?.state !== 'ready' || !idle()) return;
+  if (s?.state !== 'ready' || !idle() || store.installedDesktop || store.desktopRestart !== 'idle' || applyingSelfUpdate) return;
   if (!store.restartWanted && s.mode !== 'auto') return;
+  applyingSelfUpdate = true;
   try {
     await api.applySelfUpdate(!store.restartWanted); // on success furnish restarts
   } catch (e) {
     store.restartWanted = false;
     toast('error', t('settings.selfUpdateFailed', { brand: store.brand.name }), message(e));
+  } finally {
+    applyingSelfUpdate = false;
   }
 }
 
 export function restartToUpdate() {
+  if (store.installedDesktop || store.desktopRestart !== 'idle') return;
   store.restartWanted = true;
   maybeApplySelfUpdate();
 }
@@ -687,6 +732,7 @@ async function reloadSettings() {
 
 /** App start: load settings and the catalog, then update collections if enabled. */
 export async function start() {
+  checkInstalledDesktop();
   await reloadSettings();
   api.selfUpdateStatus().then((s) => (store.selfUpdate ??= s)).catch(() => {});
   // At start unless checking is Never and updating at start is off (then no network traffic at all).
@@ -720,9 +766,10 @@ export async function start() {
   await autoInstall();
   if (store.settings?.updateOnLaunch) await checkForUpdates();
   else {
-    updateApps();
+    await updateApps();
     if (looks().atStart) lookForCollectionUpdates();
   }
+  startupComplete = true;
 }
 
 // --- Tray
@@ -746,7 +793,7 @@ export function trayTexts(): api.TrayTexts {
     check: t('tray.check'),
     settings: t('tray.settings'),
     quit: t('tray.quit', { brand }),
-    restart: t('tray.restartToUpdate'),
+    restart: store.installedDesktop ? '' : t('tray.restartToUpdate'),
     status,
     tooltip: status ? t('tray.tooltip', { brand, status }) : brand,
   };
@@ -775,6 +822,7 @@ api.onToTray(() => {
   if (!hintShown()) hintDue = true;
 });
 api.onShown(() => {
+  checkInstalledDesktop();
   if (!hintDue) return;
   hintDue = false;
   toast('info', t('toast.inTray', { brand: store.brand.name }));
@@ -879,6 +927,7 @@ export function install(app: AppInfo, chosen = defaultDependencies(app), trigger
 type InstallRequest = Pick<Queued, 'trigger' | 'commit' | 'updateOnly'> & { action: Exclude<Queued['action'], 'uninstall'> };
 
 function scheduleInstall(app: AppInfo, chosen: string[], request: InstallRequest, onMember?: (key: string, scheduled: boolean) => void, updates?: Set<string>) {
+  if (store.desktopRestart === 'launching') return false;
   const pending = activeRequest ? [activeRequest, ...store.queue] : store.queue;
   const plan = planInstall(app, chosen, store.apps, pending, key => (!updates?.has(key) && isInstalled(key)) || store.status[key] === 'unavailable');
   if (plan.error) {
@@ -981,10 +1030,10 @@ export function uninstall(app: AppInfo) {
 }
 
 let activeRequest = $state<Queued & { runId?: string }>();
-let pumping = false;
+let pumping = $state(false);
 
 function enqueue(key: string, action: Queued['action'], trigger: api.Trigger = 'user', commit?: string) {
-  if (isPending(key)) return;
+  if (store.desktopRestart === 'launching' || isPending(key)) return;
   store.queue.push({ key, action, trigger, commit, prerequisites: [] });
   pump();
 }

@@ -474,6 +474,13 @@ fn person() -> Result<Account> {
     }))
 }
 
+/// Profile locations for the current account must come from the OS, even if HOME or USER
+/// was overridden by the desktop launcher.
+#[cfg(unix)]
+pub fn current_account() -> Option<Account> {
+    lookup(current_uid())
+}
+
 /// An account from the system's user database (also macOS's directory service and NSS), else
 /// from /etc/passwd.
 fn lookup(uid: u32) -> Option<Account> {

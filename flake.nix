@@ -27,6 +27,12 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
+      # GitHub flake locks identify a commit; a release tag or Actions run number is
+      # generally unavailable inside the pure build. Keep the source identity visible.
+      desktopRevision = self.rev or (if self ? dirtyRev then nixpkgs.lib.removeSuffix "-dirty" self.dirtyRev else "");
+      desktopVersion = "${version}-alpha"
+        + nixpkgs.lib.optionalString (desktopRevision != "") "+git.${builtins.substring 0 12 desktopRevision}"
+        + nixpkgs.lib.optionalString (desktopRevision != "" && self ? dirtyRev) ".dirty";
       # Sources only: no build output, no node_modules.
       src = nixpkgs.lib.fileset.toSource {
         root = ./.;
@@ -352,6 +358,10 @@
         # layout (binary, desktop file, icons) into $out, as nixpkgs' cargo-tauri.hook does.
         furnish-gui = r.craneLib.buildPackage (r.commonArgs // {
           pname = "furnish-gui";
+          version = desktopVersion;
+          FURNISH_VERSION = desktopVersion;
+          FURNISH_BUILD_REVISION = desktopRevision;
+          SOURCE_DATE_EPOCH = if (self.lastModified or 0) > 1 then toString self.lastModified else "";
           inherit (r) cargoArtifacts;
           npmDeps = pkgs.fetchNpmDeps {
             name = "furnish-gui-npm-deps-${version}";

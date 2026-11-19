@@ -299,6 +299,9 @@ jobs:
           cli="$(nix path-info .#furnish)/bin/furnish"
           "$cli" self-update --check | grep -F 'nix flake update'
           "$cli" settings | grep -F 'nix flake update'
+          gui="$(nix path-info .#furnish-gui)/bin/furnish-gui"
+          base=$(jq -r .version gui/src-tauri/tauri.conf.json)
+          node scripts/verify-desktop-build.mjs "$gui" "$base-alpha+git.${GITHUB_SHA:0:12}"
 
   git-auth:
     name: private collections (HTTPS credentials, SSH)
@@ -500,7 +503,8 @@ jobs:
           if [ "$GITHUB_REF" = refs/heads/main ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
-            -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" ubuntu:22.04 packaging/linux/build.sh
+            -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" -e FURNISH_BUILD_REVISION="$GITHUB_SHA" \
+            -e SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" ubuntu:22.04 packaging/linux/build.sh
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-packages
@@ -680,6 +684,8 @@ jobs:
           v=$(jq -r .version gui/src-tauri/tauri.conf.json)
           if [ "$GITHUB_REF" = refs/heads/main ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
           echo "FURNISH_VERSION=$v" >> "$GITHUB_ENV"
+          echo "FURNISH_BUILD_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis, each with the CLI.
       - run: npm run bundle
         working-directory: gui
@@ -687,7 +693,9 @@ jobs:
         shell: bash
         run: |
           case "$RUNNER_OS" in
-            Linux)   dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$'
+            Linux)   dpkg-deb -x target/release/bundle/deb/*.deb "$RUNNER_TEMP/bundle"
+                     node scripts/verify-desktop-build.mjs "$RUNNER_TEMP/bundle/usr/bin/furnish-gui" "$FURNISH_VERSION"
+                     dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/bin/furnish$'
                      dpkg-deb -c target/release/bundle/deb/*.deb | grep THIRD-PARTY-LICENSES.html
                      dpkg-deb -c target/release/bundle/deb/*.deb | grep -E '^-rwxr-xr-x .* (\./)?usr/lib/furnish/dsc/(dsc|filecontent|runcommandonset)$' | wc -l | grep -qx 3
                      dpkg-deb -c target/release/bundle/deb/*.deb | grep -E 'usr/lib/furnish/dsc/psDscAdapter/psDscAdapter.psm1$'
@@ -701,6 +709,8 @@ jobs:
                      codesign --verify --deep --strict --verbose=2 target/release/bundle/macos/furnish.app
                      hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" target/release/bundle/dmg/*.dmg
                      codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/furnish.app"
+                     exe=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$RUNNER_TEMP/dmg/furnish.app/Contents/Info.plist")
+                     node scripts/verify-desktop-build.mjs "$RUNNER_TEMP/dmg/furnish.app/Contents/MacOS/$exe" "$FURNISH_VERSION"
                      hdiutil detach "$RUNNER_TEMP/dmg" ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
@@ -714,6 +724,8 @@ jobs:
           $p = Start-Process msiexec -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
           if ($p.ExitCode) { throw "msiexec exited with $($p.ExitCode)" }
           $app = "$env:ProgramFiles\furnish"
+          node scripts/verify-desktop-build.mjs "$app\furnish-gui.exe" "$env:FURNISH_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "desktop build verification failed ($LASTEXITCODE)" }
           if (-not (Test-Path "$app\THIRD-PARTY-LICENSES.html")) { throw 'no THIRD-PARTY-LICENSES.html' }
           foreach ($f in 'dsc.exe', 'filecontent.exe', 'environment_variable.exe', 'registry.exe', 'NOTICE.txt', 'psDscAdapter\psDscAdapter.psm1') {
             if (-not (Test-Path "$app\dsc\$f")) { throw "no dsc\$f" }
@@ -728,7 +740,12 @@ jobs:
           if (-not (& "$app\furnish.exe" collection list | Select-String fixture)) { throw 'collection not added' }
       # Real app under Xvfb, driven via WebDriver; also checks GUI elevation never uses sudo.
       - if: runner.os == 'Linux'
-        run: tests/ui/run.sh target/release/furnish-gui
+        run: |
+          # Preserve the package's executable. Run a distinct alpha build and replace it
+          # on disk during the desktop test, as an external package manager would.
+          cp target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
+          FURNISH_VERSION=0.1.0+alpha.999999 cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
+          FURNISH_TEST_RUNNING_VERSION=0.1.0-alpha.999999 tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
       # The macOS and Windows installers for the package repository (publish-alpha), by version.
       - if: runner.os != 'Linux'
         shell: bash

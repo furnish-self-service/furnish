@@ -6,9 +6,12 @@ license = "MIT"
 repository = "https://github.com/furnish-self-service/furnish"
 
 [build-dependencies]
+semver = "1"
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+memchr = "2"
 furnish = { path = "../.." }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
@@ -41,7 +44,7 @@ libloading = "0.7"
 
 # The taskbar's theme (SystemUsesLightTheme) and when it changes, for the tray icon's color.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Registry"] }
 
 # The Dock icon from the branding logo (see app_icon.rs), with the crates Tauri uses for its own.
 [target.'cfg(target_os = "macos")'.dependencies]

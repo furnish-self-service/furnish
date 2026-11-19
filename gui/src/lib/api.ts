@@ -251,6 +251,8 @@ export type NixosFound = {
 export type NixosLeaf = { value: string; setBy: 'user' | 'organization'; locked: boolean } | null;
 /** How this NixOS computer is set up, or Home Manager on another system with Nix; null otherwise. */
 export type NixosSetup = {
+  systemAppsFolder: { path: string; exists: boolean } | null;
+  homeAppsFolder: { path: string; exists: boolean } | null;
   configuration: NixosFound | null;
   flakeAttribute: { value: string; source: NixosSource };
   homeManagerConfiguration: NixosFound | null;
@@ -289,7 +291,20 @@ export const installVersion = (key: string, commit: string, trigger?: Trigger) =
 export const appVersions = (key: string) => invoke<Version[]>('app_versions', { key });
 /** The version furnish would fall back to; rejects with the reason if there is none. */
 export const previousVersion = (key: string) => invoke<Version>('previous_version', { key });
-export const version = () => invoke<string>('version');
+export interface BuildInfo {
+  version: string;
+  revision: string | null;
+  target: string;
+  sourceDateEpoch: number | null;
+}
+export const buildInfo = () => invoke<BuildInfo>('build_info');
+
+export interface DesktopUpdateStatus {
+  changed: boolean;
+  installed: Pick<BuildInfo, 'version' | 'revision'> | null;
+}
+export const desktopUpdateStatus = () => invoke<DesktopUpdateStatus>('desktop_update_status');
+export const restartDesktop = (expected: NonNullable<DesktopUpdateStatus['installed']>) => invoke<boolean>('restart_desktop', { expected });
 
 /** How furnish was installed: furnish installs its own updates only for `msi` and `app`. */
 export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'nix' | 'other';
@@ -320,6 +335,7 @@ export const onSelfUpdate = (handler: (s: SelfUpdateStatus) => void) =>
 /** Restart to update, chosen in the tray menu. */
 export const onRestartToUpdate = (handler: () => void) => listen('furnish://restart-to-update', () => handler());
 /** Open the list of open-source components and their licenses in the browser. */
+export const openDirectory = (path: string) => invoke<void>('open_directory', { path });
 export const openLicenses = () => invoke<void>('open_licenses');
 /** Change a setting for one collection; null returns it to the general setting. */
 export const setCollectionSetting = (name: string, key: keyof CollectionSettings, value: unknown) =>

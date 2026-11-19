@@ -76,6 +76,8 @@ try {
     Write-Host "== the desktop app ($($gui.Name), hidden) updates itself"
     Start-Process $gui.FullName -ArgumentList '--hidden'
     Wait-Installed 'the desktop app'
+    $guiVersion = (& $gui.FullName --build-info | ConvertFrom-Json).version
+    if ($guiVersion -ne (Get-Content "$Feed\latest.json" -Raw | ConvertFrom-Json).version) { Fail "updated desktop reports $guiVersion" }
     $v = Version
     if ($v -ne $next) { Fail "after the desktop app's update: $v, expected $next" }
     for ($i = 0; $i -lt 30 -and -not (Get-Process ($gui.BaseName) -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run the UI tests (tests/ui/test.mjs) against the real furnish GUI in an Ubuntu 24.04 container.
 #
-#   tests/ui/run.sh [furnish-gui]   # binary built on Ubuntu 24.04 (CI); omitted: built in the container
+#   tests/ui/run.sh [furnish-gui [replacement-furnish-gui]]   # binary built on Ubuntu 24.04 (CI); omitted: built in the container
 #
 # The container gets a TTY on purpose: the GUI must still elevate via pkexec, not sudo in a terminal.
 # A fake pacman/sudo/pkexec on PATH records what happened, so no real packages are touched.
@@ -30,6 +30,10 @@ else
     binary="$repo/target/ui-docker/release/furnish-gui"
     image=furnish-ui-build
 fi
+
+# Bind the build inputs read-only and install a copy. Like a real package, the installed
+# path can be atomically replaced while a process continues running the old executable.
+replacement=$(realpath "${2:-$binary}")
 
 # Fake package manager and elevation tools, logging every call into $work.
 mkdir -p "$work/bin" "$work/pkgs"
@@ -75,6 +79,8 @@ sed -i '2i [ "$1" = -n ] && { echo "$*" >> '"$work"'/sudo.log; exit 1; }' "$work
 printf '#!/bin/sh\n' > "$work/bin/elsewhere-tool"
 # The browser: records what furnish opens.
 printf '#!/bin/sh\necho "$1" >> %s/browser.log\n' "$work" > "$work/bin/browser"
+# Record the separate file-manager action; directories must not go through FURNISH_BROWSER.
+printf '#!/bin/sh\n[ "$#" = 1 ] && [ -d "$1" ] || exit 1\nprintf "%%s\\n" "$1" >> %s/folders.log\n' "$work" > "$work/bin/xdg-open"
 chmod +x "$work/bin/"*
 
 # The fixture collection (already added) and a second repository for the add/remove test.
@@ -210,14 +216,16 @@ dsc_mount=$dsc_dir:/usr/local/lib/furnish/dsc:ro
 # $work is mounted at the same path, so paths in logs and inputs mean the same inside and out.
 docker run -d -t --name "$container" --network host --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e XDG_DATA_HOME="$work/user-share" -e XDG_DATA_DIRS="$work/system-share:/usr/local/share:/usr/share" -e FURNISH_DATA_DIR="$work/data" -e FURNISH_POLICY_FILE="$work/policy.json" -e FURNISH_LOAD_SAMPLE_SECONDS=1 -e FURNISH_BROWSER="$work/bin/browser" -e FURNISH_UPDATE_FEED="http://127.0.0.1:$FEED_PORT/latest.json" -e PATH="$work/bin:/usr/local/bin:/usr/bin:/bin" \
-    -v "$work:$work" -v "$binary:/usr/local/bin/furnish-gui:ro" -v "$dsc_mount" "$image" \
+    -v "$work:$work" -v "$binary:/fixtures/running:ro" -v "$replacement:/fixtures/replacement:ro" -v "$dsc_mount" "$image" \
     sh -c 'Xvfb :'"$((DRIVER_PORT % 10000 + 100))"' -screen 0 1280x800x24 >/dev/null 2>&1 & export DISPLAY=:'"$((DRIVER_PORT % 10000 + 100))"'; exec tauri-driver --port '"$DRIVER_PORT"' --native-port '"$((DRIVER_PORT + 1))" >/dev/null
+
+docker exec --user 0 "$container" install /fixtures/running /usr/local/bin/furnish-gui
 
 # A second launch path lets the suite exercise a Nix-managed installation of the same binary.
 docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
-if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container"; then
+if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${2:+replace}"; then
     echo "UI tests passed"
 else
     echo "--- container log"; docker logs "$container" 2>&1 | grep -v -e MESA -e '^$' | tail -30

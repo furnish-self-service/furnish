@@ -1,12 +1,12 @@
 // UI tests for the real furnish GUI, driven over WebDriver (tauri-driver on localhost, port DRIVER_PORT).
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
-import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 // run.sh picks the port, so runs side by side (host network) don't meet each other's driver.
 const DRIVER = `http://127.0.0.1:${process.env.DRIVER_PORT || 4444}`;
-const [workDir, screenshot, container] = process.argv.slice(2);
+const [workDir, screenshot, container, replaceDesktop] = process.argv.slice(2);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let session;
 
@@ -94,6 +94,19 @@ async function startSession(application = '/usr/local/bin/furnish-gui') {
       }),
     )
   ).sessionId;
+}
+
+function settingsWriter(start) {
+  const result = spawnSync('docker', ['exec', ...(start ? ['-d'] : []), container, 'sh', '-c', start
+    ? 'cp /bin/sleep "$1/furnish-ui-cache"; echo $$ > "$1/writer.pid"; exec "$1/furnish-ui-cache" 300'
+    : 'kill "$(cat "$1/writer.pid")"', 'sh', workDir], {encoding: 'utf8'});
+  if (result.status !== 0) throw new Error(result.stderr);
+}
+
+function inContainer(args, root = false) {
+  const result = spawnSync('docker', ['exec', ...(root ? ['--user', '0'] : []), container, ...args], {encoding: 'utf8'});
+  if (result.status !== 0) throw new Error(result.stderr || `docker exec failed with ${result.status}`);
+  return result.stdout.trim();
 }
 
 const steps = [
@@ -772,9 +785,44 @@ const steps = [
     if (!(await prop(`${section}//select`, 'disabled'))) throw new Error('locked reporting setting is editable');
     if ((await prop(`${section}//select`, 'value')) !== 'errors') throw new Error('not the policy value');
   }],
+  ['Settings opens the data, Nix configuration and generated files folders', async () => {
+    const config = workDir + '/Nix configuration';
+    const generated = '/var/lib/furnish/apps';
+    const data = workDir + '/data';
+    mkdirSync(config, { recursive: true });
+    writeFileSync(config + '/flake.nix', `{ nixosConfigurations."${inContainer(['hostname'])}" = {}; }`);
+    inContainer(['mkdir', '-p', '/etc/nixos'], true);
+    inContainer(['touch', '/etc/NIXOS'], true);
+    inContainer(['ln', '-s', config + '/flake.nix', '/etc/nixos/flake.nix'], true);
+    try {
+      await startSession();
+      await click(nav('Settings'));
+      const open = path => `//button[@aria-label='Open ${path} in the file manager']`;
+      await waitFor('generated NixOS files folder', () => find(open(generated)));
+      if (!(await prop(open(generated), 'disabled'))) throw new Error('missing generated folder can be opened');
+      inContainer(['mkdir', '-p', generated], true);
+      await startSession();
+      await click(nav('Settings'));
+      await waitFor('generated folder can be opened', async () => !(await prop(open(generated), 'disabled')));
+      for (const path of [config, generated, data]) {
+        await click(open(path));
+        await waitFor('file manager opened ' + path, () => log('folders.log').split('\n').includes(path));
+      }
+      if (log('browser.log').split('\n').includes(generated)) throw new Error('folder sent to browser');
+    } finally {
+      inContainer(['rm', '-f', '/etc/NIXOS', '/etc/nixos/flake.nix'], true);
+      await startSession();
+    }
+  }],
   ['the Settings page shows the version and opens the open-source licenses', async () => {
     await click(nav('Settings'));
-    await waitFor('version shown', async () => /furnish \d+\.\d+\.\d+/.test(await text("//*[@id='version']")));
+    const info = JSON.parse(inContainer(['/usr/local/bin/furnish-gui', '--build-info']));
+    const expected = process.env.FURNISH_TEST_RUNNING_VERSION ?? info.version;
+    await waitFor('running release version', async () => (await text("//*[@id='version']")) === `furnish ${expected}`);
+    await click("//*[@id='build-details']/summary");
+    if (await text("//*[@id='build-target']") !== info.target) throw new Error('About shows the wrong build target');
+    if (info.revision && await text("//*[@id='build-revision']") !== info.revision) throw new Error('About shows the wrong source commit');
+    if (info.sourceDateEpoch != null && await prop("//*[@id='build-details']//time", 'dateTime') !== new Date(info.sourceDateEpoch * 1000).toISOString()) throw new Error('About shows the wrong source date');
     await click(button('Open-source licenses'));
     await waitFor('licenses opened', () => log('browser.log').includes('licenses.html') || log('browser.log').includes('THIRD-PARTY-LICENSES.html'));
   }],
@@ -930,17 +978,11 @@ const steps = [
     const settings = 'preflight-settings', dependent = 'preflight-dependent', free = 'preflight-free';
     const activity = `//li[contains(@class,'row')][.//button[@aria-label='Open ${settings}']]`;
     const recheck = activity + button('Recheck and continue');
-    const process = (start) => {
-      const result = spawnSync('docker', ['exec', ...(start ? ['-d'] : []), container, 'sh', '-c', start
-        ? 'cp /bin/sleep "$1/furnish-ui-cache"; echo $$ > "$1/writer.pid"; exec "$1/furnish-ui-cache" 300'
-        : 'kill "$(cat "$1/writer.pid")"', 'sh', workDir], {encoding: 'utf8'});
-      if (result.status !== 0) throw new Error(result.stderr);
-    };
     const file = (name) => `${workDir}/${name}`;
     const preferences = JSON.parse(log('data/settings.json') || '{}');
     preferences.noAutoUpdate = [...new Set([...(preferences.noAutoUpdate ?? []), 'fixture/' + settings, 'fixture/' + dependent, 'fixture/' + free])];
     writeFileSync(file('data/settings.json'), JSON.stringify(preferences));
-    process(true);
+    settingsWriter(true);
     await startSession();
     await waitFor('only the running writer named on the card', async () => (await text(card(settings))).includes('Close ' + writer + ' to continue.'));
     await click(card(dependent) + button('Install'));
@@ -956,7 +998,7 @@ const steps = [
     await click(nav('Activity'));
     await waitFor('restored paused branch', () => find(recheck));
     if (existsSync(file('preflight-earlier')) || existsSync(file(dependent))) throw new Error('startup resumed without confirmation');
-    process(false);
+    settingsWriter(false);
     await click(recheck);
     await waitFor('settings and dependent completed', () => log('preflight-earlier') === 'ready' && log(dependent) === 'ready');
     if (!JSON.parse(log('preflight.json')).enabled) throw new Error('settings not saved');
@@ -972,7 +1014,7 @@ const steps = [
       (await findAll(card(settings) + button('Update'))).length && (await findAll(card(free) + button('Update'))).length
       && (await findAll(card(dependent) + button('Update'))).length);
     // Start the writer after status was checked to exercise the native operation preflight.
-    process(true);
+    settingsWriter(true);
     await waitFor('writer running', () => {
       const result = spawnSync('docker', ['exec', container, 'sh', '-c',
         'test "$(readlink "/proc/$(cat "$1/writer.pid")/exe")" = "$1/furnish-ui-cache"', 'sh', workDir]);
@@ -989,12 +1031,75 @@ const steps = [
     await startSession();
     await click(nav('Activity'));
     await click(group + '/details/summary');
-    process(false);
+    settingsWriter(false);
     await click(group + "//li[@data-app='fixture/preflight-settings']" + button('Recheck and continue'));
     await waitFor('same update batch finishes', async () => log('preflight-earlier') === 'ready' && log(dependent) === 'ready' && (await text(group)).includes('Updated preflight-settings'));
     if ((await findAll(group)).length !== 1 || JSON.parse(log('preflight.json')).keep !== 42) throw new Error('lost group or unrelated data');
   }],
 ];
+
+if (replaceDesktop) steps.push(['a Nix generation switch compares the desktop behind the profile wrapper', async () => {
+  const profile = '/run/current-system/sw/bin/furnish-gui';
+  const offer = "//*[@data-testid='desktop-restart']";
+  const installed = JSON.parse(inContainer(['/fixtures/replacement', '--build-info']));
+  for (const build of ['running', 'replacement']) {
+    const bin = `/nix/store/fixture-${build}-furnish/bin`;
+    inContainer(['install', '-D', `/fixtures/${build}`, `${bin}/.furnish-gui-wrapped`], true);
+    const wrapper = `#!/bin/sh\nexec "${bin}/.furnish-gui-wrapped" "$@"\n`;
+    inContainer(['sh', '-ec', 'printf %s "$1" > "$2" && chmod 755 "$2"', 'sh', wrapper, `${bin}/furnish-gui`], true);
+  }
+  inContainer(['mkdir', '-p', '/run/current-system/sw/bin'], true);
+  const switchTo = (build) => inContainer(['ln', '-sfn', `/nix/store/fixture-${build}-furnish/bin/furnish-gui`, profile], true);
+  const focus = () => wd('POST', s('/execute/sync'), {script: "window.dispatchEvent(new Event('focus'));", args: []});
+  switchTo('running');
+  await startSession(profile);
+  await click(nav('Settings'));
+  const running = JSON.parse(inContainer(['/fixtures/running', '--build-info']));
+  await waitFor('Nix running build', async () => await text("//*[@id='version']") === `furnish ${running.version}`);
+  switchTo('replacement');
+  await focus();
+  await waitFor('installed Nix generation offered', async () => (await text(offer)).includes(installed.version));
+  switchTo('running');
+  await focus();
+  await waitFor('restart offer withdrawn after restoring the running generation', async () => !(await findAll(offer)).length);
+}]);
+
+if (replaceDesktop) steps.push(['restart into the installed desktop only when the queue is idle', async () => {
+  const settings = 'preflight-settings';
+  const offer = "//*[@data-testid='desktop-restart']";
+  const running = JSON.parse(inContainer(['/fixtures/running', '--build-info']));
+  const installed = JSON.parse(inContainer(['/fixtures/replacement', '--build-info']));
+  if (running.version === installed.version) throw new Error('the test needs two distinct desktop versions');
+  writeFileSync(`${workDir}/preflight.json`, '{"enabled":false}');
+  settingsWriter(true);
+  try {
+    await startSession();
+    await click(nav('Updates'));
+    await waitFor('guarded app update', () => find(card(settings) + button('Update')));
+    if ((await findAll(offer)).length) throw new Error('restart offered for the running build');
+    inContainer(['sh', '-ec', 'install /fixtures/replacement /usr/local/bin/furnish-next && mv -f /usr/local/bin/furnish-next /usr/local/bin/furnish-gui'], true);
+    await wd('POST', s('/execute/sync'), {script: "window.dispatchEvent(new Event('focus'));", args: []});
+    await waitFor('installed version offered', async () => (await text(offer)).includes(installed.version));
+    await click(card(settings) + button('Update'));
+    await click(nav('Activity'));
+    const recheck = "//li[.//button[@aria-label='Open preflight-settings']]" + button('Recheck and continue');
+    await waitFor('paused update', () => find(recheck));
+    if ((await findAll(offer)).length) throw new Error('restart offered while a guarded update was queued');
+    settingsWriter(false);
+    await click(recheck);
+    await waitFor('idle desktop restart after the update', async () =>
+      JSON.parse(log('preflight.json')).enabled && (await text(offer)).includes(installed.version));
+    writeFileSync(screenshot, Buffer.from(await wd('GET', s('/screenshot')), 'base64'));
+    // Clicking can tear down the WebDriver session before its reply is delivered.
+    const el = await find(offer + '//button');
+    await wd('POST', s(`/element/${el}/click`), {}).catch(() => {});
+    await waitFor('relaunched desktop running the replacement executable', () =>
+      inContainer(['sh', '-c', 'for exe in /proc/[0-9]*/exe; do if [ "$exe" -ef /usr/local/bin/furnish-gui ]; then echo running; break; fi; done']) === 'running');
+  } finally {
+    // The fixture may still be alive if an assertion failed before Recheck.
+    inContainer(['sh', '-c', 'if [ "$(readlink "/proc/$(cat "$1/writer.pid")/exe")" = "$1/furnish-ui-cache" ]; then kill "$(cat "$1/writer.pid")"; fi', 'sh', workDir]);
+  }
+}]);
 
 let failed = false;
 try {

@@ -18,6 +18,7 @@ esac
 sh "$(dirname "$0")/distro-container.sh" "$image" "
     $install
     furnish --version
+    furnish-gui --build-info | grep -F '\"target\":\"x86_64-unknown-linux-gnu\"'
     git --version >/dev/null || { echo 'the package did not bring git' >&2; exit 1; }
     missing=\$(ldd /usr/bin/furnish-gui | grep 'not found' || true)
     [ -z \"\$missing\" ] || { echo \"furnish-gui can't start: \$missing\" >&2; exit 1; }
