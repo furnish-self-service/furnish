@@ -1260,7 +1260,7 @@ fn requires_new_session(doc: &Value, action: Action, before: &Value, after: &Val
             (key == "home.sessionPath" || key == "home.sessionVariables" || key.starts_with("home.sessionVariables.")) && old.get(key) != new.get(key)
         });
     }
-    ["Furnish/File", "Furnish/Line", "Furnish/Block"].iter().any(|t| kind.eq_ignore_ascii_case(t))
+    ["Furnish/File", "Furnish/Line", "Furnish/Block", "Furnish/Package"].iter().any(|t| kind.eq_ignore_ascii_case(t))
         && metadata.and_then(|m| m.other.get("furnishNewSession")) == Some(&Value::Bool(true))
 }
 
@@ -1516,6 +1516,10 @@ mod tests {
         assert!(!requires_new_session(&nix, Action::Change, &old, &packages_only, None));
         let system = json!({"options":{"home.sessionPath":["/new"]}});
         assert!(!requires_new_session(&nix, Action::Install, &Value::Null, &system, None));
+        let package = json!({"resources":[{"type":"Furnish/Package"}]});
+        let metadata = serde_json::from_value(json!({"furnishNewSession":true})).unwrap();
+        assert!(requires_new_session(&package, Action::Change, &Value::Null, &Value::Null, Some(&metadata)));
+        assert!(!requires_new_session(&package, Action::Nothing, &Value::Null, &Value::Null, Some(&metadata)));
         let declared = json!({"metadata":{"furnish":{"requiresNewSession":true}}, "resources":[{"type":"Furnish/Package"}]});
         assert!(requires_new_session(&declared, Action::Install, &Value::Null, &Value::Null, None));
         for action in [Action::Nothing, Action::Skipped] {

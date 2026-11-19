@@ -104,7 +104,7 @@ If an install option selects between a personal and a system-wide install, decla
 
 ### Furnish/Package
 
-Installs a package with the system's package manager: winget on Windows; on macOS and Linux, the first of pacman, apt, dnf, zypper, brew and nix that is installed, which is Homebrew on most Macs.
+Installs a package with a system, per-user or collection package manager. The default on Windows is winget. On macOS and Linux, Furnish checks pacman, apt, dnf, zypper, brew and nix in that order.
 
 | Property | Meaning |
 |---|---|
@@ -138,6 +138,25 @@ When migrating an existing collection, move each per-manager property into `name
 Many tools are also installed some other way: with npm or pip, with the vendor's own installer, or with another package manager. With `command`, such an app shows as installed outside furnish, and furnish neither installs it a second time nor updates or removes it. furnish looks for the program on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (on Windows, in `~\.local\bin` and npm's folder in `%APPDATA%`), and never runs it. If the package manager is missing, the app shows as installed when the program is there, and as needing the package manager when it isn't.
 
 On macOS, Homebrew packages also recognize vendor-installed apps without a `command`. For example, a package named `viscosity` recognizes `/Applications/Viscosity.app` as installed outside furnish. Furnish checks the app bundles named by the cask in `/Applications` and `~/Applications`. These apps satisfy dependencies and keep their original update and uninstall method.
+
+#### Per-user tools with mise
+
+Use mise for tools distributed through its registry or a backend such as GitHub, Aqua or pipx. To require mise on Linux, macOS and Windows, set `packageManager: mise` and use the tool ID as `name`. Supply version requirements in `versions`. For example, this step installs the GitHub release of Kargo in the signed-in user's account.
+
+```yaml
+- name: Install Kargo
+  type: Furnish/Package
+  properties:
+    packageManager: mise
+    name: github:akuity/kargo
+    command: kargo
+```
+
+To offer mise as a fallback, use a portable `name` and put its tool ID in `namesByManager.mise`. For example, `name: jq` with `namesByManager: { brew: jq, mise: 'aqua:jqlang/jq' }` uses Homebrew on a Mac with both managers and mise on a Windows machine with winget and mise. A matching Linux distribution name selects the usual system manager first. Otherwise, when mise is available, Furnish picks the first installed manager with an explicit name, with mise last. Without mise the usual system selection applies. Use `packageManager: mise` when the tool is available only through mise.
+
+The built-in manager reserves the ID `mise`. If your collection declares its own script manager under that name, remove the declaration to use the built-in manager, or rename the script manager and the steps that reference it.
+
+An app with a step that selects mise runs as the signed-in user, including apps in admin-preset collections. Put machine-wide prerequisites in a separate dependency if they require the Furnish service. Collection authors can check this selection across platforms with [target profiles](#check-target-profiles-in-ci).
 
 #### Package managers supplied by a collection
 
@@ -903,7 +922,7 @@ The preview evaluates `context().os.family` for each system. It marks a step `(d
 
 ### Check target profiles in CI
 
-Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. List the native managers available on the target in Furnish’s priority order: `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix` on Unix, or `winget` on Windows. Include a collection manager's ID when its script and prerequisites are available on that target.
+Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. List the native managers available on the target in Furnish’s priority order. On Unix the order is `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix`, then `mise`. On Windows list `winget` before `mise`. Include a collection manager's ID when its script and prerequisites are available on that target.
 
 For example, an admin can verify which package implements a step named `Editor` and which dependency applies to developers:
 

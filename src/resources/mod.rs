@@ -10,6 +10,7 @@
 pub(crate) mod closed_apps;
 mod command;
 pub(crate) mod common;
+pub(crate) mod mise;
 pub mod diff;
 pub(crate) mod note;
 pub mod text;

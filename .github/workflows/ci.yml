@@ -393,7 +393,7 @@ jobs:
       - run: cargo build --release
       - run: cargo test --release --locked --test cli_pipe --test installer_external --test closed_app_settings
       - if: runner.os == 'Windows'
-        run: cargo test --release --locked --lib package_names::tests
+        run: cargo test --release --locked --lib -- package_names::tests resources::mise
       - if: runner.os == 'Windows'
         run: cargo test --release --locked --test script_managers
       - if: runner.os == 'Windows'

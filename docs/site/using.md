@@ -67,6 +67,12 @@ On the Collections page, Downloads and earlier versions sets this per collection
 
 ![The example collection's Downloads and earlier versions section on the Collections page.](images/collection-settings.webp)
 
+## Command-line tools installed with mise
+
+A collection can use mise to install tools for your account. If an app shows that it needs mise, install mise and retry. Furnish checks the active global tool version and available releases when it checks the app for updates. The app's steps preview shows the selected manager and tool ID.
+
+Use the installed command directly in a terminal. If Furnish adds the mise shims directory to your shell or Windows user PATH, open a new terminal from the desktop to pick up the change. Furnish can set up Bash, Zsh, Fish and POSIX login shells. For another shell or a read-only shell profile, enable mise activation or add its shims directory to PATH yourself. A project with its own mise configuration can still select a different tool version. [How mise shims work](https://mise.jdx.dev/dev-tools/shims.html)
+
 ## Earlier versions of an app
 
 The Versions section of an app's page lists the versions of the app in the collection's history, newest first: the day of each, the versions of the program the collection's file accepted then, and which one is installed. Install next to a version installs it. furnish then keeps the app at that version until you choose another one, also when the collection changes the app. The app's page says when a newer version is available, and Install the current version goes back to the collection's version. In the terminal: `furnish versions <app>` and `furnish install <app> --version <day or commit>`.

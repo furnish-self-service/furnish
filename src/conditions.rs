@@ -140,6 +140,25 @@ pub(crate) fn holds_for(doc: &Value, expr: &str, values: &Map<String, Value>) ->
     Ok(execute(doc, expr, context(values))? == Value::Bool(true))
 }
 
+pub(crate) fn value_for(doc: &Value, expr: &str, values: &Map<String, Value>) -> Result<Value> {
+    if doc.get("variables").is_none() && doc.get("functions").is_none() {
+        return execute(doc, expr, context(values));
+    }
+    // Resolve selectors using the document's own DSC variables and functions, without
+    // discovering or invoking any resources just to choose the execution account.
+    use dsc_lib::{configure::Configurator, progress::ProgressFormat};
+    let mut config = json!({"$schema":crate::catalog::DSC_SCHEMA, "resources":[], "directives":{"resourceDiscovery":"duringDeployment"}});
+    for key in ["parameters", "variables", "functions"] {
+        if let Some(value) = doc.get(key) {
+            config[key] = value.clone();
+        }
+    }
+    let mut configurator = Configurator::new(&config.to_string(), ProgressFormat::None)?;
+    supply_host(doc, &mut configurator.context)?;
+    configurator.set_context((!values.is_empty()).then(|| json!({"parameters":values})).as_ref())?;
+    Ok(Statement::new()?.parse_and_execute(expr, &configurator.context)?)
+}
+
 /// Resolve author-supplied DSC parameter defaults before Furnish uses them in its
 /// own metadata and resource filtering. DSC reports invalid defaults on validation.
 pub(crate) fn parameter_default(doc: &Value, value: &Value) -> Value {

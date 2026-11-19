@@ -103,7 +103,7 @@ impl Profile {
         for id in &self.package_managers {
             ensure!(seen.insert(id), "duplicate package manager '{id}'");
             if platform::supported_manager(id) {
-                ensure!((family == "Windows") == (id == "winget"), "'{id}' is unavailable on {family}");
+                ensure!(platform::manager_on_platform(id, family == "Windows"), "'{id}' is unavailable on {family}");
                 native.push(id.as_str());
             } else {
                 let script = scripts.get(id).with_context(|| format!("package manager '{id}' is not declared by this collection"))?;

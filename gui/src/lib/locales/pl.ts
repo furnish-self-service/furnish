@@ -373,6 +373,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Nie uruchomiono',
   'plan.note': 'To jest podgląd. Na tym komputerze nic nie zostało zmienione.',
   'plan.note.package.explicit': "Aplikacja wskazuje menedżer pakietów <code>{manager}</code>",
+  'plan.note.package.mappedManager': "Aplikacja podaje nazwę pakietu dla dostępnego menedżera <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> jest pierwszym dostępnym menedżerem pakietów w systemie",
   'plan.note.package.explicitScript': "Aplikacja wskazuje menedżer <code>{manager}</code> dostarczony przez skrypt kolekcji",
   'plan.note.package.onlyScript': "<code>{manager}</code> jest jedynym dostępnym menedżerem dostarczonym przez skrypt kolekcji",

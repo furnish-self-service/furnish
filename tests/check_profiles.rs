@@ -82,6 +82,26 @@ fn documented_editor_checks_options_dependencies_and_ordered_distribution_like()
 }
 
 #[test]
+fn mise_profiles_select_native_mappings_first_and_accept_backend_tool_ids_on_all_platforms() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("repo");
+    let path = temp.path().join("targets.yaml");
+    let mut step = package("kargo");
+    step["properties"]["namesByManager"] = json!({"brew":"kargo","mise":"github:akuity/kargo"});
+    app(&dir, "kargo", json!({"resources":[step]}));
+    let mut profiles = json!({});
+    for (family, managers, manager, name) in [
+        ("Linux", vec!["apt", "mise"], "mise", "github:akuity/kargo"),
+        ("Windows", vec!["winget", "mise"], "mise", "github:akuity/kargo"),
+        ("macOS", vec!["brew", "mise"], "brew", "kargo"),
+    ] {
+        profiles[family] = json!({"family":family, "packageManagers":managers, "expect":{"kargo":{"packages":{"kargo":{"manager":manager,"name":name}}}}});
+    }
+    fs::write(&path, json!({"profiles":profiles}).to_string()).unwrap();
+    check(temp.path(), &dir, Some(&path), true);
+}
+
+#[test]
 fn mutually_exclusive_edges_pass_and_a_concrete_cycle_fails() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("repo");

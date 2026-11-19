@@ -356,6 +356,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Non eseguito',
   'plan.note': "Questa è un'anteprima. Non è stato modificato nulla su questo computer.",
   'plan.note.package.explicit': "L’app seleziona il gestore di pacchetti <code>{manager}</code>",
+  'plan.note.package.mappedManager': "L’app indica un nome di pacchetto per il gestore disponibile <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> è il primo gestore di pacchetti disponibile sul sistema",
   'plan.note.package.explicitScript': "L’app seleziona il gestore <code>{manager}</code> fornito da uno script della raccolta",
   'plan.note.package.onlyScript': "<code>{manager}</code> è l’unico gestore disponibile fornito da uno script della raccolta",

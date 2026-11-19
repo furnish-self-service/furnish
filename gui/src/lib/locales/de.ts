@@ -354,6 +354,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.notRun': 'Nicht ausgeführt',
   'plan.note': 'Dies ist eine Vorschau. Auf diesem Computer wurde nichts geändert.',
   'plan.note.package.explicit': "Die App gibt den Paketmanager <code>{manager}</code> vor",
+  'plan.note.package.mappedManager': "Die App gibt einen Paketnamen für den verfügbaren Paketmanager <code>{manager}</code> an",
   'plan.note.package.native': "<code>{manager}</code> ist der erste verfügbare Paketmanager des Systems",
   'plan.note.package.explicitScript': "Die App gibt den skriptbasierten Paketmanager <code>{manager}</code> aus der Sammlung vor",
   'plan.note.package.onlyScript': "<code>{manager}</code> ist der einzige verfügbare skriptbasierte Paketmanager der Sammlung",
