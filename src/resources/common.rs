@@ -398,7 +398,8 @@ pub fn run(args: &[String]) -> Result<std::process::Output> {
 }
 
 /// The program as given if it has a path, else where it is on PATH. On Windows also with the
-/// extensions in PATHEXT, so `bw` finds `bw.cmd`.
+/// extensions in PATHEXT, so `bw` finds `bw.cmd`. A newly installed mise tool may only
+/// be in the shim directory until the next login.
 fn find_program(program: &str) -> Option<PathBuf> {
     let given = Path::new(program);
     if given.components().count() > 1 {
@@ -410,10 +411,12 @@ fn find_program(program: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
+    let in_dir = |dir: PathBuf| {
         extensions.iter().map(|ext| dir.join(format!("{program}{ext}"))).find(|p| p.is_file())
-    })
+    };
+    std::env::var_os("PATH")
+        .and_then(|path| std::env::split_paths(&path).find_map(&in_dir))
+        .or_else(|| super::mise::shims_dir().and_then(in_dir))
 }
 
 /// Make a file or folder accessible only to the user: mode 600 (folders 700) on Unix, an access
