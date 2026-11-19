@@ -121,16 +121,16 @@
       <span>{store.brand.name}</span>
     </button>
 
-    <button class:active={isActive('discover')} onclick={() => go({ page: 'discover' })}>{t('nav.discover')}</button>
-    <button class:active={isActive('installed')} onclick={() => go({ page: 'installed' })}>
+    <button aria-current={isActive('discover') ? 'page' : undefined} onclick={() => go({ page: 'discover' })}>{t('nav.discover')}</button>
+    <button aria-current={isActive('installed') ? 'page' : undefined} onclick={() => go({ page: 'installed' })}>
       {t('nav.installed')} <span class="count">{count('installed') || ''}</span>
     </button>
-    <button class:active={isActive('updates')} onclick={() => go({ page: 'updates' })}>
+    <button aria-current={isActive('updates') ? 'page' : undefined} onclick={() => go({ page: 'updates' })}>
       {t('nav.updates')}
       {#if count('updates')}<span class="count pending">{count('updates')}</span>{/if}
     </button>
 
-    <button class:active={isActive('activity')} onclick={() => go({ page: 'activity' })}>
+    <button aria-current={isActive('activity') ? 'page' : undefined} onclick={() => go({ page: 'activity' })}>
       {t('nav.activity')}
       {#if activity}<span class="count running">{activity}</span>{/if}
     </button>
@@ -138,18 +138,18 @@
     {#if categories.length}
       <h2>{t('nav.categories')}</h2>
       {#each categories as { key, name } (key)}
-        <button class:active={isActive('category', key)} onclick={() => go({ page: 'category', name: key })}>{name}</button>
+        <button aria-current={isActive('category', key) ? 'page' : undefined} onclick={() => go({ page: 'category', name: key })}>{name}</button>
       {/each}
     {/if}
 
     <div class="spacer"></div>
-    <button class:active={isActive('collections')} onclick={() => go({ page: 'collections' })}>
+    <button aria-current={isActive('collections') ? 'page' : undefined} onclick={() => go({ page: 'collections' })}>
       {t('nav.collections')}
       {#if collectionUpdates()}
         <span class="count pending" role="img" aria-label={t('nav.collectionUpdates', { n: collectionUpdates() })}>{collectionUpdates()}</span>
       {/if}
     </button>
-    <button class:active={isActive('settings')} onclick={() => go({ page: 'settings' })}>
+    <button aria-current={isActive('settings') ? 'page' : undefined} onclick={() => go({ page: 'settings' })}>
       {t('nav.settings')}
       {#if !store.installedDesktop && store.selfUpdate?.available && store.selfUpdate.mode !== 'off'}
         <span class="dot" role="img" aria-label={t('nav.selfUpdate', { brand: store.brand.name })} title={t('nav.selfUpdate', { brand: store.brand.name })}></span>
@@ -315,13 +315,13 @@
   }
   .shell {
     display: grid;
-    grid-template-columns: 14.5rem 1fr;
+    grid-template-columns: 14.5rem minmax(0, 1fr);
     height: 100vh;
   }
   nav {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: .25rem;
     padding: 1.25rem 0.85rem;
     background: var(--sidebar);
     border-right: 1px solid var(--line);
@@ -343,7 +343,7 @@
     align-items: center;
     gap: 0.6rem;
     font: 700 1.35rem var(--font-display);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
   }
   .brand img {
     border-radius: 9px;
@@ -360,7 +360,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0.65rem;
+    min-height: 2.5rem;
+    padding: .5rem .8rem;
     border: 0;
     border-radius: 9px;
     background: none;
@@ -372,8 +373,9 @@
   nav button:hover {
     background: var(--hover);
   }
-  nav button.active {
-    background: var(--accent-soft);
+  nav button[aria-current="page"] {
+    background: var(--surface);
+    box-shadow: inset 3px 0 var(--accent);
     color: var(--accent-ink);
     font-weight: 650;
   }
@@ -419,8 +421,8 @@
   }
   h1 {
     margin: 0;
-    font: 700 2rem/1.1 var(--font-display);
-    letter-spacing: -0.02em;
+    font: var(--page-heading);
+    letter-spacing: -0.03em;
   }
   .check {
     display: flex;
@@ -469,7 +471,7 @@
   }
   @media (max-width: 760px) {
     .shell {
-      grid-template-columns: 11rem 1fr;
+      grid-template-columns: 11rem minmax(0, 1fr);
     }
     main {
       padding: 1.5rem 1.25rem 3rem;

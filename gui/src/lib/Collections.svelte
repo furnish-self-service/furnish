@@ -220,8 +220,8 @@
   }
   h1 {
     margin: 0;
-    font: 700 2rem/1.1 var(--font-display);
-    letter-spacing: -0.02em;
+    font: var(--page-heading);
+    letter-spacing: -0.03em;
   }
   .lead {
     color: var(--ink-soft);

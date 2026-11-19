@@ -82,10 +82,10 @@
   }
 </script>
 
-<ul class="settings">
+<ul class="settings preference-list">
   {#each rows() as row (row.key)}
-    <li>
-      <label for="cs-{collection.name}-{row.key}">
+    <li class="row">
+      <label class="text" for="cs-{collection.name}-{row.key}">
         <span class="label">{row.label}</span>
         <span class="desc">{row.desc}</span>
       </label>
@@ -104,53 +104,3 @@
     </li>
   {/each}
 </ul>
-
-<style>
-  .settings {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    border-top: 1px solid var(--line);
-  }
-  li {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1.5rem;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--line);
-  }
-  label {
-    display: grid;
-    gap: 0.15rem;
-    flex: 1;
-    min-width: 14rem;
-  }
-  .label,
-  .value {
-    font-weight: 600;
-  }
-  .desc {
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-  select {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 0.92rem var(--font-body);
-  }
-  .org {
-    margin-left: 0.4rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 650;
-    color: var(--ink-soft);
-    background: var(--hover);
-    white-space: nowrap;
-  }
-</style>

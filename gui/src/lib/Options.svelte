@@ -30,10 +30,10 @@
   }
 </script>
 
-<ul class="options">
+<ul class="options preference-list">
   {#each options as o (o.name)}
-    <li>
-      <label for="opt-{target}-{o.name}">
+    <li class="row">
+      <label class="text" for="opt-{target}-{o.name}">
         <span class="label">{optionLabel(collection, o)}</span>
         {#if optionDescription(collection, o)}<span class="desc">{optionDescription(collection, o)}</span>{/if}
       </label>
@@ -62,56 +62,3 @@
     </li>
   {/each}
 </ul>
-
-<style>
-  .options {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    border-top: 1px solid var(--line);
-  }
-  li {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1.5rem;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--line);
-  }
-  label {
-    display: grid;
-    gap: 0.15rem;
-    flex: 1;
-    min-width: 14rem;
-  }
-  .label {
-    font-weight: 600;
-  }
-  .desc {
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
-  select,
-  input {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 0.92rem var(--font-body);
-  }
-  .value {
-    font-weight: 600;
-  }
-  .org {
-    margin-left: 0.4rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 650;
-    color: var(--ink-soft);
-    background: var(--hover);
-    white-space: nowrap;
-  }
-</style>

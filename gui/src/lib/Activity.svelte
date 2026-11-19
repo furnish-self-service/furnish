@@ -137,8 +137,8 @@
   }
   h1 {
     margin: 0 0 1.5rem;
-    font: 700 2rem/1.1 var(--font-display);
-    letter-spacing: -0.02em;
+    font: var(--page-heading);
+    letter-spacing: -0.03em;
   }
   h2 {
     margin: 1.75rem 0 0.75rem;
