@@ -56,6 +56,11 @@
           "type": "string",
           "description": "A file in the collection to supply as a private temporary copy, in place of content."
         },
+        "showDiff": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the differing lines when test.file is %s. The preview includes both command output and supplied input."
+        },
         "test": {
           "type": "object",
           "required": [

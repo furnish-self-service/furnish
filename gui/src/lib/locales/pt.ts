@@ -399,7 +399,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'plan.diff.counts': "{added} adicionadas, {removed} removidas",
   'plan.diff.more': { one: "Mais {n} linha não mostrada", other: "Mais {n} linhas não mostradas" },
   'plan.diff.binary': "Ficheiro binário, não mostrado",
-  'plan.diff.hidden': "Linhas não mostradas: só o proprietário pode ler o ficheiro",
+  'plan.diff.hidden': "Para conteúdos privados, é apresentado o número de linhas alteradas",
   'plan.diff.noNewline': "Sem quebra de linha no fim do ficheiro",
   'plan.diff.noNewlineBefore': "Sem quebra de linha no fim do ficheiro antes da alteração",
   'plan.diff.noNewlineAfter': "Sem quebra de linha no fim do ficheiro depois da alteração",

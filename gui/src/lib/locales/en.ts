@@ -396,7 +396,7 @@ export const en = {
   'plan.diff.counts': "{added} added, {removed} removed",
   'plan.diff.more': { one: "{n} more line not shown", other: "{n} more lines not shown" },
   'plan.diff.binary': "Binary file, not shown",
-  'plan.diff.hidden': "Lines not shown: only the file’s owner may read it",
+  'plan.diff.hidden': "Showing change counts for private content",
   'plan.diff.noNewline': "No line break at the end of the file",
   'plan.diff.noNewlineBefore': "No line break at the end of the file before the change",
   'plan.diff.noNewlineAfter': "No line break at the end of the file after the change",

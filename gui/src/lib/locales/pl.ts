@@ -416,7 +416,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.diff.counts': "dodane: {added}, usunięte: {removed}",
   'plan.diff.more': { one: "Nie pokazano {n} kolejnego wiersza", few: "Nie pokazano {n} kolejnych wierszy", many: "Nie pokazano {n} kolejnych wierszy", other: "Nie pokazano {n} kolejnego wiersza" },
   'plan.diff.binary': "Plik binarny, nie jest pokazany",
-  'plan.diff.hidden': "Wiersze nie są pokazane: tylko właściciel może czytać ten plik",
+  'plan.diff.hidden': "Dla treści prywatnych wyświetlana jest liczba zmienionych wierszy",
   'plan.diff.noNewline': "Brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineBefore': "Przed zmianą brak znaku nowego wiersza na końcu pliku",
   'plan.diff.noNewlineAfter': "Po zmianie brak znaku nowego wiersza na końcu pliku",

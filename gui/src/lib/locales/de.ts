@@ -397,7 +397,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.diff.counts': "{added} hinzugefügt, {removed} entfernt",
   'plan.diff.more': { one: "{n} weitere Zeile nicht angezeigt", other: "{n} weitere Zeilen nicht angezeigt" },
   'plan.diff.binary': "Binärdatei, nicht angezeigt",
-  'plan.diff.hidden': "Zeilen nicht angezeigt: Nur der Besitzer darf die Datei lesen",
+  'plan.diff.hidden': "Für private Inhalte wird die Anzahl der geänderten Zeilen angezeigt",
   'plan.diff.noNewline': "Kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineBefore': "Vor der Änderung kein Zeilenumbruch am Ende der Datei",
   'plan.diff.noNewlineAfter': "Nach der Änderung kein Zeilenumbruch am Ende der Datei",

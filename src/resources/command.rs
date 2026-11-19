@@ -21,6 +21,8 @@ use super::{Plan, common, diff, note::{Note, note}, parse, value};
 struct Props {
     content: Option<String>,
     source: Option<PathBuf>,
+    #[serde(default, rename = "showDiff")]
+    show_diff: bool,
     test: Test,
     present: Option<Test>,
     set: Vec<String>,
@@ -109,6 +111,9 @@ fn props(v: &Value) -> Result<Props> {
     if p.content.is_some() && p.source.is_some() {
         bail!("content and source: use one of them for the command's input file");
     }
+    if p.show_diff && p.test.file.as_deref() != Some("%s") {
+        bail!("showDiff needs test.file set to '%s' to compare command output with the supplied input");
+    }
     if let Some(Remove::Word(word)) = &p.remove
         && word != "keep"
     {
@@ -161,7 +166,7 @@ struct Outcome {
 }
 
 /// Run the test.
-fn passes(test: &Test, input: Option<&Input>, projected: &Value) -> Result<Outcome> {
+fn passes(test: &Test, input: Option<&Input>, projected: &Value, show_diff: bool) -> Result<Outcome> {
     let out = exec(&test.command, input)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let command = test.command.join(" ");
@@ -184,7 +189,7 @@ fn passes(test: &Test, input: Option<&Input>, projected: &Value) -> Result<Outco
         }
         (None, Some(path)) => {
             let (file_text, hidden, shown_path) = if let Some(input) = input.filter(|_| path == "%s") {
-                (Some(common::Text::decode(&input.bytes()?)?), true, input.name())
+                (Some(common::Text::decode(&input.bytes()?)?), !show_diff, input.name())
             } else {
                 let mut file = common::Managed::open(path)?;
                 if file.unreadable {
@@ -273,7 +278,7 @@ fn short(text: &str) -> String {
 
 /// Whether a check passes; a program that isn't installed means it doesn't.
 fn passes_check(test: &Test, input: Option<&Input>, projected: &Value) -> Result<bool> {
-    match passes(test, input, projected) {
+    match passes(test, input, projected, false) {
         Err(e) if e.chain().any(|e| e.is::<common::Missing>()) => Ok(false),
         result => Ok(result?.ok),
     }
@@ -313,7 +318,7 @@ pub(super) fn evaluate_with_files(v: &Value, files: &Value) -> Result<Plan> {
     let input = p.content.map(Input::Content).or_else(|| p.source.map(Input::Source));
     let exist = p.exist.unwrap_or(true);
     let mut plan = Plan::new(v);
-    let (passes, test_note) = match passes(&p.test, input.as_ref(), &files["test"]) {
+    let (passes, test_note) = match passes(&p.test, input.as_ref(), &files["test"], p.show_diff) {
         // Nothing to remove where the tool isn't installed.
         Err(e) if !exist && e.chain().any(|e| e.is::<common::Missing>()) => (false, None),
         result => {
@@ -449,6 +454,34 @@ mod tests {
         let mut ambiguous = props;
         ambiguous["source"] = "vpn.ovpn".into();
         assert!(check(&ambiguous).is_err());
+    }
+
+    #[test]
+    fn command_input_diff_shows_normalized_lines_on_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("vpn.ovpn");
+        fs::write(&source, "# expected profile\nclient\nremote new.example\n").unwrap();
+        let mut props = json!({
+            "source": source,
+            "test": {
+                "command": ["printf", "client\n\nremote old.example\n"],
+                "file": "%s",
+                "ignoreLines": "^(#|$)"
+            },
+            "set": ["true"]
+        });
+        let comparison = |props: &Value| evaluate(props).unwrap().steps.remove(0).params;
+        let hidden = comparison(&props);
+        assert_eq!(hidden["hidden"], true);
+        assert!(!hidden.contains_key("diff"));
+
+        props["showDiff"] = true.into();
+        let shown = comparison(&props);
+        assert_eq!(shown["diff"]["hunks"][0]["lines"], json!([" client", "-remote old.example", "+remote new.example"]));
+        assert!(!shown.contains_key("hidden"));
+
+        props["test"]["file"] = json!(source);
+        assert!(check(&props).is_err());
     }
 
     fn marker_exists(path: &str) -> bool {
