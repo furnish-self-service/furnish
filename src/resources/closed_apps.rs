@@ -6,6 +6,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use sysinfo::{ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
+#[cfg(target_os = "linux")]
+mod electron;
+
 #[derive(Default, Deserialize)]
 #[serde(try_from = "Value")]
 pub(super) struct ClosedApps(Vec<String>);
@@ -59,7 +62,7 @@ impl ClosedApps {
     }
 }
 
-/// Match only the requested executable basenames against one fresh process snapshot.
+/// Match requested applications against the running processes visible to the caller.
 pub(crate) fn running(names: &[String]) -> Result<Vec<String>> {
     if names.is_empty() {
         return Ok(Vec::new());
@@ -69,15 +72,24 @@ pub(crate) fn running(names: &[String]) -> Result<Vec<String>> {
         ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().without_tasks().with_exe(UpdateKind::Always),
     );
     ensure!(refreshed > 0, "could not check running applications; retry this change when the process list is available");
+    #[cfg(target_os = "linux")]
+    let electron_apps = electron::running_apps(&mut system);
     let running = names.iter().filter(|wanted| {
+        #[cfg(target_os = "linux")]
+        if electron_apps.contains(&wanted.to_ascii_lowercase()) {
+            return true;
+        }
         system.processes().values().any(|p| {
             // A zombie can no longer write. On Linux the kernel process name can be
             // truncated or renamed, so prefer the executable path whenever available.
-            let basename = p.exe().and_then(|path| path.file_name()).unwrap_or_else(|| p.name());
-            p.status() != ProcessStatus::Zombie && matches_name(basename, wanted)
+            p.status() != ProcessStatus::Zombie && matches_name(basename(p), wanted)
         })
     }).cloned().collect();
     Ok(running)
+}
+
+fn basename(process: &sysinfo::Process) -> &OsStr {
+    process.exe().and_then(|path| path.file_name()).unwrap_or_else(|| process.name())
 }
 
 #[cfg(not(windows))]

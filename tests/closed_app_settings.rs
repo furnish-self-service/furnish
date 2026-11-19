@@ -27,14 +27,40 @@ impl Drop for CachedApp {
     }
 }
 
+fn fixture_binary(source: &Path, destination: &Path) {
+    #[cfg(target_os = "linux")]
+    if fs::hard_link(source, destination).is_ok() {
+        return;
+    }
+    fs::copy(source, destination).unwrap();
+}
+
+fn spawn_fixture(command: &mut Command) -> Child {
+    // A concurrent fork can briefly inherit the writable fd of a cross-filesystem
+    // fixture copy. Linux releases it on exec. Retry only that transient error.
+    #[cfg(target_os = "linux")]
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match command.spawn() {
+                Ok(child) => return child,
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("could not start fixture {command:?}: {error}"),
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    command.spawn().unwrap()
+}
+
 fn start_app(executable: &Path, settings: &Path) -> CachedApp {
-    let mut child = Command::new(executable)
+    let mut child = spawn_fixture(Command::new(executable)
         .args(["--exact", "cached_settings_survive_relaunch", "--nocapture"])
         .env(FIXTURE_SETTINGS, settings)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stdout(Stdio::piped()));
     let reader = BufReader::new(child.stdout.as_mut().unwrap());
     assert!(reader.lines().any(|line| line.unwrap().contains("fixture settings loaded")));
     CachedApp(child)
@@ -81,7 +107,7 @@ fn fixture_executable(root: &Path) -> (String, PathBuf) {
         root.file_name().unwrap().to_string_lossy().trim_start_matches('.')
     );
     let path = root.join(format!("{name}{}", env::consts::EXE_SUFFIX));
-    fs::copy(env::current_exe().unwrap(), &path).unwrap();
+    fixture_binary(&env::current_exe().unwrap(), &path);
     (name, path)
 }
 
@@ -213,4 +239,52 @@ fn file_resources_guard_each_mutation_and_allow_noops() {
         resource(kind, "set", &props, true);
     }
     drop(app);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn shared_electron_blocks_only_the_running_package() {
+    // A shell copied under a shared runtime's basename gives the kernel real /proc
+    // entries with the same executable and argument layout as the packaged launchers.
+    // Each fixture's first operand is its package; the script stays alive until EOF.
+    fn launch(exe: &Path, archive: &Path, later_argument: &Path) -> CachedApp {
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(archive, "echo ready\nread -r line\nexit 0\n").unwrap();
+        let mut child = spawn_fixture(Command::new(exe).arg(archive).arg(later_argument)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()));
+        let mut ready = String::new();
+        BufReader::new(child.stdout.as_mut().unwrap()).read_line(&mut ready).unwrap();
+        assert_eq!(ready, "ready\n");
+        CachedApp(child)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let product = format!("Notes-{}", root.file_name().unwrap().to_str().unwrap());
+    let wanted = product.to_ascii_lowercase();
+    let native = root.join("electron");
+    let versioned = root.join("electron43");
+    let decoy = root.join("unrelated-runtime");
+    let shell = fs::canonicalize("/bin/sh").unwrap();
+    for exe in [&native, &versioned, &decoy] {
+        fixture_binary(&shell, exe);
+    }
+    let nix = root.join("opt").join(&product).join("resources/app.asar");
+    let arch = root.join("lib").join(&wanted).join("app.asar");
+    let other = root.join("lib/AnotherApp/app.asar");
+    let _other = launch(&native, &other, &nix);
+    let _decoy = launch(&decoy, &arch, &nix);
+    let settings = root.join("settings.json");
+    let props = json!({"path":settings,"location":"$.enabled","value":true,"requiresClosed":[wanted]});
+    let set = |success| furnish(root, &["dsc-resource", "value", "set"], Some(&props), success);
+
+    for (exe, target) in [(&native, &nix), (&versioned, &arch)] {
+        fs::write(&settings, "{}").unwrap();
+        let process = launch(exe, target, &other);
+        assert_blocked(&set(false), &wanted);
+        assert_eq!(fs::read(&settings).unwrap(), b"{}");
+        drop(process);
+        set(true);
+        assert_eq!(read_settings(&settings)["enabled"], true);
+    }
 }
