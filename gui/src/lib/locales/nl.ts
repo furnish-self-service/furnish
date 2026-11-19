@@ -361,6 +361,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.note.package.explicitScript': "De app kiest pakketbeheerder <code>{manager}</code> uit de scripts van de verzameling",
   'plan.note.package.onlyScript': "<code>{manager}</code> is de enige beschikbare pakketbeheerder uit de scripts van de verzameling",
   'plan.note.package.windows': "Windows valt terug op pakketbeheerder <code>{manager}</code>",
+  'plan.note.package.needsTool': "Voor een voorbeeld van de pakketwijzigingen is <code>{tool}</code> nodig",
   'plan.note.package.noManager': "Er is geen pakketbeheerder beschikbaar",
   'plan.note.package.distroName': "De pakketnaam <code>{name}</code> hoort bij distributie <code>{selector}</code>",
   'plan.note.package.familyName': "De pakketnaam <code>{name}</code> komt overeen met <code>{selector}</code> in <code>ID_LIKE</code>",

@@ -361,6 +361,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.note.package.explicitScript': "L’app seleziona il gestore <code>{manager}</code> fornito da uno script della raccolta",
   'plan.note.package.onlyScript': "<code>{manager}</code> è l’unico gestore disponibile fornito da uno script della raccolta",
   'plan.note.package.windows': "Windows usa <code>{manager}</code> come gestore di pacchetti di riserva",
+  'plan.note.package.needsTool': "Per visualizzare l’anteprima delle modifiche al pacchetto serve <code>{tool}</code>",
   'plan.note.package.noManager': "Nessun gestore di pacchetti disponibile",
   'plan.note.package.distroName': "Il nome del pacchetto <code>{name}</code> corrisponde alla distribuzione <code>{selector}</code>",
   'plan.note.package.familyName': "Il nome del pacchetto <code>{name}</code> corrisponde a <code>{selector}</code> in <code>ID_LIKE</code>",

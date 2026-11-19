@@ -358,6 +358,7 @@ export const en = {
   'plan.note.package.explicitScript': "The app selects the collection’s <code>{manager}</code> script manager",
   'plan.note.package.onlyScript': "<code>{manager}</code> is the only available collection script manager",
   'plan.note.package.windows': "Windows uses <code>{manager}</code> as its fallback package manager",
+  'plan.note.package.needsTool': "Needs <code>{tool}</code> to preview the package changes",
   'plan.note.package.noManager': "No package manager is available",
   'plan.note.package.distroName': "Package name <code>{name}</code> matches distribution <code>{selector}</code>",
   'plan.note.package.familyName': "Package name <code>{name}</code> matches <code>{selector}</code> in <code>ID_LIKE</code>",

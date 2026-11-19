@@ -359,6 +359,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.note.package.explicitScript': "Die App gibt den skriptbasierten Paketmanager <code>{manager}</code> aus der Sammlung vor",
   'plan.note.package.onlyScript': "<code>{manager}</code> ist der einzige verfügbare skriptbasierte Paketmanager der Sammlung",
   'plan.note.package.windows': "Windows greift auf den Paketmanager <code>{manager}</code> zurück",
+  'plan.note.package.needsTool': "Für die Vorschau der Paketänderungen wird <code>{tool}</code> benötigt",
   'plan.note.package.noManager': "Es ist kein Paketmanager verfügbar",
   'plan.note.package.distroName': "Der Paketname <code>{name}</code> ist für die Distribution <code>{selector}</code> hinterlegt",
   'plan.note.package.familyName': "Der Paketname <code>{name}</code> wurde über <code>{selector}</code> in <code>ID_LIKE</code> ausgewählt",
