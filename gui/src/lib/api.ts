@@ -264,7 +264,7 @@ export type NixosSetup = {
   rejected: [string, NixosProblem] | null;
   chosen: { configuration: NixosLeaf; flakeAttribute: NixosLeaf; homeManagerConfiguration: NixosLeaf; installInto: NixosLeaf };
   /** Set up with furnish's NixOS module: its `services.furnish.nix` values. */
-  module: { nix: { configuration: string | null; flakeAttribute: string | null; allowedOptions: string[]; rebuild: string | null } } | null;
+  module: { nix: { configuration: string | null; flakeAttribute: string | null; allowedOptions: string[] | null; rebuild: string | null } } | null;
   /** Its flake.nix points furnish/apps at furnish's local flake: furnish can install apps into it. */
   appsInput: boolean;
   /** Where apps with a Furnish/NixOS resource go now. */

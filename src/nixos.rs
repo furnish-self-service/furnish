@@ -180,7 +180,7 @@ pub struct ModuleFacts {
 #[serde(rename_all = "camelCase", default)]
 pub struct HomeUser {
     pub enable: bool,
-    pub allowed_options: Vec<String>,
+    pub allowed_options: Option<Vec<String>>,
 }
 
 /// Where furnish's Home Manager module writes `HomeFacts`, in the person's home folder.
@@ -202,7 +202,7 @@ pub struct HomeFacts {
 pub struct HomeNix {
     pub configuration: Option<String>,
     pub flake_attribute: Option<String>,
-    pub allowed_options: Vec<String>,
+    pub allowed_options: Option<Vec<String>>,
 }
 
 impl HomeFacts {
@@ -218,7 +218,7 @@ pub struct ModuleNix {
     pub configuration: Option<String>,
     pub flake_attribute: Option<String>,
     /// NixOS options apps may set (Furnish/NixOS, see `nixos_apps`).
-    pub allowed_options: Vec<String>,
+    pub allowed_options: Option<Vec<String>>,
     /// After installing into the configuration: `switch` or `boot`.
     pub rebuild: Option<String>,
 }

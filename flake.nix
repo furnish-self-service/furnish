@@ -110,6 +110,8 @@
           buildPhaseCargoCommand = "${cargoBuildCli}\n${cargoBuildGui}";
         });
       };
+      # Older CLI versions expect a list when the facts contain allowedOptions.
+      optionFacts = lib: nix: lib.optionalAttrs (nix.allowedOptions != null) { inherit (nix) allowedOptions; };
       # Shared by both modules: what the installed apps (`apps` of an apps.json, as
       # src/nixos_apps.rs writes it) add, and whether the allowlist permits an option. Packages are
       # names in the configuration's nixpkgs.
@@ -124,7 +126,7 @@
           appPackages = map (name: lib.attrByPath (lib.splitString "." name)
             (throw "furnish: nixpkgs has no package ${name}") pkgs) (lib.concatMap (a: a.packages or [ ]) installed);
           appSettings = lib.concatMap (a: lib.mapAttrsToList (name: value: { inherit name value; }) (a.options or { })) installed;
-          allowed = name: lib.any (p: matches p name) allowedOptions;
+          allowed = name: allowedOptions == null || lib.any (p: matches p name) allowedOptions;
         };
       # The NixOS module, with the apps from furnish's local flake (the `apps` input).
       nixosModule = apps: { config, options, lib, pkgs, ... }:
@@ -170,10 +172,9 @@
             # they could change.
             homeManagerUsers = lib.optionalAttrs (options ? home-manager) (lib.mapAttrs (_: u: {
               inherit (u.services.furnish) enable;
-              inherit (u.services.furnish.nix) allowedOptions;
-            }) config.home-manager.users);
+            } // optionFacts lib u.services.furnish.nix) config.home-manager.users);
             moduleVersion = packages.furnish.version;
-            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions rebuild trustedGroups; };
+            nix = { inherit (cfg.nix) configuration flakeAttribute rebuild trustedGroups; } // optionFacts lib cfg.nix;
           };
         in {
           options.services.furnish = {
@@ -203,9 +204,9 @@
                 example = "alex-laptop";
               };
               allowedOptions = lib.mkOption {
-                type = lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*");
-                default = [ ];
-                description = "NixOS options that apps (Furnish/NixOS) may set; `*` stands for one part of the name. Packages need no entry.";
+                type = lib.types.nullOr (lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*"));
+                default = null;
+                description = "Optional restriction on the options apps may set. By default all options are permitted. A list permits the names it matches, with `*` matching one part of a name. An empty list permits only packages.";
                 example = [ "programs.*.enable" "services.flatpak.enable" ];
               };
               trustedGroups = lib.mkOption {
@@ -290,7 +291,7 @@
           facts = {
             moduleVersion = version;
             nixosModule = args ? osConfig;
-            nix = { inherit (cfg.nix) configuration flakeAttribute allowedOptions; };
+            nix = { inherit (cfg.nix) configuration flakeAttribute; } // optionFacts lib cfg.nix;
           };
         in {
           options.services.furnish = {
@@ -310,9 +311,9 @@
                 example = "alex@laptop";
               };
               allowedOptions = lib.mkOption {
-                type = lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*");
-                default = [ ];
-                description = "Home Manager options that apps may set; `*` stands for one part of the name. Packages need no entry.";
+                type = lib.types.nullOr (lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_*-]+(\\.[A-Za-z0-9_*-]+)*"));
+                default = null;
+                description = "Optional restriction on the options apps may set. By default all options are permitted. A list permits the names it matches, with `*` matching one part of a name. An empty list permits only packages.";
                 example = [ "programs.*.enable" ];
               };
             };

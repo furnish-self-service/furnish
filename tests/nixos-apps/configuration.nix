@@ -5,7 +5,6 @@
   services.furnish.enable = true;
   services.furnish.nix = {
     configuration = "/home/alice/cfg";
-    allowedOptions = [ "programs.htop.enable" ];
     rebuild = "boot";
   };
   nixpkgs.hostPlatform = "x86_64-linux";

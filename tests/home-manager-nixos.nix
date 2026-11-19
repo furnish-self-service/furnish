@@ -10,27 +10,28 @@ let
   apps = options: {
     furnish = {
       version = 1;
-      apps = { };
+      apps.helper.options."environment.sessionVariables.CLI_HELPER_PATH" = "/run/current-system/sw/libexec/helper";
       homes.alice.apps.hello = { packages = [ "hello" ]; inherit options; };
     };
   };
-  system = options: nixpkgs.lib.nixosSystem {
+  system = extraModule: options: nixpkgs.lib.nixosSystem {
     modules = [
       (nixosModule (apps options))
       "${h.homeManager}/nixos"
       ./nixos-apps/configuration.nix
+      extraModule
       {
         users.users.alice.isNormalUser = true;
         users.users.bob.isNormalUser = true;
         # furnish's NixOS module adds its Home Manager module itself.
         home-manager.sharedModules = [ { home.stateVersion = "25.11"; services.furnish.enable = true; } ];
-        home-manager.users.alice.services.furnish.nix.allowedOptions = [ "programs.htop.enable" ];
+        home-manager.users.alice = { };
         home-manager.users.bob = { };
       }
     ];
   };
-  good = (system { "programs.htop.enable" = true; }).config;
-  bad = (system { "programs.git.enable" = true; }).config;
+  good = (system { } { "programs.htop.enable" = true; }).config;
+  bad = (system { home-manager.users.alice.services.furnish.nix.allowedOptions = [ "programs.htop.enable" ]; } { "programs.git.enable" = true; }).config;
   names = user: map lib.getName good.home-manager.users.${user}.home.packages;
   facts = builtins.fromJSON good.home-manager.users.alice.xdg.configFile."furnish/home-manager.json".text;
   system-facts = builtins.fromJSON good.environment.etc."furnish/nixos.json".text;
@@ -41,8 +42,9 @@ assert check (!lib.elem "hello" (names "bob")) "bob has alice's hello";
 assert check good.home-manager.users.alice.programs.htop.enable "htop not enabled for alice";
 assert check (!good.home-manager.users.bob.programs.htop.enable) "htop enabled for bob";
 assert check (!lib.elem "hello" (map lib.getName good.environment.systemPackages)) "hello in the system's packages";
+assert check (good.environment.sessionVariables.CLI_HELPER_PATH == "/run/current-system/sw/libexec/helper") "system option missing";
 assert check facts.nixosModule "facts don't tell the NixOS module";
-assert check (system-facts.homeManagerUsers.alice == { enable = true; allowedOptions = [ "programs.htop.enable" ]; }) "system facts: ${builtins.toJSON system-facts.homeManagerUsers}";
+assert check (system-facts.homeManagerUsers.alice == { enable = true; }) "system facts: ${builtins.toJSON system-facts.homeManagerUsers}";
 assert check (!(builtins.tryEval bad.system.build.toplevel.drvPath).success) "an option outside the allowlist evaluates";
 pkgs.runCommand "furnish-home-manager-nixos" {
   # Evaluates the whole system, without building it.

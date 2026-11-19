@@ -116,8 +116,7 @@ echo "$out" | grep -q "home-apps.url = \"path:$data\"" || { echo "$out"; fail "n
 [ -f "$data/apps.json" ] || fail "furnish didn't create its local flake"
 
 echo "== the module on"
-home 'services.furnish.enable = true;
-  services.furnish.nix.allowedOptions = [ "programs.htop.enable" "programs.ssh.includes" ];'
+home 'services.furnish.enable = true;'
 cd "$cfg"
 git init -q && git add -A
 nix flake lock 2>&1 | tail -3
