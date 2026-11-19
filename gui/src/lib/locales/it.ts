@@ -421,6 +421,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'collections.username': 'Nome utente',
   'collections.password': 'Password o token di accesso',
   'collections.warning': 'Le app vengono eseguite con diritti di amministratore. Aggiungi solo raccolte di persone di cui ti fidi.',
+  'collections.allowedUrls': 'Modelli di URL consentiti per le raccolte',
+  'collections.noPersonalUrls': 'La tua organizzazione ha disabilitato gli URL delle raccolte personali.',
   'collections.managedNote': 'Le raccolte su questo computer sono gestite dalla tua organizzazione.',
   'collections.count': { one: '{n} raccolta', other: '{n} raccolte' },
   'collections.updating': 'Aggiornamento…',

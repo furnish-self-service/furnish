@@ -419,6 +419,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'collections.username': 'Benutzername',
   'collections.password': 'Passwort oder Zugriffstoken',
   'collections.warning': 'Apps laufen mit Administratorrechten. Fügen Sie nur Sammlungen von Personen hinzu, denen Sie vertrauen.',
+  'collections.allowedUrls': 'Erlaubte URL-Muster für Sammlungen',
+  'collections.noPersonalUrls': 'Ihre Organisation hat URLs für persönliche Sammlungen deaktiviert.',
   'collections.managedNote': 'Ihre Organisation verwaltet die Sammlungen auf diesem Computer.',
   'collections.count': { one: '{n} Sammlung', other: '{n} Sammlungen' },
   'collections.updating': 'Wird aktualisiert…',

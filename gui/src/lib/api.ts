@@ -446,7 +446,7 @@ export interface Load {
 export const systemLoad = () => invoke<Load>('system_load');
 /** Settings in effect plus what the admin policy restricts. */
 export const getSettings = () =>
-  invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean; warnings: import('./i18n.ts').SettingsWarning[] }>(
+  invoke<{ settings: Settings; locked: string[]; usersCanAddCollections: boolean; allowedCollectionUrlPatterns: string[] | null; warnings: import('./i18n.ts').SettingsWarning[] }>(
     'get_settings',
   );
 export const setSetting = (key: keyof Settings, value: unknown) => invoke<void>('set_setting', { key, value });

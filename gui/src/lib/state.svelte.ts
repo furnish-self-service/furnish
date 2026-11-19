@@ -79,6 +79,7 @@ export const store = $state({
   warnings: [] as import('./i18n.ts').SettingsWarning[],
   /** From the admin policy: whether users may add collections. */
   usersCanAddCollections: true,
+  allowedCollectionUrlPatterns: null as string[] | null,
   /** App whose optional dependencies the install dialog asks about. */
   choosing: null as string | null,
   /** The dialog with the collections' unanswered required options is open. */
@@ -723,6 +724,7 @@ async function reloadSettings() {
     store.locked = effective.locked;
     store.warnings = effective.warnings ?? [];
     store.usersCanAddCollections = effective.usersCanAddCollections;
+    store.allowedCollectionUrlPatterns = effective.allowedCollectionUrlPatterns ?? null;
     setLanguage(effective.settings.language);
   } catch (e) {
     toast('error', t('toast.settings'), message(e));

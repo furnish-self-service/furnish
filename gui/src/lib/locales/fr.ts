@@ -421,6 +421,8 @@ export const fr: Record<keyof typeof en, Entry> = {
   'collections.username': 'Nom d’utilisateur',
   'collections.password': 'Mot de passe ou jeton d’accès',
   'collections.warning': 'Les apps s’exécutent avec des droits d’administrateur. N’ajoutez que des collections provenant de personnes de confiance.',
+  'collections.allowedUrls': 'Motifs d’URL autorisés pour les collections',
+  'collections.noPersonalUrls': 'Votre organisation a désactivé les URL de collections personnelles.',
   'collections.managedNote': 'Votre organisation gère les collections de cet ordinateur.',
   'collections.count': { one: '{n} collection', other: '{n} collections' },
   'collections.updating': 'Mise à jour…',

@@ -40,6 +40,28 @@ An admin policy decides which collections people get and what they can change. f
 
 For an environment with its own package tool, ship a script in a preset collection and register it under `packageManagers` in that collection's `collection.yaml`. The service runs the script from its own checkout when it installs a system app. [Writing a collection](collections.md#package-managers-supplied-by-a-collection)
 
+### Limit the collections people can add
+
+Upgrade clients before deploying `collections.allowedUrlPatterns`. Older releases ignore a policy that contains an unknown field.
+
+Set `collections.allowedUrlPatterns` in the machine policy to let people add repositories from approved locations. This example allows HTTPS and SSH repositories in the GitHub organization `acme`. The two patterns cover URLs such as `https://github.com/acme/tools.git` and `git@github.com:acme/tools.git`.
+
+```json
+{
+  "collections": {
+    "usersCanAdd": true,
+    "allowedUrlPatterns": [
+      "https://github[.]com/acme/[A-Za-z0-9_-]+[.]git",
+      "git@github[.]com:acme/[A-Za-z0-9_-]+[.]git"
+    ]
+  }
+}
+```
+
+Furnish checks the complete configured Git URL against the list of Rust regular expressions. If Git rewrites the URL, the resulting URL must also match a pattern. To use a mirror, allow both the original address and the mirror address. For a relative local path, Furnish checks the absolute path that Git records. When someone adds a furnish address, every collection URL in its description must match before Furnish accepts that address. Collections preset directly in policy or supplied by an address named in policy remain available.
+
+Omitting `allowedUrlPatterns` allows any collection URL when `usersCanAdd` is true. An empty list or a malformed pattern blocks personal collections. Setting `usersCanAdd` to false continues to block all personal additions. When you tighten the policy, Furnish hides existing personal collections whose URLs no longer match and skips their updates. Their checkouts remain on disk and become available again if the policy allows them.
+
 ## Starting at sign-in
 
 furnish installs updates only while it runs. With `startAtSignIn` on, which is the default, it starts when people sign in, with the window closed and its icon in the system tray or menu bar. furnish adds the entry for the current user: a value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on Windows, a LaunchAgent in `~/Library/LaunchAgents` on macOS, `~/.config/autostart/furnish.desktop` on Linux. It updates or removes the entry each time it starts, so a locked policy value applies from the next start on:
@@ -335,6 +357,7 @@ The flake provides the packages and a NixOS module:
   services.furnish = {
     enable = true;
     policy.collections.preset = [{ name = "acme-it"; url = "https://github.com/acme/it-apps.git"; }];
+    policy.collections.allowedUrlPatterns = [ "https://github[.]com/acme/[A-Za-z0-9_-]+[.]git" ];
     service.enable = true;
   };
   # furnish's binary cache: without it, Nix builds furnish from source on every update.

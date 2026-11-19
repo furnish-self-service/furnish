@@ -418,6 +418,8 @@ export const en = {
   'collections.username': 'Username',
   'collections.password': 'Password or access token',
   'collections.warning': 'Apps run with administrator rights. Only add collections from people you trust.',
+  'collections.allowedUrls': 'Allowed collection URL patterns',
+  'collections.noPersonalUrls': 'Your organization has disabled personal collection URLs.',
   'collections.managedNote': 'Your organization manages the collections on this computer.',
   'collections.count': { one: '{n} collection', other: '{n} collections' },
   'collections.updating': 'Updating…',

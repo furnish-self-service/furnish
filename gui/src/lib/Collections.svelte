@@ -130,6 +130,14 @@
       </details>
     {/if}
   </form>
+  {#if store.allowedCollectionUrlPatterns?.length}
+    <details class="allowed-urls">
+      <summary>{t('collections.allowedUrls')}</summary>
+      <ul>{#each store.allowedCollectionUrlPatterns as pattern}<li><code>{pattern}</code></li>{/each}</ul>
+    </details>
+  {:else if store.allowedCollectionUrlPatterns}
+    <p class="managed-note">{t('collections.noPersonalUrls')}</p>
+  {/if}
   <p class="warning">{t('collections.warning')}</p>
   {:else}
     <p class="managed-note">{t('collections.managedNote')}</p>
@@ -142,7 +150,7 @@
         {working === '*' ? t('collections.updating') : t('common.updateAll')}
       </button>
     </div>
-    <ul>
+    <ul class="collection-list">
       {#each store.collections as c (c.name)}
         <li>
           {#if c.icon}
@@ -244,6 +252,10 @@
   .name {
     flex: 1 1 9rem;
   }
+  .allowed-urls {
+    margin-top: 0.75rem;
+    overflow-wrap: anywhere;
+  }
   .warning {
     font-size: 0.8rem;
     color: var(--muted);
@@ -277,13 +289,13 @@
     margin: 0;
     font: 650 1rem var(--font-display);
   }
-  ul {
+  .collection-list {
     margin: 0.75rem 0 0;
     padding: 0;
     list-style: none;
     border-top: 1px solid var(--line);
   }
-  li {
+  .collection-list > li {
     display: flex;
     flex-wrap: wrap;
     align-items: center;

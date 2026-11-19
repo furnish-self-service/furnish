@@ -421,6 +421,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'collections.username': 'Nombre de usuario',
   'collections.password': 'Contraseña o token de acceso',
   'collections.warning': 'Las aplicaciones se ejecutan con permisos de administrador. Agrega solo colecciones de personas en las que confíes.',
+  'collections.allowedUrls': 'Patrones de URL permitidos para colecciones',
+  'collections.noPersonalUrls': 'Tu organización ha desactivado las URL de colecciones personales.',
   'collections.managedNote': 'Tu organización administra las colecciones de este equipo.',
   'collections.count': { one: '{n} colección', other: '{n} colecciones' },
   'collections.updating': 'Actualizando…',

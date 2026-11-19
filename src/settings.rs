@@ -209,6 +209,8 @@ pub struct Effective {
     pub locked: Vec<String>,
     /// From the policy: whether users may add collections.
     pub users_can_add_collections: bool,
+    /// Whole-URL regexes for personal collections. Absent means any URL is allowed.
+    pub allowed_collection_url_patterns: Option<Vec<String>>,
     /// Values that were ignored because they aren't valid for their setting, and why: from the
     /// admin policy, an endpoint's description or the user's own file.
     pub warnings: Vec<Warning>,
@@ -502,6 +504,12 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
         unreachable!("Settings serializes to an object")
     };
     let mut warnings = policy.warnings.clone();
+    if let Some(reason) = policy.collections.url_patterns_error() {
+        warnings.push(Warning::Policy {
+            key: "collections.allowedUrlPatterns".into(),
+            reason: format!("{reason}; personal collection URLs are blocked"),
+        });
+    }
     for (key, entry) in &policy.settings {
         if !merged.contains_key(key) {
             warnings.push(Warning::UnknownSetting { key: key.clone() });
@@ -549,6 +557,7 @@ pub fn merge(policy: &Policy, choices: &Map<String, Value>) -> Effective {
         settings,
         locked,
         users_can_add_collections: policy.collections.users_can_add,
+        allowed_collection_url_patterns: policy.collections.user_url_patterns().map(<[_]>::to_vec),
         warnings,
     }
 }

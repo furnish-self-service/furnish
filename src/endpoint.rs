@@ -278,12 +278,21 @@ pub fn fetch(origin: &str) -> Result<Description> {
     Ok(description)
 }
 
+/// Check the submitted collection URLs before any identity discovery, token exchange or cache
+/// update. A discovery address is a host; the URL policy matches the Git URLs it advertises.
+fn fetch_allowed(origin: &str, policy: &crate::policy::Policy) -> Result<Description> {
+    policy.check_endpoint(origin, &[], crate::policy::Collections::check_user_url)?;
+    let description = fetch(origin)?;
+    policy.check_endpoint(origin, &description.collections, crate::catalog::check_git_url)?;
+    Ok(description)
+}
+
 /// Fetch an endpoint's description; keep it if the endpoint is known already or the admin policy
 /// names it. Endpoints the user adds are kept once they signed in (see `login`).
 pub fn discover(origin: &str) -> Result<Description> {
-    let description = fetch(origin)?;
-    let named = crate::policy::load_native().endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin));
-    if named || file(origin, "json").exists() {
+    let policy = crate::policy::load_native();
+    let description = fetch_allowed(origin, &policy)?;
+    if policy.names_endpoint(origin) || file(origin, "json").exists() {
         remember(origin, &description)?;
     }
     Ok(description)
@@ -305,11 +314,12 @@ pub struct Refresh {
 /// presets, which `catalog::ensure_presets` sets up.
 pub fn refresh() -> Refresh {
     let mut result = Refresh::default();
+    let native = crate::policy::load_native();
     for (origin, _) in known() {
-        let Ok(native) = allowed(&origin) else { continue };
+        if native.check_endpoint(&origin, &[], crate::policy::Collections::check_user_url).is_err() { continue; }
         match discover(&origin) {
             Ok(description) => {
-                if !native.endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin.as_str())) {
+                if !native.names_endpoint(&origin) {
                     let (added, problems) = crate::catalog::add_new(&origin, &description);
                     result.added.extend(added.into_iter().map(|c| c.name));
                     result.problems.extend(problems);
@@ -456,6 +466,7 @@ fn migrate(path: &std::path::Path, cached: &Cached) -> bool {
 /// The known endpoint that serves this URL.
 pub fn for_url(url: &str) -> Option<(String, Description)> {
     known().into_iter().find(|(origin, _)| url.starts_with(&format!("{origin}/")))
+        .filter(|(origin, d)| crate::policy::load_native().check_endpoint(origin, &d.collections, crate::policy::Collections::check_user_url).is_ok())
 }
 
 /// A directory only the user can open, on Unix.
@@ -492,8 +503,8 @@ pub struct Preview {
 /// Fetch an endpoint's description and its identity provider's configuration without keeping
 /// anything, and say what adding it would change. Fails if the policy doesn't allow adding it.
 pub fn preview(origin: &str) -> Result<Preview> {
-    let native = allowed(origin)?;
-    let description = fetch(origin)?;
+    let native = crate::policy::load_native();
+    let description = fetch_allowed(origin, &native)?;
     let config = provider(&description.issuer)?;
     let others: Vec<_> = known().into_iter().filter(|(o, _)| o != origin).collect();
     let before = crate::policy::with_known_endpoints(native.clone(), others.clone());
@@ -511,17 +522,6 @@ pub fn preview(origin: &str) -> Result<Preview> {
         reporting,
         branding: after.branding != before.branding,
     })
-}
-
-/// The admin policy, if it allows using this endpoint: without `usersCanAdd`, only the endpoints
-/// it names.
-fn allowed(origin: &str) -> Result<crate::policy::Policy> {
-    let native = crate::policy::load_native();
-    let named = native.endpoints.iter().any(|e| self::origin(e).as_deref() == Some(origin));
-    if !native.collections.users_can_add && !named {
-        bail!("your organization manages the collections; adding other furnish addresses isn't allowed");
-    }
-    Ok(native)
 }
 
 // --- Tokens
@@ -593,6 +593,7 @@ fn jwt_exp(jwt: &str) -> Option<u64> {
 
 /// A valid token for the endpoint, renewed if it expires within a minute.
 pub fn token(origin: &str, description: &Description) -> Result<String> {
+    crate::policy::load_native().check_endpoint(origin, &description.collections, crate::catalog::check_git_url)?;
     let required = || LoginRequired { origin: origin.into(), name: description.name.clone() };
     // A sign-in at another provider or client than the endpoint names now doesn't count.
     let tokens = load_tokens(origin)
@@ -790,7 +791,7 @@ const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Sign in to the endpoint in the browser; `show` gets the URL in case the browser doesn't open.
 /// Keeps the endpoint's description once signed in (see `discover`).
 pub fn login(origin: &str, description: &Description, show: impl Fn(&str)) -> Result<()> {
-    allowed(origin)?;
+    crate::policy::load_native().check_endpoint(origin, &description.collections, crate::catalog::check_git_url)?;
     let config = provider(&description.issuer)?;
     let listener = TcpListener::bind("127.0.0.1:0").context("listening for the sign-in")?;
     let redirect = format!("http://127.0.0.1:{}/callback", listener.local_addr()?.port());

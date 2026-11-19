@@ -636,6 +636,9 @@ const steps = [
   }],
   ['collections: clone a release tag, switch to a branch, and resume the default source', async () => {
     await click(nav('Collections'));
+    const allowed = "//details[summary[normalize-space()='Allowed collection URL patterns']]";
+    await click(allowed + '/summary');
+    if ((await text(allowed + '//code')) !== '.*/second') throw new Error('wrong collection URL policy');
     const url = "//input[@placeholder='git@github.com:your-org/apps.git']";
     await typeInto(url, 'https://furnish.example.test');
     await waitFor('organization address inherits its offered sources', async () =>
