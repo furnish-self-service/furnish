@@ -10,6 +10,13 @@ export interface Queued {
   updateOnly?: boolean;
   trigger: Trigger;
   prerequisites: string[];
+  /** The user's explicit dependency choices, revalidated against the current collection on resume. */
+  chosen?: string[];
+  waitingForClose?: string[];
+  /** Recheck this request and its dependencies before resuming after a pause. */
+  refresh?: boolean;
+  recheck?: boolean;
+
 }
 
 type App = Pick<AppInfo, 'key' | 'dependencies'>;
@@ -87,4 +94,14 @@ export function needsRetry(
     case 'reinstall': return status !== 'installed' || Object.keys(app.optionChanges).length > 0;
     case 'install': return updateOnly ? status === 'needsUpdate' || status === 'blocked' : status !== 'installed';
   }
+}
+
+/** Only a paused request and its dependents survive a restart. Unrelated work and
+ * jobs that were already running keep the ordinary interrupted-operation behavior. */
+export function pausedBranch(queue: Queued[], roots = queue.filter(j => j.waitingForClose?.length).map(j => j.key)) {
+  const held = new Set(roots);
+  for (const key of held) {
+    for (const job of queue) if (job.prerequisites.includes(key)) held.add(job.key);
+  }
+  return queue.filter(job => held.has(job.key));
 }

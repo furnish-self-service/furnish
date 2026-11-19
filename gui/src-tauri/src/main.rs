@@ -357,6 +357,8 @@ struct FellBack {
 struct OperationResult {
     requires_new_session: bool,
     fallback: Option<FellBack>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    waiting_for_close: Vec<String>,
 }
 
 /// Run an install/update, uninstall or reinstall, streaming step progress as `furnish://progress` events.
@@ -384,7 +386,7 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
         let install = |which| engine::session_result(report, |progress| app.install_version(which, progress));
         let (requires_new_session, fallback) = match action {
             Action::Install(which) => match install(which.clone()) {
-                Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && app.held.is_none() => {
+                Err(err) if which == catalog::Which::Shown && !err.is::<engine::Cancelled>() && !err.is::<engine::WaitingForClose>() && app.held.is_none() => {
                     let automatic = furnish::settings::for_collection(&app.collection).settings.fallback == furnish::settings::Fallback::Automatic;
                     let Some(version) = app.previous_version().ok().filter(|_| automatic) else { return Err(err) };
                     record_revision(Some(version.commit.clone()));
@@ -395,7 +397,10 @@ async fn run(handle: tauri::AppHandle, key: String, action: Action, trigger: Opt
             Action::Uninstall => (engine::session_result(report, |progress| app.uninstall(progress))?, None),
             Action::Reinstall => (engine::session_result(report, |progress| app.reinstall(progress))?, None),
         };
-        Ok(OperationResult { requires_new_session, fallback })
+        Ok(OperationResult { requires_new_session, fallback, waiting_for_close: vec![] })
+    }).or_else(|err: anyhow::Error| {
+        let waiting = err.downcast::<engine::WaitingForClose>()?;
+        Ok(OperationResult { requires_new_session: false, fallback: None, waiting_for_close: waiting.0 })
     }))
     .await;
     std::thread::spawn(furnish::reports::send);

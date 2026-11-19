@@ -1,6 +1,6 @@
 <script lang="ts">
   // Current, queued and recently completed operations.
-  import { store, dequeue, clearQueue, queueBlocker, retryPrerequisite, isPending, retryActivity, appByKey, appName } from './state.svelte';
+  import { store, dequeue, clearQueue, queueBlocker, recheckClosed, retryPrerequisite, isPending, retryActivity, appByKey, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import Plan from './Plan.svelte';
@@ -74,12 +74,17 @@
             <span class="text">
               <span class="name">{appName(q.app!)}</span>
               <span class="meta">{actionLabel(q.key, q.action)} · {q.app!.collection}</span>
+              {#if q.waitingForClose?.length}
+                <span class="meta">{t('queue.closeApps', {names: q.waitingForClose.join(', ')})}</span>
+              {/if}
               {#if blocker}
                 <span class="meta">{dependency ? t('queue.waitingFor', { app: appName(dependency) }) : t('queue.missing', { detail: blocker })}</span>
               {/if}
             </span>
           </button>
-          {#if dependency && !isPending(dependency.key)}
+          {#if q.waitingForClose?.length}
+            <button class="secondary" onclick={() => recheckClosed(q.key)}>{t('queue.recheckClosed')}</button>
+          {:else if dependency && !isPending(dependency.key)}
             <button class="secondary" onclick={() => retryPrerequisite(dependency.key)}>{t('queue.retry', { app: appName(dependency) })}</button>
           {/if}
           <button class="secondary" aria-label={t('action.removeFromQueue', { app: appName(q.app!) })} onclick={() => dequeue(q.key)}>{t('common.remove')}</button>

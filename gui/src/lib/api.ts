@@ -67,6 +67,7 @@ export const reportInventory = (apps: [string, string][]) => invoke<void>('repor
 
 /** An install failed and furnish installed an earlier version instead (fallback "automatic"). */
 export interface OperationResult {
+  waitingForClose?: string[];
   requiresNewSession: boolean;
   fallback: FellBack | null;
 }
@@ -219,6 +220,7 @@ export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** `required`: the collection's required versions aren't met here, or no acceptable version is offered (see required.ts). */
 /** `external`: installed outside furnish (NixOS, Home Manager, another tool); furnish leaves it alone. */
 export interface AppCheck {
+  runningApps?: string[];
   status: Status;
   reason: string | null;
   removable: boolean;

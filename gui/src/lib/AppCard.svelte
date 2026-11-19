@@ -36,6 +36,9 @@
       <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ') || app.collection}</p>
     </div>
   </header>
+  {#if store.runningApps[app.key]?.length}
+    <p class="meta close-apps">{t('queue.closeApps', {names: store.runningApps[app.key].join(', ')})}</p>
+  {/if}
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
   <footer>
     {#if stateLabel}
@@ -59,6 +62,7 @@
 </article>
 
 <style>
+  .close-apps { margin: 0; color: var(--ink-soft); font-size: .88rem; }
   .card {
     position: relative;
     display: flex;

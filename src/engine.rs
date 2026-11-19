@@ -194,6 +194,9 @@ pub enum Status {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Check {
     pub status: Status,
+    /// Running applications guarding a settings edit that would change this computer.
+    #[serde(rename = "runningApps", skip_serializing_if = "Vec::is_empty")]
+    pub running_apps: Vec<String>,
     /// For `Blocked`: what is missing, e.g. "Homebrew (brew)".
     pub reason: Option<String>,
     /// furnish can uninstall it here (see [`unremovable`]); not if it is [`Check::external`].
@@ -530,13 +533,13 @@ pub fn check(doc: &Value) -> Result<Check> {
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { status: Status::Unavailable, reason: None, removable, external: None, required: None });
+        return Ok(Check { running_apps: vec![], status: Status::Unavailable, reason: None, removable, external: None, required: None });
     };
     let mut tested = match test(&doc) {
         Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external: None, required: None });
+            return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external: None, required: None });
         }
     };
     let external = external(&tested);
@@ -564,10 +567,55 @@ pub fn check(doc: &Value) -> Result<Check> {
     }
     let removable = removable && external.is_none();
     if let Some(reason) = blocked {
-        return Ok(Check { status: Status::Blocked, reason: Some(reason), removable, external, required });
+        return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external, required });
     }
+    let running_apps = running_for_changes(&tested)?;
     let states: Vec<(bool, Value)> = tested.into_iter().map(|t| (t.ok, t.actual)).collect();
-    Ok(Check { status: classify(&states), reason: None, removable, external, required })
+    Ok(Check { running_apps, status: classify(&states), reason: None, removable, external, required })
+}
+
+fn running_for_changes(tested: &[Tested]) -> Result<Vec<String>> {
+    let mut names = std::collections::BTreeSet::new();
+    for state in tested.iter().filter(|state| !state.ok) {
+        if matches!(state.kind.as_str(), "Furnish/File" | "Furnish/Line" | "Furnish/Block" | "Furnish/Value")
+            && let Some(guard) = state.desired["requiresClosed"].as_array()
+        {
+            names.extend(guard.iter().filter_map(Value::as_str).map(str::to_owned));
+        }
+    }
+    crate::resources::closed_apps::running(&names.into_iter().collect::<Vec<_>>())
+}
+
+/// A verified pending settings mutation is waiting for one or more running executables.
+#[derive(Debug)]
+pub struct WaitingForClose(pub Vec<String>);
+
+impl std::fmt::Display for WaitingForClose {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Close {}, then retry this change", self.0.join(", "))
+    }
+}
+impl std::error::Error for WaitingForClose {}
+
+/// Check the install phase before removing anything in a reinstall.
+pub(crate) fn preflight_install(doc: &Value) -> Result<()> {
+    let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+    preflight_steps(&step_docs(doc, false)?)
+}
+
+/// Run with the actual execution identity and selected revision before the first mutation.
+/// Test just resources with a guard. An unrelated application never needs a process scan.
+fn preflight_steps(steps: &[Value]) -> Result<()> {
+    fn guarded(resource: &Value) -> bool {
+        resource["properties"].get("requiresClosed").is_some()
+            || resource["properties"]["resources"].as_array().is_some_and(|children| children.iter().any(guarded))
+    }
+    let mut tested = Vec::new();
+    for step in steps.iter().filter(|s| guarded(&s["resources"][0])).filter_map(applicable) {
+        tested.extend(test(&step)?);
+    }
+    let running = running_for_changes(&tested)?;
+    if running.is_empty() { Ok(()) } else { Err(WaitingForClose(running).into()) }
 }
 
 /// The resources (those that apply here) that aren't in their desired state, e.g. "'profile'
@@ -933,6 +981,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
         let _ = fs::remove_file(file);
     }
     let docs = step_docs(doc, uninstall)?;
+    preflight_steps(&docs)?;
     let steps = preview_steps(&docs, uninstall)?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
@@ -1507,6 +1556,20 @@ mod tests {
 
     fn tested(desired: Value, actual: Value) -> Tested {
         Tested { name: "pkg".into(), kind: "Furnish/Package".into(), ok: true, actual, desired, judged: None }
+    }
+
+    #[test]
+    fn only_changed_file_resources_report_matching_running_apps() {
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap().to_str().unwrap();
+        let props = json!({"requiresClosed": [name, "furnish-nonexistent-fixture"]});
+        let mut step = tested(props, json!({}));
+        step.kind = "Furnish/Value".into();
+        assert!(running_for_changes(std::slice::from_ref(&step)).unwrap().is_empty());
+        step.ok = false;
+        assert_eq!(running_for_changes(std::slice::from_ref(&step)).unwrap(), [name]);
+        step.kind = "Furnish/Command".into();
+        assert!(running_for_changes(&[step]).unwrap().is_empty());
     }
 
     #[test]

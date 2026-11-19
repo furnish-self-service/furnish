@@ -126,6 +126,9 @@
     </div>
   </header>
 
+  {#if store.runningApps[app.key]?.length}
+    <p class="meta close-apps">{t('queue.closeApps', {names: store.runningApps[app.key].join(', ')})}</p>
+  {/if}
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
 
   {#if app.held?.chosen}
@@ -218,6 +221,7 @@
 </section>
 
 <style>
+  .close-apps { margin: 0; color: var(--ink-soft); font-size: .88rem; }
   .detail {
     max-width: 52rem;
   }

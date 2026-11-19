@@ -103,6 +103,7 @@ enum Reply {
     Problems(Vec<String>),
     Versions(Vec<crate::catalog::Version>),
     Done,
+    WaitingForClose(Vec<String>),
     Error(String),
 }
 
@@ -187,6 +188,7 @@ fn call(request: &Request, report: &mut dyn FnMut(Progress)) -> Result<Reply> {
         match serde_json::from_str(&line?).context("reading the furnish service's answer")? {
             Reply::Progress(p) => report(p),
             Reply::Log { level, message } => engine::emit_log(&level, message),
+            Reply::WaitingForClose(names) => return Err(engine::WaitingForClose(names).into()),
             Reply::Error(e) if e == engine::CANCELLED => return Err(engine::Cancelled.into()),
             Reply::Error(e) => bail!("{e}"),
             reply => return Ok(reply),
@@ -362,6 +364,9 @@ fn handle(input: impl Read, out: Out, caller: Option<u32>, authorize: &dyn Fn(bo
         serde_json::from_str::<Request>(&line).context("invalid request")
     }) {
         Ok(request) => answer(request, &out, caller, authorize).unwrap_or_else(|e| {
+            if let Some(wait) = e.downcast_ref::<engine::WaitingForClose>() {
+                return Reply::WaitingForClose(wait.0.clone());
+            }
             Reply::Error(if e.is::<engine::Cancelled>() { engine::CANCELLED.into() } else { format!("{e:#}") })
         }),
         Err(e) => Reply::Error(format!("{e:#}")),

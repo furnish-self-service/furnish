@@ -115,6 +115,15 @@ resources:
     type: Furnish/File
     properties: { path: ~/.tool, content: tool }
 YAML
+cat > /srv/org/apps/guarded.dsc.yaml <<'YAML'
+resources:
+  - name: First step
+    type: Furnish/File
+    properties: { path: /var/furnish-preflight-first, content: ready }
+  - name: Private settings
+    type: Furnish/Value
+    properties: { path: /root/preflight.json, location: '$.enabled', value: true, requiresClosed: [furnish-cache-test] }
+YAML
 if [ -d /dsc ]; then
     mkdir -p /usr/lib/furnish && cp -r /dsc /usr/lib/furnish/dsc
     printf 'metadata:\n  furnish:\n    categories: [Test]\nresources:\n  - name: file\n    type: Microsoft.Filesystem.File/Content\n    properties: {path: /etc/furnish-dsc-test, content: furnish}\n' > /srv/org/apps/dsc-file.dsc.yaml
@@ -192,6 +201,20 @@ raw '{"install":{"app":"org/hyperfine","values":{"prefix":"/tmp"}}}' | grep -q "
 raw '{"install":{"app":"org/cli-tool","values":{"userInstall":"yes"}}}' | grep -q "needs a bool" || fail "wrong type accepted"
 raw '{"install":{"app":"../../tmp/evil","values":{}}}' | grep -q '"error"' || fail "odd app name accepted"
 raw '{"install":{"app":"org/hyperfine","values":{},"doc":"x"}}' | grep -q "invalid request" || fail "unknown field accepted"
+
+echo "== the service preflights guarded settings using its own read permissions"
+printf '{"enabled":false}' > /root/preflight.json
+chmod 600 /root/preflight.json
+cp /bin/sleep /tmp/furnish-cache-test
+/tmp/furnish-cache-test 120 &
+writer=$!
+if out=$(as alice furnish install org/guarded 2>&1); then fail "changed settings while their writer was running"; fi
+echo "$out" | grep -q "Close furnish-cache-test, then retry this change" || fail "no actionable service response: $out"
+[ ! -e /var/furnish-preflight-first ] || fail "ran an earlier step while waiting"
+raw '{"install":{"app":"org/guarded","values":{}}}' | grep -Fq '"waitingForClose":["furnish-cache-test"]' || fail "no process names in the service reply"
+kill "$writer" && wait "$writer" || true
+as alice furnish install org/guarded >/dev/null || fail "install after closing the writer failed"
+[ "$(cat /var/furnish-preflight-first)" = ready ] && grep -q 'true' /root/preflight.json || fail "service did not apply the requested changes"
 
 echo "== the service only applies the matching NixOS step of a preset per-user app"
 scoped() {

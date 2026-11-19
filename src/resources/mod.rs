@@ -7,7 +7,7 @@
 //! change that set would make (see [`Plan`]). test reports the desired state when there is no
 //! change, and set changes only then, so test and set can't disagree.
 
-mod closed_apps;
+pub(crate) mod closed_apps;
 mod command;
 pub(crate) mod common;
 pub mod diff;

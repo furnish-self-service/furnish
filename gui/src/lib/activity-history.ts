@@ -1,3 +1,4 @@
+import { pausedBranch } from './install-queue.ts';
 // The desktop's recent operations. Only these summary fields go to disk: commands,
 // command output, errors and configuration diffs stay in the running webview.
 import type { LogLine, Outcome, Progress, Step, Trigger } from './api';
@@ -186,6 +187,7 @@ export function groupProgress(group: ActivityGroup, queue: Queued[], pending: (k
     if (path.has(key)) return [];
     const item = members.get(key);
     if (item?.state !== 'queued' && item?.state !== 'interrupted') return [];
+    if (jobs.get(key)?.waitingForClose?.length) return [key];
     const next = new Set([...path, key]);
     const edges = jobs.get(key)?.prerequisites ?? item.waitingFor ?? [];
     return edges.flatMap(dep => {
@@ -231,7 +233,7 @@ export function trimHistory(entries: ActivityEntry[]) {
   return entries.filter(e => (isGroup(e) && e.items.some(itemActive)) || ++finished <= historyLimit);
 }
 
-function readGroup(record: Record<string, unknown>): ActivityGroup | undefined {
+function readGroup(record: Record<string, unknown>, paused: Set<string>): ActivityGroup | undefined {
   if (typeof record.id !== 'string' || (record.kind !== 'updates' && (record.kind !== 'kit' || typeof record.key !== 'string' || typeof record.name !== 'string'))
     || typeof record.updatedAt !== 'number' || !Number.isFinite(new Date(record.updatedAt).getTime())
     || !Array.isArray(record.items)) return;
@@ -243,7 +245,8 @@ function readGroup(record: Record<string, unknown>): ActivityGroup | undefined {
         (!Array.isArray(item.waitingFor) || !item.waitingFor.every((key: unknown) => typeof key === 'string')))) return;
     items.push({
       key: item.key, name: item.name, selected: item.selected,
-      state: itemActive(item) ? 'interrupted' : item.state,
+      state: item.state === 'queued' && paused.has(item.key) ? 'queued' : itemActive(item) ? 'interrupted' : item.state,
+      ownsJob: item.ownsJob === true,
       waitingFor: item.waitingFor,
       attempts: item.attempts.filter(isSummary).slice(0, historyLimit).map((summary: Summary) => ({ summary })),
     });
@@ -257,7 +260,25 @@ function readGroup(record: Record<string, unknown>): ActivityGroup | undefined {
 
 const storageKey = (dataDir: string) => 'furnish.activity.v1:' + dataDir;
 
-export function readHistory(dataDir: string): ActivityEntry[] {
+export function readWaitingQueue(dataDir: string): Queued[] {
+  try {
+    const records: unknown = JSON.parse(localStorage.getItem(storageKey(dataDir)) ?? '[]');
+    if (!Array.isArray(records)) return [];
+    const jobs = records.find(r => r?.kind === 'waitingQueue')?.jobs;
+    const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => typeof s === 'string' && s.length > 0);
+    if (!Array.isArray(jobs) || !jobs.every(j => j && typeof j.key === 'string'
+      && ['install', 'uninstall', 'reinstall', 'installPrevious', 'installCurrent', 'installVersion'].includes(j.action)
+      && ['user', 'update', 'autoInstall'].includes(j.trigger) && strings(j.prerequisites)
+      && (j.chosen === undefined || strings(j.chosen)) && (j.updateOnly === undefined || typeof j.updateOnly === 'boolean')
+      && (j.commit === undefined || isRevision(j.commit)) && (j.action !== 'installVersion' || isRevision(j.commit))
+      && (j.waitingForClose === undefined || (strings(j.waitingForClose) && j.waitingForClose.length)))) return [];
+    if (new Set(jobs.map(j => j.key)).size !== jobs.length) return [];
+    return pausedBranch(jobs).map(({key, action, trigger, prerequisites, chosen, updateOnly, commit, waitingForClose}) =>
+      ({key, action, trigger, prerequisites, chosen, updateOnly, commit, waitingForClose, refresh: true}));
+  } catch { return []; }
+}
+
+export function readHistory(dataDir: string, paused = new Set<string>()): ActivityEntry[] {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(storageKey(dataDir)) ?? '[]');
     if (!Array.isArray(saved)) return [];
@@ -265,7 +286,7 @@ export function readHistory(dataDir: string): ActivityEntry[] {
     for (const value of saved) {
       if (isSummary(value)) entries.push({ summary: value });
       else if (value?.kind === 'kit' || value?.kind === 'updates') {
-        const group = readGroup(value);
+        const group = readGroup(value, paused);
         if (group) entries.push(group);
       }
     }
@@ -274,14 +295,18 @@ export function readHistory(dataDir: string): ActivityEntry[] {
   return [];
 }
 
-export function writeHistory(dataDir: string, entries: ActivityEntry[]) {
+export function writeHistory(dataDir: string, entries: ActivityEntry[], queue: Queued[] = []) {
   try {
-    const saved = trimHistory(entries).map(e => isGroup(e) ? {
+    const paused = new Set(pausedBranch(queue).map(job => job.key));
+    const saved: unknown[] = trimHistory(entries).map(e => isGroup(e) ? {
       kind: e.kind, id: e.id, updatedAt: e.updatedAt,
       ...(e.kind === 'kit' ? { name: e.name, key: e.key } : {}),
-      items: e.items.map(({ key, name, selected, state, attempts, waitingFor }) =>
-        ({ key, name, selected, state, waitingFor, attempts: attempts.map(a => a.summary) })),
+      items: e.items.map(({ key, name, selected, state, attempts, waitingFor, ownsJob }) =>
+        ({ key, name, selected, state, waitingFor, ownsJob: paused.has(key) && state === 'queued' ? ownsJob : undefined, attempts: attempts.map(a => a.summary) })),
     } : e.summary);
+    const jobs = pausedBranch(queue).map(({ key, action, commit, updateOnly, trigger, prerequisites, chosen, waitingForClose }) =>
+      ({ key, action, commit, updateOnly, trigger, prerequisites, chosen, waitingForClose }));
+    if (jobs.length) saved.push({kind: 'waitingQueue', jobs});
     localStorage.setItem(storageKey(dataDir), JSON.stringify(saved));
   } catch { /* Storage may be full or disabled. */ }
 }

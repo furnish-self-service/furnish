@@ -925,6 +925,75 @@ const steps = [
       writeFileSync(policyPath, original);
     }
   }],
+  ['closed-app preflight pauses only affected work and rechecks it after restart', async () => {
+    const writer = 'furnish-ui-cache';
+    const settings = 'preflight-settings', dependent = 'preflight-dependent', free = 'preflight-free';
+    const activity = `//li[contains(@class,'row')][.//button[@aria-label='Open ${settings}']]`;
+    const recheck = activity + button('Recheck and continue');
+    const process = (start) => {
+      const result = spawnSync('docker', ['exec', ...(start ? ['-d'] : []), container, 'sh', '-c', start
+        ? 'cp /bin/sleep "$1/furnish-ui-cache"; echo $$ > "$1/writer.pid"; exec "$1/furnish-ui-cache" 300'
+        : 'kill "$(cat "$1/writer.pid")"', 'sh', workDir], {encoding: 'utf8'});
+      if (result.status !== 0) throw new Error(result.stderr);
+    };
+    const file = (name) => `${workDir}/${name}`;
+    const preferences = JSON.parse(log('data/settings.json') || '{}');
+    preferences.noAutoUpdate = [...new Set([...(preferences.noAutoUpdate ?? []), 'fixture/' + settings, 'fixture/' + dependent, 'fixture/' + free])];
+    writeFileSync(file('data/settings.json'), JSON.stringify(preferences));
+    process(true);
+    await startSession();
+    await waitFor('only the running writer named on the card', async () => (await text(card(settings))).includes('Close ' + writer + ' to continue.'));
+    await click(card(dependent) + button('Install'));
+    await click(nav('Activity'));
+    await waitFor('prerequisite queued for recheck before any step', () => find(recheck));
+    if (existsSync(file('preflight-earlier')) || existsSync(file(dependent))) throw new Error('guarded branch started before close');
+    await click(recheck);
+    await waitFor('still running on recheck', () => find(recheck));
+    await click(nav('Discover'));
+    await click(card(free) + button('Install'));
+    await waitFor('independent work completed', () => log(free) === 'ready');
+    await startSession();
+    await click(nav('Activity'));
+    await waitFor('restored paused branch', () => find(recheck));
+    if (existsSync(file('preflight-earlier')) || existsSync(file(dependent))) throw new Error('startup resumed without confirmation');
+    process(false);
+    await click(recheck);
+    await waitFor('settings and dependent completed', () => log('preflight-earlier') === 'ready' && log(dependent) === 'ready');
+    if (!JSON.parse(log('preflight.json')).enabled) throw new Error('settings not saved');
+
+    // Update all must retain one request, skip the held app, and complete the independent update.
+    writeFileSync(file('preflight.json'), '{"enabled":false,"keep":42}');
+    writeFileSync(file('preflight-earlier'), 'old');
+    writeFileSync(file(free), 'old');
+    writeFileSync(file(dependent), 'old');
+    await startSession();
+    await click(nav('Updates'));
+    await waitFor('both updates verified', async () =>
+      (await findAll(card(settings) + button('Update'))).length && (await findAll(card(free) + button('Update'))).length
+      && (await findAll(card(dependent) + button('Update'))).length);
+    // Start the writer after status was checked to exercise the native operation preflight.
+    process(true);
+    await waitFor('writer running', () => {
+      const result = spawnSync('docker', ['exec', container, 'sh', '-c',
+        'test "$(readlink "/proc/$(cat "$1/writer.pid")/exe")" = "$1/furnish-ui-cache"', 'sh', workDir]);
+      return result.status === 0;
+    });
+    await click(button('Update all') + '[not(@disabled)]');
+    await click(nav('Activity'));
+    const group = "//li[@data-kind='updates'][.//li[@data-app='fixture/preflight-settings']]";
+    await waitFor('group names the running writer and independent update completes', async () =>
+      (await text(group + '/details/summary')).includes(writer) && log(free) === 'ready');
+    for (const file of ['preflight-earlier', dependent]) {
+      if (log(file) !== 'old') throw new Error(`${file} changed before recheck: ${log(file)}; ${await text(group)}`);
+    }
+    await startSession();
+    await click(nav('Activity'));
+    await click(group + '/details/summary');
+    process(false);
+    await click(group + "//li[@data-app='fixture/preflight-settings']" + button('Recheck and continue'));
+    await waitFor('same update batch finishes', async () => log('preflight-earlier') === 'ready' && log(dependent) === 'ready' && (await text(group)).includes('Updated preflight-settings'));
+    if ((await findAll(group)).length !== 1 || JSON.parse(log('preflight.json')).keep !== 42) throw new Error('lost group or unrelated data');
+  }],
 ];
 
 let failed = false;

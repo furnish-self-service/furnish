@@ -1871,7 +1871,7 @@ impl App {
         };
         // Remembered, so the app may go back to an earlier version (see install_previous_with).
         if let Err(err) = &result
-            && !err.is::<crate::engine::Cancelled>()
+            && !err.is::<crate::engine::Cancelled>() && !err.is::<crate::engine::WaitingForClose>()
             && let Some(blob) = collection.blob("HEAD", &self.relative_path())
             && let Err(record) = crate::versions::failed(&self.state_dir(values), &self.key(), &blob)
         {
@@ -2261,6 +2261,7 @@ impl App {
             return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new, install_into }, report);
         }
         if self.remote(&old) || self.remote(&new) {
+            crate::engine::preflight_install(&self.doc_for(&new))?;
             self.uninstall_unreported(&mut report)?;
             return self.install_values(new, Which::Shown, report);
         }
@@ -2272,6 +2273,7 @@ impl App {
         let _lock = collection.lock()?;
         collection.verify(&collection.head()?)?;
         let old = self.installed_values();
+        crate::engine::preflight_install(&self.doc_here(values))?;
         self.remove_with(&old, &mut report)?;
         crate::options::forget(&self.state_dir(&old), &self.key())?;
         self.install_with(values, report)
