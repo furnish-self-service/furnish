@@ -40,18 +40,52 @@ async function waitFor(what, fn, timeout = 20000) {
 }
 const find = async (xpath) => (await wd('POST', s('/element'), { using: 'xpath', value: xpath }))[ELEMENT];
 const findAll = async (xpath) => (await wd('POST', s('/elements'), { using: 'xpath', value: xpath })).map((e) => e[ELEMENT]);
-// Scrolls the target to the middle first: notifications sit bottom-right and WebKitWebDriver
-// doesn't report a click that lands on one. Retries until the click goes through.
-const click = async (xpath) =>
-  waitFor(`click on ${xpath}`, async () => {
+// WebKit can report a successful click on a card that moved under the pointer during a
+// catalog scan. Guard actual pointer delivery before any neighboring control can act.
+function guardClick(target) {
+  target.scrollIntoView({ block: 'center', inline: 'center' });
+  // WebDriver selects an option through its native select control.
+  if (target.tagName === 'OPTION') return false;
+  let result = target.matches(':disabled') ? 'control is disabled' : 'no click reached the document';
+  const guard = (event) => {
+    if (event.composedPath().includes(target)) {
+      result = true;
+    } else {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const other = event.target.closest('button, a, summary') ?? event.target;
+      const label = other.getAttribute('aria-label') || other.textContent.trim().slice(0, 60);
+      result = `click landed on ${other.tagName} ${label}`.trim();
+    }
+  };
+  window.addEventListener('click', guard, { capture: true, once: true });
+  window.finishFurnishTestClick = () => {
+    window.removeEventListener('click', guard, true);
+    delete window.finishFurnishTestClick;
+    return result;
+  };
+  return true;
+}
+
+async function click(xpath) {
+  const result = await waitFor(`click on ${xpath}`, async () => {
     const el = await find(xpath);
-    await wd('POST', s('/execute/sync'), {
-      script: "arguments[0].scrollIntoView({ block: 'center', inline: 'center' });",
-      args: [{ [ELEMENT]: el }],
+    const guarded = await wd('POST', s('/execute/sync'), {
+      script: `return (${guardClick})(arguments[0])`, args: [{ [ELEMENT]: el }],
     });
-    await wd('POST', s(`/element/${el}/click`), {});
-    return true;
+    const error = await wd('POST', s(`/element/${el}/click`), {}).then(() => null, e => e);
+    if (!guarded) {
+      if (error) throw error;
+      return true;
+    }
+    // A dispatched click may already have changed the app. If delivery cannot be read
+    // back, fail this test instead of sending the action twice.
+    const hit = await wd('POST', s('/execute/sync'), { script: 'return window.finishFurnishTestClick()', args: [] }).catch(e => e);
+    if (hit === true || hit instanceof Error) return hit;
+    throw new Error(error ? `${hit}: ${error.message}` : hit);
   });
+  if (result instanceof Error) throw result;
+}
 const text = async (xpath) => wd('GET', s(`/element/${await find(xpath)}/text`));
 const typeInto = async (xpath, value) => wd('POST', s(`/element/${await find(xpath)}/value`), { text: value });
 const search = (value) => wd('POST', s('/execute/sync'), {
@@ -252,9 +286,13 @@ const steps = [
     }
     await click(button('Discover'));
     await click(`${card('renamed')}${button('Install')}`);
-    await waitFor('unrelated install completes', () => existsSync(`${workDir}/pkgs/renamed`), 30000);
+    // Removing the finished operation's Now row can move Retry between mouse down and up.
+    // Wait for the desktop to finish, including its status refresh.
+    await waitFor('renamed installed and no longer busy', () =>
+      find(`${card('renamed')}[not(.//*[@aria-busy='true'])]//*[normalize-space()='Installed']`), 30000);
     await click(nav('Activity'));
     await click(button('Retry homebrew'));
+    await waitFor('Activity accepts the prerequisite retry', async () => !(await findAll(button('Retry homebrew'))).length);
     await click(button('Discover'));
     await waitFor('homebrew installed', () => find(`${card('homebrew')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('brewed installed', () => find(`${card('brewed')}//*[normalize-space()='Installed']`), 30000);
