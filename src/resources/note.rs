@@ -35,6 +35,7 @@ impl Note {
             "package.explicitScript" => format!("The app selects the collection’s {} script manager", s("manager")),
             "package.onlyScript" => format!("{} is the only available collection script manager", s("manager")),
             "package.windows" => format!("Windows uses {} as its fallback package manager", s("manager")),
+            "package.needsTool" => format!("Needs {} to preview the package changes", s("tool")),
             "package.noManager" => "No package manager is available".to_owned(),
             "package.distroName" => format!("Package name {} matches distribution {}", s("name"), s("selector")),
             "package.familyName" => format!("Package name {} matches {} in ID_LIKE", s("name"), s("selector")),

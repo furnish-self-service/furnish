@@ -445,6 +445,11 @@ if ! $real; then
     expect "$(step list)" "!  brew-only"
     expect "$(step list)" "needs Homebrew (brew)"
     if step install brew-only >/dev/null 2>&1; then echo "FAIL: installed although Homebrew is missing" >&2; exit 1; fi
+    plan=$(step install brewed --dry-run)
+    expect "$plan" "First, dependency homebrew"
+    expect "$plan" "+ install        brewed tool"
+    expect "$plan" "Needs Homebrew (brew) to preview the package changes"
+    [ ! -f "$tmp/bin/brew" ] || { echo "FAIL: preview installed Homebrew" >&2; exit 1; }
     out=$(step install brewed)
     expect "$out" "brewed needs homebrew first"
     expect "$out" "Installed brewed"

@@ -967,7 +967,7 @@ pub struct Outcome {
 pub fn plan(doc: &Value, uninstall: bool) -> Result<Vec<Step>> {
     let _guard = ENGINE.lock().unwrap_or_else(|e| e.into_inner());
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
-    preview_steps(&step_docs(doc, uninstall)?, uninstall)
+    preview_steps(&step_docs(doc, uninstall)?, uninstall, !uninstall)
 }
 
 /// Install (or uninstall) one resource at a time, reporting each step as it starts and ends.
@@ -982,7 +982,7 @@ pub fn run(doc: &Value, uninstall: bool, mut report: impl FnMut(Progress)) -> Re
     }
     let docs = step_docs(doc, uninstall)?;
     preflight_steps(&docs)?;
-    let steps = preview_steps(&docs, uninstall)?;
+    let steps = preview_steps(&docs, uninstall, false)?;
     report(Progress::Planned { steps: steps.clone() });
     for (index, (step_doc, step)) in docs.iter().zip(&steps).enumerate() {
         if ABORT.load(Ordering::SeqCst) {
@@ -1194,10 +1194,32 @@ const NO_PREVIEW: &str = "No preview: this step runs its command or script";
 /// Command actually references is passed to its what-if; real operations always read the file.
 type PreviewFiles = std::collections::HashMap<PathBuf, Value>;
 
-fn preview_steps(docs: &[Value], uninstall: bool) -> Result<Vec<Step>> {
+/// A dependency can install a missing package manager after a read-only preview. Keep the
+/// requested install in the plan, but only the manager can report its state and exact changes.
+fn deferred_package(doc: &Value, error: &anyhow::Error) -> Option<Step> {
+    let resource = &doc["resources"][0];
+    let kind = resource["type"].as_str()?;
+    if !kind.eq_ignore_ascii_case("Furnish/Package") || !matches!(resource["properties"].get("_exist"), None | Some(Value::Bool(true))) {
+        return None;
+    }
+    let DscError::Command(_, 11, stderr) = error.downcast_ref::<DscError>()? else { return None };
+    let tool = missing_reason(stderr)?;
+    let note = crate::resources::note::note("package.needsTool", serde_json::json!({ "tool": tool }));
+    Some(Step {
+        name: resource["name"].as_str()?.into(), kind: kind.into(), action: Action::Install,
+        requires_new_session: doc["metadata"]["furnish"]["requiresNewSession"] == true,
+        details: vec![note.english()], notes: vec![serde_json::json!({ "code": note.code, "params": note.params })],
+        selection_notes: vec![], changes: vec![],
+    })
+}
+
+fn preview_steps(docs: &[Value], uninstall: bool, defer_missing_packages: bool) -> Result<Vec<Step>> {
     let mut files = PreviewFiles::new();
     docs.iter().map(|doc| {
-        let mut step = preview_resolved(doc, &mut files)?;
+        let mut step = match preview_resolved(doc, &mut files) {
+            Err(error) if defer_missing_packages => deferred_package(doc, &error).ok_or(error)?,
+            result => result?,
+        };
         step.requires_new_session &= !uninstall;
         Ok(step)
     }).collect()

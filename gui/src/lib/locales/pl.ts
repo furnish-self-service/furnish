@@ -378,6 +378,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.note.package.explicitScript': "Aplikacja wskazuje menedżer <code>{manager}</code> dostarczony przez skrypt kolekcji",
   'plan.note.package.onlyScript': "<code>{manager}</code> jest jedynym dostępnym menedżerem dostarczonym przez skrypt kolekcji",
   'plan.note.package.windows': "Windows używa <code>{manager}</code> jako zapasowego menedżera pakietów",
+  'plan.note.package.needsTool': "Podgląd zmian pakietu wymaga <code>{tool}</code>",
   'plan.note.package.noManager': "Brak dostępnego menedżera pakietów",
   'plan.note.package.distroName': "Nazwa pakietu <code>{name}</code> odpowiada dystrybucji <code>{selector}</code>",
   'plan.note.package.familyName': "Nazwę pakietu <code>{name}</code> wybrano na podstawie wpisu <code>{selector}</code> w <code>ID_LIKE</code>",
