@@ -81,12 +81,10 @@ picture {
   display: contents;
 }
 
-select,
-input:where(:not([type='checkbox'], [type='radio'])) {
-  min-height: var(--field-height);
+input {
   padding: 0.55rem 0.8rem;
   border: 1px solid var(--line-strong);
-  border-radius: var(--field-radius);
+  border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
   font: 0.92rem var(--font-body);
@@ -100,9 +98,8 @@ input:focus-visible {
 .primary,
 .secondary,
 .danger {
-  min-height: var(--field-height);
-  padding: 0.5rem 1rem;
-  border-radius: var(--field-radius);
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
   border: 1px solid transparent;
   font: 600 0.88rem var(--font-body);
   cursor: pointer;
@@ -164,7 +161,24 @@ button:disabled {
 .preference-list :is(select, input:not([type='checkbox'])) {
   min-width: 0;
   width: 100%;
+  min-height: var(--field-height);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--field-radius);
+  padding: .5rem .8rem;
+  font: .92rem var(--font-body);
+  background: var(--surface);
+  color: var(--ink);
   text-overflow: ellipsis;
+}
+.preference-list .control input[type='text'] {
+  flex: 1 1 10rem;
+  width: auto;
+  max-width: 100%;
+  font-family: var(--font-mono);
+}
+.preference-list .secondary {
+  min-height: var(--field-height);
+  border-radius: var(--field-radius);
 }
 .preference-list select:disabled {
   background-color: var(--canvas);
@@ -174,9 +188,10 @@ button:disabled {
   width: 1.125rem;
   height: 1.125rem;
   margin: 0;
+  padding: 0;
   accent-color: var(--accent);
 }
-.preference-list .org {
+.org {
   display: inline-block;
   width: fit-content;
   padding: .1rem .45rem;

@@ -735,7 +735,6 @@
   .error {
     white-space: pre-line;
   }
-  input[type='text'] { font-family: var(--font-mono); }
   .warn {
     display: block;
     color: var(--highlight-ink);

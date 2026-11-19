@@ -260,16 +260,6 @@
     font-size: 0.8rem;
     color: var(--muted);
   }
-  .org {
-    margin-left: 0.4rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 650;
-    color: var(--ink-soft);
-    background: var(--hover);
-    white-space: nowrap;
-  }
   .managed-note {
     margin-top: 1.5rem;
     color: var(--ink-soft);
