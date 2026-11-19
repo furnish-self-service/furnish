@@ -1,0 +1,86 @@
+name: Publish alpha packages
+
+on:
+  workflow_call:
+    secrets:
+      REPO_SIGNING_KEY:
+        required: true
+
+jobs:
+  deploy:
+    name: Deploy the package repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.publish.outputs.version }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-packages
+          path: new
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: furnish-desktop-*
+          path: new/desktop
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-linux-x86_64
+          path: new/cli
+      # The updater's signatures of the .msi and .app.tar.gz (update-feed job): publish.sh writes the feed.
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-update-signatures
+          path: new/desktop
+      - run: sudo apt-get install -y -qq apt-utils createrepo-c
+      - run: echo "$REPO_SIGNING_KEY" | gpg --batch --import
+        env:
+          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
+      - id: publish
+        run: |
+          packaging/repo/fetch.sh "$BASE_URL" site
+          packaging/repo/publish.sh alpha new site
+          version=$(jq -er '.version | strings | select(length > 0)' site/alpha/latest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        env:
+          BASE_URL: https://furnish-self-service.github.io/furnish
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
+
+  verify:
+    name: Verify the public update feed
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the signed downloads for this deployment
+        env:
+          EXPECTED_VERSION: ${{ needs.deploy.outputs.version }}
+          REQUIRE: windows-x86_64 darwin-aarch64
+        run: |
+          : "${EXPECTED_VERSION:?missing deployed version}"
+          node --version
+          node scripts/verify-update-feed.mjs https://furnish-self-service.github.io/furnish/alpha/latest.json &
+          verifier=$!
+          echo "Waiting for verifier process $verifier"
+          status=0
+          wait "$verifier" || status=$?
+          echo "Verifier process $verifier exited with status $status"
+          exit "$status"
