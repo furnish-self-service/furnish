@@ -533,57 +533,15 @@ jobs:
     name: publish alpha packages
     if: github.ref == 'refs/heads/main'
     needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, home-manager-macos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Hold the Pages lock until the public feed for this deployment has been verified.
+    concurrency: pages
     permissions:
+      contents: read
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    concurrency: pages
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: furnish-linux-packages
-          path: new
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: furnish-desktop-*
-          path: new/desktop
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          name: furnish-linux-x86_64
-          path: new/cli
-      # The updater's signatures of the .msi and .app.tar.gz (update-feed job): publish.sh writes the feed.
-      - uses: actions/download-artifact@v4
-        with:
-          name: furnish-update-signatures
-          path: new/desktop
-      - run: sudo apt-get install -y -qq apt-utils createrepo-c
-      - run: echo "$REPO_SIGNING_KEY" | gpg --batch --import
-        env:
-          REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
-      - run: |
-          packaging/repo/fetch.sh "$BASE_URL" site
-          packaging/repo/publish.sh alpha new site
-        env:
-          BASE_URL: https://furnish-self-service.github.io/furnish
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - id: deploy
-        uses: actions/deploy-pages@v4
-      # What furnish's updater reads now: every download matches its signature under the app's key.
-      - name: The published update feed verifies
-        timeout-minutes: 12
-        run: |
-          expected=$(jq -er '.version | strings | select(length > 0)' site/alpha/latest.json)
-          EXPECTED_VERSION="$expected" REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "$BASE_URL/alpha/latest.json"
-        env:
-          BASE_URL: https://furnish-self-service.github.io/furnish
+    uses: ./.github/workflows/publish-alpha.yml
+    secrets:
+      REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
 
   # Each alpha as a GitHub pre-release with a fixed download URL, and the Homebrew cask
   # (furnish-self-service/homebrew-tap) pointed at it. The `homebrew` job tested that cask.
