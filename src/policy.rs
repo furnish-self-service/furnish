@@ -20,7 +20,7 @@
 //!
 //! FURNISH_POLICY_FILE points to a JSON file instead (for tests).
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::{Arc, Mutex}};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -110,13 +110,98 @@ pub struct Collections {
     pub preset: Vec<Preset>,
     /// Whether users may add their own collections. If not, collections they added are ignored.
     pub users_can_add: bool,
+    /// Optional whole-URL allowlist for repositories from personal collections and endpoints.
+    /// A malformed allowlist blocks personal additions while all other policy still applies.
+    #[serde(deserialize_with = "read_url_allowlist")]
+    allowed_url_patterns: Option<Arc<UrlAllowlist>>,
     /// SSH public keys (`ssh-ed25519 AAAA…`): preset collections only use commits signed by one.
     pub trusted_keys: Vec<String>,
 }
 
 impl Default for Collections {
     fn default() -> Self {
-        Self { preset: Vec::new(), users_can_add: true, trusted_keys: Vec::new() }
+        Self { preset: Vec::new(), users_can_add: true, allowed_url_patterns: None, trusted_keys: Vec::new() }
+    }
+}
+
+#[derive(Debug)]
+enum UrlAllowlist {
+    Restricted { patterns: Vec<String>, matcher: regex::RegexSet },
+    Invalid(String),
+}
+
+impl PartialEq for UrlAllowlist {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Restricted { patterns: a, .. }, Self::Restricted { patterns: b, .. }) => a == b,
+            (Self::Invalid(a), Self::Invalid(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl UrlAllowlist {
+    fn compile(value: &Value) -> Result<Self> {
+        let patterns = Vec::<String>::deserialize(value)
+            .map_err(|_| anyhow::anyhow!("expected an array of regular expression strings"))?;
+        let mut anchored = Vec::with_capacity(patterns.len());
+        for (index, pattern) in patterns.iter().enumerate() {
+            // Parse before grouping alternatives: even a malformed expression must never
+            // escape the anchors. Printing the AST also removes free-spacing comments.
+            let ast = regex_syntax::ast::parse::Parser::new().parse(pattern)
+                .map_err(|error| anyhow::anyhow!("invalid pattern {}: {}", index + 1, error.kind()))?;
+            anchored.push(format!(r"\A(?:{ast})\z"));
+        }
+        let matcher = regex::RegexSet::new(anchored).context("could not compile URL patterns")?;
+        Ok(Self::Restricted { patterns, matcher })
+    }
+}
+
+fn read_url_allowlist<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Arc<UrlAllowlist>>, D::Error> {
+    // An explicit null is invalid. Only omission leaves URLs unrestricted.
+    let value = Value::deserialize(d)?;
+    // Policy loads on catalog, settings and authentication calls. Share the last compiled
+    // rules across reads, always comparing the current field, including invalid values.
+    static LAST: Mutex<Option<(Value, Arc<UrlAllowlist>)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((previous, rules)) = &*last && previous == &value {
+        return Ok(Some(Arc::clone(rules)));
+    }
+    let rules = Arc::new(UrlAllowlist::compile(&value).unwrap_or_else(|err| UrlAllowlist::Invalid(err.to_string())));
+    *last = Some((value, Arc::clone(&rules)));
+    Ok(Some(rules))
+}
+
+impl Collections {
+    pub fn has_user_url_restriction(&self) -> bool {
+        self.allowed_url_patterns.is_some()
+    }
+
+    /// Effective expressions for display. An empty list allows no personal collection URLs.
+    pub fn user_url_patterns(&self) -> Option<&[String]> {
+        match self.allowed_url_patterns.as_deref() {
+            None => None,
+            Some(UrlAllowlist::Restricted { patterns, .. }) => Some(patterns),
+            Some(UrlAllowlist::Invalid(_)) => Some(&[]),
+        }
+    }
+
+    pub(crate) fn url_patterns_error(&self) -> Option<&str> {
+        match self.allowed_url_patterns.as_deref() {
+            Some(UrlAllowlist::Invalid(reason)) => Some(reason),
+            _ => None,
+        }
+    }
+
+    /// Apply only the URL restriction. The caller separately checks whether users may add
+    /// collections and whether the organization itself supplied the source.
+    pub fn check_user_url(&self, url: &str) -> Result<()> {
+        match self.allowed_url_patterns.as_deref() {
+            None => Ok(()),
+            Some(UrlAllowlist::Restricted { matcher, .. }) if matcher.is_match(url) => Ok(()),
+            Some(UrlAllowlist::Restricted { .. }) => anyhow::bail!("this URL does not match your organization's collections.allowedUrlPatterns"),
+            Some(UrlAllowlist::Invalid(reason)) => anyhow::bail!("invalid collections.allowedUrlPatterns: {reason}; personal collection URLs are blocked"),
+        }
     }
 }
 
@@ -158,6 +243,25 @@ pub fn with_known_endpoints(mut policy: Policy, endpoints: Vec<(String, crate::e
     policy
 }
 
+impl Policy {
+    pub(crate) fn names_endpoint(&self, origin: &str) -> bool {
+        self.endpoints.iter().any(|e| crate::endpoint::origin(e).as_deref() == Some(origin))
+    }
+
+    /// A named endpoint provides managed collections. For a user-added endpoint the whole
+    /// description must be admissible before it can supply credentials, defaults or checkouts.
+    pub(crate) fn check_endpoint(&self, origin: &str, collections: &[crate::endpoint::Collection], check_url: fn(&Collections, &str) -> Result<()>) -> Result<()> {
+        if self.names_endpoint(origin) {
+            return Ok(());
+        }
+        anyhow::ensure!(self.collections.users_can_add, "your organization manages the collections; adding other furnish addresses isn't allowed");
+        for c in collections {
+            check_url(&self.collections, &c.url).with_context(|| format!("collection '{}'", c.name))?;
+        }
+        Ok(())
+    }
+}
+
 /// The endpoints whose defaults apply, each with only the collections it may speak for. Without
 /// `usersCanAdd`, only the endpoints the policy names count. An endpoint the user added doesn't
 /// speak for a collection the admin presets (directly or through a named endpoint), nor for one
@@ -172,7 +276,7 @@ pub fn speaking_for_own(
     admins.extend(endpoints.iter().filter(|(o, _)| named.contains(o)).flat_map(|(_, d)| d.collections.iter().map(|c| c.name.clone())));
     endpoints
         .into_iter()
-        .filter(|(origin, _)| policy.collections.users_can_add || named.contains(origin))
+        .filter(|(origin, d)| policy.check_endpoint(origin, &d.collections, Collections::check_user_url).is_ok())
         .map(|(origin, mut d)| {
             if !named.contains(&origin) {
                 d.collections.retain(|c| !admins.contains(&c.name) && local_url(&c.name).is_none_or(|url| url == c.url));
@@ -352,7 +456,7 @@ mod tests {
     fn plist_and_json_mean_the_same() {
         let json: Policy = serde_json::from_str(
             r#"{"settings":{"updateIntervalMinutes":{"value":60,"locked":true}},
-                "collections":{"preset":[{"name":"acme","url":"git@example.com:acme.git","tracking":{"mode":"tag","pattern":"^v","order":"newest"}}],"usersCanAdd":false}}"#,
+                "collections":{"preset":[{"name":"acme","url":"git@example.com:acme.git","tracking":{"mode":"tag","pattern":"^v","order":"newest"}}],"usersCanAdd":false,"allowedUrlPatterns":["git@corp:.+"]}}"#,
         )
         .unwrap();
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -364,6 +468,7 @@ mod tests {
     <key>preset</key><array><dict><key>name</key><string>acme</string><key>url</key><string>git@example.com:acme.git</string>
     <key>tracking</key><dict><key>mode</key><string>tag</string><key>pattern</key><string>^v</string><key>order</key><string>newest</string></dict></dict></array>
     <key>usersCanAdd</key><false/>
+    <key>allowedUrlPatterns</key><array><string>git@corp:.+</string></array>
   </dict>
 </dict></plist>"#;
         let dir = std::env::temp_dir().join(format!("furnish-policy-test-{}", std::process::id()));
@@ -502,6 +607,65 @@ mod tests {
         let mut p = Policy::default();
         with_endpoints(&mut p, &[("https://a.tld".into(), plain), ("https://b.tld".into(), second)]);
         assert_eq!(p.branding, Branding::default());
+    }
+
+    #[test]
+    fn user_url_patterns_match_the_whole_git_url() {
+        let patterns = serde_json::json!([
+            r"https://git\.example/team/[a-z-]+\.git|git@git\.example:team/[a-z-]+\.git",
+            "(?ix) https://secondary [.] example / mirror # trusted mirror",
+        ]);
+        let p: Policy = serde_json::from_value(serde_json::json!({"collections":{"allowedUrlPatterns":patterns}})).unwrap();
+        let c = &p.collections;
+        assert!(c.has_user_url_restriction());
+        for url in ["https://git.example/team/a.git", "git@git.example:team/b.git", "HTTPS://SECONDARY.EXAMPLE/mirror"] {
+            c.check_user_url(url).unwrap();
+        }
+        for url in ["Xhttps://git.example/team/a.git", "git@git.example:team/b.git/more", "https://git.example.evil/team/a.git", "/tmp/a"] {
+            assert!(c.check_user_url(url).is_err(), "{url}");
+        }
+        let effective = crate::settings::merge(&p, &serde_json::Map::new());
+        assert!(effective.warnings.is_empty());
+        assert_eq!(serde_json::to_value(effective).unwrap()["allowedCollectionUrlPatterns"], patterns);
+    }
+
+    #[test]
+    fn malformed_or_empty_url_patterns_deny_personal_sources_without_discarding_policy() {
+        for rules in [Value::Null, true.into(), ".*".into(), serde_json::json!([".*", 3]), serde_json::json!([".*", ")|.*|(?:"])] {
+            let p: Policy = serde_json::from_value(serde_json::json!({
+                "collections": {"allowedUrlPatterns":rules, "preset":[{"name":"acme","url":"git@corp:acme"}]},
+                "settings":{"startAtSignIn":{"value":false,"locked":true}}
+            })).unwrap();
+            let error = p.collections.check_user_url("https://secret@example.test/x").unwrap_err().to_string();
+            assert!(error.contains("invalid collections.allowedUrlPatterns") && !error.contains("secret"), "{error}");
+            assert_eq!(p.collections.preset[0].name, "acme");
+            let effective = crate::settings::merge(&p, &serde_json::Map::new());
+            assert!(effective.locked.iter().any(|setting| setting == "startAtSignIn"));
+            assert_eq!(effective.allowed_collection_url_patterns, Some(vec![]));
+            assert!(matches!(&effective.warnings[..], [crate::settings::Warning::Policy { key, reason }]
+                if key == "collections.allowedUrlPatterns" && reason.contains("blocked")));
+        }
+        let p: Policy = serde_json::from_str(r#"{"collections":{"allowedUrlPatterns":[]}}"#).unwrap();
+        assert!(p.collections.check_user_url("anywhere").is_err());
+        assert!(p.collections.url_patterns_error().is_none());
+        let p = Policy::default();
+        p.collections.check_user_url("/anywhere").unwrap();
+        assert!(!p.collections.has_user_url_restriction());
+        assert!(p.collections.user_url_patterns().is_none());
+    }
+
+    #[test]
+    fn changing_url_patterns_replaces_the_matcher_for_new_policy_reads() {
+        let load = |rule| serde_json::from_value::<Policy>(serde_json::json!({
+            "collections": {"allowedUrlPatterns": [rule]}
+        })).unwrap().collections;
+        let previous = load("git@old:.*");
+        let current = load("git@new:.*");
+        assert!(previous.check_user_url("git@old:a").is_ok());
+        assert!(current.check_user_url("git@old:a").is_err());
+        assert!(current.check_user_url("git@new:a").is_ok());
+        assert!(load("[").check_user_url("git@new:a").is_err());
+        assert!(load("git@old:.*").check_user_url("git@old:a").is_ok());
     }
 
     #[test]

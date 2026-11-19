@@ -421,6 +421,8 @@ export const pt: Record<keyof typeof en, Entry> = {
   'collections.username': 'Nome de utilizador',
   'collections.password': 'Palavra-passe ou token de acesso',
   'collections.warning': 'As apps são executadas com direitos de administrador. Adicione apenas coleções de pessoas em quem confia.',
+  'collections.allowedUrls': 'Padrões de URL permitidos para coleções',
+  'collections.noPersonalUrls': 'A sua organização desativou os URL de coleções pessoais.',
   'collections.managedNote': 'A sua organização gere as coleções neste computador.',
   'collections.count': { one: '{n} coleção', other: '{n} coleções' },
   'collections.updating': 'A atualizar…',

@@ -438,6 +438,8 @@ export const pl: Record<keyof typeof en, Entry> = {
   'collections.username': 'Nazwa użytkownika',
   'collections.password': 'Hasło lub token dostępu',
   'collections.warning': 'Aplikacje działają z uprawnieniami administratora. Dodawaj tylko kolekcje od osób, którym ufasz.',
+  'collections.allowedUrls': 'Dozwolone wzorce adresów URL kolekcji',
+  'collections.noPersonalUrls': 'Twoja organizacja wyłączyła adresy URL kolekcji osobistych.',
   'collections.managedNote': 'Kolekcjami na tym komputerze zarządza Twoja organizacja.',
   'collections.count': { one: '{n} kolekcja', few: '{n} kolekcje', many: '{n} kolekcji', other: '{n} kolekcji' },
   'collections.updating': 'Aktualizowanie…',

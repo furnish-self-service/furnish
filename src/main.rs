@@ -961,6 +961,10 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
         CollectionCommand::Add { url, name, tracking, options, username, password_stdin } => {
             let tracking = tracking.selection();
             let name = name.unwrap_or_else(|| catalog::name_from_url(&url));
+            // An explicitly supplied login can invoke a Git credential helper or prompt on stdin.
+            if username.is_some() {
+                catalog::checked_add_url(&url, &name)?;
+            }
             let given = match (&username, password_stdin) {
                 (Some(user), true) => {
                     let mut password = String::new();
@@ -997,8 +1001,16 @@ fn collection(cmd: CollectionCommand) -> Result<()> {
                 rows.push(row([&c.name, &apps, &rev, &url, managed]));
             }
             print_table(&rows);
-            if !furnish::settings::effective().users_can_add_collections {
+            let effective = furnish::settings::effective();
+            if !effective.users_can_add_collections {
                 println!("\nYour organization manages the collections; adding others isn't allowed.");
+            } else if let Some(patterns) = effective.allowed_collection_url_patterns {
+                if patterns.is_empty() {
+                    println!("\nYour organization has disabled personal collection URLs.");
+                } else {
+                    println!("\nAllowed collection URL patterns:");
+                    for pattern in patterns { println!("  {pattern}"); }
+                }
             }
         }
         CollectionCommand::Update { name, dry_run, reviewed, tracking } => {

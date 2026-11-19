@@ -195,7 +195,7 @@ DESKTOP
 # An admin policy: the fixture collection is managed, the update interval locked, the app branded.
 cat > "$work/policy.json" <<JSON
 {"settings": {"updateIntervalMinutes": {"value": 30, "locked": true}, "reporting": {"value": "errors", "locked": true}},
- "collections": {"preset": [{"name": "fixture", "url": "$work/origin.git", "tracking": {"mode": "default"}}]},
+ "collections": {"allowedUrlPatterns": [".*/second"], "preset": [{"name": "fixture", "url": "$work/origin.git", "tracking": {"mode": "default"}}]},
  "branding": {"name": "Acme Apps", "logo": "fixture/branding/logo.svg", "accent": "#e30613"},
  "parameters": {"fixture": {"role": {"value": "developer"}}}}
 JSON

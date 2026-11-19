@@ -78,6 +78,8 @@ impl Env {
             .env("FURNISH_SYSTEM_DIR", self.root.join("system"))
             .env("FURNISH_POLICY_FILE", &self.policy)
             .env("FURNISH_TOKEN_STORE", "file")
+            .env("GCM_INTERACTIVE", "never")
+            .env("GIT_CONFIG_GLOBAL", self.root.join(".gitconfig"))
             .env("HOME", &self.root)
             .output()
             .unwrap();
@@ -445,6 +447,86 @@ fn collections_an_endpoint_lists_later_are_added_by_the_rules_for_adding() {
     assert_eq!(read(&saved)["added"], 42);
 
     let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn user_endpoint_url_policy_applies_before_sign_in_cache_changes_or_cloning() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let env = Env { data: root.join("data"), policy: root.join("policy.json"), root: root.to_owned() };
+    let repos = root.join("repos");
+    repository(&repos, "tools", &[("collection.yaml", "{}\n")]);
+    let doc = Arc::new(Mutex::new(None));
+    let origin = serve(doc.clone(), Some(repos));
+    let collection = |name: &str| json!({"name": name, "url": format!("{origin}/git/{name}.git")});
+    let allowed = json!({"name":"Acme","issuer":origin,"clientId":"furnish","collections":[collection("tools")],
+        "settings":{"blobsOnDemand":false, "reporting":"errors"}});
+    let mut mixed = allowed.clone();
+    mixed["collections"] = json!([collection("tools"), collection("kit"), collection("blocked")]);
+    let pattern = format!("{}/git/(tools|kit)[.]git", regex::escape(&origin));
+    fs::write(&env.policy, json!({"collections":{"allowedUrlPatterns":[pattern]}}).to_string()).unwrap();
+    // An inadmissible description must fail before contacting its identity provider.
+    let mut before_login = mixed.clone();
+    before_login["issuer"] = json!(format!("{origin}/unconfigured"));
+    *doc.lock().unwrap() = Some(before_login.to_string());
+
+    let endpoints = env.data.join("endpoints");
+    let out = env.furnish(&["collection", "add", &origin]);
+    assert!(!out.status.success() && stderr(&out).contains("allowedUrlPatterns"), "{}", stderr(&out));
+    assert!(!endpoints.exists());
+    let out = env.furnish(&["login", &origin]);
+    assert!(!out.status.success() && stderr(&out).contains("allowedUrlPatterns"));
+    assert!(!endpoints.exists());
+
+    // A previously accepted endpoint can contain sources the current policy excludes.
+    // Its settings and its token must no longer be used, even for an otherwise allowed URL.
+    fs::create_dir_all(&endpoints).unwrap();
+    let stem = origin.replace("://", "_").replace(':', "_");
+    let saved = endpoints.join(format!("{stem}.json"));
+    let token = endpoints.join(format!("{stem}.token"));
+    fs::write(&saved, json!({"origin":origin,"description":mixed,"added":42}).to_string()).unwrap();
+    fs::write(&token, json!({"issuer":origin,"client_id":"furnish","token_endpoint":format!("{origin}/token"),
+        "id_token":"id","access_token":"access","expires_at":4_000_000_000u64}).to_string()).unwrap();
+    let reports = || String::from_utf8(env.furnish(&["reports"]).stdout).unwrap();
+    assert!(reports().starts_with("Reports: off"));
+    let out = env.furnish(&["collection", "add", &format!("{origin}/git/tools.git")]);
+    assert!(!out.status.success(), "Git accepted a token from the rejected endpoint");
+    let collections = env.data.join("collections");
+    assert!(!collections.join("tools").exists());
+
+    // The rule covers only the Git URL. Once the endpoint offers an allowed repository, its
+    // discovery address and identity provider work normally and the private clone succeeds.
+    *doc.lock().unwrap() = Some(allowed.to_string());
+    let out = env.furnish(&["collection", "add", &origin]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(collections.join("tools/.git").is_dir() && reports().starts_with("Reports: errors"));
+    let before = read(&saved);
+    *doc.lock().unwrap() = Some(mixed.to_string());
+    let out = env.furnish(&["collection", "update"]);
+    assert!(stderr(&out).contains("allowedUrlPatterns") && out.status.success());
+    assert_eq!(read(&saved), before);
+    assert!(!collections.join("kit").exists() && !collections.join("blocked").exists());
+
+    // A newly advertised URL can also become disallowed after Git applies insteadOf.
+    mixed["collections"] = json!([collection("tools"), collection("kit")]);
+    *doc.lock().unwrap() = Some(mixed.to_string());
+    let git_config = env.root.join(".gitconfig");
+    fs::write(&git_config, format!("[url \"{origin}/outside/kit.git\"]\n\tinsteadOf = {origin}/git/kit.git\n")).unwrap();
+    let out = env.furnish(&["collection", "add", &origin]);
+    assert!(!out.status.success() && stderr(&out).contains("allowedUrlPatterns"));
+    let out = env.furnish(&["collection", "update"]);
+    assert!(out.status.success() && stderr(&out).contains("allowedUrlPatterns"));
+    assert_eq!(read(&saved), before);
+    assert!(!collections.join("kit").exists());
+    fs::remove_file(git_config).unwrap();
+
+    // Native policy names an endpoint explicitly: its repositories are managed sources.
+    fs::write(&env.policy, json!({"collections":{"allowedUrlPatterns":[]},"endpoints":[origin]}).to_string()).unwrap();
+    *doc.lock().unwrap() = Some(allowed.to_string());
+    let out = env.furnish(&["collection", "add", &origin]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = env.furnish(&["collection", "list"]);
+    assert!(String::from_utf8_lossy(&out.stdout).lines().any(|l| l.starts_with("tools ") && l.contains("managed")));
 }
 
 #[test]

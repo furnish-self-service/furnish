@@ -421,6 +421,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'collections.username': 'Gebruikersnaam',
   'collections.password': 'Wachtwoord of toegangstoken',
   'collections.warning': 'Apps worden uitgevoerd met beheerdersrechten. Voeg alleen collecties toe van mensen die u vertrouwt.',
+  'collections.allowedUrls': 'Toegestane URL-patronen voor collecties',
+  'collections.noPersonalUrls': 'Je organisatie heeft URL’s voor persoonlijke collecties uitgeschakeld.',
   'collections.managedNote': 'Uw organisatie beheert de collecties op deze computer.',
   'collections.count': { one: '{n} collectie', other: '{n} collecties' },
   'collections.updating': 'Bijwerken…',

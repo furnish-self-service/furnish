@@ -825,6 +825,47 @@ if git lfs version >/dev/null 2>&1; then
 else
     lfs="LFS skipped: git-lfs not installed"
 fi
+# User collection URLs must remain allowed after a policy change. A denied origin is a
+# working repository too, so a failed add cannot pass merely because Git failed to clone.
+(
+    export FURNISH_POLICY_FILE="$tmp/url-policy.json" FURNISH_DATA_DIR="$tmp/url-policy-data"
+    git clone -q --bare "$tmp/repo" "$tmp/repo-extra"
+    printf '%s\n' '{"collections":{"usersCanAdd":true,"allowedUrlPatterns":["https://example[.]org/approved[.]git",".+[/\\\\]repo"]}}' > "$FURNISH_POLICY_FILE"
+    # The relative spelling "repo" only matches after resolving it as Git will store it.
+    (cd "$tmp" && step collection add repo --name personal) >/dev/null
+    if step collection add "$tmp/repo-extra" --name denied; then echo "FAIL: added a URL matching only a prefix" >&2; exit 1; fi
+    [ ! -e "$FURNISH_DATA_DIR/collections/denied" ] || { echo "FAIL: denied collection was cloned" >&2; exit 1; }
+    expect "$(step collection list)" "^personal "
+
+    # Both the configured URL and the mirror Git will contact must be allowed.
+    (
+        export GIT_CONFIG_GLOBAL="$tmp/url-rewrites"
+        source_url='https://example.org/approved.git'
+        git config --global "url.$tmp/repo-extra.insteadOf" "$source_url"
+        if step collection add "$source_url" --name mirrored; then echo "FAIL: cloned from a blocked mirror" >&2; exit 1; fi
+        [ ! -e "$FURNISH_DATA_DIR/collections/mirrored" ] || { echo "FAIL: blocked mirror was cloned" >&2; exit 1; }
+        git config --global --unset "url.$tmp/repo-extra.insteadOf"
+        git config --global "url.$tmp/repo.insteadOf" "$source_url"
+        step collection add "$source_url" --name mirrored
+        expect "$(step collection list)" '^mirrored '
+        git config --global --unset "url.$tmp/repo.insteadOf"
+        git config --global "url.$tmp/repo-extra.insteadOf" "$source_url"
+        if grep -q '^mirrored ' <<<"$(step collection list)"; then echo "FAIL: a newly blocked mirror is still listed" >&2; exit 1; fi
+    )
+
+    for patterns in '[]' '[".*","["]'; do
+        printf '{"collections":{"preset":[{"name":"prescribed","url":"%s"}],"allowedUrlPatterns":%s}}\n' "$tmp/repo-extra" "$patterns" > "$FURNISH_POLICY_FILE"
+        visible=$(step collection list)
+        expect "$visible" "^prescribed .*managed by your organization"
+        if grep -q '^personal ' <<<"$visible"; then echo "FAIL: blocked personal collection is still listed" >&2; exit 1; fi
+        if step collection update personal; then echo "FAIL: updated a collection blocked by the current policy" >&2; exit 1; fi
+        if step collection add "$tmp/repo" --name denied; then echo "FAIL: accepted a URL with patterns $patterns" >&2; exit 1; fi
+    done
+
+    echo '{}' > "$FURNISH_POLICY_FILE"
+    expect "$(step collection list)" '^personal '
+    step collection update personal
+)
 # Admin policy in the OS's native store (real mode; needs admin rights), else via the test override.
 step collection remove lfs >/dev/null 2>&1 || true
 cat > "$tmp/policy.json" <<JSON

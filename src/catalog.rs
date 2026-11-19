@@ -1,6 +1,7 @@
 //! App collections: git repositories with one DSC configuration document per app in `apps/`.
 
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     env, fs,
     io::{Seek, Write},
@@ -205,10 +206,10 @@ pub fn collections() -> Result<Vec<Collection>> {
     let separate = preset_dir() != collections_dir();
     let mut collections: Vec<_> = in_dir(collections_dir())?
         .into_iter()
-        // If users may not add collections, only the admin's count (others stay on disk, unused).
-        .filter(|c| (policy.users_can_add || c.managed) && (!separate || !c.managed))
-        // With the service, a preset's name belongs to the service's copy.
+        // With the service, a preset's name belongs to the service's copy. Personal copies
+        // excluded by current policy stay on disk and become available again if allowed.
         .filter(|c| !separate || !preset_name(&c.name))
+        .filter(|c| c.managed || (policy.users_can_add && personal_origin_allowed(&policy, c)))
         .collect();
     if separate {
         collections.extend(in_dir(preset_dir())?.into_iter().filter(|c| c.managed));
@@ -220,11 +221,39 @@ pub fn collections() -> Result<Vec<Collection>> {
 /// A preset collection: the policy presets its name, and the copy comes from the URL the policy
 /// gives for it, compared exactly as written. A collection of the same name from elsewhere is not.
 fn is_preset(presets: &[crate::policy::Preset], name: &str, dir: &Path) -> bool {
-    presets.iter().any(|p| p.name == name && origin_url(dir).is_ok_and(|u| u == p.url))
+    presets.iter().any(|p| p.name == name && origin_urls_match(dir, |url| url == p.url))
 }
 
 fn origin_url(dir: &Path) -> Result<String> {
     git(Some(dir), &["config", "--get", "remote.origin.url"])
+}
+
+/// Git can have multiple URLs for a remote. Check them all, including the first one Git fetches.
+fn origin_urls_match(dir: &Path, allowed: impl Fn(&str) -> bool) -> bool {
+    let Ok(bytes) = git_bytes(Some(dir), &["config", "--local", "--null", "--get-all", "remote.origin.url"]) else {
+        return false;
+    };
+    let Ok(urls) = std::str::from_utf8(&bytes) else { return false };
+    urls.strip_suffix('\0').is_some_and(|list| list.split('\0').all(|url| !url.is_empty() && allowed(url)))
+}
+
+fn personal_origin_allowed(policy: &crate::policy::Collections, collection: &Collection) -> bool {
+    !policy.has_user_url_restriction() || (
+        origin_urls_match(&collection.dir, |url| policy.check_user_url(url).is_ok())
+        && collection.url().is_ok_and(|url| policy.check_user_url(&url).is_ok())
+    )
+}
+
+/// Also check Git's fetch destination when an insteadOf rule or remote name rewrites the URL.
+/// --get-url resolves it locally, before any credentials are requested or connection is made.
+pub(crate) fn check_git_url(policy: &crate::policy::Collections, url: &str) -> Result<()> {
+    if policy.has_user_url_restriction() {
+        policy.check_user_url(url)?;
+        let destination = git(None, &["ls-remote", "--get-url", "--end-of-options", url])
+            .map_err(|_| anyhow::anyhow!("could not resolve the collection URL for your organization's policy"))?;
+        policy.check_user_url(&destination)?;
+    }
+    Ok(())
 }
 
 pub fn get(name: &str) -> Result<Collection> {
@@ -268,14 +297,8 @@ pub fn add(url: &str, name: &str, credentials: Option<(&str, &str)>) -> Result<C
 }
 
 pub fn add_with_tracking(url: &str, name: &str, credentials: Option<(&str, &str)>, requested: Option<&Tracking>) -> Result<Collection> {
-    check_name(name)?;
-    let policy = crate::policy::load().collections;
-    if !policy.users_can_add {
-        bail!("your organization manages the collections; adding others isn't allowed");
-    }
-    if policy.preset.iter().any(|p| p.name == name) {
-        bail!("'{name}' is the name of a collection your organization provides");
-    }
+    let url = checked_add_url(url, name)?;
+    let url = url.as_ref();
     if let Some((user, password)) = credentials {
         crate::auth::store(url, user, password)?;
     }
@@ -286,14 +309,30 @@ pub fn add_with_tracking(url: &str, name: &str, credentials: Option<(&str, &str)
     })
 }
 
+/// Check a personal addition before requesting credentials or contacting Git. Return the
+/// repository address to clone so a relative local path matches the same policy on later loads.
+pub fn checked_add_url<'a>(url: &'a str, name: &str) -> Result<Cow<'a, str>> {
+    check_name(name)?;
+    let policy = crate::policy::load().collections;
+    if !policy.users_can_add {
+        bail!("your organization manages the collections; adding others isn't allowed");
+    }
+    if policy.preset.iter().any(|p| p.name == name) {
+        bail!("'{name}' is the name of a collection your organization provides");
+    }
+    let path = Path::new(url);
+    let url = if policy.has_user_url_restriction() && path.is_relative() && path.exists() {
+        env::current_dir()?.join(path).to_string_lossy().into_owned().into()
+    } else {
+        Cow::Borrowed(url)
+    };
+    check_git_url(&policy, &url)?;
+    Ok(url)
+}
+
 /// Add an organization's furnish address (`furnish.myorg.tld`, see `endpoint`): sign in if
 /// needed (`show` gets the sign-in URL), then add each of its collections. Returns the new ones.
 pub fn add_endpoint(origin: &str, show: impl Fn(&str)) -> Result<Vec<Collection>> {
-    let policy = crate::policy::load_native();
-    let preset = policy.endpoints.iter().filter_map(|e| crate::endpoint::origin(e)).any(|o| o == origin);
-    if !policy.collections.users_can_add && !preset {
-        bail!("your organization manages the collections; adding others isn't allowed");
-    }
     let description = crate::endpoint::discover(origin)?;
     if crate::endpoint::token(origin, &description).is_err() {
         crate::endpoint::login(origin, &description, show)?;
@@ -402,7 +441,11 @@ fn offers<'a>(
 /// collections and problems as messages; a collection that couldn't be added is tried again next
 /// time.
 pub fn add_new(origin: &str, description: &crate::endpoint::Description) -> (Vec<Collection>, Vec<String>) {
-    let presets = crate::policy::load().collections.preset;
+    let policy = crate::policy::load();
+    if let Err(err) = policy.check_endpoint(origin, &description.collections, check_git_url) {
+        return (Vec::new(), vec![format!("{err:#}")]);
+    }
+    let presets = policy.collections.preset;
     let local_url = |name: &str| {
         let dir = collections_dir().join(name);
         dir.join(".git").exists().then(|| origin_url(&dir).ok()).flatten()
@@ -505,7 +548,7 @@ fn clone(url: &str, name: &str, managed: bool, replace: bool, requested: Option<
         if !replace {
             bail!("a collection named '{name}' already exists");
         }
-        if origin_url(&dir).is_ok_and(|u| u == url) {
+        if origin_urls_match(&dir, |origin| origin == url) {
             return Ok(Collection { name: name.to_string(), dir, managed }); // another furnish just did
         }
     }
@@ -2435,7 +2478,8 @@ fn git_bytes_input(dir: Option<&Path>, args: &[&str], input: Option<&[u8]>) -> R
     // Commands that write or read files download the contents they lack (see blobs_on_demand).
     // The command: the first argument after `-c <name>=<value>` pairs.
     let command = args.iter().enumerate().find(|(i, a)| **a != "-c" && (*i == 0 || args[i - 1] != "-c")).map(|(_, a)| *a);
-    let network = matches!(command, Some("clone" | "fetch" | "pull" | "lfs" | "ls-remote" | "checkout" | "reset" | "read-tree" | "cat-file"));
+    let network = matches!(command, Some("clone" | "fetch" | "pull" | "lfs" | "checkout" | "reset" | "read-tree" | "cat-file"))
+        || (command == Some("ls-remote") && args.get(1) != Some(&"--get-url"));
     let url = if !network {
         None
     } else if command == Some("clone") || (command == Some("ls-remote") && dir.is_none()) {
@@ -2519,6 +2563,24 @@ mod tests {
             ]
         );
         assert!(offers(&listed, &listed.iter().map(|c| c.name.clone()).collect::<Vec<_>>(), &presets, local).is_empty());
+    }
+
+    #[test]
+    fn every_configured_origin_must_qualify_for_a_preset_or_a_personal_collection() {
+        let repo = tempfile::tempdir().unwrap();
+        let dir = Some(repo.path());
+        git(dir, &["init", "--quiet"]).unwrap();
+        let preset = crate::policy::Preset { name: "it".into(), url: "approved".into(), tracking: None };
+        let policy = serde_json::from_str(r#"{"allowedUrlPatterns":["approved"]}"#).unwrap();
+        let collection = Collection { name: "it".into(), dir: repo.path().into(), managed: false };
+        let presets = [preset];
+        assert!(!personal_origin_allowed(&policy, &collection));
+        git(dir, &["remote", "add", "origin", "approved"]).unwrap();
+        assert!(is_preset(&presets, "it", repo.path()) && personal_origin_allowed(&policy, &collection));
+        git(dir, &["config", "--add", "remote.origin.url", "elsewhere"]).unwrap();
+        assert!(!personal_origin_allowed(&policy, &collection));
+        git(dir, &["config", "--add", "remote.origin.url", "approved"]).unwrap();
+        assert!(!is_preset(&presets, "it", repo.path()));
     }
 
     #[test]
