@@ -186,18 +186,68 @@ fn family_preview_is_identical_with_or_without_ci_environment_and_validates_defa
 }
 
 #[test]
-fn only_if_set_up_skips_windows_and_identifies_unmodeled_unix_setup() {
+fn guarded_nix_steps_use_only_the_destinations_in_the_target_profile() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("repo");
     let path = temp.path().join("targets.yaml");
-    app(&dir, "tool", json!({"resources":[{"name":"desktop","type":"Furnish/NixOS","properties":{"name":"desktop","onlyIfSetUp":true}}]}));
-    fs::write(&path, "profiles: {office: {family: Windows, packageManagers: [winget], expect: {tool: {steps: [], skipped: [desktop]}}}}")
-        .unwrap();
+    let nix_step = |name: &str, extra: Value| {
+        let mut props = json!({"name":name, "onlyIfSetUp":true});
+        props.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        json!({"name":name, "type":"Furnish/NixOS", "properties":props})
+    };
+    app(&dir, "tool", json!({"resources":[
+        nix_step("ssh-include", json!({"homeOptions":{"programs.ssh.includes":["config.d/extra.conf"]}})),
+        nix_step("system-daemon", json!({"options":{"services.example.enable":true}})),
+        nix_step("portable", json!({"packages":["hello"]})),
+        {"name":"ordinary", "type":"Furnish/NixOS", "properties":{"name":"ordinary"}},
+        {"name":"line-fallback", "type":"Furnish/Line", "properties":{"path":"~/.ssh/config", "line":"Include config.d/extra.conf"}}
+    ]}));
+    let absent = "expect: {tool: {steps: [ordinary, line-fallback], skipped: [ssh-include, system-daemon, portable]}}";
+    let home = "expect: {tool: {steps: [ssh-include, portable, ordinary, line-fallback], skipped: [system-daemon]}}";
+    fs::write(&path, format!("profiles:
+  debian: {{family: Linux, distribution: debian, packageManagers: [apt], {absent}}}
+  mac: {{family: macOS, packageManagers: [brew, nix], {absent}}}
+  windows: {{family: Windows, packageManagers: [winget], {absent}}}
+  linux-home: {{family: Linux, packageManagers: [nix], nixSetup: {{home: true}}, {home}}}
+  mac-home: {{family: macOS, packageManagers: [nix], nixSetup: {{home: true}}, {home}}}
+  nixos:
+    family: Linux
+    packageManagers: [nix]
+    nixSetup: {{system: true}}
+    expect: {{tool: {{steps: [system-daemon, portable, ordinary, line-fallback], skipped: [ssh-include]}}}}
+  nixos-home:
+    family: Linux
+    packageManagers: [nix]
+    nixSetup: {{system: true, home: true}}
+    expect: {{tool: {{steps: [ssh-include, system-daemon, portable, ordinary, line-fallback], skipped: []}}}}
+")).unwrap();
     let output = check(temp.path(), &dir, Some(&path), true);
-    assert!(output.contains("skipped desktop") && output.contains("Linux: desktop (depends on host)"), "{output}");
-    fs::write(&path, "profiles: {dev: {family: Linux, packageManagers: [nix], expect: {tool: {steps: [desktop]}}}}").unwrap();
+    for message in ["no NixOS or Home Manager configuration is set up in this profile", "Home Manager is not set up in this profile",
+        "the NixOS configuration is not set up in this profile", "unavailable on Windows", "ssh-include (depends on host)"] {
+        assert!(output.contains(message), "{output}");
+    }
+
+    // A skipped declaration cannot hide a later assertion failure.
+    fs::write(&path, "profiles: {debian: {family: Linux, packageManagers: [apt], expect: {tool: {steps: [ssh-include]}}}}").unwrap();
     let output = check(temp.path(), &dir, Some(&path), false);
-    assert!(output.contains("onlyIfSetUp requires the target's NixOS or Home Manager configuration"), "{output}");
+    assert!(output.contains("expected steps") && output.contains("line-fallback"), "{output}");
+}
+
+#[test]
+fn a_declared_nix_setup_needs_a_supported_target_and_nix() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("repo");
+    let path = temp.path().join("profiles.yaml");
+    app(&dir, "tool", json!({"resources":[package("tool")]}));
+    fs::write(&path, "profiles:
+  windows: {family: Windows, packageManagers: [winget], nixSetup: {home: true}}
+  mac: {family: macOS, packageManagers: [nix], nixSetup: {system: true}}
+  without-nix: {family: Linux, packageManagers: [apt], nixSetup: {system: true}}
+").unwrap();
+    let output = check(temp.path(), &dir, Some(&path), false);
+    for diagnostic in ["nixSetup.home requires a Linux or macOS profile", "nixSetup.system requires a Linux profile", "nixSetup requires nix in packageManagers"] {
+        assert!(output.contains(diagnostic), "{output}");
+    }
 }
 
 #[test]

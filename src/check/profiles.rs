@@ -31,11 +31,21 @@ struct Profile {
     distribution_like: Vec<String>,
     package_managers: Vec<String>,
     #[serde(default)]
+    nix_setup: NixSetup,
+    #[serde(default)]
     options: Map<String, Value>,
     #[serde(default)]
     app_options: BTreeMap<String, Map<String, Value>>,
     #[serde(default)]
     expect: BTreeMap<String, Expected>,
+}
+
+/// The declarative destinations ready for a fresh install on this target.
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct NixSetup {
+    system: bool,
+    home: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -112,6 +122,10 @@ impl Profile {
                 scripted.push(id.as_str());
             }
         }
+        ensure!(!self.nix_setup.system || family == "Linux", "nixSetup.system requires a Linux profile");
+        ensure!(!self.nix_setup.home || family != "Windows", "nixSetup.home requires a Linux or macOS profile");
+        ensure!(!(self.nix_setup.system || self.nix_setup.home) || native.contains(&"nix"),
+            "nixSetup requires nix in packageManagers");
         for key in self.expect.keys().chain(self.app_options.keys()) {
             ensure!(apps.iter().any(|app| &app.id == key), "unknown app '{key}'");
         }
@@ -127,7 +141,7 @@ impl Profile {
         scripted.sort();
         let managers: Vec<_> = native.iter().chain(&scripted).collect();
         let host = json!({"distribution":distro.id,"distributionLike":distro.like,"packageManagers":managers});
-        let target = Target { family, host, distro, native, scripted };
+        let target = Target { family, host, distro, native, scripted, nix_setup: self.nix_setup };
         let mut graph = Graph::default();
         for app in apps {
             let checked = (|| {
@@ -173,6 +187,7 @@ struct Target<'a> {
     distro: Distribution,
     native: Vec<&'a str>,
     scripted: Vec<&'a str>,
+    nix_setup: NixSetup,
 }
 
 impl Target<'_> {
@@ -206,7 +221,20 @@ impl Target<'_> {
                 result.skipped.push(name.into());
                 continue;
             }
-            ensure!(!setup, "{name}: onlyIfSetUp requires the target's NixOS or Home Manager configuration, which is outside this profile");
+            if setup {
+                let reason = if !self.nix_setup.system && !self.nix_setup.home {
+                    Some("no NixOS or Home Manager configuration is set up in this profile")
+                } else {
+                    let props = ctx.properties(&r["properties"]).with_context(|| format!("{name}: NixOS properties"))?;
+                    crate::nixos_apps::missing_profile_destination(&props, self.nix_setup.system, self.nix_setup.home)
+                        .with_context(|| format!("{name}: NixOS properties"))?
+                };
+                if let Some(reason) = reason {
+                    details.push(format!("{}: skipped {name} ({reason})", app.id));
+                    result.skipped.push(name.into());
+                    continue;
+                }
+            }
             result.steps.push(name.into());
             if r["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case(PACKAGE_TYPE)) {
                 let props = ctx.properties(&r["properties"]).with_context(|| format!("{name}: package properties"))?;
