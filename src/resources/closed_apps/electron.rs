@@ -87,6 +87,7 @@ fn package_name<'a>(mut args: impl Iterator<Item = &'a [u8]>) -> Option<&'a str>
             // With a bare switch of unknown arity the next argument might be a profile or
             // log path. Only accept unambiguous switches before the launch operand.
             b"--"
+            | b"--autostart"
             | b"--no-sandbox"
             | b"--disable-gpu"
             | b"--no-help"
@@ -144,7 +145,7 @@ mod tests {
         let expected = Some("Notes".to_string());
         assert_eq!(
             app(&[
-                "/usr/lib/electron43/electron --user-data-dir=/lib/Other/app.asar /opt/Notes/resources/app.asar /lib/Other/app.asar"
+                "/usr/lib/electron43/electron --user-data-dir=/lib/Other/app.asar --autostart /opt/Notes/resources/app.asar /lib/Other/app.asar"
             ]),
             expected
         );
@@ -170,6 +171,7 @@ mod tests {
             app(&[
                 "wrapper",
                 "--ozone-platform=wayland",
+                "--autostart",
                 "-r",
                 "/lib/plugin/app.asar",
                 "/opt/Notes/resources/app.asar"
