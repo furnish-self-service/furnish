@@ -252,9 +252,13 @@ const steps = [
     }
     await click(button('Discover'));
     await click(`${card('renamed')}${button('Install')}`);
-    await waitFor('unrelated install completes', () => existsSync(`${workDir}/pkgs/renamed`), 30000);
+    // Removing the finished operation's Now row can move Retry between mouse down and up.
+    // Wait for the desktop to finish, including its status refresh.
+    await waitFor('renamed installed and no longer busy', () =>
+      find(`${card('renamed')}[not(.//*[@aria-busy='true'])]//*[normalize-space()='Installed']`), 30000);
     await click(nav('Activity'));
     await click(button('Retry homebrew'));
+    await waitFor('Activity accepts the prerequisite retry', async () => !(await findAll(button('Retry homebrew'))).length);
     await click(button('Discover'));
     await waitFor('homebrew installed', () => find(`${card('homebrew')}//*[normalize-space()='Installed']`), 30000);
     await waitFor('brewed installed', () => find(`${card('brewed')}//*[normalize-space()='Installed']`), 30000);
