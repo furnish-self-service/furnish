@@ -47,6 +47,30 @@ SH
     cp "$tmp/bin/pkexec" "$tmp/bin/sudo"
     chmod +x "$tmp/bin/"*
     export PATH="$tmp/bin:$PATH"
+elif command -v dnf >/dev/null; then
+    # Exercise the real manager, including the stricter argument syntax of Fedora 43's DNF 5.2.
+    # Record rejected queries too: an unavailable version lookup otherwise looks like no update.
+    real_dnf=$(command -v dnf)
+    mkdir -p "$tmp/bin"
+    cat > "$tmp/bin/dnf" <<SH
+#!/bin/sh
+subcommand=
+for arg do
+    if [ -z "\$subcommand" ]; then
+        case \$arg in
+            -*) continue ;;
+            install|remove|upgrade|check-update|repoquery) subcommand=\$arg ;;
+            *) break ;;
+        esac
+    elif [ "\$arg" = -- ]; then
+        echo "DNF 5.2 rejects: dnf \$*" | tee -a "$tmp/dnf-rejected" >&2
+        exit 2
+    fi
+done
+exec "$real_dnf" "\$@"
+SH
+    chmod +x "$tmp/bin/dnf"
+    export PATH="$tmp/bin:$PATH"
 fi
 
 # Collections are git repos: turn the fixture into one.
@@ -906,5 +930,6 @@ expect "$(step option list org/cli-tool)" "userInstall *true *your organization 
 if "$furnish" list 2>&1 | grep -q "org asks"; then echo "FAIL: asked although the policy answers" >&2; exit 1; fi
 if step option set org/cli-tool userInstall false >/dev/null 2>&1; then echo "FAIL: changed a locked option" >&2; exit 1; fi
 drop
+if [ -s "$tmp/dnf-rejected" ]; then cat "$tmp/dnf-rejected" >&2; exit 1; fi
 echo "e2e OK ($lfs, $n installer(s), policy from $store, DSC resources $($dsc && echo used || echo "not beside furnish"))" >&2
 echo "e2e OK ($($real && echo real || echo fake) package manager)"
