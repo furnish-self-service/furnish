@@ -59,7 +59,7 @@
         "showDiff": {
           "type": "boolean",
           "default": false,
-          "description": "Show the differing lines when test.file is %s. The preview includes both command output and supplied input."
+          "description": "Show the differing lines when test.file is %s. The preview includes both command output and supplied input. A present check only determines whether the setting exists."
         },
         "test": {
           "type": "object",
