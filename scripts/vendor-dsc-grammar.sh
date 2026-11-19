@@ -10,6 +10,11 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 git clone -q --depth 1 --branch "$tag" https://github.com/PowerShell/DSC.git "$tmp/dsc"
+# Backport the upstream multiline-string grammar fix to the pinned DSC release.
+if [ "$tag" = v3.3.0 ]; then
+    git -C "$tmp/dsc" fetch -q --depth 1 origin f050e3ef2996a02db51c3cea3c72ce84670662df
+    git -C "$tmp/dsc" restore --source=FETCH_HEAD -- grammars/tree-sitter-dscexpression/grammar.js
+fi
 cargo install -q tree-sitter-cli --version "$ts_version" --locked --root "$tmp/ts"
 cd "$tmp/dsc/grammars/tree-sitter-dscexpression"
 "$tmp/ts/bin/tree-sitter" init --update >/dev/null

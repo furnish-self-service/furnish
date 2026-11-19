@@ -47,6 +47,30 @@ SH
     cp "$tmp/bin/pkexec" "$tmp/bin/sudo"
     chmod +x "$tmp/bin/"*
     export PATH="$tmp/bin:$PATH"
+elif command -v dnf >/dev/null; then
+    # Exercise the real manager, including the stricter argument syntax of Fedora 43's DNF 5.2.
+    # Record rejected queries too: an unavailable version lookup otherwise looks like no update.
+    real_dnf=$(command -v dnf)
+    mkdir -p "$tmp/bin"
+    cat > "$tmp/bin/dnf" <<SH
+#!/bin/sh
+subcommand=
+for arg do
+    if [ -z "\$subcommand" ]; then
+        case \$arg in
+            -*) continue ;;
+            install|remove|upgrade|check-update|repoquery) subcommand=\$arg ;;
+            *) break ;;
+        esac
+    elif [ "\$arg" = -- ]; then
+        echo "DNF 5.2 rejects: dnf \$*" | tee -a "$tmp/dnf-rejected" >&2
+        exit 2
+    fi
+done
+exec "$real_dnf" "\$@"
+SH
+    chmod +x "$tmp/bin/dnf"
+    export PATH="$tmp/bin:$PATH"
 fi
 
 # Collections are git repos: turn the fixture into one.
@@ -310,7 +334,14 @@ resources:
     properties: { path: "$tmp/conf/settings.json", location: "\$.enabledPlugins['fixture@market']", value: true, private: true }
   - name: home file
     type: Furnish/File
-    properties: { path: "~/$home_file", content: "furnish" }
+    properties:
+      path: "~/$home_file"
+      content: |
+        [[repo]
+        key=value
+
+        [other]
+        prefix=[[
   - name: current context
     type: Furnish/Value
     properties: { path: "$tmp/conf/kube.yaml", location: "\$.current-context", removeIf: [fixture-prod, fixture-stg] }
@@ -738,7 +769,9 @@ grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAI
 [ "$(tr -d '\r' < "$tmp/conf/profile.conf")" = "$(cat "$tmp/repo/files/profile.conf")" ] || { echo "FAIL: profile not copied" >&2; exit 1; }
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
-[ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
+# Compare bytes including the final newline; only the first opening bracket is an escape.
+printf '[repo]\nkey=value\n\n[other]\nprefix=[[\n' > "$tmp/expected-home-file"
+git diff --no-index -- "$tmp/expected-home-file" ~/"$home_file"
 [ "$(git config --file ~/"$home_file".gitconfig fixture.home)" = home ] || { echo "FAIL: ~/ in a command wasn't expanded" >&2; exit 1; }
 # removeIf: installing leaves the value as it is, there or not, and the app stays installed.
 grep -q '^current-context: fixture-prod$' "$tmp/conf/kube.yaml" || { echo "FAIL: install changed current-context" >&2; exit 1; }
@@ -897,5 +930,6 @@ expect "$(step option list org/cli-tool)" "userInstall *true *your organization 
 if "$furnish" list 2>&1 | grep -q "org asks"; then echo "FAIL: asked although the policy answers" >&2; exit 1; fi
 if step option set org/cli-tool userInstall false >/dev/null 2>&1; then echo "FAIL: changed a locked option" >&2; exit 1; fi
 drop
+if [ -s "$tmp/dnf-rejected" ]; then cat "$tmp/dnf-rejected" >&2; exit 1; fi
 echo "e2e OK ($lfs, $n installer(s), policy from $store, DSC resources $($dsc && echo used || echo "not beside furnish"))" >&2
 echo "e2e OK ($($real && echo real || echo fake) package manager)"

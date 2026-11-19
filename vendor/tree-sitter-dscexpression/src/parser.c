@@ -392,8 +392,7 @@ static bool ts_lex(TSLexer *lexer, TSStateId state) {
       END_STATE();
     case 8:
       ACCEPT_TOKEN(sym_escapedStringLiteral);
-      if (lookahead != 0 &&
-          lookahead != '\n') ADVANCE(8);
+      if (lookahead != 0) ADVANCE(8);
       END_STATE();
     case 9:
       ACCEPT_TOKEN(anon_sym_LBRACK);

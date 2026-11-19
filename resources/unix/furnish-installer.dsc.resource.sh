@@ -38,6 +38,8 @@ if [ -n "${url:-}" ]; then
 else
     [ -n "${file:-}" ] && [ -z "${sha256:-}" ] || fail 10 "use either file or url with sha256"
     identity=$(json_member file "$file")
+    # Furnish supplies an absolute path. Direct DSC calls may pass a name starting with '-'.
+    case $file in /*|./*|../*) ;; *) file=./$file ;; esac
     subject=$(basename "$file")
 fi
 [ -n "${command:-}" ] && identity="$identity,$(json_member command "$command")"
@@ -105,8 +107,10 @@ case "$file" in
     newer_version() { v=$(latest_version) && [ "$v" != "$(installed_version)" ] && echo "$v"; }
     if command -v dnf >/dev/null 2>&1; then
         via=dnf
-        do_install() { run_step dnf install -y -- "$file"; }
-        do_remove() { run_step dnf remove -y -- "$id"; }
+        # DNF 5.2 rejects --. A local file is already a path, and the RPM's own name must be an operand.
+        case $id in ''|-*) fail 10 "invalid RPM package name: $id" ;; esac
+        do_install() { run_step dnf install -y "$file"; }
+        do_remove() { run_step dnf remove -y "$id"; }
         install_desc="dnf install -y $file" remove_desc="dnf remove -y $id"
     elif command -v zypper >/dev/null 2>&1; then
         via=zypper

@@ -61,17 +61,18 @@ use_apt() {
 use_dnf() {
     have dnf || return 1
     manager=dnf via=dnf admin=true
+    # Some DNF 5 versions reject -- after a subcommand. The name is validated below.
     installed_version() { rpm_version; }
-    do_install() { run_step dnf install -y -- "$name"; }
-    do_remove() { run_step dnf remove -y -- "$name"; }
+    do_install() { run_step dnf install -y "$name"; }
+    do_remove() { run_step dnf remove -y "$name"; }
     install_desc="dnf install -y $name" remove_desc="dnf remove -y $name"
     # Cached metadata only (-C): no download during a status check.
-    newer_version() { dnf -C -q check-update -- "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
-    do_upgrade() { run_step dnf upgrade -y -- "$name"; }
+    newer_version() { dnf -C -q check-update "$name" 2>/dev/null | grep "^$name\\." | tr -s ' ' | cut -d' ' -f2; }
+    do_upgrade() { run_step dnf upgrade -y "$name"; }
     upgrade_desc="dnf upgrade -y $name"
     # dnf install takes "name-[epoch:]version-release", also to go to an older one.
     scheme=rpm pin=true
-    do_install_version() { run_step dnf install -y -- "$name-$targetVersion"; }
+    do_install_version() { run_step dnf install -y "$name-$targetVersion"; }
     version_desc() { echo "dnf install -y $name-$targetVersion"; }
     latest_version() { dnf_versions -C --latest-limit 1 | tail -n 1; }
     # From the cache; once more with fresh metadata if the cache has none.
@@ -80,7 +81,7 @@ use_dnf() {
 # Every version of $name in the repositories, oldest first, for this machine's
 # architecture: "[epoch:]version-release" per line. dnf4 ends each line itself, dnf5 doesn't.
 dnf_versions() {
-    english dnf -q repoquery "$@" --arch "$(uname -m),noarch" --qf '%{epoch}:%{version}-%{release}\n' -- "$name" 2>/dev/null |
+    english dnf -q repoquery "$@" --arch "$(uname -m),noarch" --qf '%{epoch}:%{version}-%{release}\n' "$name" 2>/dev/null |
         while IFS= read -r l; do [ -n "$l" ] && echo "${l#0:}"; done | uniq_words
 }
 use_zypper() {

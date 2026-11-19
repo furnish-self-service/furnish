@@ -1,4 +1,4 @@
-# Generated from PowerShell/DSC grammars/tree-sitter-dscexpression (v3.3.0) with tree-sitter-cli 0.25.10.
+# Generated from PowerShell/DSC grammars/tree-sitter-dscexpression (v3.3.0 + PowerShell/DSC#1732) with tree-sitter-cli 0.25.10.
 # Upstream does not commit generated sources, so dsc-lib can't build as a plain git dependency.
 # Regenerate with scripts/vendor-dsc-grammar.sh when bumping the DSC tag.
 [package]
