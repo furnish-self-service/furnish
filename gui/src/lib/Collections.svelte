@@ -220,8 +220,8 @@
   }
   h1 {
     margin: 0;
-    font: 700 2rem/1.1 var(--font-display);
-    letter-spacing: -0.02em;
+    font: var(--page-heading);
+    letter-spacing: -0.03em;
   }
   .lead {
     color: var(--ink-soft);
@@ -259,16 +259,6 @@
   .warning {
     font-size: 0.8rem;
     color: var(--muted);
-  }
-  .org {
-    margin-left: 0.4rem;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 650;
-    color: var(--ink-soft);
-    background: var(--hover);
-    white-space: nowrap;
   }
   .managed-note {
     margin-top: 1.5rem;

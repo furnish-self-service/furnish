@@ -20,7 +20,11 @@
   --on-highlight: #3a2a00;
   --danger: #b4322c;
   --danger-soft: #fbe7e5;
-  --radius: 16px;
+  --radius: 14px;
+  --page-heading: 700 clamp(1.85rem, 2.6vw, 2.25rem)/1.12 var(--font-display);
+  --field-height: 2.5rem;
+  --field-radius: .55rem;
+  --help-size: .875rem;
   --shadow: 0 1px 2px rgb(16 40 46 / 0.05);
   --shadow-raised: 0 10px 28px -10px rgb(16 40 46 / 0.22);
   --font-display: 'Bricolage Grotesque Variable', system-ui, sans-serif;
@@ -122,4 +126,84 @@ input:focus-visible {
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Preferences in Settings, collection details, and app options use the available panel width. */
+.preference-list {
+  container-type: inline-size;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: .9375rem;
+  line-height: 1.45;
+}
+.preference-list > li { padding: .875rem 1.125rem; }
+.preference-list > li + li { border-top: 1px solid var(--line); }
+.preference-list :is(.row, .status) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 38%);
+  align-items: center;
+  gap: .5rem 1.5rem;
+}
+.preference-list .text {
+  display: grid;
+  justify-items: start;
+  gap: .2rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.preference-list .label { color: var(--ink); font-weight: 600; }
+.preference-list .desc { font-size: var(--help-size); color: var(--ink-soft); line-height: 1.45; }
+.preference-list :is(select, input:not([type='checkbox'])) {
+  min-width: 0;
+  width: 100%;
+  min-height: var(--field-height);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--field-radius);
+  padding: .5rem .8rem;
+  font: .92rem var(--font-body);
+  background: var(--surface);
+  color: var(--ink);
+  text-overflow: ellipsis;
+}
+.preference-list .control input[type='text'] {
+  flex: 1 1 10rem;
+  width: auto;
+  max-width: 100%;
+  font-family: var(--font-mono);
+}
+.preference-list .secondary {
+  min-height: var(--field-height);
+  border-radius: var(--field-radius);
+}
+.preference-list select:disabled {
+  background-color: var(--canvas);
+  color: var(--ink-soft);
+}
+.preference-list input[type='checkbox'] {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.org {
+  display: inline-block;
+  width: fit-content;
+  padding: .1rem .45rem;
+  border-radius: .35rem;
+  background: var(--sidebar);
+  color: var(--ink-soft);
+  font-size: .75rem;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.preference-list .value { overflow-wrap: anywhere; }
+@container (max-width: 32rem) {
+  .preference-list :is(.row, .status) { grid-template-columns: minmax(0, 1fr); }
+  .preference-list label.row:has(input[type='checkbox']) { grid-template-columns: minmax(0, 1fr) auto; }
 }

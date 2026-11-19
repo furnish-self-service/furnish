@@ -144,15 +144,15 @@
   {#if store.settings}
     <section aria-labelledby="startup-title">
       <h2 id="startup-title">{t('settings.startup')}</h2>
-      <ul class="rows">
+      <ul class="rows preference-list">
         <li>
           <label class="row">
             <span class="text">
               <span class="label">{t('settings.startAtSignIn', { brand })}</span>
               <span class="desc">{t('settings.startAtSignInText', { brand })}</span>
+              {@render locked('startAtSignIn')}
             </span>
             <span class="control">
-              {@render locked('startAtSignIn')}
               <input
                 type="checkbox"
                 checked={store.settings.startAtSignIn}
@@ -168,7 +168,7 @@
     <section aria-labelledby="updates-title">
       <h2 id="updates-title">{t('settings.updates')}</h2>
       <p class="intro">{t('settings.updatesText')}</p>
-      <ul class="rows">
+      <ul class="rows preference-list">
         <li class="status">
           <span class="text" aria-live="polite">
             {#if store.scan.running}
@@ -196,23 +196,20 @@
             <button class="secondary" disabled={store.autoUpdate.running || store.scan.running || store.loading} onclick={checkForUpdates}>{t('settings.checkNow')}</button>
           </span>
         </li>
-        <li class="row">
-          <span class="text">
-            <span class="label" id="look-label">{t('settings.lookForUpdates')}</span>
-          </span>
-          <span class="control stack" role="group" aria-labelledby="look-label">
-            <label class="inline">
+        <li>
+          <fieldset class="schedule">
+            <legend>{t('settings.lookForUpdates')}</legend>
+            <label class="row">
+              <span class="text">{t('settings.onStart', { brand })}{@render locked('updateOnLaunch')}</span>
               <input
                 type="checkbox"
                 checked={store.settings.updateOnLaunch}
                 disabled={isLocked('updateOnLaunch')}
                 onchange={(e) => changeSettings({ updateOnLaunch: e.currentTarget.checked })}
               />
-              {t('settings.onStart', { brand })}
-              {@render locked('updateOnLaunch')}
             </label>
-            <label class="inline interval">
-              {t('settings.whileRunning', { brand })}
+            <label class="row interval">
+              <span class="text">{t('settings.whileRunning', { brand })}{@render locked('updateIntervalMinutes')}</span>
               <select
                 id="interval"
                 value={store.settings.updateIntervalMinutes}
@@ -223,18 +220,17 @@
                   <option value={minutes}>{text}</option>
                 {/each}
               </select>
-              {@render locked('updateIntervalMinutes')}
             </label>
-          </span>
+          </fieldset>
         </li>
         <li>
           <label class="row">
             <span class="text">
               <span class="label">{t('settings.loadAware')}</span>
               <span class="desc">{t('settings.loadAwareText')}</span>
+              {@render locked('loadAwareUpdates')}
             </span>
             <span class="control">
-              {@render locked('loadAwareUpdates')}
               <input
                 type="checkbox"
                 checked={store.settings.loadAwareUpdates}
@@ -260,13 +256,13 @@
 
     <section aria-labelledby="language-title">
       <h2 id="language-title">{t('settings.language')}</h2>
-      <ul class="rows">
+      <ul class="rows preference-list">
         <li class="row">
           <label class="text" for="language">
             <span class="label">{t('settings.languageLabel', { brand })}</span>
+            {@render locked('language')}
           </label>
           <span class="control">
-            {@render locked('language')}
             <select
               id="language"
               value={store.settings.language}
@@ -283,9 +279,9 @@
           <label class="text" for="fallback-language">
             <span class="label">{t('settings.fallbackLanguage')}</span>
             <span class="desc">{t('settings.fallbackLanguageText')}</span>
+            {@render locked('fallbackLanguage')}
           </label>
           <span class="control">
-            {@render locked('fallbackLanguage')}
             <select
               id="fallback-language"
               value={store.settings.fallbackLanguage}
@@ -313,13 +309,13 @@
             {t('settings.noReports')}
           {/if}
         </p>
-        <ul class="rows">
+        <ul class="rows preference-list">
           <li class="row">
             <label class="text" for="reporting">
               <span class="label">{t('settings.send')}</span>
+              {@render locked('reporting')}
             </label>
             <span class="control">
-              {@render locked('reporting')}
               <select
                 id="reporting"
                 value={store.settings.reporting}
@@ -336,9 +332,9 @@
             <label class="row">
               <span class="text">
                 <span class="label">{t('settings.hostname')}</span>
+                {@render locked('reportHostname')}
               </span>
               <span class="control">
-                {@render locked('reportHostname')}
                 <input
                   type="checkbox"
                   checked={store.settings.reportHostname}
@@ -362,7 +358,7 @@
     <section aria-labelledby="nixos-title">
       <h2 id="nixos-title">{nixos.nixos ? 'NixOS' : 'Home Manager'}</h2>
       <p class="intro">{t(nixos.nixos ? 'nixos.declared' : 'nixos.homeOnly')}</p>
-      <ul class="rows">
+      <ul class="rows preference-list">
         {#if nixos.nixos}
         <li class="row">
           <span class="text">
@@ -534,7 +530,7 @@
 
   <section aria-labelledby="about-title">
     <h2 id="about-title">{t('settings.about')}</h2>
-    <ul class="rows">
+    <ul class="rows preference-list">
       <li class="row">
         <span class="text"><span class="label">{t('settings.version')}</span></span>
         <span class="control value" id="version">{build ? `furnish ${build.version}` : '…'}</span>
@@ -619,9 +615,9 @@
         <li class="row">
           <label class="text" for="self-update-mode">
             <span class="label">{t('settings.selfUpdate', { brand })}</span>
+            {@render locked('selfUpdate')}
           </label>
           <span class="control">
-            {@render locked('selfUpdate')}
             <select
               id="self-update-mode"
               value={updatesItself || store.settings.selfUpdate === 'off' ? store.settings.selfUpdate : 'notify'}
@@ -654,30 +650,28 @@
 
 <style>
   .settings {
-    max-width: 44rem;
+    max-width: 56rem;
+    margin-inline: auto;
   }
   h1 {
     margin: 0;
-    font: 700 2rem/1.1 var(--font-display);
-    letter-spacing: -0.02em;
+    font: var(--page-heading);
+    letter-spacing: -0.035em;
   }
-  section section {
-    margin-top: 2.25rem;
-  }
+  section section { margin-top: 1.75rem; }
   h2 {
-    margin: 0 0 0.5rem;
-    font: 650 1rem var(--font-display);
+    margin: 0 0 .65rem;
+    font: 650 1.125rem/1.3 var(--font-display);
+    letter-spacing: -.015em;
   }
-  .intro,
-  .note {
-    margin: 0 0 0.6rem;
-    font-size: 0.85rem;
-    line-height: 1.45;
-    color: var(--muted);
+  .intro, .note {
+    margin: -.25rem 0 .8rem;
+    color: var(--ink-soft);
+    font-size: var(--help-size);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
   }
-  .note {
-    margin: 0.6rem 0 0;
-  }
+  .note { margin: .55rem 0 0; }
   .notice {
     margin-top: 1.25rem;
     padding: 0.8rem 1rem;
@@ -697,36 +691,10 @@
   .notice code {
     font: 0.8rem var(--font-mono);
   }
-  .rows {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    border-top: 1px solid var(--line);
-  }
-  .rows > li {
-    border-bottom: 1px solid var(--line);
-  }
-  .row,
-  .status {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem 1.5rem;
-    padding: 0.75rem 0;
-  }
-  label.row {
-    cursor: pointer;
-  }
-  .text {
-    display: grid;
-    gap: 0.15rem;
-    flex: 1 1 14rem;
-    min-width: 0;
-  }
-  .label {
-    font-weight: 600;
-  }
+  .schedule { margin: 0; border: 0; min-width: 0; padding: 0; }
+  .schedule legend { padding: 0; font-weight: 650; }
+  .schedule .row { margin-top: .5rem; min-height: 2rem; }
+  label.row { cursor: pointer; }
   .status .label {
     font-weight: 400;
     color: var(--ink-soft);
@@ -739,54 +707,19 @@
     font-weight: 600;
     color: var(--danger);
   }
-  .desc {
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
   .control {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
     align-items: center;
-    gap: 0.5rem;
+    gap: .5rem;
     min-width: 0;
-    max-width: 100%;
   }
-  .control.stack {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
-  }
-  .inline {
-    display: flex;
-    flex-wrap: wrap;
-    max-width: 100%;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.92rem;
-  }
-  input[type='checkbox'] {
-    width: 1.05rem;
-    height: 1.05rem;
-    margin: 0;
-    accent-color: var(--accent);
-  }
-  select {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 0.92rem var(--font-body);
-    max-width: 100%;
-    min-width: 0;
-    text-overflow: ellipsis;
-  }
+  .control.stack { flex-direction: column; align-items: flex-start; }
+  .inline { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
   .value {
     color: var(--ink-soft);
     font-size: 0.92rem;
   }
-  .build-info { padding: .65rem 0; }
   .build-info summary { width: fit-content; cursor: pointer; font-size: .92rem; }
   .build-info dl { display: grid; grid-template-columns: fit-content(40%) 1fr; gap: .4rem 1rem; margin: .75rem 0 .2rem; font-size: .86rem; }
   .build-info dt { color: var(--muted); }
@@ -802,17 +735,6 @@
   .error {
     white-space: pre-line;
   }
-  input[type='text'] {
-    padding: 0.45rem 0.7rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 10px;
-    background: var(--surface);
-    color: var(--ink);
-    font: 0.85rem var(--font-mono);
-    width: 16rem;
-    max-width: 100%;
-    min-width: 0;
-  }
   .warn {
     display: block;
     color: var(--highlight-ink);
@@ -822,7 +744,7 @@
     color: var(--highlight-ink);
   }
   .more {
-    margin: -0.35rem 0 0.75rem;
+    margin: .4rem 0 0;
     font-size: 0.85rem;
     color: var(--muted);
   }
@@ -836,15 +758,6 @@
     margin: 0.35rem 0 0;
     line-height: 1.45;
   }
-  .org {
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 650;
-    color: var(--ink-soft);
-    background: var(--hover);
-    white-space: nowrap;
-  }
   .link {
     width: fit-content;
     padding: 0;
@@ -855,10 +768,5 @@
     font-size: 0.92rem;
     text-decoration: underline;
     cursor: pointer;
-  }
-  @media (max-width: 760px) {
-    .control.stack {
-      align-items: flex-start;
-    }
   }
 </style>
