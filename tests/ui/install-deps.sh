@@ -1,25 +1,37 @@
 #!/bin/sh
-# Install packages in the Ubuntu WebDriver image. Fetch before configuring packages
-# so only an index or download failure can trigger the archive mirror fallback.
+# Install the desktop build and WebDriver dependencies from Ubuntu's signed archives.
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 
+sources=/etc/apt/sources.list.d/ubuntu.sources
+apt() {
+    # Scope resolution to the Ubuntu packages we need. Keep unrelated runner indexes.
+    timeout "$deadline" apt-get -o Dir::Etc::sourcelist="$sources" -o Dir::Etc::sourceparts=- \
+        -o APT::Get::List-Cleanup=false -o Acquire::Retries=0 \
+        -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 "$@"
+}
 fetch() {
-    apt-get update --error-on=any -qq &&
-        apt-get install --download-only -y -qq --no-install-recommends "$@"
+    apt update --error-on=any -qq && apt install --download-only -y -qq "$@"
 }
 
-sources=/etc/apt/sources.list.d/ubuntu.sources
-ubuntu_uri='^URIs: (https?)://(archive|security)[.]ubuntu[.]com/ubuntu/?$'
+# Bound the primary attempt even if apt encounters a timeout for every package.
+deadline=3m
 fetch "$@" || {
     status=$?
-    [ -f "$sources" ] && grep -Eq "$ubuntu_uri" "$sources" || exit "$status"
+    fallback=$(mktemp --suffix=.sources)
+    trap 'rm -f "$fallback"' EXIT
+    sed -E \
+        -e 's#^URIs: (https?)://(archive|security)[.]ubuntu[.]com/ubuntu/?$#URIs: \1://mirrors.edge.kernel.org/ubuntu/#' \
+        -e 's#^URIs: mirror\+file:/etc/apt/apt-mirrors[.]txt$#URIs: https://mirrors.edge.kernel.org/ubuntu/#' \
+        "$sources" > "$fallback"
+    cmp -s "$sources" "$fallback" && exit "$status"
+    chmod 644 "$fallback"
+    sources=$fallback
     echo "Retrying Ubuntu package downloads from the kernel.org archive mirror" >&2
-    original=$(mktemp)
-    cp -p "$sources" "$original"
-    trap 'mv "$original" "$sources"' EXIT
-    sed -Ei "s#$ubuntu_uri#URIs: \1://mirrors.edge.kernel.org/ubuntu/#" "$sources"
+    deadline=0
     fetch "$@"
 }
-apt-get install --no-download -y -qq --no-install-recommends "$@"
-rm -rf /var/lib/apt/lists/*
+
+# Configure once, offline. A package's maintainer scripts can legitimately take time.
+deadline=0
+apt install --no-download -y -qq "$@"
