@@ -19,10 +19,10 @@ trap cleanup EXIT
 
 if [ -n "${1:-}" ]; then
     binary=$(realpath "$1")
-    docker build -q --target runtime -t furnish-ui "$repo/tests/ui" >/dev/null
+    docker build --progress=plain --target runtime -t furnish-ui "$repo/tests/ui"
     image=furnish-ui
 else
-    docker build -q --target build -t furnish-ui-build "$repo/tests/ui" >/dev/null
+    docker build --progress=plain --target build -t furnish-ui-build "$repo/tests/ui"
     (cd "$repo/gui" && npm run -s build)
     docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$repo:/src" -v "$HOME/.cargo/registry:/opt/cargo/registry" \
         -w /src -e CARGO_TARGET_DIR=/src/target/ui-docker furnish-ui-build \
