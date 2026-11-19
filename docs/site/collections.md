@@ -246,17 +246,19 @@ Adds packages and options to the computer's NixOS configuration and rebuilds the
 |---|---|
 | `name` | The app's name in furnish's list on the computer; unique among your apps (letters, digits, `_` and `-`) |
 | `packages` | Attribute names in the configuration's nixpkgs, such as `htop` or `kdePackages.kdenlive`, added to `environment.systemPackages` or `home.packages` |
-| `options` | NixOS options by name and value. Each needs an entry in the computer's `services.furnish.nix.allowedOptions` |
-| `homeOptions` | Home Manager options by name and value, used instead of `options` when the app goes into Home Manager. Each needs an entry in `services.furnish.nix.allowedOptions` of the Home Manager configuration |
+| `options` | NixOS options by name and value |
+| `homeOptions` | Home Manager options by name and value, used instead of `options` when the app goes into Home Manager |
 | `onlyIfSetUp` | `true`: the step applies only where the configuration it goes into is set up for furnish. Elsewhere furnish skips it, as for a false `condition` |
 
 Whether the app goes into the NixOS configuration or Home Manager is up to the computer: Home Manager when furnish's Home Manager module is set up for the person, unless the setting `osSpecific.nixos.installInto` says otherwise. `packages` work in both. An app that sets options should give `options`, `homeOptions` or both. An app with options for only one of them goes there, if that is set up.
+
+By default, an app can set any option supported by its target configuration. If that configuration sets `services.furnish.nix.allowedOptions`, each option must match an entry in its list.
 
 Each install or uninstall rebuilds the system or the Home Manager generation once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
 Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. The guard also keeps an existing app entry available for removal when that configuration no longer accepts new apps. Use the host setup fields to select a complementary fallback.
 
-For example, this app adds a directory to the person's login shell path. Allow `home.sessionPath` in the Home Manager module's `services.furnish.nix.allowedOptions`. On other Unix systems the person's shell must read `~/.profile` for the fallback to take effect. If Home Manager owns that file, configure Furnish's module or choose a writable shell startup file that the person's shell sources.
+For example, this app adds a directory to the person's login shell path. On other Unix systems the person's shell must read `~/.profile` for the fallback to take effect. If Home Manager owns that file, configure Furnish's module or choose a writable shell startup file that the person's shell sources.
 
 ```yaml
 metadata:
@@ -299,7 +301,7 @@ A guarded NixOS step can also help another step where Home Manager manages a fil
     accept: '^\s*Include\s(.*\s)?config\.d/acme\.conf(\s|$)'
 ```
 
-`programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself. Home Manager's `allowedOptions` needs `programs.ssh.includes`.
+`programs.ssh.includes` takes effect only if the person's configuration sets `programs.ssh.enable = true`. Otherwise Home Manager doesn't write `~/.ssh/config`, and the `Line` step edits the file itself.
 
 On uninstall, a `Line` with `accept` leaves an exact match in a file linked by Home Manager to its generation in the Nix store. The `Furnish/NixOS` step removes the option. With a switch the activated generation updates the file, and with a rebuild for boot the active file stays as it is until activation. In an ordinary SSH config, the `Line` step removes the exact include and keeps other lines.
 

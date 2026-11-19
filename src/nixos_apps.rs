@@ -7,7 +7,7 @@
 //! ```
 //!
 //! furnish's NixOS module adds what that flake lists (`apps.json`): packages from the system's
-//! nixpkgs, and NixOS options from `services.furnish.nix.allowedOptions` (`allowed`).
+//! nixpkgs, and NixOS options. Administrators can restrict option names with `services.furnish.nix.allowedOptions`.
 //!
 //! Installing (`set`), only in the furnish service:
 //!
@@ -226,10 +226,10 @@ pub(crate) fn stamp_packages(doc: &mut Value, app: &str) -> Result<()> {
 /// Checks an app's entry: package and option names, and each option against the allowlist.
 pub fn check(name: &str, entry: &Entry, allowlist: &[String]) -> Result<()> {
     anyhow::ensure!(explicit_name(name), "invalid Furnish/NixOS resource name '{name}'");
-    check_in(name, entry, allowlist, Place::System)
+    check_in(name, entry, Some(allowlist), Place::System)
 }
 
-fn check_in(name: &str, entry: &Entry, allowlist: &[String], place: Place) -> Result<()> {
+fn check_in(name: &str, entry: &Entry, allowlist: Option<&[String]>, place: Place) -> Result<()> {
     if !(explicit_name(name) || package_key(name) && entry.packages.len() == 1 && entry.options.is_empty()) {
         bail!("'{name}' isn't a name for a Furnish/NixOS resource (letters, digits, _ and -)");
     }
@@ -242,7 +242,7 @@ fn check_in(name: &str, entry: &Entry, allowlist: &[String], place: Place) -> Re
         if !plain_name(o, "") {
             bail!("'{o}' isn't an option's name");
         }
-        if !allowlist.iter().any(|a| allowed(a, o)) {
+        if allowlist.is_some_and(|list| !list.iter().any(|a| allowed(a, o))) {
             match place {
                 Place::System => bail!("the app sets the NixOS option {o}, which isn't in services.furnish.nix.allowedOptions on this computer"),
                 _ => bail!("the app sets the Home Manager option {o}, which isn't in services.furnish.nix.allowedOptions in your Home Manager configuration"),
@@ -329,7 +329,7 @@ struct Facts {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct FactsNix {
-    allowed_options: Vec<String>,
+    allowed_options: Option<Vec<String>>,
     rebuild: Option<String>,
     /// Groups whose members may become root anyway (`services.furnish.nix.trustedGroups`): a
     /// configuration folder they can write to is still rebuilt (`may_rebuild`).
@@ -376,9 +376,9 @@ impl Target {
 
     /// The options apps may set there: the NixOS module's, or the person's from Home Manager's
     /// NixOS module, as the NixOS configuration says.
-    fn allowlist(&self, place: Place, user: &str) -> Vec<String> {
+    fn allowlist(&self, place: Place, user: &str) -> Option<Vec<String>> {
         match place {
-            Place::HomeNixos => self.facts.home_manager_users.get(user).map(|u| u.allowed_options.clone()).unwrap_or_default(),
+            Place::HomeNixos => self.facts.home_manager_users.get(user).and_then(|u| u.allowed_options.clone()),
             _ => self.facts.nix.allowed_options.clone(),
         }
     }
@@ -388,7 +388,7 @@ impl Target {
 struct HomeTarget {
     dir: PathBuf,
     attribute: String,
-    allowlist: Vec<String>,
+    allowlist: Option<Vec<String>>,
     apps_dir: PathBuf,
 }
 
@@ -700,7 +700,7 @@ pub(crate) fn missing_profile_destination(properties: &Value, system: bool, home
 fn apply_home(home: &HomeTarget, desired: &Desired, person: &Account) -> Result<()> {
     let entry = desired.entry(Place::HomeStandalone);
     if desired.exist {
-        check_in(&desired.name, &entry, &home.allowlist, Place::HomeStandalone)?;
+        check_in(&desired.name, &entry, home.allowlist.as_deref(), Place::HomeStandalone)?;
     }
     let before = read_apps_as(person, &home.apps_dir)?;
     let mut after = before.clone();
@@ -1196,7 +1196,7 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     }
     let entry = desired.entry(place);
     if desired.exist {
-        check_in(&desired.name, &entry, &target.allowlist(place, &person.name), place)?;
+        check_in(&desired.name, &entry, target.allowlist(place, &person.name).as_deref(), place)?;
     }
     let requester: u32 = std::env::var("FURNISH_REQUESTER_UID").ok().and_then(|v| v.parse().ok()).unwrap_or(u32::MAX);
     let uid = may_rebuild(&chain(&target.dir)?, requester, &target.facts.nix.trusted_groups, group_name)?;
@@ -1388,7 +1388,7 @@ fn operate(desired: &Desired, person: &Account, current: Option<(Place, Entry)>,
                     Place::HomeStandalone => HomeTarget::find(person)?.allowlist,
                     p => Target::here()?.allowlist(p, &person.name),
                 };
-                if let Err(e) = check_in(&desired.name, &desired.entry(place), &allowlist, place) {
+                if let Err(e) = check_in(&desired.name, &desired.entry(place), allowlist.as_deref(), place) {
                     lines.push(json!(format!("refused: {e:#}")));
                 }
             }
@@ -1605,6 +1605,10 @@ mod tests {
         e.options.insert("programs.htop.enable".into(), json!(true));
         check("htop", &e, &allow).unwrap();
         e.options.insert("services.openssh.enable".into(), json!(true));
+        for place in [Place::System, Place::HomeStandalone, Place::HomeNixos] {
+            check_in("htop", &e, None, place).unwrap();
+            assert!(check_in("htop", &e, Some(&[]), place).is_err());
+        }
         let err = check("htop", &e, &allow).unwrap_err().to_string();
         assert!(err.contains("services.openssh.enable") && err.contains("allowedOptions"), "{err}");
         assert!(check("htop", &Entry { packages: vec!["a b".into()], ..Default::default() }, &allow).is_err());
@@ -1612,7 +1616,7 @@ mod tests {
         assert!(check("a.b", &Entry::default(), &allow).is_err());
         let mut odd = Entry::default();
         odd.options.insert("programs.\"x\".enable".into(), json!(true));
-        assert!(check("x", &odd, &["*.*.*".into()]).is_err());
+        assert!(check_in("x", &odd, None, Place::System).is_err());
     }
 
     #[test]

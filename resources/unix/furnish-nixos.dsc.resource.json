@@ -60,11 +60,11 @@
         },
         "options": {
           "type": "object",
-          "description": "NixOS options by name, e.g. programs.htop.enable: true; each must be in services.furnish.nix.allowedOptions of the NixOS configuration"
+          "description": "NixOS options by name, e.g. programs.htop.enable: true"
         },
         "homeOptions": {
           "type": "object",
-          "description": "Home Manager options by name, used instead of options when the app goes into Home Manager; each must be in services.furnish.nix.allowedOptions of the Home Manager configuration"
+          "description": "Home Manager options by name, used instead of options when the app goes into Home Manager"
         },
         "onlyIfSetUp": {
           "type": "boolean",

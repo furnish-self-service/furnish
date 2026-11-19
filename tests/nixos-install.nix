@@ -2,7 +2,7 @@
 # furnish writes the app into its local flake, updates furnish/apps in alice's flake.lock and
 # builds the system as alice, makes it the system the computer starts next (rebuild = "boot"), and
 # commits flake.lock because her repository had no other changes. bob may not have alice's
-# configuration rebuilt, an option outside the allowlist is refused, an app from a collection alice
+# configuration rebuilt, an invalid option name is refused, an app from a collection alice
 # added herself is refused with a message that names it, and an uninstall with other changes in
 # the repository leaves flake.lock uncommitted. A configuration in /etc/nixos that wheel can change
 # (root:wheel 2775) is rebuilt for alice, a member of wheel, which the module trusts because sudo
@@ -35,7 +35,7 @@ pkgs.testers.runNixOSTest {
         service.allowedGroup = "users";
       };
       # As in alice's configuration (nixos-apps/configuration.nix).
-      nix = { configuration = "/home/alice/cfg"; allowedOptions = [ "programs.htop.enable" ]; rebuild = "boot"; };
+      nix = { configuration = "/home/alice/cfg"; rebuild = "boot"; };
     };
     users.users.alice = { isNormalUser = true; extraGroups = [ "wheel" ]; };
     users.users.bob.isNormalUser = true;
@@ -69,7 +69,7 @@ pkgs.testers.runNixOSTest {
         "mkdir -p /srv/org/apps",
         "cp ${import ./nixos-apps/ordinary-package.nix { inherit pkgs; }} /srv/org/apps/greeting.dsc.yaml",
         "cp ${app "htop" htop} /srv/org/apps/htop.dsc.yaml",
-        "cp ${app "sshd" { options."services.openssh.enable" = true; }} /srv/org/apps/sshd.dsc.yaml",
+        "cp ${app "invalid" { options."bad option" = true; }} /srv/org/apps/invalid.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
         "mkdir -p /home/alice/cfg",
         "cp ${s.userFlake} /home/alice/cfg/flake.nix",
@@ -123,9 +123,9 @@ pkgs.testers.runNixOSTest {
     assert "belongs to another user" in out, out
     assert "htop" in apps() and system() == "${after}"
 
-    # An option outside services.furnish.nix.allowedOptions: refused, nothing changes.
-    out = machine.fail("su - alice -c 'furnish install sshd' 2>&1")
-    assert "allowedOptions" in out, out
+    # Option names are validated before changing the configuration.
+    out = machine.fail("su - alice -c 'furnish install invalid' 2>&1")
+    assert "bad option" in out, out
     assert list(apps()) == ["htop"] and system() == "${after}"
 
     # From a collection alice added herself: the service installs only preset collections' apps,
