@@ -47,8 +47,10 @@
   const kits = $derived(visibleKits(view, store.query));
   const kit = $derived(view.page === 'kit' ? store.kits.find((k) => k.key === view.key) : undefined);
   // On Discover, before the full catalog: what the collections recommend for this user.
-  const recommended = $derived(
-    view.page === 'discover' && !store.query
+  const showRecommendations = $derived(view.page === 'discover' && !store.query);
+  const recommendedKits = $derived(showRecommendations ? kits.filter((kit) => kit.recommended) : []);
+  const recommendedApps = $derived(
+    showRecommendations
       ? store.apps.filter((a) => a.recommended && store.status[a.key] !== 'unavailable')
       : [],
   );
@@ -238,10 +240,13 @@
           <p class="empty">{partialResults ? t('catalog.noUpdatesFound') : t('catalog.upToDate', { brand: store.brand.name })}</p>
         {/if}
       {:else}
-        {#if recommended.length}
+        {#if recommendedKits.length || recommendedApps.length}
           <h2 class="row-title">{t('catalog.recommended')}</h2>
           <div class="grid recommended">
-            {#each recommended as app (app.key)}
+            {#each recommendedKits as k (k.key)}
+              <KitCard kit={k} onopen={() => go({ page: 'kit', key: k.key, back: view })} />
+            {/each}
+            {#each recommendedApps as app (app.key)}
               <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
             {/each}
           </div>

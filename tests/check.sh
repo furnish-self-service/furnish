@@ -105,9 +105,24 @@ resources:
 # An icon that links out of the collection.
 echo '<svg/>' > "$tmp/outside.svg"
 ln -s "$tmp/outside.svg" "$c/icons/outside.svg"
-printf 'icon: icons/outside.svg\niconDark: icons/missing-dark.svg\n' > "$c/collection.yaml"
+cat > "$c/collection.yaml" <<'YAML'
+icon: icons/outside.svg
+iconDark: icons/missing-dark.svg
+parameters:
+  team: { type: string, required: true }
+YAML
 printf 'description: Kit\nitems:\n  - app: good\n  - app: ghost\n' > "$c/kits/starter.yaml"
-printf 'description: Kit\niconDark: icons/missing-dark.svg\nitems:\n  - app: good\n' > "$c/kits/dark.yaml"
+cat > "$c/kits/team.yaml" <<'YAML'
+recommended: "[equals(parameters('team'), 'engineering')]"
+items: [{ app: good }]
+YAML
+cat > "$c/kits/dark.yaml" <<'YAML'
+description: Kit
+iconDark: icons/missing-dark.svg
+recommended: "[parameters('unknown')]"
+items:
+  - app: good
+YAML
 git -C "$c" init -q && git -C "$c" add -A && git -C "$c" -c user.name=t -c user.email=t@t commit -qm init
 # The checked repository's config must not run commands (checking an installer runs git there).
 git -C "$c" config core.fsmonitor "touch '$tmp/pwned'"
@@ -133,6 +148,8 @@ expect icon "icon 'icons/missing.svg' is not in the collection"
 expect icondark "iconDark 'icons/missing-dark.svg' is not in the collection"
 expect dark "iconDark 'icons/missing-dark.svg' is not in the collection"
 expect recommended "recommended:"
+expect dark "recommended:"
+echo "$out" | grep -q '^✓ team ' && ok "kit with unanswered question" || bad "kit with unanswered question"
 expect empty "no resources"
 expect undescribed "warning: no description"
 expect starter "ghost"
@@ -145,7 +162,7 @@ expect leave "or 'keep' to leave the setting in place"
 expect collection.yaml "icon 'icons/outside.svg' is not in the collection"
 expect collection.yaml "iconDark 'icons/missing-dark.svg' is not in the collection"
 [ ! -e "$tmp/pwned" ] && ok "the repository's core.fsmonitor did not run" || bad "core.fsmonitor ran"
-echo "$out" | grep -qE '^[0-9]+ apps, 2 kits: [0-9]+ errors, [0-9]+ warnings?$' && ok "summary line" || bad "no summary: $(echo "$out" | tail -1)"
+echo "$out" | grep -qE '^[0-9]+ apps, 3 kits: [0-9]+ errors, [0-9]+ warnings?$' && ok "summary line" || bad "no summary: $(echo "$out" | tail -1)"
 
 out=$("$furnish" check "$fixture" 2>&1) && ok "the test fixture passes" || bad "fixture: $out"
 echo "$out" | grep -q '^✓ hyperfine .*Windows: hyperfine (winget)' && ok "shows what runs on each system" || bad "no per-system preview: $out"

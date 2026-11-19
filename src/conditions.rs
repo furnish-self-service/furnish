@@ -188,6 +188,13 @@ impl Preview {
         Self { system, context: ctx, unknown_parameters: Default::default(), unknown_variables: Default::default() }
     }
 
+    /// Collection questions with no default or choices have no sample answer during checking.
+    pub(crate) fn for_collection(system: &'static str, values: &Map<String, Value>, shared: &std::collections::BTreeMap<String, crate::options::Declaration>) -> Self {
+        let mut preview = Self::new(system, values);
+        preview.unknown_parameters.extend(shared.keys().filter(|name| !values.contains_key(*name)).cloned());
+        preview
+    }
+
     /// Prepare a document whose DSC defaults and variables no longer consult the checker host.
     /// Unknown values stay unset; known values still go through DSC type and constraint validation.
     pub(crate) fn document(&mut self, source: &Value, shared: &std::collections::BTreeMap<String, crate::options::Declaration>) -> Result<Value> {

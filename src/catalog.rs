@@ -39,6 +39,30 @@ pub struct Kit {
     /// Shown instead of `icon` in dark mode (`iconDark`).
     pub icon_dark: Option<PathBuf>,
     pub items: Vec<Item>,
+    pub(crate) recommendation: Value,
+    collection_dir: PathBuf,
+}
+
+impl Kit {
+    pub fn recommended(&self) -> bool {
+        recommended(&self.recommendation, &self.collection, &self.collection_dir, None)
+    }
+}
+
+fn recommended(rule: &Value, collection: &str, dir: &Path, app: Option<&App>) -> bool {
+    match rule {
+        Value::Bool(b) => *b,
+        Value::String(expr) => {
+            let shared = crate::options::collection_declarations(dir).unwrap_or_default();
+            let mut values = crate::options::values(&crate::options::resolve_collection(collection, &shared));
+            if let Some(app) = app {
+                values.extend(app.current_values());
+            }
+            // An unanswered option makes the expression fail until an answer is available.
+            crate::conditions::holds_for(app.map_or(&Value::Null, |a| &a.doc), expr, &values).unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 /// An app a kit contains, or an app depends on.
@@ -96,6 +120,8 @@ struct KitFile {
     #[serde(rename = "iconDark")]
     icon_dark: Option<String>,
     items: Vec<Item>,
+    #[serde(default)]
+    recommended: Value,
 }
 
 #[derive(Clone)]
@@ -1306,6 +1332,8 @@ impl Collection {
             icon: file.icon.as_deref().and_then(|p| self.file_in_repo(p)),
             icon_dark: file.icon_dark.as_deref().and_then(|p| self.file_in_repo(p)),
             items: file.items,
+            recommendation: file.recommended,
+            collection_dir: self.dir.clone(),
         })
     }
 
@@ -1626,18 +1654,7 @@ impl App {
     /// Recommended for this user: `metadata.furnish.recommended`, `true` or a DSC expression over
     /// the collection's and the app's options, e.g. `[equals(parameters('role'), 'developer')]`.
     pub fn recommended(&self) -> bool {
-        match &self.doc["metadata"]["furnish"]["recommended"] {
-            Value::Bool(b) => *b,
-            Value::String(expr) => {
-                let dir = &self.collection_dir;
-                let shared = crate::options::collection_declarations(dir).unwrap_or_default();
-                let mut values = crate::options::values(&crate::options::resolve_collection(&self.collection, &shared));
-                values.extend(self.current_values());
-                // An unanswered option makes the expression fail: not recommended (yet).
-                crate::conditions::holds_for(&self.doc, expr, &values).unwrap_or(false)
-            }
-            _ => false,
-        }
+        recommended(&self.doc["metadata"]["furnish"]["recommended"], &self.collection, &self.collection_dir, Some(self))
     }
 
     /// Required collection options nobody answered yet (names); installing waits for them.
@@ -2599,6 +2616,8 @@ mod tests {
             categories: vec![],
             icon: None,
             icon_dark: None,
+            recommendation: Value::Null,
+            collection_dir: PathBuf::new(),
             items: items.iter().map(|(app, required)| Item { app: (*app).into(), required: *required, selected: true, condition: None }).collect(),
         }
     }
@@ -2617,7 +2636,8 @@ mod tests {
     #[test]
     fn kit_file_defaults() {
         let file: KitFile = serde_yaml::from_str("items:\n  - app: a\n    required: true\n  - app: b\n  - app: c\n    selected: false\n").unwrap();
-        let k = Kit { id: "k".into(), collection: "c".into(), name: None, description: file.description, categories: file.categories, icon: None, icon_dark: None, items: file.items };
+        let k = Kit { recommendation: file.recommended, items: file.items, ..kit("c", "k", &[]) };
+        assert!(!k.recommended());
         assert_eq!(default_selection(&k.items), ["a", "b"]);
         let with = ["c".to_string()];
         let without = ["b".to_string()];

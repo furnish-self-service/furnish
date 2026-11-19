@@ -149,6 +149,12 @@ pub fn collection_with_profiles(dir: &Path, profiles: Option<&Path>) -> Result<V
                         item.findings.push(missing_icon(key, &icon));
                     }
                 }
+                if let Some(expr) = kit.recommendation.as_str() {
+                    let previews = SYSTEMS.map(|system| (system, crate::conditions::Preview::for_collection(system, &values, &shared)));
+                    check_recommendation(expr, &previews, &mut item.findings);
+                } else if !(kit.recommendation.is_boolean() || kit.recommendation.is_null()) {
+                    item.findings.push(error("recommended must be a boolean or a DSC expression"));
+                }
                 kits.push(kit);
             }
         }
@@ -227,6 +233,15 @@ fn check_locales(dir: &Path, apps: &[App], kits: &[crate::catalog::Kit], shared:
         items.push(item);
     }
     items
+}
+
+fn check_recommendation(expr: &str, previews: &[(&str, crate::conditions::Preview)], findings: &mut Vec<Finding>) {
+    for (system, preview) in previews {
+        if let Err(err) = preview.condition(expr) {
+            findings.push(error(format!("recommended: {expr} on {system}: {err:#}")));
+            break;
+        }
+    }
 }
 
 fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, shared: &BTreeMap<String, crate::options::Declaration>, apps: &[App], graphs: &mut [(&str, Graph)]) -> Item {
@@ -332,12 +347,7 @@ fn check_app(app: &App, dir: &Path, collection_values: &Map<String, Value>, shar
     }
 
     if let Value::String(expr) = &meta["recommended"] {
-        for (system, preview) in &previews {
-            if let Err(err) = preview.condition(expr) {
-                findings.push(error(format!("recommended: {expr} on {system}: {err:#}")));
-                break;
-            }
-        }
+        check_recommendation(expr, &previews, &mut findings);
     }
 
     for dep in &app.dependencies {
