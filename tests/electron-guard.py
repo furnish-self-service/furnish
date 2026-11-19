@@ -11,7 +11,7 @@ import time
 
 
 @contextmanager
-def launch(runtime, package, other_argument):
+def launch(runtime, package, other_argument, *flags):
     # Electron also accepts an unpacked directory at the distribution's app.asar path.
     package.mkdir(parents=True)
     (package / "package.json").write_text('{"name":"guard-fixture","version":"1.0.0","main":"main.js"}')
@@ -26,7 +26,7 @@ def launch(runtime, package, other_argument):
     with log.open("w") as output:
         process = subprocess.Popen(
             [runtime, "--ozone-platform=headless", "--no-sandbox", "--disable-gpu",
-             f"--user-data-dir={package.parent / 'user-data'}", str(package), str(other_argument)],
+             f"--user-data-dir={package.parent / 'user-data'}", *flags, str(package), str(other_argument)],
             env={**os.environ, "FURNISH_FIXTURE_READY": str(ready), "XDG_CONFIG_HOME": str(package.parent)},
             stdout=output, stderr=subprocess.STDOUT,
         )
@@ -46,7 +46,7 @@ def launch(runtime, package, other_argument):
                 process.wait()
 
 
-def main(furnish, runtime):
+def check_guard(furnish, runtime, *flags):
     with tempfile.TemporaryDirectory(prefix="furnish-electron-") as temp:
         root = Path(temp)
         name = f"Notes-{root.name}"
@@ -65,17 +65,18 @@ def main(furnish, runtime):
             )
 
         with launch(runtime, other, target):
-            with launch(runtime, target, other):
+            with launch(runtime, target, other, *flags):
                 blocked = apply()
                 assert blocked.returncode and name.lower() in blocked.stderr, blocked
                 assert settings.read_text() == "{}"
             applied = apply()
             assert applied.returncode == 0, applied.stderr
             assert json.loads(settings.read_text()) == {"enabled": True}
-    print("Passed: the requested Electron app blocked the write and the unrelated app allowed it.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         sys.exit(__doc__)
-    main(*sys.argv[1:])
+    check_guard(*sys.argv[1:])
+    check_guard(*sys.argv[1:], "--autostart")
+    print("Passed: the guarded app blocked writes on normal launch and autostart; the unrelated app allowed them.")
