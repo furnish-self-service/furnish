@@ -993,10 +993,10 @@ export async function answerQuestions(answers: { collection: string; name: strin
   await reloadApps();
 }
 
-/** Reload apps and collections (their options, dependencies) without rechecking every status. */
+/** Refresh options, dependencies and recommendations without rechecking every status. */
 async function reloadApps() {
   try {
-    [store.apps, store.collections] = await Promise.all([api.listApps(), api.listCollections()]);
+    [store.apps, store.collections, store.kits] = await Promise.all([api.listApps(), api.listCollections(), api.listKits()]);
     return true;
   } catch (e) {
     toast('error', t('toast.loadApps'), message(e));

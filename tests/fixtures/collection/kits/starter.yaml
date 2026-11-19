@@ -1,5 +1,6 @@
 # A kit: apps of this collection installed together. Users can deselect optional items.
 description: The basics for trying furnish
+recommended: "[equals(parameters('role'), 'developer')]"
 categories: [Test]
 items:
   - app: hyperfine

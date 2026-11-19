@@ -834,7 +834,7 @@ metadata:
     recommended: "[equals(parameters('role'), 'office')]"   # or: true
 ```
 
-Recommended apps appear first on Discover. The expression can use the collection's options and the app's own.
+Recommended kits appear alongside recommended apps at the top of Discover. In a kit file, put `recommended` at the top level. Use `true` to recommend it to everyone, or use an expression such as `"[equals(parameters('role'), 'office')]"` to recommend it based on collection options. App expressions can also use the app's own options.
 
 ## Translations
 

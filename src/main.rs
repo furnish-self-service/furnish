@@ -905,6 +905,9 @@ fn list() -> Result<()> {
             if name != kit.id {
                 description = if description.is_empty() { name } else { format!("{name}: {description}") };
             }
+            if kit.recommended() {
+                description = format!("★ {description}");
+            }
             rows.push(row([symbol, &kit.id, &kit.collection, &items, &description]));
         }
         print_table(&rows);

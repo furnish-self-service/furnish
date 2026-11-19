@@ -169,6 +169,7 @@ export interface KitInfo {
   icon: string | null;
   /** Shown instead of `icon` in dark mode (`iconDark`). */
   iconDark: string | null;
+  recommended: boolean;
   items: Item[];
 }
 

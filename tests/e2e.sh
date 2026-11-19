@@ -413,10 +413,16 @@ expect "$("$furnish" collection add "$tmp/repo" --name fixture 2>&1)" "furnish o
 if step install hyperfine >/dev/null 2>&1; then echo "FAIL: installed before the question was answered" >&2; exit 1; fi
 if step option set fixture role "Design" >/dev/null 2>&1; then echo "FAIL: a label was accepted as a value" >&2; exit 1; fi
 step option set fixture role developer >/dev/null
-expect "$(step list)" "★ Command-line benchmarking tool"           # recommended for everyone
-expect "$(step list)" "★ A development tool"                         # recommended for developers
+catalog=$(step list)
+expect "$catalog" "★ Command-line benchmarking tool"
+expect "$catalog" "★ A development tool"
+expect "$catalog" "★ The basics for trying furnish"
 step option set fixture role design >/dev/null
-if step list | grep -q "★ A development tool"; then echo "FAIL: still recommended for designers" >&2; exit 1; fi
+catalog=$(step list)
+if [[ $catalog == *"★ A development tool"* || $catalog == *"★ The basics for trying furnish"* ]]; then
+    echo "FAIL: developer recommendations still shown for designers" >&2
+    exit 1
+fi
 step option set fixture role developer >/dev/null
 expect "$(step list)" "·  hyperfine"
 expect "$(step list)" "–  nowhere"

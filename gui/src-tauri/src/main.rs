@@ -91,6 +91,7 @@ struct KitInfo {
     categories: Vec<String>,
     icon: Option<String>,
     icon_dark: Option<String>,
+    recommended: bool,
     items: Vec<ItemInfo>,
 }
 
@@ -306,6 +307,7 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
             .into_iter()
             .map(|k| KitInfo {
                 key: format!("{}/{}", k.collection, k.id),
+                recommended: k.recommended(),
                 items: items(&k.collection, &k.items),
                 icon: k.icon.as_deref().and_then(icon_data_url),
                 icon_dark: k.icon_dark.as_deref().and_then(icon_data_url),

@@ -24,6 +24,11 @@ pub(crate) fn executable() -> Option<PathBuf> {
     platform::find_mise()
 }
 
+/// The signed-in user's effective shim directory, including any mise override.
+pub(super) fn shims_dir() -> Option<PathBuf> {
+    Some(Mise(executable()?).doctor().ok()?.dirs.shims)
+}
+
 struct Mise(PathBuf);
 
 #[derive(Deserialize)]

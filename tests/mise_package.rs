@@ -19,6 +19,7 @@ fn mise_global_tool_lifecycle_and_shell_setup() {
     let bin = home.join("host-bin");
     let shims = home.join("data/shims");
     fs::create_dir(&bin).unwrap();
+    symlink(which::which("rm").unwrap(), bin.join("rm")).unwrap();
     fs::create_dir_all(&shims).unwrap();
     let profile = home.join(".bash_profile");
     fs::write(&profile, "# existing user configuration\n").unwrap();
@@ -46,7 +47,7 @@ case "$*" in
  'latest github:furnish/fixture') printf '2.0.0\n';;
  'use --global github:furnish/fixture@1.0.0') echo 1.0.0 > "$HOME/selected";;
  'use --global github:furnish/fixture@latest github:furnish/fixture@0.5') [ -e "$HOME/multi" ]; echo 2.0.0 > "$HOME/selected";;
- 'unuse --global github:furnish/fixture@2.0.0 github:furnish/fixture@0.5') /bin/rm "$HOME/selected" "$HOME/multi";;
+ 'unuse --global github:furnish/fixture@2.0.0 github:furnish/fixture@0.5') rm "$HOME/selected" "$HOME/multi";;
  *) echo "unexpected arguments: $*" >&2; exit 92;;
 esac
 "#,
@@ -61,18 +62,16 @@ esac
     symlink(&shims, &alias).unwrap();
     let path = std::env::join_paths([&bin, &alias]).unwrap();
     let props = json!({"name":"github:furnish/fixture","packageManager":"mise","command":cmd});
-    let run = |op: &str, extra: Value, preview: bool, ok: bool| {
-        let mut request = props.clone();
-        request.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    let resource = |kind: &str, op: &str, request: Value, search_path: &std::ffi::OsStr, preview: bool, ok: bool| {
         let mut process = Command::new(env!("CARGO_BIN_EXE_furnish"));
-        process.args(["dsc-resource", "package", op]);
+        process.args(["dsc-resource", kind, op]);
         if preview {
             process.arg("--what-if");
         }
         let mut child = process
             .current_dir(home)
             .env("HOME", home)
-            .env("PATH", &path)
+            .env("PATH", search_path)
             .env("SHELL", "/bin/bash")
             .env("MISE_NODE_VERSION", "an-inherited-project-override")
             .env_remove("FURNISH_SERVICE")
@@ -87,7 +86,7 @@ esac
         assert_eq!(
             out.status.success(),
             ok,
-            "{op} {extra}: {}",
+            "{kind} {op} {request}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         if ok {
@@ -95,6 +94,11 @@ esac
         } else {
             Value::String(String::from_utf8(out.stderr).unwrap())
         }
+    };
+    let run = |op: &str, extra: Value, preview: bool, ok: bool| {
+        let mut request = props.clone();
+        request.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        resource("package", op, request, &path, preview, ok)
     };
     let pin = json!({"targetVersion":"1.0.0"});
     let remove = json!({"_exist":false});
@@ -113,6 +117,17 @@ esac
     assert!(!home.join("selected").exists() && !home.join(".bashrc").exists());
     fs::set_permissions(&profile, fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(run("set", pin.clone(), false, true)["version"], "1.0.0");
+    // The dependent command runs in the same session, whose PATH still lacks the shims.
+    let check_tool = json!({"test":{"command":[cmd],"exitCode":1},"set":[cmd]});
+    let check = || resource("command", "test", check_tool.clone(), bin.as_os_str(), false, true);
+    assert_eq!(check()["_inDesiredState"], true);
+    // A program already on PATH retains precedence over the shim.
+    let native = bin.join(cmd);
+    fs::write(&native, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&native, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(check()["_inDesiredState"], false);
+    fs::remove_file(native).unwrap();
+
     let written = fs::read_to_string(&profile).unwrap();
     assert!(written.starts_with("# existing user configuration\n"));
     assert_eq!(run("test", pin, false, true)["_inDesiredState"], true);
