@@ -9,13 +9,20 @@ use dsc_lib::{
 };
 use serde_json::{Map, Value, json};
 
+use crate::{nixos_apps::NixSetup, platform::Distribution};
+
 pub(crate) const HOST: &str = "furnish.host";
 
-fn host(doc: &Value) -> Result<Value> {
+pub(crate) fn host_facts(distro: &Distribution, managers: &[impl serde::Serialize], nix_setup: NixSetup) -> Value {
+    json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": managers, "nixSetup": nix_setup})
+}
+
+fn host(doc: &Value, read: HostRead) -> Result<Value> {
     let distro = crate::platform::distribution();
     let mut managers: Vec<String> = crate::platform::package_managers().into_iter().map(str::to_owned).collect();
     managers.extend(crate::script_managers::available(doc)?.into_keys());
-    Ok(json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": managers}))
+    let setup = if read == HostRead::Full { crate::nixos_apps::nix_setup() } else { NixSetup::default() };
+    Ok(host_facts(&distro, &managers, setup))
 }
 
 fn context(values: &Map<String, Value>) -> Context {
@@ -56,16 +63,29 @@ fn family_read(function: tree_sitter::Node, src: &str) -> Option<std::ops::Range
     Some(function.start_byte()..accessor?.named_child(1)?.end_byte())
 }
 
-fn uses_host(node: tree_sitter::Node, src: &str) -> bool {
+// Reading only platform fields shouldn't inspect the user's Home Manager configuration.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum HostRead { None, Platform, Full }
+
+fn host_read(node: tree_sitter::Node, src: &str) -> HostRead {
+    let mut read = HostRead::None;
     if let Some(name) = node.child_by_field_name("name")
         && node.kind() == "function"
         && &src[name.byte_range()] == "variables"
         && let Some(arg) = node.child_by_field_name("args").and_then(|a| a.named_child(0))
         && (arg.kind() == "expression" || (arg.kind() == "string" && &src[arg.byte_range()] == HOST))
     {
-        return true;
+        let field = member(node.parent().and_then(|p| p.child_by_field_name("accessor")), 0, src);
+        read = match field {
+            Some("distribution" | "distributionLike" | "packageManagers") => HostRead::Platform,
+            _ => return HostRead::Full,
+        };
     }
-    node.named_children(&mut node.walk()).any(|child| uses_host(child, src))
+    for child in node.named_children(&mut node.walk()) {
+        read = read.max(host_read(child, src));
+        if read == HostRead::Full { break; }
+    }
+    read
 }
 
 /// DSC functions whose result depends on the invoking host, a live resource or the time.
@@ -73,36 +93,41 @@ fn machine_function(name: &str) -> bool {
     matches!(name, "envvar" | "systemRoot" | "tryWhich" | "utcNow" | "secret" | "reference" | "path" | "restartRequired" | "stateChanged" | "stdout")
 }
 
-fn expression_uses_host(src: &str, parser: &mut Option<tree_sitter::Parser>) -> Result<bool> {
+fn expression_host_read(src: &str, parser: &mut Option<tree_sitter::Parser>) -> Result<HostRead> {
     if !src.starts_with('[') || src.starts_with("[[") {
-        return Ok(false);
+        return Ok(HostRead::None);
     }
     if parser.is_none() {
         *parser = Some(self::parser()?);
     }
-    Ok(parser.as_mut().unwrap().parse(src, None).is_some_and(|tree| uses_host(tree.root_node(), src)))
+    Ok(parser.as_mut().unwrap().parse(src, None).map_or(HostRead::None, |tree| host_read(tree.root_node(), src)))
 }
 
 /// Package managers can change between steps. Take fresh facts when an expression
 /// needs them, avoiding directory and PATH probes for documents with no host reads.
 pub(crate) fn supply_host(doc: &Value, context: &mut Context) -> Result<()> {
-    fn needs_host(value: &Value, parser: &mut Option<tree_sitter::Parser>) -> Result<bool> {
+    fn read(value: &Value, parser: &mut Option<tree_sitter::Parser>) -> Result<HostRead> {
+        let combine = |found: HostRead, v: &Value| {
+            if found == HostRead::Full { Ok(found) } else { Ok(found.max(read(v, parser)?)) }
+        };
         match value {
-            Value::String(s) => expression_uses_host(s, parser),
-            Value::Object(o) => o.values().try_fold(false, |found, v| Ok(found || needs_host(v, parser)?)),
-            Value::Array(a) => a.iter().try_fold(false, |found, v| Ok(found || needs_host(v, parser)?)),
-            _ => Ok(false),
+            Value::String(s) => expression_host_read(s, parser),
+            Value::Object(o) => o.values().try_fold(HostRead::None, combine),
+            Value::Array(a) => a.iter().try_fold(HostRead::None, combine),
+            _ => Ok(HostRead::None),
         }
     }
-    if needs_host(doc, &mut None)? {
-        context.variables.insert(HOST.into(), host(doc)?);
+    let read = read(doc, &mut None)?;
+    if read != HostRead::None {
+        context.variables.insert(HOST.into(), host(doc, read)?);
     }
     Ok(())
 }
 
 fn execute(doc: &Value, expr: &str, mut context: Context) -> Result<Value> {
-    if expression_uses_host(expr, &mut None)? {
-        context.variables.insert(HOST.into(), host(doc)?);
+    let read = expression_host_read(expr, &mut None)?;
+    if read != HostRead::None {
+        context.variables.insert(HOST.into(), host(doc, read)?);
     }
     Ok(Statement::new()?.parse_and_execute(expr, &context)?)
 }
@@ -139,7 +164,8 @@ impl Preview {
         let mut ctx = context(values);
         // Representative values used only to validate host-dependent expressions.
         let (id, like) = if system == "Linux" { ("debian", vec!["debian"]) } else { ("", vec![]) };
-        ctx.variables.insert(HOST.into(), json!({"distribution": id, "distributionLike": like, "packageManagers": ["nix"]}));
+        let distro = Distribution { id: id.into(), like: like.into_iter().map(str::to_owned).collect() };
+        ctx.variables.insert(HOST.into(), host_facts(&distro, &["nix"], NixSetup::default()));
         Self { system, context: ctx, unknown_parameters: Default::default(), unknown_variables: Default::default() }
     }
 
@@ -292,7 +318,12 @@ impl Preview {
                     }
                 }
                 "variables" if first_arg.is_some_and(|arg| arg.kind() == "string" && &src[arg.byte_range()] == HOST) => {
-                    *unknown |= self.system == "Linux" || !matches!(member(accessor, 0, src), Some("distribution" | "distributionLike"));
+                    *unknown |= match member(accessor, 0, src) {
+                        Some("distribution" | "distributionLike") => self.system == "Linux",
+                        Some("nixSetup") if member(accessor, 1, src) == Some("system") => self.system == "Linux",
+                        Some("nixSetup") => self.system != "Windows",
+                        _ => true,
+                    };
                     // Validate indexing into a host-dependent array using its representative
                     // element. Its actual length is known only when that DSC resource runs.
                     if matches!(member(accessor, 0, src), Some("distributionLike" | "packageManagers"))
@@ -454,10 +485,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_setup_or_indirect_host_reads_probe_module_configuration() {
+        let mut parser = None;
+        for expr in ["[variables('furnish.host').distribution]", "[variables('furnish.host')['packageManagers'][0]]"] {
+            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::Platform);
+        }
+        for expr in ["[variables('furnish.host').nixSetup.home]", "[variables('furnish.host')]", "[variables(parameters('key'))]"] {
+            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::Full);
+        }
+    }
+
+    #[test]
     fn system_previews_keep_runtime_facts_conditional_and_validate_dsc() {
         let linux = Preview::new("Linux", &Map::new());
         let windows = Preview::new("Windows", &Map::new());
         let distro = "[equals(variables('furnish.host').distribution, 'debian')]";
+        let mac = Preview::new("macOS", &Map::new());
+        let home = "[variables('furnish.host')['nixSetup'].home]";
+        let system = "[variables('furnish.host').nixSetup.system]";
+        assert_eq!(linux.condition(home).unwrap(), None);
+        assert_eq!(mac.condition(home).unwrap(), None);
+        assert_eq!(mac.condition(system).unwrap(), Some(false));
+        assert_eq!(windows.condition(home).unwrap(), Some(false));
+        assert!(linux.condition("[variables('furnish.host').nixSetup.hmoe]").is_err());
         assert_eq!(linux.condition(distro).unwrap(), None);
         assert_eq!(windows.condition(distro).unwrap(), Some(false));
         assert_eq!(windows.condition("[equals(context()['os'].family, 'Windows')]").unwrap(), Some(true));

@@ -2,7 +2,8 @@
 use super::{Graph, Item, SYSTEMS, error};
 use crate::{
     catalog::{App, PACKAGE_TYPE},
-    conditions::TargetContext,
+    conditions::{TargetContext, host_facts},
+    nixos_apps::NixSetup,
     options::Declaration,
     platform::{self, Distribution},
 };
@@ -38,14 +39,6 @@ struct Profile {
     app_options: BTreeMap<String, Map<String, Value>>,
     #[serde(default)]
     expect: BTreeMap<String, Expected>,
-}
-
-/// The declarative destinations ready for a fresh install on this target.
-#[derive(Clone, Copy, Default, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-struct NixSetup {
-    system: bool,
-    home: bool,
 }
 
 #[derive(Default, Deserialize)]
@@ -140,7 +133,7 @@ impl Profile {
         ensure!(native == ordered_native, "native package managers must follow Furnish priority: {}", ordered_native.join(", "));
         scripted.sort();
         let managers: Vec<_> = native.iter().chain(&scripted).collect();
-        let host = json!({"distribution":distro.id,"distributionLike":distro.like,"packageManagers":managers});
+        let host = host_facts(&distro, &managers, self.nix_setup);
         let target = Target { family, host, distro, native, scripted, nix_setup: self.nix_setup };
         let mut graph = Graph::default();
         for app in apps {

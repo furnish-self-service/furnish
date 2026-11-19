@@ -63,6 +63,10 @@ Resource steps and dependencies can use the DSC variable `variables('furnish.hos
 | `distribution` | Linux distribution ID from `os-release`, such as `fedora`, or an empty string when unavailable |
 | `distributionLike` | Ordered list of Linux distribution IDs from `ID_LIKE`, or an empty list when unavailable |
 | `packageManagers` | List of supported package managers available to the account running Furnish |
+| `nixSetup.system` | Boolean. The NixOS configuration is ready to accept apps through Furnish's module |
+| `nixSetup.home` | Boolean. The requesting person's Home Manager configuration is ready to accept apps through Furnish's standalone or NixOS-integrated module |
+
+Both setup fields are `false` on Windows. On macOS only the home destination can be configured. Installing Nix or Home Manager alone leaves the corresponding field `false`. Each field describes readiness independently of the preferred install destination.
 
 For a step specific to Fedora and its derivatives, check both the exact ID and its parents:
 
@@ -231,9 +235,33 @@ Whether the app goes into the NixOS configuration or Home Manager is up to the c
 
 Each install or uninstall rebuilds the system or the Home Manager generation once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
-Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. A `condition` can't do this, because it doesn't see whether furnish's modules are set up. An app that is already in a configuration counts as set up, so it can still be removed.
+Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. The guard also keeps an existing app entry available for removal when that configuration no longer accepts new apps. Use the host setup fields to select a complementary fallback.
 
-This suits a step that helps another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. Home Manager puts all includes into one `Include` line before the first `Host`, so the `Line` step accepts an `Include` that names the file among others. After the generation is activated, the `Line` step finds that line and changes nothing. Everywhere else, only the `Line` step runs. Set [`perUser: true`](#installing-for-one-person) on the app so the SSH file belongs to the person installing it:
+For example, this app adds a directory to the person's login shell path. Allow `home.sessionPath` in the Home Manager module's `services.furnish.nix.allowedOptions`. On other Unix systems the person's shell must read `~/.profile` for the fallback to take effect. If Home Manager owns that file, configure Furnish's module or choose a writable shell startup file that the person's shell sources.
+
+```yaml
+metadata:
+  furnish:
+    description: Add the user's local executables to the login path
+    categories: [Shell]
+    perUser: true
+resources:
+  - name: Set the login path through Home Manager
+    type: Furnish/NixOS
+    properties:
+      name: local-bin
+      onlyIfSetUp: true
+      homeOptions:
+        home.sessionPath: ["$HOME/.local/bin"]
+  - name: Set the login path in the shell profile
+    type: Furnish/Line
+    condition: "[and(not(equals(context().os.family, 'Windows')), not(variables('furnish.host').nixSetup.home))]"
+    properties:
+      path: ~/.profile
+      line: 'export PATH="$HOME/.local/bin:$PATH"'
+```
+
+A guarded NixOS step can also help another step where Home Manager manages a file. Where Home Manager writes `~/.ssh/config` (`programs.ssh`), the file is a link into the Nix store, and `Furnish/Line` can't change it. The first step has Home Manager write the `Include`. Home Manager puts all includes into one `Include` line before the first `Host`, so the `Line` step accepts an `Include` that names the file among others. After the generation is activated, the `Line` step finds that line and changes nothing. Everywhere else, only the `Line` step runs. Set [`perUser: true`](#installing-for-one-person) on the app so the SSH file belongs to the person installing it:
 
 ```yaml
 - name: SSH include through Home Manager
@@ -871,7 +899,7 @@ furnish-check:
     - furnish check
 ```
 
-The preview evaluates `context().os.family` for each system. It marks a step `(depends on host)` when its result depends on the target computer's distribution or available package managers. Reads of other `context()` fields also depend on the target computer.
+The preview evaluates `context().os.family` for each system. It marks a step `(depends on host)` when its result depends on the target computer's distribution, available package managers, or configured Nix destinations. Reads of other `context()` fields also depend on the target computer.
 
 ### Check target profiles in CI
 
@@ -916,7 +944,7 @@ profiles:
     nixSetup: { system: true, home: true }
 ```
 
-Use `home` for Home Manager on Linux or macOS and `system` for the NixOS system configuration on Linux. Each defaults to `false`. Steps declaring only `homeOptions` require the home destination. Steps declaring only `options` require the system destination. For packages alone or options for both destinations, the profile uses home when configured and system otherwise. Windows profiles always skip guarded steps. A step without the guard keeps its normal condition.
+Use `home` for Home Manager on Linux or macOS and `system` for the NixOS system configuration on Linux. These values also supply `variables('furnish.host').nixSetup.home` and `.nixSetup.system` in target expressions. Each defaults to `false`. Steps declaring only `homeOptions` require the home destination. Steps declaring only `options` require the system destination. For packages alone or options for both destinations, the profile uses home when configured and system otherwise. Windows profiles always skip guarded steps. A step without the guard keeps its normal condition.
 
 The [two-profile example](https://github.com/furnish-self-service/furnish/blob/main/docs/examples/target-profiles.yaml) runs against Furnish's test collection:
 

@@ -456,30 +456,29 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
         _ => authorize(true)?,
     }
     match request {
-        Request::Install { app: key, values, which, install_into } => {
+        // Metadata and parameter defaults can depend on the caller's Home Manager setup.
+        // Resolve them with that caller selected, under the same lock as the install.
+        Request::Install { app: key, values, which, install_into } => operation(&|report| {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
-            operation(&|report| app.install_here(&values, which.clone(), report), install_into.as_deref())
-        }
-        Request::NixosStep { step, install_into } => {
-            let app = app(&step.app)?;
-            operation(&|_| app.apply_nixos_step(&step), install_into.as_deref())
-        }
-        Request::Uninstall { app: key } => {
+            app.install_here(&values, which.clone(), report)
+        }, install_into.as_deref()),
+        Request::NixosStep { step, install_into } => operation(&|_| app(&step.app)?.apply_nixos_step(&step), install_into.as_deref()),
+        Request::Uninstall { app: key } => operation(&|report| {
             let app = app(&key)?;
             if app.per_user(&app.installed_values()) {
                 bail!("{} installs into your user account, which furnish removes without the service", app.id);
             }
-            operation(&|report| app.uninstall(report), None)
-        }
-        Request::Reinstall { app: key, values, install_into } => {
+            app.uninstall(report)
+        }, None),
+        Request::Reinstall { app: key, values, install_into } => operation(&|report| {
             let app = app(&key)?;
             let values = accept(&app, &values)?;
             if app.per_user(&app.installed_values()) {
                 bail!("{} was installed into your user account, which furnish removes without the service", app.id);
             }
-            operation(&|report| app.reinstall_with(&values, report), install_into.as_deref())
-        }
+            app.reinstall_with(&values, report)
+        }, install_into.as_deref()),
         Request::Stop { force } => {
             if force { engine::force_stop() } else { engine::abort() }
             Ok(Reply::Done)
