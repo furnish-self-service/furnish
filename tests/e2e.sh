@@ -430,6 +430,14 @@ fi
 elsewhere=$tmp/elsewhere
 if command -v cygpath >/dev/null; then elsewhere=$(cygpath -u "$elsewhere"); fi  # PATH separates with ':'
 PATH="$elsewhere:$PATH"
+if ! command -v cygpath >/dev/null; then
+    # The system service can probe a package without an account's HOME. An executable on its
+    # PATH still identifies an externally installed program and protects it from removal.
+    state=$(cd "$(dirname "$0")/../resources/unix" && env -u HOME "$furnish" dsc-resource package get \
+        <<< '{"name":"furnish-external-probe","packageManager":"pacman","command":"elsewhere-tool"}')
+    expect "$state" '"managedBy":"other"'
+    expect "$state" "$elsewhere/elsewhere-tool"
+fi
 list=$(step list)
 expect "$list" "✓  elsewhere "
 expect "$list" "installed outside furnish: .*elsewhere-tool"

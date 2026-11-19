@@ -404,7 +404,10 @@
       homeManagerModules.default = homeManagerModule { inherit apps home-apps; };
 
       # `nix flake check`: the packages and furnish's library tests (`nix build` runs no tests).
-      checks = forAll (pkgs: let r = rust pkgs; in {
+      checks = forAll (pkgs: let
+        r = rust pkgs;
+        offlineModule = import ./tests/nixos-apps/offline-module.nix self;
+      in {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) furnish furnish-gui;
         tests = r.craneLib.cargoTest (r.commonArgs // {
           inherit (r) cargoArtifacts;
@@ -414,12 +417,13 @@
         # NixOS VM: packages from the system's configuration show as installed.
         nixos-declared = import ./tests/nixos-declared.nix { inherit pkgs; module = self.nixosModules.default; };
         # NixOS VM: apps from furnish's local flake, a nested input, end up in the system.
-        nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
+        nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs; nixosModule = offlineModule; furnish = self; };
         # NixOS VM: installing such an app through the furnish service.
         nixos-install = import ./tests/nixos-install.nix {
-          inherit pkgs nixpkgs nixosModule;
+          inherit pkgs nixpkgs;
+          nixosModule = offlineModule;
           furnish = self;
-          module = self.nixosModules.default;
+          module = offlineModule apps;
         };
         # NixOS VM: apps from furnish's local flake in a person's data folder end up in their
         # standalone Home Manager configuration.
@@ -432,9 +436,10 @@
         home-manager-nixos = import ./tests/home-manager-nixos.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
         # NixOS VM: installing an app into Home Manager as a NixOS module, through the service.
         home-manager-nixos-install = import ./tests/home-manager-nixos-install.nix {
-          inherit pkgs nixpkgs nixosModule;
+          inherit pkgs nixpkgs;
+          nixosModule = offlineModule;
           furnish = self;
-          module = self.nixosModules.default;
+          module = offlineModule apps;
         };
       });
     };
