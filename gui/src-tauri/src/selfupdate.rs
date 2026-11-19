@@ -65,7 +65,7 @@ fn fresh() -> Status {
         method,
         mode: selfupdate::effective(effective.settings.self_update, method),
         locked: effective.locked.iter().any(|k| k == "selfUpdate"),
-        current: selfupdate::current().to_string(),
+        current: crate::build_info::current().version,
         available: None,
         notes: None,
         state: State::Idle,
@@ -138,18 +138,15 @@ pub async fn check(app: AppHandle, download: bool) -> Status {
 
 /// Download the update with Tauri's updater, which checks it against the key and the version.
 async fn fetch(app: &AppHandle) -> Result<Option<(tauri_plugin_updater::Update, Vec<u8>)>, String> {
-    let current = selfupdate::current();
-    let url = selfupdate::feed_url(current);
+    let current = crate::build_info::current().version;
+    let url = selfupdate::feed_url(&current);
     if !selfupdate::feed_allowed(&url) {
         return Err(format!("the update feed {url} doesn't use HTTPS"));
     }
-    let ours = selfupdate::semver(current).ok_or_else(|| format!("{current} isn't a version"))?;
     let updater = app
         .updater_builder()
         .endpoints(vec![url.parse().map_err(|e| format!("{url}: {e}"))?])
         .map_err(|e| e.to_string())?
-        // furnish's version (alpha builds: 0.1.0-alpha.N), not the bundle's (0.1.0).
-        .version_comparator(move |_, remote| remote.version > ours)
         .build()
         .map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else { return Ok(None) };
@@ -161,12 +158,10 @@ async fn fetch(app: &AppHandle) -> Result<Option<(tauri_plugin_updater::Update, 
 /// with `only_hidden` while the window is open (automatic updates don't interrupt anyone). On
 /// Windows the installer replaces furnish and starts it again (this process ends here).
 pub fn apply(app: &AppHandle, only_hidden: bool) -> Result<bool, String> {
-    if crate::tray::running() > 0 {
-        return Ok(false);
-    }
     if only_hidden && app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false)) {
         return Ok(false);
     }
+    let Some(_idle) = crate::tray::IdleRestart::reserve(app) else { return Ok(false) };
     let Some((update, bytes)) = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take() else { return Ok(false) };
     if let Err(err) = update.install(&bytes) {
         let message = err.to_string();

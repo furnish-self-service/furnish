@@ -164,7 +164,8 @@ prepare() { :; }
 # installers, Homebrew's, where npm and pip put programs with Homebrew's Node and Python). Only
 # looks: never runs it, so a folder others can write to is harmless.
 find_program() {
-    rest=$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin
+    # A system service can lack HOME. Only include the per-user directory when it is known.
+    rest=${PATH:-}${HOME:+:$HOME/.local/bin}:/opt/homebrew/bin:/usr/local/bin
     while [ -n "$rest" ]; do
         d=${rest%%:*}
         case $rest in *:*) rest=${rest#*:} ;; *) rest= ;; esac

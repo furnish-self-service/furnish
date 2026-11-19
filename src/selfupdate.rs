@@ -237,7 +237,7 @@ pub fn app_bundle(exe: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn msi_dirs() -> Vec<PathBuf> {
+fn msi_packages() -> Vec<(PathBuf, Option<String>)> {
     use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
     let Ok(uninstall) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall") else {
         return Vec::new();
@@ -248,15 +248,84 @@ fn msi_dirs() -> Vec<PathBuf> {
         .filter_map(|name| uninstall.open_subkey(name).ok())
         .filter(|k| k.get_value::<String, _>("DisplayName").is_ok_and(|n| n == "furnish"))
         .filter(|k| k.get_value::<u32, _>("WindowsInstaller").is_ok_and(|v| v == 1))
-        .filter_map(|k| k.get_value::<String, _>("InstallLocation").ok())
-        .filter(|l| !l.is_empty())
-        .map(PathBuf::from)
+        .filter_map(|k| {
+            let path: String = k.get_value("InstallLocation").ok()?;
+            (!path.is_empty()).then(|| (path.into(), k.get_value("DisplayVersion").ok()))
+        })
         .collect()
+}
+
+#[cfg(windows)]
+fn msi_dirs() -> Vec<PathBuf> {
+    msi_packages().into_iter().map(|(dir, _)| dir).collect()
 }
 
 #[cfg(not(windows))]
 fn msi_dirs() -> Vec<PathBuf> {
     Vec::new()
+}
+
+/// Version of an older desktop executable whose package predates the embedded build identity.
+/// Only consult the installer which actually owns this file.
+pub fn legacy_desktop_version(exe: &Path) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        if exe != Path::new("/usr/bin/furnish-gui") { return None; }
+        let query = |program: &str, args: &[&str]| -> Option<String> {
+            use std::{io::Read, process::Stdio, time::{Duration, Instant}};
+            let mut child = std::process::Command::new(program).args(args)
+                .env_clear().env("LANG", "C").env("PATH", "/usr/bin:/bin")
+                .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+            let until = Instant::now() + Duration::from_secs(2);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) if status.success() => break,
+                    Ok(Some(_)) => return None,
+                    Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(10)),
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return None;
+                    }
+                }
+            }
+            let mut output = Vec::new();
+            child.stdout.take()?.take(1025).read_to_end(&mut output).ok()?;
+            if output.len() > 1024 { return None; }
+            String::from_utf8(output).ok()
+        };
+        let listed = std::fs::read_to_string("/var/lib/dpkg/info/furnish.list").is_ok_and(|list| list.lines().any(|line| Path::new(line) == exe));
+        let raw = if listed {
+            let record = query("/usr/bin/dpkg-query", &["-W", "-f=${Status}\t${Version}", "furnish"])?;
+            let version = record.trim().strip_prefix("install ok installed\t")?;
+            version.rsplit_once('-').filter(|(_, release)| release.bytes().all(|b| b.is_ascii_digit())).map_or(version, |(upstream, _)| upstream).to_owned()
+        } else {
+            let record = query("/usr/bin/rpm", &["-qf", "--queryformat", "%{NAME}\t%{VERSION}", "/usr/bin/furnish-gui"])?;
+            record.trim().strip_prefix("furnish\t")?.to_owned()
+        };
+        semver(&raw.replace("~alpha.", "-alpha.")).map(|v| v.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let bundle = app_bundle(exe)?;
+        let file = std::fs::File::open(bundle.join("Contents/Info.plist")).ok()?;
+        if file.metadata().ok()?.len() > 1024 * 1024 { return None; }
+        let info = plist::Value::from_reader(std::io::BufReader::new(file)).ok()?;
+        let info = info.as_dictionary()?;
+        if info.get("CFBundleIdentifier")?.as_string()? != "io.github.furnish-self-service.furnish"
+            || info.get("CFBundleExecutable")?.as_string()? != exe.file_name()?.to_str()? { return None; }
+        semver(info.get("CFBundleShortVersionString")?.as_string()?).map(|v| v.to_string())
+    }
+    #[cfg(windows)]
+    {
+        if !exe.file_name()?.eq_ignore_ascii_case("furnish-gui.exe") { return None; }
+        let parent = exe.parent()?.canonicalize().ok()?;
+        msi_packages().into_iter().find_map(|(dir, version)| {
+            (dir.canonicalize().ok()? == parent).then(|| semver(&version?).map(|v| v.to_string()))?
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    { let _ = exe; None }
 }
 
 fn rpm_owns(exe: &Path) -> bool {

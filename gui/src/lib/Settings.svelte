@@ -4,7 +4,7 @@
   // control on the right. Settings the admin policy locks stay visible, not editable.
   import * as api from './api';
   import { store, changeSettings, checkForUpdates, checkSelfUpdate, restartToUpdate, toast, isLocked } from './state.svelte';
-  import { t, parts, tparts, formatTime } from './i18n.svelte';
+  import { t, parts, tparts, formatTime, lang } from './i18n.svelte';
   import { languages, warningText, type Lang } from './i18n.ts';
 
   const intervals = $derived([
@@ -22,8 +22,9 @@
       : intervals,
   );
 
-  let version = $state('');
-  api.version().then((v) => (version = v));
+  let build = $state<api.BuildInfo>();
+  api.buildInfo().then(info => (build = info));
+  const sourceDate = $derived(build?.sourceDateEpoch != null ? new Date(build.sourceDateEpoch * 1000) : null);
   let dataDir = $state('');
   api.dataDir().then((d) => (dataDir = d)).catch(() => {});
   // The organization's furnish addresses that take reports; the section shows only with one.
@@ -113,6 +114,13 @@
     checkSelfUpdate(true);
   }
 </script>
+
+{#snippet openFolder(path: string, exists = true)}
+  <button class="secondary" disabled={!exists} aria-label={t('settings.openFolderAt', { path })} onclick={() =>
+    api.openDirectory(path).catch(e => toast('error', t('settings.openFolderFailed'), String(e)))}>
+    {t('settings.openFolder')}
+  </button>
+{/snippet}
 
 {#snippet locked(key: keyof api.Settings)}
   {#if isLocked(key)}<span class="org">{t('common.setByOrg')}</span>{/if}
@@ -376,6 +384,7 @@
             <span class="control value">
               {#if config.source === 'policy' || (config.source === 'module' && chosen.configuration?.locked)}<span class="org">{t('common.setByOrg')}</span>{/if}
               <code class="path">{config.path}</code> · {t(config.kind === 'flake' ? 'nixos.flake' : 'nixos.channels')}
+              {@render openFolder(config.path)}
             </span>
           {/if}
         </li>
@@ -417,6 +426,7 @@
               {#each nixos.suggestions as s}
                 <span class="inline">
                   <code class="path">{s.path}</code>
+                  {@render openFolder(s.path)}
                   <button class="secondary" onclick={() => saveNixos('configuration', s.path)}>{t('nixos.useThis')}</button>
                 </span>
               {/each}
@@ -464,8 +474,23 @@
             <span class="label">{t(nixos.nixos ? 'nixos.homeManager' : 'nixos.config')}</span>
             {#if nixos.homeManagerConfiguration}<span class="desc"><code class="path">{nixos.homeManagerConfiguration.path}</code></span>{/if}
           </span>
-          <span class="control value">{t(nixos.homeManager || nixos.homeManagerConfiguration ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}</span>
+          <span class="control value">
+            {t(nixos.homeManager || nixos.homeManagerConfiguration ? 'nixos.homeManagerFound' : 'nixos.homeManagerMissing')}
+            {#if nixos.homeManagerConfiguration}{@render openFolder(nixos.homeManagerConfiguration.path)}{/if}
+          </span>
         </li>
+        {#each [{ label: t('nixos.systemFiles'), folder: nixos.systemAppsFolder }, { label: t('nixos.homeFiles'), folder: nixos.homeAppsFolder }] as { label, folder } (label)}
+          {#if folder}
+            <li class="row">
+              <span class="text"><span class="label">{label}</span>
+                <span class="desc">{folder.exists ? 'flake.nix · apps.json' : t('nixos.folderPending')}</span>
+              </span>
+              <span class="control value"><code class="path">{folder.path}</code>
+                {@render openFolder(folder.path, folder.exists)}
+              </span>
+            </li>
+          {/if}
+        {/each}
         {#if nixos.homeHint}
           {@const lines = nixos.homeHint.lines.join('\n')}
           <li class="row">
@@ -512,8 +537,25 @@
     <ul class="rows">
       <li class="row">
         <span class="text"><span class="label">{t('settings.version')}</span></span>
-        <span class="control value" id="version">furnish {version}</span>
+        <span class="control value" id="version">{build ? `furnish ${build.version}` : '…'}</span>
       </li>
+      {#if build}
+        <li class="build-info">
+          <details id="build-details">
+            <summary>{t('settings.buildDetails')}</summary>
+            <dl>
+              {#if build.revision}
+                <dt>{t('settings.buildRevision')}</dt><dd><code id="build-revision">{build.revision}</code></dd>
+              {/if}
+              <dt>{t('settings.buildTarget')}</dt><dd><code id="build-target">{build.target}</code></dd>
+              {#if sourceDate}
+                <dt>{t('settings.buildSourceDate')}</dt>
+                <dd><time datetime={sourceDate.toISOString()}>{sourceDate.toLocaleString(lang(), {dateStyle: 'medium', timeStyle: 'long', timeZone: 'UTC'})}</time></dd>
+              {/if}
+            </dl>
+          </details>
+        </li>
+      {/if}
       {#if self && methods[self.method]}
         <li class="row">
           <span class="text"><span class="label">{t('settings.installedWith')}</span></span>
@@ -535,7 +577,7 @@
           </span>
         </li>
       {/if}
-      {#if self && self.mode !== 'off' && (self.available || self.error)}
+      {#if !store.installedDesktop && self && self.mode !== 'off' && (self.available || self.error)}
         <li class="status" id="self-update">
           <span class="text" aria-live="polite">
             {#if self.state === 'downloading'}
@@ -596,7 +638,7 @@
       {#if dataDir}
         <li class="row">
           <span class="text"><span class="label">{t('settings.dataFolder')}</span></span>
-          <span class="control value"><code class="path">{dataDir}</code></span>
+          <span class="control value"><code class="path">{dataDir}</code>{@render openFolder(dataDir)}</span>
         </li>
       {/if}
       <li class="row">
@@ -744,6 +786,11 @@
     color: var(--ink-soft);
     font-size: 0.92rem;
   }
+  .build-info { padding: .65rem 0; }
+  .build-info summary { width: fit-content; cursor: pointer; font-size: .92rem; }
+  .build-info dl { display: grid; grid-template-columns: fit-content(40%) 1fr; gap: .4rem 1rem; margin: .75rem 0 .2rem; font-size: .86rem; }
+  .build-info dt { color: var(--muted); }
+  .build-info dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
   .snippet {
     white-space: pre-wrap;
   }

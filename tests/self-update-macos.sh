@@ -55,6 +55,8 @@ echo "== the desktop app ($gui, hidden) updates itself and restarts"
 for _ in $(seq 150); do [ "$(version 2>/dev/null)" = "$next" ] && break; sleep 2; done
 v=$(version)
 [ "$v" = "$next" ] || { cat "$RUNNER_TEMP/gui.log"; fail "after the desktop app's update: $v, expected $next"; }
+gui_version=$("$app/Contents/MacOS/$gui" --build-info | jq -r .version)
+[ "$gui_version" = "$(jq -r .version "$feed/latest.json")" ] || fail "updated desktop reports $gui_version"
 codesign --verify --deep --strict "$app" || fail "the updated app's signature doesn't verify"
 for _ in $(seq 30); do pgrep -f "$app/Contents/MacOS/$gui" >/dev/null && break; sleep 1; done
 pgrep -f "$app/Contents/MacOS/$gui" >/dev/null || fail "the desktop app didn't start again"

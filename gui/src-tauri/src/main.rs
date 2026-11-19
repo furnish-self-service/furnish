@@ -4,9 +4,11 @@
 //! furnish GUI backend: thin Tauri commands over the same library the CLI uses.
 
 mod app_icon;
+mod build_info;
 #[cfg(target_os = "linux")]
 mod desktop_entry;
 mod autostart;
+mod desktop_update;
 mod selfupdate;
 mod tray;
 mod tray_icon;
@@ -456,10 +458,9 @@ async fn reinstall(app: tauri::AppHandle, key: String, trigger: Option<String>) 
     run(app, key, Action::Reinstall, trigger).await
 }
 
-/// furnish's version (builds of main: 0.1.0+alpha.<build>).
 #[tauri::command]
-fn version() -> &'static str {
-    furnish::selfupdate::current()
+fn build_info() -> build_info::BuildInfo {
+    build_info::current()
 }
 
 /// How furnish was installed and whether a newer version of it is out or ready to install.
@@ -779,6 +780,23 @@ fn data_dir() -> String {
     catalog::data_dir().display().to_string()
 }
 
+/// Ask the desktop's file manager to open an existing directory selected in Settings.
+#[tauri::command]
+async fn open_directory(path: std::path::PathBuf) -> CmdResult<()> {
+    blocking(move || {
+        anyhow::ensure!(path.is_absolute() && path.is_dir(), "Folder does not exist: {}", path.display());
+        #[cfg(windows)]
+        std::process::Command::new("explorer.exe").arg(&path).spawn()?;
+        #[cfg(not(windows))]
+        {
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let status = std::process::Command::new(opener).arg(&path).status()?;
+            anyhow::ensure!(status.success(), "{opener} could not open {}", path.display());
+        }
+        Ok(())
+    }).await
+}
+
 /// How this NixOS computer is set up; `None` on other systems.
 #[tauri::command]
 fn nixos_setup() -> Option<furnish::nixos::Setup> {
@@ -818,6 +836,10 @@ async fn remove_collection(name: String) -> CmdResult<()> {
 }
 
 fn main() -> std::process::ExitCode {
+    if std::env::args_os().skip(1).eq(["--build-info"]) {
+        println!("{}", serde_json::to_string(&build_info::current()).unwrap());
+        return std::process::ExitCode::SUCCESS;
+    }
     // DSC runs furnish's configuration resources as `furnish-gui dsc-resource …` (see engine::init).
     if let Some(code) = furnish::resources::dispatch() {
         return code.into();
@@ -825,6 +847,7 @@ fn main() -> std::process::ExitCode {
     if let Some(resource) = furnish::nixos_apps::ResourceCommand::from_desktop_args() {
         return resource.run();
     }
+    desktop_update::initialize();
     // On Wayland the compositor finds the app's icon via the desktop file named like the app ID,
     // which GTK takes from the program name ("furnish-gui", the binary). The packages install
     // furnish.desktop, so name the program to match.
@@ -841,7 +864,10 @@ fn main() -> std::process::ExitCode {
         std::process::exit(1);
     }
     furnish::load::start_sampler(load_interval());
-    tauri::Builder::default()
+    // Tauri's native About menu and updater read PackageInfo as well.
+    let mut context = tauri::generate_context!();
+    context.package_info_mut().version = build_info::current().version.parse().expect("validated desktop version");
+    let exit_code = tauri::Builder::default()
         // Started again while running (from the menu, a furnish:// link): show the window. The
         // link itself reaches the window through the deep-link plugin.
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
@@ -914,8 +940,10 @@ fn main() -> std::process::ExitCode {
             install_version,
             app_versions,
             set_collection_setting,
-            version,
+            build_info,
             self_update_status,
+            desktop_update::desktop_update_status,
+            desktop_update::restart_desktop,
             #[cfg(target_os = "macos")]
             cli_link_installed,
             #[cfg(target_os = "macos")]
@@ -923,6 +951,7 @@ fn main() -> std::process::ExitCode {
             check_self_update,
             apply_self_update,
             open_licenses,
+            open_directory,
             report_destinations,
             nixos_setup,
             report_inventory,
@@ -949,9 +978,9 @@ fn main() -> std::process::ExitCode {
             data_dir,
             remove_collection
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to start the furnish window")
-        .run(|app, event| match event {
+        .run_return(|app, event| match event {
             // Quit from the macOS app menu (Cmd+Q) while installing: after the install.
             tauri::RunEvent::ExitRequested { code: None, api, .. } => {
                 api.prevent_exit();
@@ -962,5 +991,5 @@ fn main() -> std::process::ExitCode {
             tauri::RunEvent::Reopen { has_visible_windows: false, .. } => tray::show(app),
             _ => {}
         });
-    std::process::ExitCode::SUCCESS
+    desktop_update::finish(exit_code)
 }

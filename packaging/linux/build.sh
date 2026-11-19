@@ -22,4 +22,11 @@ npm ci --silent
 FURNISH_CLI_TARGET=x86_64-unknown-linux-musl npm run bundle -- --bundles deb,rpm \
     ${FURNISH_VERSION:+--config "{\"version\": \"$FURNISH_VERSION\"}"}
 cd ..
+if [ -n "${FURNISH_BUILD_REVISION:-}" ] && [ -n "${FURNISH_VERSION:-}" ] && [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    # Query the package's actual desktop executable on the oldest supported glibc.
+    extracted=$(mktemp -d)
+    dpkg-deb -x target/jammy/release/bundle/deb/*.deb "$extracted"
+    node scripts/verify-desktop-build.mjs "$extracted/usr/bin/furnish-gui" "$FURNISH_VERSION"
+    rm -rf "$extracted"
+fi
 ls target/jammy/release/bundle/deb/*.deb target/jammy/release/bundle/rpm/*.rpm

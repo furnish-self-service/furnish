@@ -1,6 +1,6 @@
 <script lang="ts">
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
+  import { store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -17,6 +17,11 @@
   import { createHistory } from './lib/history';
 
   start();
+  $effect(() => {
+    // Local package replacements are independent of the release feed and its schedule.
+    const timer = setInterval(checkInstalledDesktop, 60_000);
+    return () => clearInterval(timer);
+  });
   // The tray menu follows the language, the branding and what furnish is doing.
   $effect(() => syncTray(trayTexts()));
 
@@ -98,7 +103,7 @@
     view.page === page && (name === undefined || (view.page === 'category' && view.name === name));
 </script>
 
-<svelte:window onmousedown={onMouse} onmouseup={onMouse} onkeydown={onKey} />
+<svelte:window onfocus={checkInstalledDesktop} onmousedown={onMouse} onmouseup={onMouse} onkeydown={onKey} />
 
 {#snippet sizer()}
   {#each idleLabels as label}<span>{label}</span>{/each}
@@ -107,7 +112,7 @@
 <div class="sizer" aria-hidden="true" bind:clientWidth={actionWidth}>{@render sizer()}</div>
 <div class="sizer large" aria-hidden="true" bind:clientWidth={actionLargeWidth}>{@render sizer()}</div>
 
-<div class="shell">
+<div class="shell" inert={store.desktopRestart === 'launching'}>
   <nav aria-label={t('nav.sections')}>
     <button class="brand" onclick={() => go({ page: 'discover' })} aria-label={t('nav.home', { brand: store.brand.name })}>
       <img src={store.brand.logo ?? logo} alt="" width="34" height="34" />
@@ -144,13 +149,20 @@
     </button>
     <button class:active={isActive('settings')} onclick={() => go({ page: 'settings' })}>
       {t('nav.settings')}
-      {#if store.selfUpdate?.available && store.selfUpdate.mode !== 'off'}
+      {#if !store.installedDesktop && store.selfUpdate?.available && store.selfUpdate.mode !== 'off'}
         <span class="dot" role="img" aria-label={t('nav.selfUpdate', { brand: store.brand.name })} title={t('nav.selfUpdate', { brand: store.brand.name })}></span>
       {/if}
     </button>
   </nav>
 
   <main>
+    {#if store.installedDesktop && desktopIdle()}
+      {@const installed = store.installedDesktop}
+      <div class="restart-banner" data-testid="desktop-restart" role="status">
+        <span>{t('desktop.installed', { brand: store.brand.name, version: installed.version })}{#if installed.revision} <code title={installed.revision}>{installed.revision.slice(0, 12)}</code>{/if}</span>
+        <button class="primary" disabled={store.desktopRestart !== 'idle'} onclick={restartInstalledDesktop}>{t('desktop.restart', { brand: store.brand.name })}</button>
+      </div>
+    {/if}
     <SignInBanner />
     {#if view.page === 'collections'}
       <Collections />
@@ -254,6 +266,25 @@
 <LinkDialog />
 
 <style>
+  .restart-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+    padding: 0.8rem 1rem;
+    margin-bottom: 1.5rem;
+    border-radius: 12px;
+    background: var(--highlight-soft);
+    color: var(--ink);
+    font-size: 0.92rem;
+  }
+  .restart-banner code {
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+
   /* Paddings, border and font match ActionButton.svelte's .action, .busy and .large. */
   .sizer {
     position: absolute;

@@ -27,6 +27,12 @@
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
+      # GitHub flake locks identify a commit; a release tag or Actions run number is
+      # generally unavailable inside the pure build. Keep the source identity visible.
+      desktopRevision = self.rev or (if self ? dirtyRev then nixpkgs.lib.removeSuffix "-dirty" self.dirtyRev else "");
+      desktopVersion = "${version}-alpha"
+        + nixpkgs.lib.optionalString (desktopRevision != "") "+git.${builtins.substring 0 12 desktopRevision}"
+        + nixpkgs.lib.optionalString (desktopRevision != "" && self ? dirtyRev) ".dirty";
       # Sources only: no build output, no node_modules.
       src = nixpkgs.lib.fileset.toSource {
         root = ./.;
@@ -352,6 +358,10 @@
         # layout (binary, desktop file, icons) into $out, as nixpkgs' cargo-tauri.hook does.
         furnish-gui = r.craneLib.buildPackage (r.commonArgs // {
           pname = "furnish-gui";
+          version = desktopVersion;
+          FURNISH_VERSION = desktopVersion;
+          FURNISH_BUILD_REVISION = desktopRevision;
+          SOURCE_DATE_EPOCH = if (self.lastModified or 0) > 1 then toString self.lastModified else "";
           inherit (r) cargoArtifacts;
           npmDeps = pkgs.fetchNpmDeps {
             name = "furnish-gui-npm-deps-${version}";
@@ -394,7 +404,10 @@
       homeManagerModules.default = homeManagerModule { inherit apps home-apps; };
 
       # `nix flake check`: the packages and furnish's library tests (`nix build` runs no tests).
-      checks = forAll (pkgs: let r = rust pkgs; in {
+      checks = forAll (pkgs: let
+        r = rust pkgs;
+        offlineModule = import ./tests/nixos-apps/offline-module.nix self;
+      in {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) furnish furnish-gui;
         tests = r.craneLib.cargoTest (r.commonArgs // {
           inherit (r) cargoArtifacts;
@@ -404,12 +417,13 @@
         # NixOS VM: packages from the system's configuration show as installed.
         nixos-declared = import ./tests/nixos-declared.nix { inherit pkgs; module = self.nixosModules.default; };
         # NixOS VM: apps from furnish's local flake, a nested input, end up in the system.
-        nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
+        nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs; nixosModule = offlineModule; furnish = self; };
         # NixOS VM: installing such an app through the furnish service.
         nixos-install = import ./tests/nixos-install.nix {
-          inherit pkgs nixpkgs nixosModule;
+          inherit pkgs nixpkgs;
+          nixosModule = offlineModule;
           furnish = self;
-          module = self.nixosModules.default;
+          module = offlineModule apps;
         };
         # NixOS VM: apps from furnish's local flake in a person's data folder end up in their
         # standalone Home Manager configuration.
@@ -422,9 +436,10 @@
         home-manager-nixos = import ./tests/home-manager-nixos.nix { inherit pkgs nixpkgs nixosModule; furnish = self; };
         # NixOS VM: installing an app into Home Manager as a NixOS module, through the service.
         home-manager-nixos-install = import ./tests/home-manager-nixos-install.nix {
-          inherit pkgs nixpkgs nixosModule;
+          inherit pkgs nixpkgs;
+          nixosModule = offlineModule;
           furnish = self;
-          module = self.nixosModules.default;
+          module = offlineModule apps;
         };
       });
     };
