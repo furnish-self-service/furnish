@@ -310,7 +310,14 @@ resources:
     properties: { path: "$tmp/conf/settings.json", location: "\$.enabledPlugins['fixture@market']", value: true, private: true }
   - name: home file
     type: Furnish/File
-    properties: { path: "~/$home_file", content: "furnish" }
+    properties:
+      path: "~/$home_file"
+      content: |
+        [[repo]
+        key=value
+
+        [other]
+        prefix=[[
   - name: current context
     type: Furnish/Value
     properties: { path: "$tmp/conf/kube.yaml", location: "\$.current-context", removeIf: [fixture-prod, fixture-stg] }
@@ -738,7 +745,9 @@ grep -q "^# BEGIN furnish fixture/config$" "$tmp/conf/ssh_config" || { echo "FAI
 [ "$(tr -d '\r' < "$tmp/conf/profile.conf")" = "$(cat "$tmp/repo/files/profile.conf")" ] || { echo "FAIL: profile not copied" >&2; exit 1; }
 grep -q '"fixture@market": true' "$tmp/conf/settings.json" || { echo "FAIL: settings key missing" >&2; exit 1; }
 [ "$(git config --file "$tmp/conf/gitconfig" fixture.server)" = https://fixture.example ] || { echo "FAIL: command didn't run" >&2; exit 1; }
-[ -f ~/"$home_file" ] || { echo "FAIL: ~/ wasn't expanded" >&2; exit 1; }
+# Compare bytes including the final newline; only the first opening bracket is an escape.
+printf '[repo]\nkey=value\n\n[other]\nprefix=[[\n' > "$tmp/expected-home-file"
+git diff --no-index -- "$tmp/expected-home-file" ~/"$home_file"
 [ "$(git config --file ~/"$home_file".gitconfig fixture.home)" = home ] || { echo "FAIL: ~/ in a command wasn't expanded" >&2; exit 1; }
 # removeIf: installing leaves the value as it is, there or not, and the app stays installed.
 grep -q '^current-context: fixture-prod$' "$tmp/conf/kube.yaml" || { echo "FAIL: install changed current-context" >&2; exit 1; }

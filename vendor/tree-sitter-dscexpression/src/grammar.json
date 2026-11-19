@@ -33,7 +33,7 @@
             },
             {
               "type": "PATTERN",
-              "value": ".*"
+              "value": "[\\s\\S]*"
             }
           ]
         }
@@ -219,7 +219,7 @@
     },
     "string": {
       "type": "PATTERN",
-      "value": "([^']|'')*"
+      "value": "([^']|''|\\n)*"
     },
     "number": {
       "type": "PATTERN",
