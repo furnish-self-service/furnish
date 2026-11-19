@@ -18,7 +18,7 @@ mod tracking;
 use crate::settings::Tracking;
 use tracking::Target;
 
-const DSC_SCHEMA: &str = "https://aka.ms/dsc/schemas/v3/bundled/config/document.json";
+pub(crate) const DSC_SCHEMA: &str = "https://aka.ms/dsc/schemas/v3/bundled/config/document.json";
 
 pub struct Collection {
     pub name: String,
@@ -1660,18 +1660,18 @@ impl App {
         Ok(())
     }
 
-    /// Installs into the user's account with these values: `metadata.furnish.perUser`, a DSC
-    /// expression over the options (e.g. `[parameters('userInstall')]`) or `true`. Such installs
-    /// never go through the furnish service: root or SYSTEM would install for the wrong account.
+    /// Run in the signed-in user's account when the app declares perUser (optionally
+    /// through a DSC expression) or an active step selects a user-scoped mise tool.
     pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
-        match &self.doc["metadata"]["furnish"]["perUser"] {
+        let declared = match &self.doc["metadata"]["furnish"]["perUser"] {
             Value::Bool(b) => *b,
             Value::String(expr) => crate::conditions::holds_for(&self.doc, expr, values).unwrap_or_else(|err| {
                 eprintln!("warning: {}: perUser: {err:#}", self.id);
                 false
             }),
             _ => false,
-        }
+        };
+        declared || crate::package_names::requires_user(&self.doc, values)
     }
 
     /// Installed through the furnish service with these values.

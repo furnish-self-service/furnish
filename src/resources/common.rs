@@ -491,6 +491,9 @@ pub fn set_mode(path: &Path, mode: u32) -> Result<()> {
 }
 
 #[cfg(windows)]
+pub(crate) use windows::user_sid;
+
+#[cfg(windows)]
 mod windows {
     use std::{os::windows::ffi::OsStrExt, path::Path, ptr::null_mut};
 
@@ -520,7 +523,7 @@ mod windows {
     }
 
     /// The user this process runs as, as a SID string such as `S-1-5-21-…`.
-    fn user_sid() -> std::io::Result<String> {
+    pub(crate) fn user_sid() -> std::io::Result<String> {
         // SAFETY: the token handle is closed below; the buffer is large enough for TOKEN_USER
         // (GetTokenInformation reports the size it needs).
         unsafe {

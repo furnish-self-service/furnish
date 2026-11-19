@@ -18,9 +18,13 @@ pub(crate) fn supported_manager(name: &str) -> bool {
     native_manager_priority(name).is_some()
 }
 
-/// Native discovery iterates UNIX_MANAGERS in this order. Windows only uses winget.
+/// Host facts list mise after the ordinary system managers on all platforms.
 pub(crate) fn native_manager_priority(name: &str) -> Option<usize> {
-    if name == "winget" { Some(0) } else { UNIX_MANAGERS.iter().position(|(manager, _)| *manager == name) }
+    match name {
+        "winget" => Some(0),
+        "mise" => Some(UNIX_MANAGERS.len()),
+        _ => UNIX_MANAGERS.iter().position(|(manager, _)| *manager == name),
+    }
 }
 
 pub(crate) fn valid_distribution_id(word: &str) -> bool {
@@ -65,9 +69,21 @@ pub(crate) fn distribution() -> Distribution {
     Distribution::default()
 }
 
+pub(crate) fn manager_on_platform(id: &str, windows: bool) -> bool {
+    id == "mise" || (id == "winget") == windows
+}
+
+pub(crate) fn package_managers() -> Vec<&'static str> {
+    let mut managers = system_package_managers();
+    if crate::resources::mise::executable().is_some() {
+        managers.push("mise");
+    }
+    managers
+}
+
 // Recheck the executables each time: a preceding dependency or step may have installed one.
 #[cfg(unix)]
-pub(crate) fn package_managers() -> Vec<&'static str> {
+fn system_package_managers() -> Vec<&'static str> {
     // SAFETY: geteuid has no preconditions.
     let root = unsafe { libc::geteuid() } == 0;
     // Match use_brew in the Unix package resource. The root service on macOS only
@@ -143,7 +159,7 @@ pub(crate) fn winget_path() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(windows)]
-pub(crate) fn package_managers() -> Vec<&'static str> {
+fn system_package_managers() -> Vec<&'static str> {
     if winget_path().is_some() { vec!["winget"] } else { Vec::new() }
 }
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/Package",
-  "description": "Manage a package with the system package manager",
+  "description": "Manage a package with a system, per-user or collection package manager",
   "version": "0.1.0",
   "get": {
     "executable": "furnish",
@@ -53,8 +53,8 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Default package name or winget ID",
-          "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
+          "description": "Default package name, winget ID or mise tool ID",
+          "pattern": "^([A-Za-z0-9@._+][A-Za-z0-9@._+-]*|[A-Za-z0-9][A-Za-z0-9._+-]*(:@?[A-Za-z0-9][A-Za-z0-9._+-]*(/[A-Za-z0-9][A-Za-z0-9._+-]*)*)?)$"
         },
         "namesByDistribution": {
           "type": "object",
@@ -76,7 +76,13 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9@._+][A-Za-z0-9@._+-]*$"
           },
-          "description": "Package names by backend when no distribution name matches"
+          "description": "Package names by backend when no distribution name matches",
+          "properties": {
+            "mise": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*(:@?[A-Za-z0-9][A-Za-z0-9._+-]*(/[A-Za-z0-9][A-Za-z0-9._+-]*)*)?$"
+            }
+          }
         },
         "version": {
           "type": "string",
@@ -118,7 +124,7 @@
         },
         "packageManager": {
           "type": "string",
-          "description": "Use this built-in or collection package manager. By default, use the first available built-in manager or the only available collection manager.",
+          "description": "Select a built-in or collection manager. A namesByManager.mise entry opts into mise after a matching system manager.",
           "pattern": "^[a-z0-9][a-z0-9._-]*$"
         },
         "_inDesiredState": {

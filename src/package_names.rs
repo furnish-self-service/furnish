@@ -27,6 +27,21 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('-') && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"@._+-".contains(&b))
 }
 
+// Backend-qualified tool IDs are only passed to mise. Each component is an identifier,
+// including scoped names like npm:@scope/tool. Versions are supplied via targetVersion.
+fn mise_name(name: &str) -> bool {
+    let part = |s: &str| s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b));
+    match name.split_once(':') {
+        Some((backend, tool)) => part(backend) && tool.strip_prefix('@').unwrap_or(tool).split('/').all(part),
+        None => part(name),
+    }
+}
+
+fn valid_for(name: &str, manager: Option<&str>) -> bool {
+    if manager == Some("mise") { mise_name(name) } else { valid_name(name) }
+}
+
 fn expression(value: &Value) -> bool {
     value.as_str().is_some_and(|s| s.starts_with('[') && !s.starts_with("[[") && s.ends_with(']'))
 }
@@ -59,7 +74,8 @@ pub(crate) fn validate(props: &Value) -> Result<()> {
             } else {
                 ensure!(platform::valid_distribution_id(selector), "{key}: invalid os-release identifier '{selector}'");
             }
-            ensure!(value.as_str().is_some_and(valid_name) || expression(value), "{key}.{selector} must be a package name");
+            let manager = if key == "namesByManager" { Some(selector.as_str()) } else { None };
+            ensure!(value.as_str().is_some_and(|s| valid_for(s, manager)) || expression(value), "{key}.{selector} must be a package name");
         }
     }
     Ok(())
@@ -88,21 +104,78 @@ impl Selection<'_> {
     }
 }
 
-fn preferred_manager<'a>(props: &'a Value, native: &[&'a str]) -> Option<&'a str> {
-    props["packageManager"].as_str().or_else(|| native.first().copied())
+fn preferred_manager<'a>(props: &'a Value, distribution: &Distribution, native: &[&'a str]) -> Option<(&'a str, &'static str)> {
+    if let Some(id) = props["packageManager"].as_str() {
+        return Some((id, "package.explicit"));
+    }
+    let default = native.iter().copied().find(|&id| id != "mise");
+    let aliases = &props["namesByManager"];
+    if aliases.get("mise").is_some() && native.contains(&"mise")
+        && (default.is_none() || distribution_name(props, distribution).is_none())
+        && let Some(id) = native.iter().copied().find(|id| aliases.get(*id).is_some())
+    {
+        return Some((id, "package.mappedManager"));
+    }
+    default.map(|id| (id, "package.native"))
+}
+
+fn distribution_name<'p, 'd>(props: &'p Value, distribution: &'d Distribution) -> Option<(&'p Value, &'static str, &'d str)> {
+    let names = &props["namesByDistribution"];
+    names.get(&distribution.id).map(|v| (v, "package.distroName", distribution.id.as_str()))
+        .or_else(|| distribution.like.iter().find_map(|id| names.get(id).map(|v| (v, "package.familyName", id.as_str()))))
+}
+
+/// Route an app with an active mise package through the signed-in user's account.
+/// Shared or scripted installations can execute multiple resources as one operation.
+pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>) -> bool {
+    let applied = std::cell::LazyCell::new(|| crate::options::apply(doc, values));
+    let managers = std::cell::LazyCell::new(platform::package_managers);
+    let distribution = std::cell::LazyCell::new(platform::distribution);
+    let selects = |step: &Value| {
+        if step["type"] != crate::catalog::PACKAGE_TYPE {
+            return false;
+        }
+        let props = &step["properties"];
+        let manager = &props["packageManager"];
+        if let Some(id) = manager.as_str() {
+            return if expression(manager) {
+                crate::conditions::value_for(doc, id, values).map_or(true, |v| v == "mise")
+            } else { id == "mise" };
+        }
+        if props["namesByManager"].get("mise").is_none() && !expression(&props["namesByManager"]) {
+            return false;
+        }
+        let mut selection = props.clone();
+        for key in ["namesByManager", "namesByDistribution"] {
+            if expression(&props[key]) {
+                let Ok(names) = crate::conditions::value_for(doc, props[key].as_str().unwrap(), values) else { return true };
+                selection[key] = names;
+            }
+        }
+        matches!(preferred_manager(&selection, &distribution, &managers), Some(("mise", _)))
+    };
+    fn any(steps: &[Value], selects: &impl Fn(&Value) -> bool, applies: &impl Fn(&Value) -> bool) -> bool {
+        steps.iter().any(|step| {
+            (selects(step) || step["properties"]["resources"].as_array().is_some_and(|nested| any(nested, selects, applies))) && applies(step)
+        })
+    }
+    let applies = |step: &Value| step["condition"].is_null() || crate::engine::applies_here(step, &applied);
+    [doc["resources"].as_array(), crate::engine::removal_steps(doc)].into_iter().flatten().any(|steps| any(steps, &selects, &applies))
 }
 
 pub(crate) fn select<'a>(
     props: &'a Value, distribution: &Distribution, native: &[&str], scripts: &[&str], windows: bool,
 ) -> Result<Selection<'a>> {
-    let requested = props.get("packageManager").map(|v| v.as_str().context("packageManager must be a name")).transpose()?;
-    let (manager, reason) = match preferred_manager(props, native) {
-        Some(id) if platform::supported_manager(id) => {
-            ensure!((id == "winget") == windows, "package manager '{id}' is unavailable on this platform");
-            (Some(id), if requested.is_some() { "package.explicit" } else { "package.native" })
+    if let Some(manager) = props.get("packageManager") {
+        ensure!(manager.is_string(), "packageManager must be a name");
+    }
+    let (manager, reason) = match preferred_manager(props, distribution, native) {
+        Some((id, reason)) if platform::supported_manager(id) => {
+            ensure!(platform::manager_on_platform(id, windows), "package manager '{id}' is unavailable on this platform");
+            (Some(id), reason)
         }
-        Some(id) if scripts.contains(&id) => (Some(id), "package.explicitScript"),
-        Some(id) => return Err(Missing(format!("package manager {id}")).into()),
+        Some((id, _)) if scripts.contains(&id) => (Some(id), "package.explicitScript"),
+        Some((id, _)) => return Err(Missing(format!("package manager {id}")).into()),
         None => match scripts {
             [id] => (Some(*id), "package.onlyScript"),
             [] if windows => (Some("winget"), "package.windows"),
@@ -114,17 +187,18 @@ pub(crate) fn select<'a>(
         },
     };
 
-    let base = props["name"].as_str().filter(|s| valid_name(s)).context("a valid package name is required")?;
-    let distro_names = &props["namesByDistribution"];
-    let matched = distro_names.get(&distribution.id).map(|v| (v, "package.distroName", distribution.id.as_str()))
-        .or_else(|| distribution.like.iter().find_map(|id| distro_names.get(id).map(|v| (v, "package.familyName", id.as_str()))))
-        .or_else(|| manager.and_then(|id| props["namesByManager"].get(id).map(|v| (v, "package.managerName", id))));
+    let base = props["name"].as_str().filter(|s| valid_name(s) || (manager == Some("mise") && mise_name(s))).context("a valid package name is required")?;
+    let distro = if (manager, reason) == (Some("mise"), "package.mappedManager") { None } else { distribution_name(props, distribution) };
+    let matched = distro.or_else(|| manager.and_then(|id| props["namesByManager"].get(id).map(|v| (v, "package.managerName", id))));
     let (name, name_note) = match matched {
         Some((v, code, selector)) => {
-            let name = v.as_str().filter(|s| valid_name(s)).context("invalid resolved package name")?;
+            let name = v.as_str().filter(|s| valid_for(s, manager)).context("invalid resolved package name")?;
             (name, note(code, json!({"name": name, "selector": selector})))
         }
-        None => (base, note("package.defaultName", json!({"name": base}))),
+        None => {
+            ensure!(valid_for(base, manager), "invalid resolved package name");
+            (base, note("package.defaultName", json!({"name": base})))
+        }
     };
     let manager_note = note(reason, manager.map_or_else(|| json!({}), |id| json!({"manager": id})));
     Ok(Selection { name, manager: manager.map(str::to_owned), notes: [manager_note, name_note] })
@@ -232,18 +306,27 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     let native = if props.get("packageManager").is_none() { platform::package_managers() } else { Vec::new() };
     // Resolving collection scripts checks the installed policy and canonical paths. Do this
     // only when the operation needs a script, as ordinary native packages don't rely on them.
+    let distribution = platform::distribution();
+    let preferred = preferred_manager(props, &distribution, &native).map(|(id, _)| id);
     let delegated = props["_metadata"][crate::nixos_apps::PACKAGE_FINGERPRINT].is_string();
-    ensure!(!delegated || preferred_manager(props, &native) == Some("nix"), "this step does not select the Nix package manager");
-    let scripts = if preferred_manager(props, &native).is_some_and(platform::supported_manager) {
+    ensure!(!delegated || preferred == Some("nix"), "this step does not select the Nix package manager");
+    let scripts = if preferred.is_some_and(platform::supported_manager) {
         Default::default()
     } else {
         crate::script_managers::active(props)?
     };
     let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
-    let selection = select(props, &platform::distribution(), &native, &ids, cfg!(windows))?;
+    let selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
     let manager = selection.manager.as_deref();
     if let Some((id, script)) = manager.and_then(|id| scripts.get_key_value(id)) {
         let state = run_script(id, script, selection.name, props, if what_if { "what-if" } else { operation })?;
+        return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
+    }
+
+    if manager == Some("mise") {
+        ensure!(!crate::service::in_service() && std::env::var("FURNISH_SERVICE").as_deref() != Ok("1"),
+            "mise installs tools for the signed-in user and cannot run in the furnish service");
+        let state = crate::resources::mise::run(props, selection.name, operation, what_if)?;
         return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
     }
 
@@ -371,6 +454,60 @@ mod tests {
         let missing = select(&json!({"name":"tool","packageManager":"b"}), &distro, &[], &["a"], false).err().unwrap();
         assert_eq!(missing.downcast_ref::<Missing>().unwrap().0, "package manager b");
         assert!(select(&json!({"name":"tool","packageManager":"winget"}), &distro, &[], &[], false).is_err());
+    }
+
+    #[test]
+    fn mise_requires_an_explicit_or_mapped_choice_and_accepts_backend_names_only_for_mise() {
+        let distro = Distribution { id: "custom".into(), like: vec!["debian".into()] };
+        for id in ["github:akuity/kargo", "pipx:magic-wormhole", "aqua:jqlang/jq", "npm:@scope/tool", "node"] {
+            let props = json!({"name":id, "packageManager":"mise"});
+            assert_eq!(select(&props, &distro, &[], &[], true).unwrap().name, id);
+            assert_eq!(select(&props, &distro, &[], &[], false).unwrap().name, id);
+        }
+        for name in ["--version", "github:../tool", "github:org//tool", "pipx:pkg@latest", "github:org/tool arg"] {
+            assert!(select(&json!({"name":name, "packageManager":"mise"}), &distro, &[], &[], false).is_err());
+        }
+        let aliases = json!({"name":"tool", "namesByManager":{"mise":"github:akuity/kargo", "apt":"apt-tool"}});
+        for (native, manager, name) in [
+            (vec!["pacman", "apt", "mise"], "apt", "apt-tool"),
+            (vec!["pacman", "mise"], "mise", "github:akuity/kargo"),
+            (vec!["pacman"], "pacman", "tool"),
+        ] {
+            let choice = select(&aliases, &distro, &native, &[], false).unwrap();
+            assert_eq!((choice.manager.as_deref(), choice.name), (Some(manager), name));
+        }
+        let mut props = aliases;
+        props["namesByDistribution"] = json!({"debian":"native-tool"});
+        let choice = select(&props, &distro, &["pacman", "mise"], &[], false).unwrap();
+        assert_eq!((choice.manager.as_deref(), choice.name), (Some("pacman"), "native-tool"));
+        assert_eq!(choice.notes[0].code, "package.native");
+        let choice = select(&props, &distro, &["mise"], &[], false).unwrap();
+        assert_eq!((choice.manager.as_deref(), choice.name), (Some("mise"), "github:akuity/kargo"));
+        let props = json!({"name":"generic"});
+        assert_eq!(select(&props, &distro, &["mise"], &["org"], false).unwrap().manager.as_deref(), Some("org"));
+    }
+
+    #[test]
+    fn mise_routes_applicable_steps_including_removal_through_the_user() {
+        let step = json!({"type":"Furnish/Package", "properties":{"name":"jq","packageManager":"[parameters('provider')]"}});
+        let doc = json!({"parameters":{"provider":{"type":"string","defaultValue":"apt"}},
+            "resources":[{"type":"Microsoft.DSC/Group","properties":{"resources":[step]}}]});
+        for (manager, expected) in [("apt", false), ("mise", true)] {
+            let values = serde_json::Map::from_iter([("provider".into(), json!(manager))]);
+            assert_eq!(requires_user(&doc, &values), expected);
+        }
+        let mut variable = doc.clone();
+        variable["variables"]["provider"] = json!("[parameters('provider')]");
+        variable["resources"][0]["properties"]["resources"][0]["properties"]["packageManager"] = json!("[variables('provider')]");
+        for (manager, expected) in [("apt", false), ("mise", true)] {
+            let values = serde_json::Map::from_iter([("provider".into(), json!(manager))]);
+            assert_eq!(requires_user(&variable, &values), expected);
+        }
+        let step = json!({"type":"Furnish/Package","properties":{"name":"jq","packageManager":"mise"}});
+        let mut doc = json!({"resources":[],"metadata":{"furnish":{"uninstall":[step]}}});
+        assert!(requires_user(&doc, &Default::default()));
+        doc["metadata"]["furnish"]["uninstall"][0]["condition"] = json!("[equals(1, 2)]");
+        assert!(!requires_user(&doc, &Default::default()));
     }
 
     #[test]

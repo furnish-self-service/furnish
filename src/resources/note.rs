@@ -30,6 +30,7 @@ impl Note {
         let s = |k| self.s(k);
         match self.code {
             "package.explicit" => format!("The app selects the {} package manager", s("manager")),
+            "package.mappedManager" => format!("The app provides a package name for the available {} manager", s("manager")),
             "package.native" => format!("{} is the first available system package manager", s("manager")),
             "package.explicitScript" => format!("The app selects the collection’s {} script manager", s("manager")),
             "package.onlyScript" => format!("{} is the only available collection script manager", s("manager")),

@@ -353,6 +353,7 @@ export const en = {
   'plan.notRun': 'Not run',
   'plan.note': 'This is a preview. Nothing has been changed on this computer.',
   'plan.note.package.explicit': "The app selects the <code>{manager}</code> package manager",
+  'plan.note.package.mappedManager': "The app provides a package name for the available <code>{manager}</code> manager",
   'plan.note.package.native': "<code>{manager}</code> is the first available system package manager",
   'plan.note.package.explicitScript': "The app selects the collection’s <code>{manager}</code> script manager",
   'plan.note.package.onlyScript': "<code>{manager}</code> is the only available collection script manager",
