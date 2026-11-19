@@ -627,7 +627,7 @@ For example, openvpn3 drops comment lines and adds blank lines when it exports a
     set: [openvpn3, config-import, --config, '%s', --name, Acme, --persistent]
 ```
 
-Use `'%s'` as a whole argument in `test.command`, `present.command`, `set` or `remove`. If a shell is needed, pass the file as a positional argument to the script. The preview shows the command as written and gives only line counts for differences in the input.
+Use `'%s'` as a whole argument in `test.command`, `present.command`, `set` or `remove`. If a shell is needed, pass the file as a positional argument to the script. By default, the preview shows how many input lines differ. To see the lines themselves, set `showDiff: true` alongside `source` or `content` and use `test.file: '%s'`. Both the desktop preview and CLI dry run will show lines from the command output and the supplied input after applying `ignoreLines`. Enable this for profiles whose contents can be displayed, including the currently imported copy. The temporary file stays private. The preview takes its diff from `test`. Furnish uses `present` only to decide whether the setting already exists.
 
 When `test.file` or `present.file` names a file an earlier `Furnish/File` step will write, the preview compares the command output with the planned file contents. During installation the command checks the file on disk after the earlier step finishes.
 

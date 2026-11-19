@@ -1593,7 +1593,7 @@ fn print_plan(app: &catalog::App, uninstall: bool) -> Result<()> {
             let shown = if params["binary"] == true {
                 vec!["binary file, not shown".to_string()]
             } else if params["hidden"] == true {
-                vec!["lines not shown: only the file's owner may read it".to_string()]
+                vec![format!("private content ({} added, {} removed)", params["added"], params["removed"])]
             } else {
                 furnish::resources::diff::plain(&params["diff"], color)
             };
