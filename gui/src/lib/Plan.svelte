@@ -12,7 +12,7 @@
   import { dictionaries, type Key } from './i18n.ts';
 
   // Activity supplies the actual operation, even if the app has since left the catalog.
-  let { app, operation }: { app: AppInfo; operation?: never } | { app?: never; operation: Run } = $props();
+  let { app, operation, oncount }: { app: AppInfo; operation?: never; oncount?: (count: number | null) => void } | { app?: never; operation: Run; oncount?: never } = $props();
 
   const status = $derived(app && store.status[app.key]);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
@@ -26,6 +26,7 @@
   // preview of the app's primary action.
   const unremovable = $derived(app && !!store.unremovable[app.key]);
   const mode: Mode = $derived(operation || running ? 'run' : (picked ?? (status === 'installed' && !unremovable ? 'uninstall' : 'install')));
+  export function showInstallPreview() { picked = 'install'; }
   const installLabel = $derived(status === 'needsUpdate' ? t('common.update') : t('common.install'));
 
   // Once a run starts, keep showing it after it ends, so its results stay visible.
@@ -72,6 +73,7 @@
 
   const active = $derived(rows.filter((r) => r.step.action !== 'skipped'));
   const changing = $derived(active.filter((r) => r.step.action !== 'nothing').length);
+  $effect(() => oncount?.(mode === 'install' && preview && !error ? changing : null));
   const skippedCount = $derived(rows.length - active.length);
   const previewKind = $derived(mode === 'uninstall' ? 'uninstall' : status === 'needsUpdate' ? 'update' : 'install');
   const finished = $derived(rows.filter((r) => r.state !== 'pending' && r.state !== 'running').length);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
   import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
@@ -20,6 +21,16 @@
   let { app, onback }: { app: AppInfo; onback: () => void } = $props();
   let confirming = $state(false);
   let planOpen = $state(false);
+  let planPanel: HTMLDetailsElement;
+  let plan = $state<ReturnType<typeof Plan>>();
+  let previewCount = $state<number | null>(null);
+  async function openPreview() {
+    planOpen = true;
+    await tick();
+    plan?.showInstallPreview();
+    planPanel.querySelector('summary')?.focus({ preventScroll: true });
+    planPanel.scrollIntoView({ block: 'start' });
+  }
   let versionsOpen = $state(false);
   // People may choose a version of the collection's apps (setting chooseVersion).
   const canChoose = $derived(store.collections.find((c) => c.name === app.collection)?.settings.settings.chooseVersion ?? false);
@@ -110,6 +121,9 @@
         {/if}
       {:else if checkError === undefined || isPending(app.key)}
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
+      {/if}
+      {#if status === 'needsUpdate' && !isPending(app.key) && checkError === undefined}
+        <button class="secondary" onclick={openPreview}>{t('app.previewChanges')}{#if planOpen && previewCount !== null}{' '}({previewCount}){/if}</button>
       {/if}
       {#if installed && !store.external[app.key]}
         <label class="auto">
@@ -205,10 +219,10 @@
       {#if versionsOpen}<Versions {app} />{/if}
     </details>
   {/if}
-  <details class="expert" bind:open={planOpen}>
+  <details class="expert" bind:this={planPanel} bind:open={planOpen}>
     <summary>{t('app.steps')} <span class="hint">{t('app.stepsHint')}</span></summary>
     <!-- Mounted only while open: the preview asks DSC, which takes a moment. -->
-    {#if planOpen}<Plan {app} />{/if}
+    {#if planOpen}<Plan {app} bind:this={plan} oncount={(n) => previewCount = n} />{/if}
   </details>
 
   <RunLog lines={store.logs[app.key] ?? []} busy={!!store.busy[app.key]} />

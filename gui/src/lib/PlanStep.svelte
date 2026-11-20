@@ -21,15 +21,17 @@
       {:else}{index + 1}{/if}
     </span>
   {/if}
-  {#if action}<span class="badge">{t(`plan.action.${action}`)}</span>{/if}
+  {#if action && !state}<span class="badge">{t(`plan.action.${action}`)}</span>{/if}
   <div class="body">
     <div class="title">
       <span class="name">{name}</span>
       {#if type}<span class="type">{type}</span>{/if}
     </div>
+    {#if timing && state}<div class="timing recorded">{@render timing()}</div>{/if}
+    {#if action && state}<span class="planned">{t('plan.planned', { action: t(`plan.action.${action}`) })}</span>{/if}
     {@render children?.()}
   </div>
-  {#if timing}<div class="timing">{@render timing()}</div>{/if}
+  {#if timing && !state}<div class="timing">{@render timing()}</div>{/if}
 </li>
 
 <style>
@@ -47,18 +49,18 @@
     --tone-ink: var(--ink-soft);
     transition: opacity 0.2s, box-shadow 0.2s;
   }
-  li.install {
+  li.install:not(.live), li.live.done {
     --tone: var(--accent);
     --tone-soft: var(--accent-soft);
     --tone-ink: var(--accent-ink);
   }
-  li.remove,
+  li.remove:not(.live),
   li.failed {
     --tone: var(--danger);
     --tone-soft: var(--danger-soft);
     --tone-ink: var(--danger);
   }
-  li.change {
+  li.change:not(.live) {
     --tone: var(--highlight);
     --tone-soft: var(--highlight-soft);
     --tone-ink: var(--highlight-ink);
@@ -157,6 +159,11 @@
     li { flex-wrap: wrap; gap: 0.4rem 0.6rem; }
     .body { flex-basis: 100%; order: 1; }
     .timing { margin-inline-start: auto; }
+  }
+  .timing.recorded { display: flex; align-items: baseline; gap: .65rem; margin: 0; flex-wrap: wrap; }
+  .planned { font-size: .78rem; color: var(--muted); }
+  @container (max-width: 32rem) {
+    .live .body { flex: 1; order: 0; }
   }
   .timing:empty { display: none; }
   .timing :global(strong) { font-weight: 650; color: var(--tone-ink); }

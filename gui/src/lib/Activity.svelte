@@ -28,8 +28,8 @@
 <section>
   <h1>{t('activity.title')}</h1>
 
-  <h2>{t('activity.now')}</h2>
   {#if run}
+    <h2>{t('activity.now')}</h2>
     <div class="row now">
       {#if running}
         <button class="open" onclick={() => onopen(running.key)} aria-label={t('common.open', { name: appName(running) })}>
@@ -52,17 +52,17 @@
       {#if showSteps}<Plan operation={run} />{/if}
     </details>
     <RunLog lines={store.logs[runningKey!] ?? []} busy />
-  {:else}
-    <p class="empty">{t('activity.nothingRunning')}</p>
+  {:else if !queued.length}
+    <p class="empty">{t('activity.idle')}</p>
   {/if}
 
+  {#if queued.length}
   <div class="heading">
     <h2>{t('activity.upNext')} {#if queued.length}<span class="count">{queued.length}</span>{/if}</h2>
     {#if queued.length > 1}
       <button class="secondary" onclick={clearQueue}>{t('activity.clearQueue')}</button>
     {/if}
   </div>
-  {#if queued.length}
     <ol class="queue">
       {#each queued as q, i (q.key)}
         {@const blocker = queueBlocker(q)}
@@ -91,8 +91,7 @@
         </li>
       {/each}
     </ol>
-  {:else}
-    <p class="empty">{t('activity.queueEmpty')}</p>
+
   {/if}
 
   {#if store.recent.length}

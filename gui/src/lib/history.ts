@@ -17,6 +17,7 @@ export function createHistory<T>(key: (v: T) => string = (v) => JSON.stringify(v
       ahead.length = 0;
       current = v;
     },
+    previous(): T | undefined { return behind.at(-1); },
     back(): T | undefined {
       const v = behind.pop();
       if (v !== undefined && current !== undefined) ahead.push(current);

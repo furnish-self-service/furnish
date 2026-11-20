@@ -5,6 +5,10 @@ import type { Entry } from '../i18n.ts';
 
 export const it: Record<keyof typeof en, Entry> = {
   // App.svelte: navigation and the catalog pages
+  'catalog.more': "Altro da scoprire",
+  'activity.idle': "Nessuna operazione in corso o in coda.",
+  'app.previewChanges': "Anteprima delle modifiche",
+  'plan.planned': "Azione prevista: {action}",
   'release.heading': "Anteprima dell’aggiornamento della raccolta",
   'release.loading': "Confronto delle versioni…",
   'release.refresh': "Aggiorna confronto",
