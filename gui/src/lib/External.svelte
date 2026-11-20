@@ -7,7 +7,7 @@
   import { t } from './i18n.svelte';
 
   let { external }: { external: External } = $props();
-  const snippet = $derived(external.by === 'other' ? (external.path ?? external.package) : `pkgs.${external.package}`);
+  const snippet = $derived(external.options?.length ? external.options.join('\n') : external.by === 'other' ? (external.path ?? external.package) : `pkgs.${external.package}`);
   let copied = $state(false);
 
   async function copy() {
@@ -44,6 +44,7 @@
     align-items: center;
   }
   code {
+    white-space: pre-wrap;
     padding: 0.2rem 0.45rem;
     border-radius: 6px;
     background: var(--hover);

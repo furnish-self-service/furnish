@@ -254,6 +254,8 @@ Whether the app goes into the NixOS configuration or Home Manager is up to the c
 
 By default, an app can set any option supported by its target configuration. If that configuration sets `services.furnish.nix.allowedOptions`, each option must match an entry in its list.
 
+For an option-only step, furnish checks the selected flake's evaluated options when it has no installation record for that name. Option names follow the same dotted-name rules as installation. Values must match as JSON, including list order and every member of a nested object. An explicit `null` requires a present option with a null value. If every requested value matches, the step counts as installed, satisfies dependencies and stays under the configuration's ownership. Installing it skips the rebuild. To remove it, edit the configuration. A step that also requests packages still uses its installation record. If the flake cannot be evaluated offline, furnish uses its normal installation path.
+
 Each install or uninstall rebuilds the system or the Home Manager generation once per `Furnish/NixOS` resource, so keep an app's packages and options in one.
 
 Without `onlyIfSetUp`, an app whose configuration isn't set up shows "Needs ...", also on Windows and macOS. With it, the step is skipped there, including on computers without NixOS, and the rest of the app works as usual. The preview shows the step as not needed and says why. The guard also keeps an existing app entry available for removal when that configuration no longer accepts new apps. Use the host setup fields to select a complementary fallback.

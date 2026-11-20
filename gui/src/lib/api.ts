@@ -234,7 +234,7 @@ export const appStatus = (key: string, revision?: string) => invoke<AppCheck>('a
  * A package installed outside furnish: by the NixOS or Home Manager configuration (`package` is its
  * nixpkgs attribute), or with another tool (`other`, e.g. npm; `path` is where its program is).
  */
-export type External = { by: 'nixos' | 'home-manager' | 'other'; package: string; configuration: string | null; path: string | null };
+export type External = { by: 'nixos' | 'home-manager' | 'other'; package: string; options?: string[]; configuration: string | null; path: string | null };
 export type { Required };
 /** How furnish found a NixOS or Home Manager configuration, or the flake attribute. */
 export type NixosSource = 'setting' | 'module' | 'policy' | 'etc-nixos' | 'nh' | 'nix-path' | 'hostname' | 'env' | 'usual-place';

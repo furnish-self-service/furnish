@@ -70,6 +70,17 @@
           "type": "boolean",
           "description": "Apply the step only where its configuration is set up for furnish; elsewhere furnish skips it, as for a false condition"
         },
+        "managedBy": {
+          "type": "string",
+          "enum": ["nixos", "home-manager"],
+          "readOnly": true,
+          "description": "The configuration that already supplies this step's options outside furnish"
+        },
+        "declaredIn": {
+          "type": "string",
+          "readOnly": true,
+          "description": "Folder of the configuration that supplies these options"
+        },
         "installedInto": {
           "type": "string",
           "enum": [

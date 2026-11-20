@@ -62,6 +62,12 @@ resources:
     type: Furnish/NixOS
     properties: { name: htop, packages: [hello], homeOptions: { programs.htop.enable: true } }
 EOF
+cat > "$org/apps/ssh-enabled.dsc.yaml" <<'EOF'
+resources:
+  - name: existing Home Manager setting
+    type: Furnish/NixOS
+    properties: { name: ssh-enabled, homeOptions: { programs.ssh.enable: true } }
+EOF
 cat > "$org/apps/acme-ssh.dsc.yaml" <<'EOF'
 metadata: { furnish: { description: acme-ssh, categories: [Test] } }
 resources:
@@ -131,6 +137,14 @@ nix build -L ".#homeConfigurations.\"$user\".activationPackage" 2>&1 | tail -3
 rm result
 out=$(furnish settings)
 echo "$out" | grep -q 'home-apps.url' && { echo "$out"; fail "still asks for the input line"; }
+
+echo "== recognize an option set in the Home Manager configuration"
+out=$(furnish list)
+echo "$out" | grep -q "✓  ssh-enabled .*in your Home Manager configuration" || fail "external Home Manager setting missing: $out"
+furnish install ssh-enabled
+if furnish uninstall ssh-enabled; then fail "removed an externally configured setting"; fi
+[ "$(git log -1 --format=%s)" = config ] || fail "external install changed the configuration"
+grep -q ssh-enabled "$data/apps.json" && fail "external install created an ownership record"
 
 echo "== install into Home Manager"
 furnish install htop || fail "install failed"

@@ -53,6 +53,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod external_options;
+
 /// furnish's local flake with the apps it installed.
 pub const APPS_DIR: &str = "/var/lib/furnish/apps";
 /// What the configuration's furnish/apps input points at.
@@ -348,12 +350,16 @@ fn in_service() -> bool {
     std::env::var("FURNISH_SERVICE").as_deref() == Ok("1") && is_root()
 }
 
+fn system_facts() -> Result<Facts> {
+    match std::fs::read_to_string(FACTS) {
+        Ok(text) => serde_json::from_str(&text).with_context(|| format!("reading {FACTS}")),
+        Err(_) => Err(missing("furnish's NixOS module (services.furnish.enable in the NixOS configuration)")),
+    }
+}
+
 impl Target {
     fn here() -> Result<Target> {
-        let facts: Facts = match std::fs::read_to_string(FACTS) {
-            Ok(text) => serde_json::from_str(&text).with_context(|| format!("reading {FACTS}"))?,
-            Err(_) => return Err(missing("furnish's NixOS module (services.furnish.enable in the NixOS configuration)")),
-        };
+        let facts = system_facts()?;
         let setup = crate::nixos::detect(&crate::nixos::Context::new(in_service()));
         let Some(setup) = setup else { return Err(missing("NixOS")) };
         let Some(found) = setup.configuration else {
@@ -1356,6 +1362,9 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
 }
 
 fn operate(desired: &Desired, person: &Account, current: Option<(Place, Entry)>, action: &str, what_if: bool, label: &str) -> Result<Value> {
+    if current.is_none() && let Some((place, dir)) = external_options::probe(desired, person) {
+        return external_options::response(desired, place, &dir, action, what_if);
+    }
     let in_desired_state = match &current {
         Some((place, entry)) => desired.exist && *entry == desired.entry(*place),
         None => !desired.exist,
@@ -1514,10 +1523,7 @@ pub(crate) fn apply_service_step(properties: &Value, expected: &str) -> Result<(
     }
     let person = person()?;
     let current = find(&desired.name, &person)?;
-    if current.as_ref().map(|(place, entry)| desired.exist && *entry == desired.entry(*place)).unwrap_or(!desired.exist) {
-        return Ok(());
-    }
-    set(&desired, &person, current.map(|(p, _)| p))
+    operate(&desired, &person, current, "set", false, &desired.name).map(drop)
 }
 
 /// A changed app first leaves its previous place. Delegate the whole transition before any

@@ -68,6 +68,7 @@ pkgs.testers.runNixOSTest {
         "git config --global user.name t && git config --global user.email t@t",
         "mkdir -p /srv/org/apps",
         "cp ${import ./nixos-apps/ordinary-package.nix { inherit pkgs; }} /srv/org/apps/greeting.dsc.yaml",
+        "cp ${app "preconfigured" { options = { "boot.loader.grub.enable" = false; "system.stateVersion" = "25.11"; }; }} /srv/org/apps/preconfigured.dsc.yaml",
         "cp ${app "htop" htop} /srv/org/apps/htop.dsc.yaml",
         "cp ${app "invalid" { options."bad option" = true; }} /srv/org/apps/invalid.dsc.yaml",
         "cd /srv/org && git init -q && git add -A && git commit -qm apps",
@@ -81,6 +82,19 @@ pkgs.testers.runNixOSTest {
     out = machine.succeed("su - alice -c 'furnish settings'")
     print(out)
     assert "add to its flake.nix" not in out, out
+
+    # Already in the evaluated flake: status and preview agree, install does not claim the
+    # options, and removal leaves the source configuration and generation untouched.
+    initial = (system(), alice("git rev-parse HEAD"))
+    listing = alice("furnish list")
+    assert any(line.startswith("✓  preconfigured") and "in your NixOS configuration" in line for line in listing.splitlines()), listing
+    preview = alice("furnish install preconfigured --dry-run")
+    assert "Add preconfigured" not in preview and "rebuild it" not in preview, preview
+    alice("furnish install preconfigured")
+    out = machine.fail("su - alice -c 'furnish uninstall preconfigured' 2>&1")
+    assert "in your NixOS configuration" in out and "boot.loader.grub.enable" in out, out
+    assert apps() == {} and (system(), alice("git rev-parse HEAD")) == initial
+    assert alice("git status --porcelain").strip() == ""
 
     # An ordinary package selected Nix and resolved its nixpkgs name through namesByManager.
     # rebuild=boot leaves the running system alone; inspect the generation selected for next boot.
@@ -177,6 +191,14 @@ pkgs.testers.runNixOSTest {
     for path, value in [("/etc/furnish/policy.json", policy), ("/etc/furnish/nixos.json", facts)]:
         machine.succeed(f"rm {path} && echo {shlex.quote(json.dumps(value))} > {path}")
     machine.succeed("systemctl restart furnish")
+    # Root can observe a match in the shared wheel-owned git checkout, and so can a service
+    # request for alice. A writable untrusted directory must not furnish an external match.
+    probe = shlex.quote(json.dumps({"name": "preconfigured", "options": {"system.stateVersion": "25.11"}}))
+    def probe_shared(uid):
+        return json.loads(machine.succeed(f"echo {probe} | FURNISH_SERVICE=1 FURNISH_REQUESTER_UID={uid} furnish nixos-resource test"))
+    alice_uid = int(machine.succeed("id -u alice"))
+    assert probe_shared(0)["managedBy"] == "nixos"
+    assert probe_shared(alice_uid)["managedBy"] == "nixos"
     print(machine.succeed("su - alice -c 'furnish install htop' 2>&1"))
     assert list(apps()) == ["htop"] and system() == "${after}", system()
     assert shared("git log -1 --format=%s").strip() == "furnish: install htop"
@@ -196,6 +218,7 @@ pkgs.testers.runNixOSTest {
 
     # Another group that can change the folder: refused, and the message says how to trust it.
     machine.succeed("chgrp users /etc/nixos")
+    assert not probe_shared(alice_uid)["_exist"]
     out = machine.fail("su - alice -c 'furnish uninstall htop' 2>&1")
     assert "the group users can change /etc/nixos" in out and "trustedGroups" in out, out
     assert list(apps()) == ["htop"] and system() == "${after}"
