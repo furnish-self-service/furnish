@@ -12,6 +12,11 @@ case "$image" in
     fedora*) install='dnf install -y -q /p/rpm/*.rpm >/dev/null' ;;
     # Enterprise Linux has WebKitGTK 4.1 from version 10, with EPEL and CRB (EL9 only has 4.0).
     rockylinux*|almalinux*) install='dnf install -y -q epel-release >/dev/null && dnf config-manager --set-enabled crb && dnf install -y -q /p/rpm/*.rpm >/dev/null' ;;
+    # The Leap mirror redirector can stall dependency downloads on hosted runners.
+    # Use the same signed repositories on openSUSE's CDN and keep zypper progress in the job log.
+    opensuse/leap:15.6) install='
+        sed -i "s|^baseurl=http://download.opensuse.org/|baseurl=https://downloadcontentcdn.opensuse.org/|" /etc/zypp/repos.d/*.repo
+        zypper -n --no-gpg-checks install --allow-unsigned-rpm /p/rpm/*.rpm' ;;
     opensuse*) install='zypper -n -q --no-gpg-checks install --allow-unsigned-rpm /p/rpm/*.rpm >/dev/null' ;;
     *) echo "unknown image: $image" >&2; exit 1 ;;
 esac

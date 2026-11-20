@@ -88,6 +88,11 @@
               "type": "string",
               "description": "Compare output with this file (absolute or starting with ~/) or with the command's input (%s)"
             },
+            "ignoreLineOrder": {
+              "type": "boolean",
+              "default": false,
+              "description": "Compare lines of output or file in any order after ignoreLines. Repeated lines must occur equally often."
+            },
             "ignoreLines": {
               "type": "string",
               "description": "A regular expression for lines of the output and of output or file that the comparison leaves out"
@@ -127,6 +132,11 @@
             "file": {
               "type": "string",
               "description": "Compare output with this file (absolute or starting with ~/) or with the command's input (%s)"
+            },
+            "ignoreLineOrder": {
+              "type": "boolean",
+              "default": false,
+              "description": "Compare lines of output or file in any order after ignoreLines. Repeated lines must occur equally often."
             },
             "ignoreLines": {
               "type": "string",

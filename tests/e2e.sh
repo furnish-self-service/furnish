@@ -308,7 +308,7 @@ fi
 
 # furnish's configuration resources: one app for every system, no conditions needed.
 mkdir -p "$tmp/repo/files" "$tmp/conf-seed"
-printf 'remote vpn.fixture.example 1194\n' > "$tmp/repo/files/profile.conf"
+printf 'client\nremote vpn.fixture.example 1194\n' > "$tmp/repo/files/profile.conf"
 home_file=".furnish-e2e-$$"
 trap 'rm -rf "$tmp" ~/"$home_file".gitconfig ~/"$home_file".ovpn ~/"$home_file".imported' EXIT
 cat > "$tmp/repo/apps/config.dsc.yaml" <<YAML
@@ -386,7 +386,7 @@ resources:
     type: Furnish/Command
     properties:
       source: files/profile.conf
-      test: { command: [cat, "$tmp/tool-copy"], file: '%s' }
+      test: { command: [cat, "$tmp/tool-copy"], file: '%s', ignoreLineOrder: true }
       set: [cp, '%s', "$tmp/tool-copy"]
       remove: [rm, -f, "$tmp/tool-copy"]
 YAML
@@ -836,8 +836,8 @@ expect "$(step list)" "·  config "
 ls "$tmp/conf"/ssh_config.*~ >/dev/null || { echo "FAIL: no backup of ssh_config" >&2; exit 1; }
 [ -d "$tmp/conf" ] || { echo "FAIL: a folder that isn't empty was removed" >&2; exit 1; }
 
-# A matching copy previously imported by the tool is sufficient on its own.
-cp "$tmp/repo/files/profile.conf" "$tmp/tool-copy"
+# A copy previously imported in the tool's order is sufficient on its own.
+printf 'remote vpn.fixture.example 1194\nclient\n' > "$tmp/tool-copy"
 expect "$(step install command-input)" "already installed"
 printf 'outdated\n' > "$tmp/tool-copy"
 plan=$(step install command-input --dry-run)
