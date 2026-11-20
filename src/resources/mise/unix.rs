@@ -6,14 +6,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn extra_bin_dirs() -> Vec<PathBuf> {
-    dirs::home_dir()
-        .map(|p| p.join(".local/bin"))
-        .into_iter()
-        .chain([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")])
-        .collect()
-}
-
 pub(super) fn find_mise() -> Option<PathBuf> {
     // mise can install plugins and run hooks. Only invoke it as the actual user.
     if unsafe { libc::geteuid() } == 0 {
@@ -22,7 +14,7 @@ pub(super) fn find_mise() -> Option<PathBuf> {
     let mut dirs = env::var_os("PATH")
         .map(|p| env::split_paths(&p).filter(|p| p.is_absolute()).collect::<Vec<_>>())
         .unwrap_or_default();
-    dirs.extend(extra_bin_dirs());
+    dirs.extend(crate::resources::common::desktop_bin_dirs());
     which::which_in("mise", env::join_paths(dirs).ok(), "/").ok()
 }
 

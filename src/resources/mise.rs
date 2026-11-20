@@ -155,7 +155,7 @@ fn external(name: Option<&str>, dirs: Option<&Dirs>) -> Option<PathBuf> {
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .unwrap_or_default();
     #[cfg(unix)]
-    paths.extend(unix::extra_bin_dirs());
+    paths.extend(super::common::desktop_bin_dirs());
     let roots = dirs
         .into_iter()
         .flat_map(|d| [d.shims.clone(), d.data.join("installs")])

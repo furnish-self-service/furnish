@@ -554,6 +554,8 @@ resources:
 
 A setting that a tool must apply itself. `test` runs a command and checks its result: the exit code (`exitCode`, default 0), its output (`output`, or `file` for a file's content, see below), or a place in its JSON output (`jsonPath`, and `value` to compare with). `set` runs only when the test fails. `remove`, if given, runs on uninstall whatever the test says, since a failing test can also mean a setting that is there but outdated. So `remove` must succeed when there is nothing to remove. `remove: keep` leaves the setting in place on uninstall (see below). Without `remove`, furnish doesn't offer to uninstall the app. Commands are lists of the program and its arguments, run without a shell. A program that isn't installed makes the app show "Needs" with its name.
 
+On macOS and Linux, commands running as the signed-in user search the inherited `PATH` first, then `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`. This also lets scripts find their interpreters and helper programs when Furnish starts from the Finder or a desktop menu. Elevated commands use their inherited `PATH`.
+
 ```yaml
 - name: Vault server
   type: Furnish/Command
