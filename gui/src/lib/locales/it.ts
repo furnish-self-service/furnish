@@ -41,6 +41,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'desktop.restartFailed': "Impossibile riavviare {brand}",
   'nav.selfUpdate': 'È disponibile una nuova versione di {brand}',
   'catalog.scanProgress': "App controllate: {done} di {total}",
+  'catalog.retryChecks': 'Riprova i controlli non riusciti ({n})',
   'catalog.scanFailures': "App che non è stato possibile controllare: {n}",
   'catalog.noUpdatesFound': "Nessun aggiornamento trovato tra le app controllate.",
   'catalog.settingUp': "Configurazione delle raccolte…",
@@ -176,6 +177,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'card.recommended': 'Consigliata',
   'kit.openKit': 'Apri il kit {name}',
   'kit.eyebrow': 'Kit · {apps}',
+  'kit.optionalRemaining': 'Le app rimanenti sono facoltative',
+  'kit.otherSystems': 'App per altri sistemi: {n}',
   'kit.partlyInstalled': '{n} di {total} installate',
   'kit.chooseApps': 'Scegli app',
 

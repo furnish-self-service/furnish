@@ -38,6 +38,7 @@ export const en = {
   'desktop.restartFailed': "Couldn’t restart {brand}",
   'nav.selfUpdate': 'A new version of {brand} is available',
   'catalog.scanProgress': "Checked {done} of {total} apps",
+  'catalog.retryChecks': 'Retry failed checks ({n})',
   'catalog.scanFailures': "Apps that couldn’t be checked: {n}",
   'catalog.noUpdatesFound': "No updates found among the apps checked.",
   'catalog.settingUp': "Setting up your collections…",
@@ -173,6 +174,8 @@ export const en = {
   'card.recommended': 'Recommended',
   'kit.openKit': 'Open kit {name}',
   'kit.eyebrow': 'Kit · {apps}',
+  'kit.optionalRemaining': 'Remaining apps are optional',
+  'kit.otherSystems': 'Apps for other systems: {n}',
   'kit.partlyInstalled': '{n} of {total} installed',
   'kit.chooseApps': 'Choose apps',
 

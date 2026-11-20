@@ -39,6 +39,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'desktop.restartFailed': "{brand} konnte nicht neu gestartet werden",
   'nav.selfUpdate': 'Eine neue Version von {brand} ist verfügbar',
   'catalog.scanProgress': "{done} von {total} Apps geprüft",
+  'catalog.retryChecks': 'Fehlgeschlagene Prüfungen wiederholen ({n})',
   'catalog.scanFailures': "Nicht geprüfte Apps: {n}",
   'catalog.noUpdatesFound': "Bei den geprüften Apps wurden keine Updates gefunden.",
   'catalog.settingUp': "Sammlungen werden eingerichtet…",
@@ -174,6 +175,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'card.recommended': 'Empfohlen',
   'kit.openKit': 'Kit {name} öffnen',
   'kit.eyebrow': 'Kit · {apps}',
+  'kit.optionalRemaining': 'Übrige Apps sind optional',
+  'kit.otherSystems': 'Apps für andere Systeme: {n}',
   'kit.partlyInstalled': '{n} von {total} installiert',
   'kit.chooseApps': 'Apps auswählen',
 

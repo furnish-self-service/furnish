@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { KitInfo } from './api';
-  import { appByKey, isInstalled, kitName, kitDescription, categoryName } from './state.svelte';
+  import { appByKey, kitStatus, kitName, kitDescription, categoryName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
 
   let { kit, onopen }: { kit: KitInfo; onopen: () => void } = $props();
 
   const apps = $derived(kit.items.map((i) => appByKey(i.key)).filter((a) => !!a));
-  const installed = $derived(kit.items.filter((i) => isInstalled(i.key)).length);
+  const status = $derived(kitStatus(kit));
 </script>
 
 <article class="card kit">
@@ -25,10 +25,13 @@
     {#if apps.length > 5}<span class="more">+{apps.length - 5}</span>{/if}
   </div>
   <footer>
-    {#if installed === kit.items.length}
-      <span class="state installed">{t('common.installed')}</span>
-    {:else if installed}
-      <span class="state partial">{t('kit.partlyInstalled', { n: installed, total: kit.items.length })}</span>
+    {#if status.installed}
+      <span class="state" class:installed={status.complete} class:partial={!status.complete}>
+        {t('kit.partlyInstalled', { n: status.installed, total: status.applicable })}
+        {#if status.complete && status.installed < status.applicable}
+          <small>{t('kit.optionalRemaining')}</small>
+        {/if}
+      </span>
     {:else}
       <span class="collection">{kit.collection}</span>
     {/if}
@@ -123,6 +126,7 @@
     font-size: 0.82rem;
     font-weight: 650;
   }
+  .state small { display: block; color: var(--muted); }
   .installed {
     color: var(--accent-ink);
   }

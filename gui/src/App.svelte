@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import logo from '../../logo.svg';
-  import { appStatus, store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
+  import { appName, retryFailedChecks, appStatus, store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -14,7 +14,7 @@
   import KitCard from './lib/KitCard.svelte';
   import KitDetail from './lib/KitDetail.svelte';
   import Toasts from './lib/Toasts.svelte';
-  import { t, formatTime, lang } from './lib/i18n.svelte';
+  import { t, terror, formatTime, lang } from './lib/i18n.svelte';
   import { createHistory } from './lib/history';
 
   start();
@@ -41,7 +41,8 @@
   );
   const count = (page: 'installed' | 'updates') => visibleApps({ page }, '').length;
   const checking = $derived(store.autoUpdate.running || store.scan.running);
-  const failedChecks = $derived(Object.keys(store.statusErrors).length);
+  const failedApps = $derived(store.apps.filter(app => store.statusErrors[app.key] !== undefined));
+  const failedChecks = $derived(failedApps.length);
   const partialResults = $derived(failedChecks > 0 || !!store.autoUpdate.error || store.catalogError);
   const activity = $derived(Object.keys(store.busy).length + store.queue.length);
   const apps = $derived(visibleApps(view, store.query));
@@ -236,10 +237,10 @@
         <h1>{title}</h1>
         {#if view.page === 'updates'}
           <div class="check">
-            <button class="primary" disabled={checking || store.loading || !availableAppUpdates().length} onclick={updateAllApps}>
+            <button class="primary" disabled={checking || store.retryingFailedChecks || store.loading || !availableAppUpdates().length} onclick={updateAllApps}>
               {t('common.updateAll')}
             </button>
-            <button class="secondary" disabled={checking || store.loading} onclick={checkForUpdates}>
+            <button class="secondary" disabled={checking || store.retryingFailedChecks || store.loading} onclick={checkForUpdates}>
               {checking ? t('catalog.checking') : t('catalog.checkForUpdates')}
             </button>
             <span class="muted" aria-live="polite">
@@ -247,8 +248,6 @@
                 {t('catalog.scanProgress', { done: store.scan.checked, total: store.scan.total })}
               {:else if store.autoUpdate.running}
                 {t('settings.checking')}
-              {:else if failedChecks}
-                {t('catalog.scanFailures', { n: failedChecks })}
               {/if}
               {#if store.autoUpdate.postponed}
                 <span class="postponed">{t('catalog.postponed', {
@@ -274,6 +273,18 @@
         {/if}
       </div>
 
+      {#if view.page === 'updates' && failedChecks}
+        <details class="failed-checks">
+          <summary>{t('catalog.scanFailures', { n: failedChecks })}</summary>
+          <ul>
+            {#each failedApps as app (app.key)}
+              <li><strong>{appName(app)}</strong><span>{terror(store.statusErrors[app.key])}</span></li>
+            {/each}
+          </ul>
+          <button class="secondary" disabled={checking || store.loading || store.retryingFailedChecks}
+            onclick={retryFailedChecks}>{store.retryingFailedChecks ? t('catalog.checking') : t('catalog.retryChecks', { n: failedChecks })}</button>
+        </details>
+      {/if}
       {#if store.loading}
         <p class="empty">{t('catalog.loading')}</p>
       {:else if !store.collections.length && store.settingUpCollections}
@@ -492,6 +503,17 @@
     font-size: 0.82rem;
     color: var(--muted);
   }
+  .failed-checks {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .failed-checks summary { cursor: pointer; font-weight: 650; }
+  .failed-checks ul { list-style: none; padding: 0; }
+  .failed-checks li { display: grid; gap: 0.2rem; margin-block: 0.7rem; overflow-wrap: anywhere; }
+  .failed-checks li span { color: var(--muted); }
   .postponed {
     font-weight: 650;
     color: var(--highlight-ink);

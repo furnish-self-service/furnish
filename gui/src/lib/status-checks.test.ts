@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StatusChecks } from './status-checks.ts';
+import { scanOrder, StatusChecks } from './status-checks.ts';
 
 test('a startup scan and a resumed dependent share the live result in either order', async () => {
   for (const verified of [false, true]) {
@@ -35,4 +35,15 @@ test('an operation or catalog change invalidates old reads without removing thei
     newGate.resolve();
     assert.equal(await fresh, true);
   }
+});
+
+test('opening a kit or app changes the next check without repeating work or extending a partial scan', () => {
+  let focus: string[] = [];
+  const scan = scanOrder(['a', 'b', 'c', 'd', 'e', 'f'], () => focus, key => key === 'e');
+  assert.equal(scan.next().value, 'a');
+  focus = ['outside', 'a', 'e', 'd', 'f', 'd'];
+  assert.equal(scan.next().value, 'd');
+  focus = ['c'];
+  assert.equal(scan.next().value, 'c');
+  assert.deepEqual([...scan], ['b', 'e', 'f']);
 });
