@@ -41,6 +41,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'desktop.restartFailed': "Kan {brand} niet opnieuw starten",
   'nav.selfUpdate': 'Er is een nieuwe versie van {brand}',
   'catalog.scanProgress': "{done} van {total} apps gecontroleerd",
+  'catalog.retryChecks': 'Mislukte controles opnieuw uitvoeren ({n})',
   'catalog.scanFailures': "Apps die niet konden worden gecontroleerd: {n}",
   'catalog.noUpdatesFound': "Geen updates gevonden voor de gecontroleerde apps.",
   'catalog.settingUp': "Je collecties worden ingesteld…",
@@ -176,6 +177,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'card.recommended': 'Aanbevolen',
   'kit.openKit': 'Kit {name} openen',
   'kit.eyebrow': 'Kit · {apps}',
+  'kit.optionalRemaining': 'De overige apps zijn optioneel',
+  'kit.otherSystems': 'Apps voor andere systemen: {n}',
   'kit.partlyInstalled': '{n} van {total} geïnstalleerd',
   'kit.chooseApps': 'Apps kiezen',
 

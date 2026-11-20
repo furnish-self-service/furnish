@@ -4,7 +4,8 @@ import { defaultDependencies, needsRetry, pausedBranch, planInstall, releaseDepe
 export { defaultDependencies, type Queued } from './install-queue';
 import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
 import { restoreCheck, StatusCache, type AppSnapshot } from './status-cache';
-import { StatusChecks } from './status-checks';
+import { summarizeKit } from './kit-status';
+import { scanOrder, StatusChecks } from './status-checks';
 import { desktopRestart, type RestartState } from './desktop-restart';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
 import { applyBranding, type Branding } from './brand';
@@ -41,6 +42,7 @@ export const store = $state({
   /** Shared by the catalog, kits, detail views and the queue. */
   checks: {} as Record<string, AppSnapshot | undefined>,
   statusErrors: {} as Record<string, string>,
+  retryingFailedChecks: false,
   checkingStatus: {} as Record<string, true>,
   busy: {} as Record<string, Busy>,
   collections: [] as CollectionInfo[],
@@ -292,18 +294,46 @@ async function listCatalog(load: number) {
   store.loading = false;
 }
 
+const focusedChecks = $derived.by(() => {
+  const view = store.view;
+  if (view.page === 'app') return [view.key];
+  if (view.page === 'kit') return store.kits.find(kit => kit.key === view.key)?.items.map(item => item.key) ?? [];
+  return [];
+});
+
 /** The engine checks one app at a time. A newer catalog scan takes over its progress. */
 async function scanApps(apps: AppInfo[], load: number) {
   store.scan = { running: true, complete: false, checked: 0, total: apps.length };
   try {
-    for (const app of apps) {
+    for (const key of scanOrder(apps.map(app => app.key), () => focusedChecks, isVerified)) {
       if (load !== catalogLoad) return;
-      await checkStatus(app.key);
+      await checkStatus(key);
       if (load === catalogLoad) store.scan.checked++;
     }
     if (load === catalogLoad) store.scan.complete = true;
   } finally {
     if (load === catalogLoad) store.scan.running = false;
+  }
+}
+
+let retryBatch: Promise<void> | undefined;
+
+export async function retryFailedChecks() {
+  if (retryBatch || store.loading || store.scan.running || store.autoUpdate.running || store.desktopRestart === 'launching') return;
+  const load = catalogLoad;
+  const keys = Object.keys(store.statusErrors);
+  store.retryingFailedChecks = true;
+  retryBatch = (async () => {
+    for (const key of keys) {
+      if (load !== catalogLoad) break;
+      if (store.statusErrors[key] !== undefined) await checkStatus(key);
+    }
+  })();
+  try {
+    await retryBatch;
+  } finally {
+    retryBatch = undefined;
+    store.retryingFailedChecks = false;
   }
 }
 
@@ -553,6 +583,7 @@ async function updateApps() {
 export async function checkForUpdates() {
   if (store.autoUpdate.running || store.desktopRestart === 'launching') return;
   store.autoUpdate.running = true;
+  if (retryBatch) await retryBatch;
   const catalogAtStart = catalogLoad;
   const catalogWasChecking = !!latestLoad && (store.loading || store.scan.running);
   checkRound++;
@@ -612,7 +643,7 @@ let applyingSelfUpdate = $state(false);
 
 // A queued request can leave the list before its prerequisite checks report it as busy.
 export const desktopIdle = () => idle() && startupComplete && !pumping && !applyingSelfUpdate
-  && !checkingSelfUpdate && !samplingUpdateLoad && !collectionChanges && !store.autoUpdate.running && !store.loading && !store.scan.running
+  && !store.retryingFailedChecks && !checkingSelfUpdate && !samplingUpdateLoad && !collectionChanges && !store.autoUpdate.running && !store.loading && !store.scan.running
   && !Object.keys(store.retrying).length && !Object.keys(store.checkingStatus).length
   && store.selfUpdate?.state !== 'downloading';
 
@@ -1281,9 +1312,8 @@ export function optionValueLabel(
     ?? (value === true ? t('common.yes') : value === false ? t('common.no') : value === '' ? '""' : String(value));
 }
 
-/** A kit counts as installed when all its required items are. */
-function kitInstalled(kit: KitInfo) {
-  return kit.items.some((i) => isInstalled(i.key)) && kit.items.filter((i) => i.required).every((i) => isInstalled(i.key));
+export function kitStatus(kit: KitInfo) {
+  return summarizeKit(kit.items, appStatus);
 }
 
 /** Installed apps and complete kits left behind when the selected apps are removed. */
@@ -1292,14 +1322,14 @@ export function removalImpact(keys: string[], removingKit?: string) {
   return {
     apps: store.apps.filter(app => isInstalled(app.key) && !removing.has(app.key)
       && app.installedRequirements.some(key => removing.has(key))),
-    kits: store.kits.filter(kit => kit.key !== removingKit && kitInstalled(kit)
+    kits: store.kits.filter(kit => kit.key !== removingKit && kitStatus(kit).complete
       && kit.items.some(item => item.required && removing.has(item.key))),
   };
 }
 
 /** Other installed kits that contain this app. */
 export function otherKitsWith(appKey: string, except: KitInfo) {
-  return store.kits.filter((k) => k.key !== except.key && kitInstalled(k) && k.items.some((i) => i.key === appKey));
+  return store.kits.filter((k) => k.key !== except.key && kitStatus(k).complete && k.items.some((i) => i.key === appKey));
 }
 
 /** Installed items to preselect for uninstalling a kit: those no other installed kit needs, and
@@ -1388,7 +1418,7 @@ function queueGroupApp(group: ActivityGroup, app: AppInfo) {
 
 /** One Activity result for the selected kit apps, including those already installed. */
 export function installKit(kit: KitInfo, keys: string[]) {
-  const conflict = kit.items.find(i => i.required && pendingUninstall(i.key));
+  const conflict = kit.items.find(i => i.required && appStatus(i.key) !== 'unavailable' && pendingUninstall(i.key));
   if (conflict) {
     const app = appByKey(conflict.key);
     toast('error', t('queue.uninstalling', { detail: app ? appName(app) : conflict.key }));

@@ -17,6 +17,7 @@
     appName,
     appDescription,
     kitName,
+    kitStatus,
     kitDescription,
     categoryName,
     externalStatus,
@@ -33,6 +34,7 @@
   let removing = $state(false);
   let removePicked = $state<Record<string, boolean>>({});
 
+  const status = $derived(kitStatus(kit));
   const unavailable = (key: string) => appStatus(key) === 'unavailable';
   /** Items the install checklist can't change: required, installed, running/queued or not for this OS. */
   const locked = (item: KitInfo['items'][number]) =>
@@ -43,7 +45,7 @@
   const toInstall = $derived(
     kit.items.filter((i) => checked(i) && !isInstalled(i.key) && !isPending(i.key) && !unavailable(i.key)).map((i) => i.key),
   );
-  const conflict = $derived(kit.items.find(i => i.required && pendingUninstall(i.key)));
+  const conflict = $derived(kit.items.find(i => i.required && !unavailable(i.key) && pendingUninstall(i.key)));
   const installedItems = $derived(kit.items.filter((i) => isInstalled(i.key)));
   const defaults = $derived(defaultUninstall(kit));
   const toRemove = $derived(
@@ -90,6 +92,9 @@
 
   {#if !removing}
     <h2>{t('kit.chooseInstall')}</h2>
+    <p class="meta">{t('kit.partlyInstalled', { n: status.installed, total: status.applicable })}
+      {#if status.unavailable} · {t('kit.otherSystems', { n: status.unavailable })}{/if}
+    </p>
     <ul class="items">
       {#each kit.items as item (item.key)}
         {@const app = appByKey(item.key)}
@@ -104,7 +109,7 @@
               />
               <AppIcon {app} size={36} />
               <span class="text">
-                <span class="name">{appName(app)}</span>
+                <span><span class="name">{appName(app)}</span>{#if !item.required} <small>· {t('common.optional')}</small>{/if}</span>
                 <span class="desc">{appDescription(app)}</span>
               </span>
             </label>
@@ -173,6 +178,7 @@
 </section>
 
 <style>
+  .text small { font-weight: 400; color: var(--muted); }
   .detail {
     max-width: 52rem;
   }

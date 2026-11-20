@@ -41,6 +41,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'desktop.restartFailed': "No se pudo reiniciar {brand}",
   'nav.selfUpdate': 'Hay una nueva versión de {brand}',
   'catalog.scanProgress': "Apps comprobadas: {done} de {total}",
+  'catalog.retryChecks': 'Reintentar las comprobaciones fallidas ({n})',
   'catalog.scanFailures': "Apps que no se pudieron comprobar: {n}",
   'catalog.noUpdatesFound': "No se encontraron actualizaciones entre las apps comprobadas.",
   'catalog.settingUp': "Configurando tus colecciones…",
@@ -176,6 +177,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'card.recommended': 'Recomendada',
   'kit.openKit': 'Abrir el kit {name}',
   'kit.eyebrow': 'Kit · {apps}',
+  'kit.optionalRemaining': 'Las aplicaciones restantes son opcionales',
+  'kit.otherSystems': 'Aplicaciones para otros sistemas: {n}',
   'kit.partlyInstalled': '{n} de {total} instaladas',
   'kit.chooseApps': 'Elegir aplicaciones',
 

@@ -1,7 +1,7 @@
 // UI tests for the real furnish GUI, driven over WebDriver (tauri-driver on localhost, port DRIVER_PORT).
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
-import { readFileSync, existsSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { readFileSync, renameSync, existsSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
@@ -359,6 +359,34 @@ const steps = [
     await waitFor('live check corrects Discover', () => find(`${card('hyperfine')}${button('Install')}`), 30000);
     await waitFor('live check corrects the kit count', async () =>
       !(await text(card('starter'))).includes('1 of 3 installed'));
+  }],
+  ['Updates lists individual check errors and retries just the failed apps', async () => {
+    await click(nav('Updates'));
+    await waitFor('initial scan finished', () => find(button('Check for updates')), 30000);
+    await click(nav('Discover'));
+    await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
+    const definition = `${workDir}/data/collections/fixture/apps/hyperfine.dsc.yaml`;
+    renameSync(definition, definition + '.held');
+    const panel = "//details[contains(@class,'failed-checks')]";
+    try {
+      await click(button('Check status'));
+      await waitFor('failed verification on detail page', () => find(button('Retry check')));
+      await click(nav('Updates'));
+      await click(`${panel}/summary`);
+      await waitFor('app name and native error', async () => {
+        const failure = await text(`${panel}//li`);
+        return failure.includes('hyperfine') && failure.includes("no app named");
+      });
+    } finally {
+      renameSync(definition + '.held', definition);
+    }
+    const key = name => createHash('sha256').update(name).digest('base64url');
+    const healthy = `${workDir}/data/app-status-v1/${key('fixture')}/${key('toolbox')}`;
+    const before = readFileSync(healthy, 'utf8');
+    await click(`${panel}${button('Retry failed checks (1)')}`);
+    await waitFor('successful retry clears the failure', async () => !(await findAll(panel)).length);
+    if (readFileSync(healthy, 'utf8') !== before) throw new Error('retry rechecked a healthy app');
+    await click(nav('Discover'));
   }],
   ['install from the card finishes and shows Installed', async () => {
     await click(`${card('hyperfine')}${button('Install')}`);
