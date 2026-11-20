@@ -1009,8 +1009,20 @@ export function installCurrent(app: AppInfo) {
 
 /** Uninstall an app: right away, or after what is already running and queued. */
 export async function uninstall(app: AppInfo) {
-  if (store.checks[app.key]?.source === 'previousRevision' && (!(await checkStatus(app.key)) || !isInstalled(app.key))) return;
-  if (store.checks[app.key]?.removable === false) return; // furnish would refuse; the app page says why
+  if (planStatus(app.key) === undefined) {
+    if (!(await checkStatus(app.key))) {
+      toast('error', appName(app), store.statusErrors[app.key] ?? t('app.status.error'));
+      return;
+    }
+    if (!isInstalled(app.key)) {
+      toast('info', t('activity.noLongerNeeded', { app: appName(app) }));
+      return;
+    }
+  }
+  if (store.checks[app.key]?.removable === false) {
+    toast('info', t('app.cantUninstall', { collection: app.collection }));
+    return;
+  }
   enqueue(app.key, 'uninstall');
 }
 
@@ -1203,7 +1215,8 @@ function installedStatus(status: ReturnType<typeof appStatus>) {
 export const isInstalled = (key: string) => installedStatus(appStatus(key));
 
 function planStatus(key: string) {
-  return store.checks[key]?.source === 'previousRevision' ? undefined : appStatus(key);
+  if (store.statusErrors[key] !== undefined || store.checks[key]?.source === 'previousRevision') return;
+  return store.checks[key]?.status;
 }
 function skipDependency(key: string, updating = false) {
   const status = planStatus(key);
@@ -1499,7 +1512,7 @@ async function retryOperation(key: string, kind: Run['kind'], action: Queued['ac
       toast('info', t('activity.noLongerNeeded', { app: appName(app) }));
     } else if (action === 'uninstall') {
       if (store.checks[key]?.removable === false) toast('info', t('app.cantUninstall', { collection: app.collection }));
-      else uninstall(app);
+      else await uninstall(app);
     } else {
       if (!(await checkRetryDependencies(app))) return;
       if (isPending(key)) return;

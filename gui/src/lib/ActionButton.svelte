@@ -36,7 +36,7 @@
 
   function run(event: MouseEvent) {
     event.stopPropagation();
-    if (status === 'installed') uninstall(app);
+    if (status === 'installed') return uninstall(app);
     else if (oninstall) oninstall();
     else requestInstall(app);
   }

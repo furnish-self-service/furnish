@@ -68,9 +68,10 @@
     picked = {};
   }
   function uninstall() {
-    uninstallKit(kit, toRemove);
+    const queued = uninstallKit(kit, toRemove);
     removing = false;
     removePicked = {};
+    return queued;
   }
 </script>
 

@@ -107,7 +107,7 @@
         <p class="confirm">{t('app.confirmUninstall', { app: appName(app) })}</p>
         <RemovalImpact keys={[app.key]} />
         <div class="row">
-          <button class="danger" onclick={() => { confirming = false; uninstall(app); }}>{t('common.uninstall')}</button>
+          <button class="danger" onclick={() => { confirming = false; return uninstall(app); }}>{t('common.uninstall')}</button>
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}

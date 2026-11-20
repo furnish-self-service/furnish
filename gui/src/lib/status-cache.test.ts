@@ -93,3 +93,12 @@ test('the newest readable observation wins across native and webview storage', (
   assert.equal(restoreCheck(web, 'rev', disk)?.status, 'needsUpdate');
   assert.equal(restoreCheck({}, 'rev', web)?.status, 'needsUpdate');
 });
+
+test('a successful check with unknown revision survives a webview-only restart for display', () => {
+  storage();
+  const cache = new StatusCache('/profile');
+  cache.write('team/jq', undefined, installed, checkedAt);
+  assert.deepEqual(restoreCheck(undefined, 'rev', cache.entry('team/jq')), {
+    ...installed, checkedAt, source: 'previousRevision',
+  });
+});

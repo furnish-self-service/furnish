@@ -73,7 +73,7 @@ export class StatusCache {
 
   write(key: string, revision: string | undefined, check: AppCheck, checkedAt: number) {
     try {
-      localStorage.setItem(this.prefix + key, JSON.stringify({ revision, check, checkedAt }));
+      localStorage.setItem(this.prefix + key, JSON.stringify({ revision: revision ?? null, check, checkedAt }));
     } catch { /* Checking works even when the webview cannot save data. */ }
   }
 
