@@ -15,6 +15,7 @@ use serde_json::Value;
 mod release;
 pub use release::{AppChange, Change, CollectionPreview, ReviewedRevisions, StepChange};
 mod tracking;
+mod status_cache;
 use crate::settings::Tracking;
 use tracking::Target;
 
@@ -737,6 +738,7 @@ pub fn remove(name: &str) -> Result<()> {
         return Err(err);
     }
     remove_repository(&removed);
+    status_cache::forget(name);
     edit_remote_heads(&remote_heads_file(), |heads| { heads.remove(name); });
     if let Some(url) = url { crate::auth::forget(&url); }
     Ok(())

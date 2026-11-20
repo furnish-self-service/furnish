@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AppCheck } from './api';
-import { StatusCache } from './status-cache.ts';
+import { restoreCheck, StatusCache } from './status-cache.ts';
 
 const checkedAt = 1_800_000_000_000;
 const installed: AppCheck = {
@@ -26,13 +26,13 @@ test('a fresh launch restores completed checks and picks up later changes per ap
   const cache = new StatusCache('/profile');
   cache.write('team/jq', 'a25d340', installed, checkedAt);
   const launched = new StatusCache('/profile');
-  assert.deepEqual(launched.read('team/jq', 'a25d340'), { check: installed, checkedAt });
-  assert.equal(launched.read('team/new', 'a25d340'), undefined);
-  assert.equal(launched.read('team/jq', '123beef'), undefined);
-  assert.equal(new StatusCache('/other').read('team/jq', 'a25d340'), undefined);
+  assert.deepEqual(restoreCheck(launched.entry('team/jq'), 'a25d340')?.saved, { check: installed, checkedAt });
+  assert.equal(restoreCheck(launched.entry('team/new'), 'a25d340')?.saved, undefined);
+  assert.equal(restoreCheck(launched.entry('team/jq'), '123beef')?.saved, undefined);
+  assert.equal(restoreCheck(new StatusCache('/other').entry('team/jq'), 'a25d340')?.saved, undefined);
   const removed: AppCheck = { ...installed, status: 'notInstalled', external: null, removable: true };
   launched.write('team/jq', 'a25d340', removed, checkedAt);
-  assert.deepEqual(new StatusCache('/profile').read('team/jq', 'a25d340'), { check: removed, checkedAt });
+  assert.deepEqual(restoreCheck(new StatusCache('/profile').entry('team/jq'), 'a25d340')?.saved, { check: removed, checkedAt });
 });
 
 test('restores the status from an older entry without inventing a verification time', () => {
@@ -41,7 +41,7 @@ test('restores the status from an older entry without inventing a verification t
   cache.write('team/jq', 'rev', installed, checkedAt);
   const [key] = entries.keys();
   entries.set(key, JSON.stringify({ revision: 'rev', check: installed }));
-  assert.deepEqual(cache.read('team/jq', 'rev'), { check: installed, checkedAt: null });
+  assert.deepEqual(restoreCheck(cache.entry('team/jq'), 'rev')?.saved, { check: installed, checkedAt: null });
 });
 
 test('pruning removed apps preserves active apps and other profiles', () => {
@@ -52,9 +52,9 @@ test('pruning removed apps preserves active apps and other profiles', () => {
   cache.write('other/jq', 'rev', installed, checkedAt);
   other.write('team/jq', 'rev', installed, checkedAt);
   cache.prune(new Set(['other/jq']));
-  assert.equal(cache.read('team/jq', 'rev'), undefined);
-  assert.deepEqual(cache.read('other/jq', 'rev'), { check: installed, checkedAt });
-  assert.deepEqual(other.read('team/jq', 'rev'), { check: installed, checkedAt });
+  assert.equal(restoreCheck(cache.entry('team/jq'), 'rev')?.saved, undefined);
+  assert.deepEqual(restoreCheck(cache.entry('other/jq'), 'rev')?.saved, { check: installed, checkedAt });
+  assert.deepEqual(restoreCheck(other.entry('team/jq'), 'rev')?.saved, { check: installed, checkedAt });
 });
 
 test('unreadable or incompatible cached checks leave the app ready for a live check', () => {
@@ -68,10 +68,18 @@ test('unreadable or incompatible cached checks leave the app ready for a live ch
     JSON.stringify({ revision: 'rev', check: { ...installed, required: { needs: null } } }),
   ]) {
     entries.set(key, contents);
-    assert.equal(cache.read('team/jq', 'rev'), undefined);
+    assert.equal(restoreCheck(cache.entry('team/jq'), 'rev')?.saved, undefined);
   }
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('unavailable'); } });
   cache.write('team/jq', 'rev', installed, checkedAt);
-  assert.equal(cache.read('team/jq', 'rev'), undefined);
+  assert.equal(restoreCheck(cache.entry('team/jq'), 'rev')?.saved, undefined);
   cache.prune(new Set());
+});
+
+test('a changed or unknown revision preserves membership without restoring stale update details', () => {
+  const entry = { revision: 'previous', checkedAt, check: { ...installed, status: 'needsUpdate' } };
+  for (const revision of ['next', 'unknown', undefined]) {
+    assert.deepEqual(restoreCheck(entry, revision), { installed: true, saved: undefined });
+    assert.equal(restoreCheck({ ...entry, check: { ...installed, status: 'notInstalled' } }, revision)?.installed, false);
+  }
 });

@@ -4,7 +4,7 @@ import * as api from './api';
 import { defaultDependencies, needsRetry, pausedBranch, planInstall, releaseDependents, type Queued } from './install-queue';
 export { defaultDependencies, type Queued } from './install-queue';
 import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
-import { StatusCache } from './status-cache';
+import { restoreCheck, StatusCache } from './status-cache';
 import { StatusChecks } from './status-checks';
 import { desktopRestart, type RestartState } from './desktop-restart';
 import type { AppInfo, CollectionInfo, KitInfo, LogLine, Settings, Status } from './api';
@@ -222,6 +222,7 @@ let reportedCatalog = 0;
 let cache: StatusCache | undefined;
 const revisions = new Map<string, string>();
 // Cached values are for display. Automatic updates and inventory use live checks.
+const lastInstalled = new SvelteSet<string>();
 const verifiedKeys = new SvelteSet<string>();
 const pendingChecks = new StatusChecks();
 
@@ -272,6 +273,7 @@ async function listCatalog(load: number) {
   revisions.clear();
   pendingChecks.clear();
   verifiedKeys.clear();
+  lastInstalled.clear();
   store.status = {};
   store.statusErrors = {};
   store.checkedAt = {};
@@ -281,15 +283,15 @@ async function listCatalog(load: number) {
   store.unremovable = {};
   store.external = {};
   store.required = {};
-  if (apps.status === 'fulfilled' && collections.status === 'fulfilled') {
-    const byCollection = new Map(collections.value.map(c => [c.name, c.revision]));
+  if (apps.status === 'fulfilled') {
+    const byCollection = new Map(collections.status === 'fulfilled' ? collections.value.map(c => [c.name, c.revision] as const) : []);
     cache?.prune(new Set(apps.value.map(app => app.key)));
     for (const app of apps.value) {
       const revision = byCollection.get(app.collection);
-      if (!revision || revision === 'unknown') continue;
-      revisions.set(app.key, revision);
-      const saved = cache?.read(app.key, revision);
-      if (saved) showCheck(app.key, saved.check, saved.checkedAt);
+      if (revision && revision !== 'unknown') revisions.set(app.key, revision);
+      const restored = restoreCheck(app.cachedCheck, revision) ?? restoreCheck(cache?.entry(app.key), revision);
+      if (restored?.installed) lastInstalled.add(app.key);
+      if (restored?.saved) showCheck(app.key, restored.saved.check, restored.saved.checkedAt);
     }
   }
   store.loading = false;
@@ -334,7 +336,7 @@ export function checkStatus(key: string): Promise<boolean> {
 async function readStatus(key: string, current: () => boolean): Promise<boolean> {
   store.checkingStatus[key] = true;
   try {
-    const check = await api.appStatus(key);
+    const check = await api.appStatus(key, revisions.get(key));
     if (!current()) return false;
     const checkedAt = Date.now();
     showCheck(key, check, checkedAt);
@@ -475,7 +477,8 @@ export function visibleApps(view: View, query: string): AppInfo[] {
   const apps = store.apps.filter((app) => {
     const status = store.status[app.key];
     if (status === 'unavailable' && store.statusErrors[app.key] === undefined) return false;
-    if (view.page === 'installed' && status !== 'installed' && status !== 'needsUpdate') return false;
+    if (view.page === 'installed' && !isInstalled(app.key)
+      && (status !== undefined || !lastInstalled.has(app.key))) return false;
     if (view.page === 'updates' && status !== 'needsUpdate') return false;
     if (view.page === 'category' && !app.categories.includes(view.name)) return false;
     if (!query.trim()) return true;

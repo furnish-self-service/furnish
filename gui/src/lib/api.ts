@@ -12,6 +12,7 @@ export interface Resource {
 
 export interface AppInfo {
   key: string;
+  cachedCheck?: unknown;
   id: string;
   collection: string;
   /** The name to show (`metadata.furnish.name`); null: the id. See `appName` for translations. */
@@ -228,7 +229,7 @@ export interface AppCheck {
   external: External | null;
   required: Required | null;
 }
-export const appStatus = (key: string) => invoke<AppCheck>('app_status', { key });
+export const appStatus = (key: string, revision?: string) => invoke<AppCheck>('app_status', { key, revision });
 /**
  * A package installed outside furnish: by the NixOS or Home Manager configuration (`package` is its
  * nixpkgs attribute), or with another tool (`other`, e.g. npm; `path` is where its program is).
