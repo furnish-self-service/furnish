@@ -3,7 +3,7 @@
   // App::versions). Mounted only while shown: listing may download earlier files and ask DSC.
   import * as api from './api';
   import type { AppInfo, Version } from './api';
-  import { store, appName, installVersion, isPending } from './state.svelte';
+  import { appStatus, appName, installVersion, isPending } from './state.svelte';
   import { describeNeeds } from './required';
   import { t, terror, formatDate, lang } from './i18n.svelte';
 
@@ -15,7 +15,7 @@
   // Load when shown, and again after an install changed which version the app is at.
   $effect(() => {
     void app.held?.commit;
-    void store.status[app.key];
+    void appStatus(app.key);
     error = null;
     api
       .appVersions(app.key)
@@ -25,7 +25,7 @@
 
   // The version installed: the one the app is held at, else the current one if it is up to date.
   const installedVersion = (v: Version) =>
-    app.held ? app.held.commit === v.commit : store.status[app.key] === 'installed' && !!v.current;
+    app.held ? app.held.commit === v.commit : appStatus(app.key) === 'installed' && !!v.current;
 </script>
 
 {#if error}

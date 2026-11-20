@@ -2,13 +2,13 @@
   // An app's dependencies: required ones are locked; optional ones not yet installed can be
   // deselected. `chosen` holds the keys to install along with the app.
   import type { AppInfo } from './api';
-  import { store, appByKey, isInstalled, isPending, appName, appDescription } from './state.svelte';
+  import { appStatus, store, appByKey, isInstalled, isPending, appName, appDescription } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
 
   let { app, chosen = $bindable() }: { app: AppInfo; chosen: string[] } = $props();
 
-  const unavailable = (key: string) => store.status[key] === 'unavailable';
+  const unavailable = (key: string) => appStatus(key) === 'unavailable';
   const locked = (dep: AppInfo['dependencies'][number]) =>
     dep.required || isInstalled(dep.key) || isPending(dep.key) || unavailable(dep.key);
 

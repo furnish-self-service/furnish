@@ -1,6 +1,6 @@
 <script lang="ts">
   // Current, queued and recently completed operations.
-  import { store, dequeue, clearQueue, queueBlocker, recheckClosed, retryPrerequisite, isPending, retryActivity, appByKey, appName } from './state.svelte';
+  import { appStatus, store, dequeue, clearQueue, queueBlocker, recheckClosed, retryPrerequisite, isPending, retryActivity, appByKey, appName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
   import Plan from './Plan.svelte';
@@ -21,7 +21,7 @@
     store.queue.map((q) => ({ ...q, app: store.apps.find((a) => a.key === q.key) })).filter((q) => q.app),
   );
   const actionLabel = (key: string, action: string) =>
-    action === 'uninstall' ? t('common.uninstall') : store.status[key] === 'needsUpdate' ? t('common.update') : t('common.install');
+    action === 'uninstall' ? t('common.uninstall') : appStatus(key) === 'needsUpdate' ? t('common.update') : t('common.install');
   const kindLabel = { install: 'run.installing', update: 'run.updating', uninstall: 'run.uninstalling', reinstall: 'run.reinstalling' } as const;
 </script>
 
@@ -116,7 +116,7 @@
             </div>
             <ActivityAttempt {entry} />
             {#if item.result === 'failed'}
-              {#if appByKey(item.key) && store.status[item.key] !== 'unavailable'}
+              {#if appByKey(item.key) && appStatus(item.key) !== 'unavailable'}
                 <button class="secondary" disabled={isPending(item.key) || store.retrying[item.key]}
                   onclick={() => retryActivity(item)}>{t('queue.retry', { app: item.name })}</button>
               {:else}

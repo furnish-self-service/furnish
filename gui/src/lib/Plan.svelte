@@ -5,7 +5,7 @@
   import PlanStep from './PlanStep.svelte';
   import type { AppInfo, Step } from './api';
   import { stepProgress, type Run, type RunStep } from './activity-history';
-  import { store, appName, externalNote } from './state.svelte';
+  import { appStatus, store, appName, externalNote } from './state.svelte';
   import { stepProse } from './step-prose';
   import { describeCondition } from './conditions';
   import { t, terror, tparts, parts, formatTime, formatDuration, formatDate } from './i18n.svelte';
@@ -14,7 +14,8 @@
   // Activity supplies the actual operation, even if the app has since left the catalog.
   let { app, operation, oncount }: { app: AppInfo; operation?: never; oncount?: (count: number | null) => void } | { app?: never; operation: Run; oncount?: never } = $props();
 
-  const status = $derived(app && store.status[app.key]);
+  const check = $derived(app && store.checks[app.key]);
+  const status = $derived(app && appStatus(app.key));
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
   const run = $derived(operation ?? (app && store.runs[app.key]));
   const name = $derived(app ? appName(app) : operation!.name);
@@ -24,7 +25,7 @@
   let picked = $state<Mode | null>(null);
   // While an operation runs, always follow it; otherwise show what the user picked, or the
   // preview of the app's primary action.
-  const unremovable = $derived(app && !!store.unremovable[app.key]);
+  const unremovable = $derived(app && check?.removable === false);
   const mode: Mode = $derived(operation || running ? 'run' : (picked ?? (status === 'installed' && !unremovable ? 'uninstall' : 'install')));
   export function showInstallPreview() { picked = 'install'; }
   const installLabel = $derived(status === 'needsUpdate' ? t('common.update') : t('common.install'));
@@ -238,8 +239,8 @@
     {/if}
   {:else if app && mode === 'uninstall' && unremovable}
     <p class="muted">
-      {store.external[app.key]
-        ? externalNote(store.external[app.key])
+      {check?.external
+        ? externalNote(check?.external)
         : t('app.cantUninstall', { collection: app.collection })}
     </p>
   {:else if error}

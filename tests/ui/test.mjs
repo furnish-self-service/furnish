@@ -2,6 +2,7 @@
 // Started by tests/ui/run.sh, which prepares the app's data dir and a fake package manager.
 // Plain fetch, no test framework: each step names what it checks, the first failure stops the run.
 import { readFileSync, existsSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
 // run.sh picks the port, so runs side by side (host network) don't meet each other's driver.
@@ -332,6 +333,32 @@ const steps = [
     await waitFor('status line', async () => (await text("//p[contains(@class,'status')]")) === needs);
     await snap('required-unmet-page');
     await click(button('Discover'));
+  }],
+  ['Discover, kits and Installed share the last check while a new revision is scanned', async () => {
+    const key = name => createHash('sha256').update(name).digest('base64url');
+    const file = `${workDir}/data/app-status-v1/${key('fixture')}/${key('hyperfine')}`;
+    await wd('DELETE', s(''));
+    session = null;
+    const record = JSON.parse(readFileSync(file, 'utf8'));
+    record.check.status = 'installed';
+    record.revision = 'previous';
+    record.checkedAt = Date.now();
+    writeFileSync(file, JSON.stringify(record));
+    const gate = `${workDir}/hold-hyperfine-status`;
+    writeFileSync(gate, '');
+    try {
+      await startSession();
+      await waitFor('cached Discover badge', () => find(`${card('hyperfine')}//*[normalize-space()='Installed']`));
+      await waitFor('cached kit count', () => find(`${card('starter')}//*[normalize-space()='1 of 3 installed']`));
+      await click(nav('Installed'));
+      await waitFor('cached Installed membership', () => find(card('hyperfine')));
+      await click(button('Discover'));
+    } finally {
+      rmSync(gate, { force: true });
+    }
+    await waitFor('live check corrects Discover', () => find(`${card('hyperfine')}${button('Install')}`), 30000);
+    await waitFor('live check corrects the kit count', async () =>
+      !(await text(card('starter'))).includes('1 of 3 installed'));
   }],
   ['install from the card finishes and shows Installed', async () => {
     await click(`${card('hyperfine')}${button('Install')}`);

@@ -4,13 +4,13 @@
   // with an always-visible stop control inside it (app-store pattern: no layout shift, no
   // hover-only controls). First stop click aborts after the current step, second one forces.
   import type { AppInfo } from './api';
-  import { recheckClosed, store, requestInstall, uninstall, stop, dequeue, askQuestions, appName } from './state.svelte';
+  import { appStatus, recheckClosed, store, requestInstall, uninstall, stop, dequeue, askQuestions, appName } from './state.svelte';
   import { t } from './i18n.svelte';
 
   // `oninstall` replaces the default (asking about optional dependencies, then installing).
   let { app, large = false, oninstall }: { app: AppInfo; large?: boolean; oninstall?: () => void } = $props();
 
-  const status = $derived(store.status[app.key]);
+  const status = $derived(appStatus(app.key));
   const busy = $derived(store.busy[app.key]);
   // Only one operation runs at a time; others wait in the queue (see the Activity page).
   const engineBusy = $derived(Object.keys(store.busy).length > 0);
@@ -36,7 +36,7 @@
 
   function run(event: MouseEvent) {
     event.stopPropagation();
-    if (status === 'installed') uninstall(app);
+    if (status === 'installed') return uninstall(app);
     else if (oninstall) oninstall();
     else requestInstall(app);
   }
@@ -54,12 +54,12 @@
 {:else if app.unanswered.length && !busy && !queued && status !== 'installed' && status !== 'needsUpdate'}
   <!-- The collection asks something first (e.g. your role); installing waits for the answer. -->
   <button class="action" class:large onclick={(e) => { e.stopPropagation(); askQuestions(true); }}>{t('action.answerFirst')}</button>
-{:else if status === 'blocked' && store.required[app.key] && !busy && !queued}
+{:else if status === 'blocked' && store.checks[app.key]?.required && !busy && !queued}
   <!-- No acceptable version is offered: the card and the app page say what is needed. -->
 {:else if status === 'blocked' && !app.dependencies.some((d) => d.required || d.selected) && !busy && !queued}
   <!-- A tool this app needs is missing and the collection doesn't provide it. -->
-  <span class="checking needs" class:large title={t('action.needs', { what: store.reasons[app.key] ?? t('common.missingTool') })}>
-    {t('action.needs', { what: (store.reasons[app.key] ?? t('common.missingTool')).split(' (')[0] })}
+  <span class="checking needs" class:large title={t('action.needs', { what: store.checks[app.key]?.reason ?? t('common.missingTool') })}>
+    {t('action.needs', { what: (store.checks[app.key]?.reason ?? t('common.missingTool')).split(' (')[0] })}
   </span>
 {:else if store.queue.some(q => q.key === app.key && q.waitingForClose?.length)}
   <button class="action" class:large onclick={(event) => { event.stopPropagation(); recheckClosed(app.key); }}>{t('queue.recheckClosed')}</button>

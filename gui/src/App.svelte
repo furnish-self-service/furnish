@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import logo from '../../logo.svg';
-  import { store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
+  import { appStatus, store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
@@ -32,7 +32,7 @@
   const categories = $derived(
     [
       ...new Set([
-        ...store.apps.filter((a) => store.status[a.key] !== 'unavailable').flatMap((a) => a.categories),
+        ...store.apps.filter((a) => appStatus(a.key) !== 'unavailable').flatMap((a) => a.categories),
         ...store.kits.flatMap((k) => k.categories),
       ]),
     ]

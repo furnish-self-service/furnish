@@ -3,7 +3,7 @@
   import ActivityAttempt from './ActivityAttempt.svelte';
   import RunLog from './RunLog.svelte';
   import { groupProgress, itemDone, type ActivityGroup, type GroupItem } from './activity-history';
-  import { appByKey, appName, isPending, kitName, queueBlocker, recheckClosed, retryGroupItem, retryFailed, store } from './state.svelte';
+  import { appStatus, appByKey, appName, isPending, kitName, queueBlocker, recheckClosed, retryGroupItem, retryFailed, store } from './state.svelte';
   import { formatDate, lang, t } from './i18n.svelte';
 
   let { group }: { group: ActivityGroup } = $props();
@@ -64,7 +64,7 @@
     </summary>
     <div class="meta"><time datetime={new Date(group.updatedAt).toISOString()}>{date(group.updatedAt)}</time> · {t('activity.trigger.user')}{#if group.kind === 'kit'} · {group.key}{/if}</div>
     {#if group.kind === 'updates' && failed.length}
-      <button class="secondary" disabled={failed.every(i => isPending(i.key) || store.retrying[i.key] || !appByKey(i.key) || store.status[i.key] === 'unavailable')} onclick={() => retryFailed(group)}>{t('activity.retryFailed')}</button>
+      <button class="secondary" disabled={failed.every(i => isPending(i.key) || store.retrying[i.key] || !appByKey(i.key) || appStatus(i.key) === 'unavailable')} onclick={() => retryFailed(group)}>{t('activity.retryFailed')}</button>
     {/if}
     <ul>
       {#each group.items as item (item.key)}
@@ -75,7 +75,7 @@
           {#if store.queue.some(q => q.key === item.key && q.waitingForClose?.length)}
             <button class="secondary" onclick={() => recheckClosed(item.key)}>{t('queue.recheckClosed')}</button>
           {:else if item.state === 'failed' || item.state === 'cancelled' || item.state === 'interrupted'}
-            {#if appByKey(item.key) && store.status[item.key] !== 'unavailable'}
+            {#if appByKey(item.key) && appStatus(item.key) !== 'unavailable'}
               <button class="secondary" disabled={isPending(item.key) || store.retrying[item.key]} onclick={() => retryGroupItem(group, item.key)}>
                 {t('queue.retry', { app: name(item) })}
               </button>
