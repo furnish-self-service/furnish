@@ -2,6 +2,7 @@
   // The steps of installing/updating or uninstalling an app: a preview (DSC what-if, changes
   // nothing) or, during and after a run, live progress of those same steps.
   import * as api from './api';
+  import PlanStep from './PlanStep.svelte';
   import type { AppInfo, Step } from './api';
   import type { Run, RunStep } from './activity-history';
   import { store, appName, externalNote } from './state.svelte';
@@ -262,94 +263,78 @@
     <p class="session-notice">{t('session.preview')}</p>
   {/if}
 
-  <ol class="steps" class:live={mode === 'run'}>
+  <ol class="steps plan-steps">
     {#each rows as row, i (i)}
       {@const step = row.step}
-      <li class="{step.action} {row.state}">
-        {#if mode === 'run'}
-          {@const stateLabel = row.state === 'notRun' ? t('plan.notRun') : t(`plan.state.${row.state}`)}
-          <span class="marker" title={stateLabel} aria-label={stateLabel}>
-            {#if row.state === 'done'}✓
-            {:else if row.state === 'failed'}✕
-            {:else if row.state === 'skipped' || row.state === 'notRun'}–
-            {:else if row.state === 'cancelled'}⊘
-            {:else}{i + 1}{/if}
-          </span>
-        {/if}
-        <span class="badge">{t(`plan.action.${step.action}`)}</span>
-        <div class="body">
-          <div class="title">
-            <span class="name">{step.name}</span>
-            <span class="type">{step.type}</span>
-          </div>
-          {#each step.selectionNotes ?? [] as n}
-            <p class="detail">{#if known(n)}{@render sentence(n)}{:else}{@render prose(n.english)}{/if}</p>
-          {/each}
-          {#if step.notes?.length && step.notes.every(known)}
-            {#each step.notes as n}
-              {#if n.code === 'run'}
-                <div class="command">
-                  <span class="who">{t('plan.runs')}</span>
-                  <code>{n.params.command}</code>
-                </div>
-              {:else}
-                {#if boxed(n)}
-                  <div class="command">
-                    <span class="who">{t(n.code === 'command.keep' ? 'plan.keeps' : 'plan.tests')}</span>
-                    <code>{n.params.command}</code>
-                  </div>
-                {/if}
-                {#if n.params.diff}
-                  <details class="filediff">
-                    <summary><span class="detail">{@render sentence(n)}</span></summary>
-                    {@render diffTable(n)}
-                  </details>
-                {:else}
-                  <p class="detail">{@render sentence(n)}</p>
-                  {#if n.params.binary}<p class="lines-note">{t('plan.diff.binary')}</p>
-                  {:else if n.params.hidden}<p class="lines-note">{t('plan.diff.hidden')}</p>{/if}
-                {/if}
-              {/if}
-            {/each}
-          {:else}
-          {#each step.details as detail}
-            {@const c = command(detail)}
-            {@const skip = skipReason(detail)}
-            {@const unneeded = notNeeded(detail)}
-            {#if skip}
-              <p class="detail">{t('plan.notForSystem', { reason: skip.text })}</p>
-              <code class="condition">{skip.condition}</code>
-            {:else if unneeded}
-              <p class="detail">{t('plan.notNeeded', { reason: unneeded })}</p>
-            {:else if c}
+      <PlanStep name={step.name} type={step.type} action={step.action}
+        state={mode === 'run' ? row.state : undefined} index={i}>
+        {#each step.selectionNotes ?? [] as n}
+          <p class="detail">{#if known(n)}{@render sentence(n)}{:else}{@render prose(n.english)}{/if}</p>
+        {/each}
+        {#if step.notes?.length && step.notes.every(known)}
+          {#each step.notes as n}
+            {#if n.code === 'run'}
               <div class="command">
-                <span class="who">{c.who}</span>
-                <code>{c.cmd}</code>
+                <span class="who">{t('plan.runs')}</span>
+                <code>{n.params.command}</code>
               </div>
             {:else}
-              <p class="detail">{@render prose(detail)}</p>
+              {#if boxed(n)}
+                <div class="command">
+                  <span class="who">{t(n.code === 'command.keep' ? 'plan.keeps' : 'plan.tests')}</span>
+                  <code>{n.params.command}</code>
+                </div>
+              {/if}
+              {#if n.params.diff}
+                <details class="filediff">
+                  <summary><span class="detail">{@render sentence(n)}</span></summary>
+                  {@render diffTable(n)}
+                </details>
+              {:else}
+                <p class="detail">{@render sentence(n)}</p>
+                {#if n.params.binary}<p class="lines-note">{t('plan.diff.binary')}</p>
+                {:else if n.params.hidden}<p class="lines-note">{t('plan.diff.hidden')}</p>{/if}
+              {/if}
             {/if}
           {/each}
+        {:else}
+        {#each step.details as detail}
+          {@const c = command(detail)}
+          {@const skip = skipReason(detail)}
+          {@const unneeded = notNeeded(detail)}
+          {#if skip}
+            <p class="detail">{t('plan.notForSystem', { reason: skip.text })}</p>
+            <code class="condition">{skip.condition}</code>
+          {:else if unneeded}
+            <p class="detail">{t('plan.notNeeded', { reason: unneeded })}</p>
+          {:else if c}
+            <div class="command">
+              <span class="who">{c.who}</span>
+              <code>{c.cmd}</code>
+            </div>
+          {:else}
+            <p class="detail">{@render prose(detail)}</p>
           {/if}
-          {#each changes(row) as change}
-            <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
-          {/each}
-          {#if row.outcome?.error}
-            <pre class="failure">{terror(row.outcome.error)}</pre>
-          {/if}
-        </div>
-        {#if mode === 'run' && (row.state === 'notRun' || (row.state === 'pending' && !running))}
-          <div class="timing"><span class="muted">{t('plan.notRun')}</span></div>
-        {:else if mode === 'run' && row.state !== 'pending' && row.state !== 'skipped'}
-          <div class="timing">
-            <span class="result">{row.state === 'running' ? t('plan.running') : result(row)}</span>
+        {/each}
+        {/if}
+        {#each changes(row) as change}
+          <p class="diff"><span>{change.property}</span> {show(change.before)} <span aria-label={t('plan.becomes')}>→</span> {show(change.after)}</p>
+        {/each}
+        {#if row.outcome?.error}
+          <pre class="failure">{terror(row.outcome.error)}</pre>
+        {/if}
+        {#snippet timing()}
+          {#if mode === 'run' && (row.state === 'notRun' || (row.state === 'pending' && !running))}
+            <span class="muted">{t('plan.notRun')}</span>
+          {:else if mode === 'run' && row.state !== 'pending' && row.state !== 'skipped'}
+            <strong>{row.state === 'running' ? t('plan.running') : result(row)}</strong>
             <span class="muted">
               {row.startedAt ? clock(row.startedAt) : ''} ·
               {seconds(row.durationMs ?? (row.startedAt ? now - row.startedAt : 0))}
             </span>
-          </div>
-        {/if}
-      </li>
+          {/if}
+        {/snippet}
+      </PlanStep>
     {/each}
   </ol>
   {#if mode !== 'run' && preview}
@@ -409,91 +394,6 @@
   @keyframes pulse {
     50% { opacity: 0.25; }
   }
-  .steps {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: grid;
-    gap: 0.5rem;
-  }
-  .steps li {
-    display: flex;
-    gap: 0.9rem;
-    align-items: flex-start;
-    padding: 0.85rem 1rem;
-    border: 1px solid var(--line);
-    border-left: 4px solid var(--tone);
-    border-radius: 12px;
-    background: var(--surface);
-    --tone: var(--line-strong);
-    --tone-soft: var(--hover);
-    --tone-ink: var(--ink-soft);
-    transition: opacity 0.2s, box-shadow 0.2s;
-  }
-  .steps li.install {
-    --tone: var(--accent);
-    --tone-soft: var(--accent-soft);
-    --tone-ink: var(--accent-ink);
-  }
-  .steps li.remove,
-  .steps li.failed {
-    --tone: var(--danger);
-    --tone-soft: var(--danger-soft);
-    --tone-ink: var(--danger);
-  }
-  .steps li.change {
-    --tone: var(--highlight);
-    --tone-soft: var(--highlight-soft);
-    --tone-ink: var(--highlight-ink);
-  }
-  .steps li.skipped {
-    background: transparent;
-    border-style: dashed;
-    border-left-style: solid;
-  }
-  /* Live view: upcoming steps recede, the current one stands out. */
-  .live li.pending, .live li.notRun {
-    opacity: 0.55;
-  }
-  .live li.running {
-    box-shadow: 0 0 0 2px var(--tone-soft), var(--shadow-raised);
-  }
-  .marker {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 1.6rem;
-    height: 1.6rem;
-    border-radius: 50%;
-    font: 700 0.8rem var(--font-body);
-    color: var(--muted);
-    border: 2px solid var(--line-strong);
-  }
-  .done .marker {
-    color: var(--on-accent);
-    background: var(--accent);
-    border-color: var(--accent);
-  }
-  .failed .marker {
-    color: var(--surface);
-    background: var(--danger);
-    border-color: var(--danger);
-  }
-  .running .marker {
-    color: var(--accent-ink);
-    background: var(--accent-soft);
-    border-color: transparent;
-  }
-  .cancelled .marker {
-    color: var(--surface);
-    background: var(--muted);
-    border-color: var(--muted);
-  }
-  .steps li.cancelled {
-    --tone: var(--muted);
-    --tone-soft: var(--hover);
-    --tone-ink: var(--ink-soft);
-  }
   .stopping {
     margin-left: 0.5rem;
     font-weight: 650;
@@ -503,40 +403,6 @@
     .pulse {
       animation: none;
     }
-  }
-  .badge {
-    flex: none;
-    width: 6.75rem;
-    box-sizing: border-box;
-    overflow-wrap: anywhere;
-    padding: 0.2rem 0.6rem;
-    border-radius: 999px;
-    text-align: center;
-    font: 700 0.72rem var(--font-body);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--tone-ink);
-    background: var(--tone-soft);
-  }
-  .body {
-    flex: 1;
-    min-width: 0;
-    display: grid;
-    gap: 0.35rem;
-  }
-  .title {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.75rem;
-    align-items: baseline;
-  }
-  .name {
-    font-weight: 650;
-    overflow-wrap: anywhere;
-  }
-  .type {
-    font: 0.75rem var(--font-mono);
-    color: var(--muted);
   }
   .detail {
     margin: 0;
@@ -689,23 +555,6 @@
     font: 0.78rem/1.4 var(--font-mono);
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  .timing {
-    flex: none;
-    display: grid;
-    justify-items: end;
-    gap: 0.15rem;
-    font-size: 0.8rem;
-    font-variant-numeric: tabular-nums;
-  }
-  @container (max-width: 32rem) {
-    .steps li { flex-wrap: wrap; gap: 0.4rem 0.6rem; }
-    .steps .body { flex-basis: 100%; order: 1; }
-    .timing { margin-inline-start: auto; }
-  }
-  .result {
-    font-weight: 650;
-    color: var(--tone-ink);
   }
   .note {
     margin: 0.75rem 0 0;

@@ -207,3 +207,11 @@ button:disabled {
   .preference-list :is(.row, .status) { grid-template-columns: minmax(0, 1fr); }
   .preference-list label.row:has(input[type='checkbox']) { grid-template-columns: minmax(0, 1fr) auto; }
 }
+
+.plan-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}

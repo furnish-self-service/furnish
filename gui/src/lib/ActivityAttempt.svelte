@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { RecentActivity } from './activity-history';
-  import { lang, t } from './i18n.svelte';
+  import { formatDuration, lang, t } from './i18n.svelte';
   import Plan from './Plan.svelte';
+  import PlanStep from './PlanStep.svelte';
   import RunLog from './RunLog.svelte';
 
   let { entry, multiple = false }: { entry: RecentActivity; multiple?: boolean } = $props();
@@ -23,11 +24,19 @@
     {#if entry.details}
       <Plan operation={entry.details.run} /><RunLog lines={entry.details.logs} />
     {:else}
-      <ol class="saved-steps">
-        {#each summary.steps ?? [] as step}
-          <li>{step.name} · {t(step.state === 'notRun' ? 'plan.notRun' : `plan.state.${step.state}`)}</li>
-        {/each}
-      </ol>
+      <div class="saved-steps">
+        <ol class="plan-steps">
+          {#each summary.steps ?? [] as step, i}
+            <PlanStep name={step.name} type={step.type} action={step.action} state={step.state} index={i}>
+              {#snippet timing()}
+                <strong>{step.state === 'done' && step.outcome ? t(`plan.result.${step.outcome}`)
+                  : step.state === 'notRun' ? t('plan.notRun') : t(`plan.state.${step.state}`)}</strong>
+                {#if step.durationMs !== undefined}<span>{formatDuration(step.durationMs)}</span>{/if}
+              {/snippet}
+            </PlanStep>
+          {/each}
+        </ol>
+      </div>
     {/if}
   {/if}
 {/if}
@@ -36,5 +45,5 @@
   .meta { color: var(--muted); font-size: .82rem; margin: .25rem 0; }
   .failed { color: var(--danger); }
   .reveal { margin-block: .4rem; }
-  .saved-steps { padding-inline-start: 1.6rem; }
+  .saved-steps { container-type: inline-size; margin-block-start: .75rem; }
 </style>

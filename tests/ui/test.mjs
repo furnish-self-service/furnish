@@ -580,7 +580,8 @@ const steps = [
     await waitFor('manual trigger recorded on the group', async () => (await text(group)).includes('Started by you'));
     const extras = `${group}//li[@data-app='fixture/extras']`;
     await click(`${extras}${button('Steps')}`);
-    await waitFor('failed package step survives restart', async () => (await text(`${extras}//ol`)).includes('extras · failed'));
+    await waitFor('failed package step survives restart', () =>
+      find(`${extras}//ol/li[.//span[@aria-label='failed'] and .//span[text()='extras'] and .//span[text()='Furnish/Package'] and .//strong[text()='failed']]`));
     const hyperfineCalls = () => log('pkexec.log').split('\n').filter(line => line.includes('pacman -S') && line.endsWith('hyperfine')).length;
     const before = hyperfineCalls();
     await click(`${group}${button('Retry failed')}`);
@@ -786,7 +787,8 @@ const steps = [
       return detail.includes('The package manager could not complete this step') && /[a-f0-9]{7,40}/.test(detail);
     });
     await click(`${entry}${button('Steps')}`);
-    await waitFor('failed step after restart', async () => (await text(`${entry}//ol`)).includes('later · failed'));
+    await waitFor('failed step after restart', () =>
+      find(`${entry}//ol/li[.//span[@aria-label='failed'] and .//span[text()='later'] and .//span[text()='Furnish/Package'] and .//strong[text()='failed']]`));
     await click(`${entry}${button('Retry later')}`);
     await waitFor('retry installed the package', () => existsSync(`${workDir}/pkgs/later`), 30000);
   }],
