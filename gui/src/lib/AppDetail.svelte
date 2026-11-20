@@ -123,7 +123,7 @@
         <ActionButton {app} large oninstall={() => install(app, chosen)} />
       {/if}
       {#if status === 'needsUpdate' && !isPending(app.key) && checkError === undefined}
-        <button class="secondary" onclick={openPreview}>{t('app.previewChanges')}{#if planOpen && previewCount !== null} ({previewCount}){/if}</button>
+        <button class="secondary" onclick={openPreview}>{t('app.previewChanges')}{#if planOpen && previewCount !== null}{' '}({previewCount}){/if}</button>
       {/if}
       {#if installed && !store.external[app.key]}
         <label class="auto">

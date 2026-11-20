@@ -67,6 +67,7 @@
   }
   // Back and forward like a browser: thumb buttons (3 back, 4 forward), Alt+Left/Right, Cmd+[ / ].
   let main: HTMLElement;
+  let content: HTMLDivElement;
   type Visit = { view: View; top: number };
   const pages = createHistory<Visit>(visit => JSON.stringify(visit.view));
   let currentVisit: Visit | undefined;
@@ -80,15 +81,32 @@
     restoring = undefined;
     currentVisit = visit;
     pages.seen(visit);
-    if (!first) tick().then(() => {
-      if (currentVisit !== visit) return;
+    if (first) return;
+    const controller = new AbortController();
+    tick().then(() => {
+      if (controller.signal.aborted) return;
       main.scrollTop = visit.top;
+      // Settings and detail panels grow as desktop data arrives. A webview clamps
+      // scrollTop to the currently available height, so retry while it grows.
+      if (main.scrollTop + 1 < visit.top) {
+        const observer = new ResizeObserver(() => {
+          main.scrollTop = visit.top;
+          if (main.scrollTop + 1 >= visit.top) controller.abort();
+        });
+        observer.observe(content);
+        const cancel = () => controller.abort();
+        for (const event of ['pointerdown', 'wheel', 'keydown']) {
+          window.addEventListener(event, cancel, { signal: controller.signal, capture: true, passive: true });
+        }
+        controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+      }
       const heading = main.querySelector('h1');
       if (heading && !document.querySelector('dialog[open]')) {
         heading.tabIndex = -1;
         heading.focus({ preventScroll: true });
       }
     });
+    return () => controller.abort();
   });
   function step(where: 'back' | 'forward') {
     const next = where === 'back' ? pages.back() : pages.forward();
@@ -190,6 +208,7 @@
   </nav>
 
   <main bind:this={main}>
+    <div bind:this={content}>
     {#if store.installedDesktop && desktopIdle()}
       {@const installed = store.installedDesktop}
       <div class="restart-banner" data-testid="desktop-restart" role="status">
@@ -296,6 +315,7 @@
         </div>
       {/if}
     {/if}
+    </div>
   </main>
 </div>
 

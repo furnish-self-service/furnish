@@ -264,6 +264,21 @@ const steps = [
     const dark = "//article//span[contains(@class,'collection')]//picture/source[@media='(prefers-color-scheme: dark)'][starts-with(@srcset,'data:image/svg+xml;base64,')]";
     await waitFor('dark-mode avatar on the cards', async () => (await findAll(dark)).length > 0);
   }],
+  ['new destinations open at the top and Back restores the Settings position', async () => {
+    const scrollTop = () => prop('//main', 'scrollTop');
+    await click(nav('Settings'));
+    await click("//a[@href='#about-title']");
+    await waitFor('jump to About', async () => (await scrollTop()) > 0);
+    const previous = await scrollTop();
+    await click(nav('Discover'));
+    await waitFor('new destination starts at its heading', async () => (await scrollTop()) === 0);
+    await wd('POST', s('/execute/sync'), {
+      script: "window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true }))", args: [],
+    });
+    await waitFor('Back restores the scrolled Settings page', async () =>
+      (await text('//h1')) === 'Settings' && Math.abs((await scrollTop()) - previous) <= 1);
+    await click(nav('Discover'));
+  }],
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
   }],
