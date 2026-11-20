@@ -371,6 +371,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.note.package.familyName': "De pakketnaam <code>{name}</code> komt overeen met <code>{selector}</code> in <code>ID_LIKE</code>",
   'plan.note.package.managerName': "De pakketnaam <code>{name}</code> is ingesteld voor pakketbeheerder <code>{selector}</code>",
   'plan.note.package.defaultName': "<code>{name}</code> is de standaardpakketnaam",
+  'plan.note.dir.sync': 'Bestanden in <code>{path}</code> synchroniseren · Toegevoegd {filesAdded}, gewijzigd {filesChanged}, verwijderd {filesRemoved}',
   'plan.note.dir.create': "Maakt de map <code>{path}</code> aan",
   'plan.note.dir.remove': "Verwijdert de lege map <code>{path}</code>",
   'plan.note.dir.keep': "Houdt <code>{path}</code>, omdat de map niet leeg is",

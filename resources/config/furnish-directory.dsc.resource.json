@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/dsc/schemas/v3/bundled/resource/manifest.json",
   "type": "Furnish/Directory",
-  "description": "A folder, with a Unix mode or access only for the user",
+  "description": "A folder, optionally synchronized from the collection",
   "version": "0.1.0",
   "get": {
     "executable": "furnish",
@@ -50,6 +50,10 @@
         "path": {
           "type": "string",
           "description": "The folder's path: absolute or starting with ~/"
+        },
+        "source": {
+          "type": "string",
+          "description": "Folder to copy from the collection. Unrelated local files are kept."
         },
         "mode": {
           "type": "string",

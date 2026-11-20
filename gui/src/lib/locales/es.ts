@@ -371,6 +371,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.note.package.familyName': "El nombre de paquete <code>{name}</code> corresponde a <code>{selector}</code> en <code>ID_LIKE</code>",
   'plan.note.package.managerName': "El nombre de paquete <code>{name}</code> está definido para el gestor <code>{selector}</code>",
   'plan.note.package.defaultName': "<code>{name}</code> es el nombre de paquete predeterminado",
+  'plan.note.dir.sync': 'Sincronizar archivos en <code>{path}</code> · Añadidos {filesAdded}, modificados {filesChanged}, eliminados {filesRemoved}',
   'plan.note.dir.create': "Crea la carpeta <code>{path}</code>",
   'plan.note.dir.remove': "Elimina la carpeta vacía <code>{path}</code>",
   'plan.note.dir.keep': "Conserva <code>{path}</code> porque no está vacía",

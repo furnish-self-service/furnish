@@ -685,7 +685,7 @@ fn source_key(url: &str, tracking: &Tracking) -> String {
     cache_key(serde_json::json!([url, tracking]).to_string().as_bytes())
 }
 
-fn cache_key(input: &[u8]) -> String {
+pub(crate) fn cache_key(input: &[u8]) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use sha2::{Digest, Sha256};
     // Avoid writing a credential-bearing remote URL into the status cache.
@@ -1282,7 +1282,13 @@ impl Collection {
         }
         self.write_revision_file(commit, relative, into)?;
         let earlier = Collection { name: self.name.clone(), dir: into.to_path_buf(), managed: self.managed };
-        for file in earlier.load_app(&into.join(relative))?.missing_installers(values) {
+        let app = earlier.load_app(&into.join(relative))?;
+        for folder in app.directory_sources(values)? {
+            for name in directory_tree(&self.dir, commit, &folder)? {
+                self.write_revision_file(commit, &format!("{folder}/{name}"), into)?;
+            }
+        }
+        for file in app.missing_installers(values) {
             self.write_revision_file(commit, &file, into)?;
         }
         Ok(())
@@ -1444,7 +1450,7 @@ impl Collection {
             }
             let (key, what) = match canonical {
                 Some(&INSTALLER_TYPE) => ("file", "installer"),
-                Some(&FILE_TYPE | &COMMAND_TYPE) => ("source", "source"),
+                Some(&FILE_TYPE | &COMMAND_TYPE | &DIRECTORY_TYPE) => ("source", "source"),
                 Some(kind) => {
                     crate::resources::check(kind, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
                     continue;
@@ -1474,17 +1480,30 @@ impl Collection {
                 if file.chars().any(char::is_control) {
                     bail!("{what} '{}' has control characters in its name", file.escape_debug());
                 }
+                if canonical == Some(&DIRECTORY_TYPE) {
+                    let relative = Path::new(file);
+                    anyhow::ensure!(!file.is_empty() && relative.components().all(|c| matches!(c, Component::Normal(n) if !n.eq_ignore_ascii_case(".git"))),
+                        "source '{file}' must name a folder within the collection");
+                }
                 let outside = || format!("{what} '{file}' is outside the collection");
                 let resolved = match fs::symlink_metadata(self.dir.join(file)) {
                     Ok(_) => self.file_in_repo(file).with_context(outside)?,
                     // Not checked out yet (blobs_on_demand): installing the app checks it out.
                     Err(_) => self.file_in_repo_later(file).with_context(outside)?,
                 };
+                if canonical == Some(&DIRECTORY_TYPE) {
+                    let lexical = self.file_in_repo_later(file).with_context(outside)?;
+                    anyhow::ensure!(same_path(Some(lexical), Some(resolved.clone())), "directory source '{file}' traverses a link");
+                    // The trusted collection root also bounds source reads when a sparse file is missing.
+                    resource["metadata"]["furnishDirectoryRoot"] = plain_path(self.dir.canonicalize()?).to_string_lossy().into_owned().into();
+                    resource["metadata"]["furnishDirectoryOwner"] = format!("{}/{app}", self.name).into();
+                    if let Some(props) = resource["properties"].as_object_mut() { props.remove("_metadata"); }
+                }
                 resource["properties"][key] = resolved.to_string_lossy().into_owned().into();
             } else if !resource["properties"][key].is_null() {
                 bail!("{what} file must be a path in the collection");
             }
-            if matches!(canonical, Some(&FILE_TYPE | &COMMAND_TYPE)) {
+            if matches!(canonical, Some(&FILE_TYPE | &COMMAND_TYPE | &DIRECTORY_TYPE)) {
                 crate::resources::check(&kind, &resource["properties"]).with_context(|| format!("resource '{name}'"))?;
             }
         }
@@ -1522,13 +1541,14 @@ pub const RESOURCE_TYPES: [&str; 9] = [
     PACKAGE_TYPE,
     INSTALLER_TYPE,
     "Furnish/NixOS",
-    "Furnish/Directory",
+    DIRECTORY_TYPE,
     FILE_TYPE,
     BLOCK_TYPE,
     "Furnish/Line",
     "Furnish/Value",
     COMMAND_TYPE,
 ];
+pub(crate) const DIRECTORY_TYPE: &str = "Furnish/Directory";
 const COMMAND_TYPE: &str = "Furnish/Command";
 const FILE_TYPE: &str = "Furnish/File";
 const BLOCK_TYPE: &str = "Furnish/Block";
@@ -1983,6 +2003,25 @@ impl App {
         self.path.strip_prefix(&self.collection_dir).unwrap_or(&self.path).to_string_lossy().into_owned()
     }
 
+    /// Source trees in an historical app are materialized from the same revision as its YAML.
+    fn directory_sources(&self, values: &serde_json::Map<String, Value>) -> Result<Vec<String>> {
+        fn collect(list: &Value, root: &Path, doc: &Value, values: &serde_json::Map<String, Value>, out: &mut Vec<String>) -> Result<()> {
+            for entry in list.as_array().into_iter().flatten() {
+                if entry["condition"].as_str().is_some_and(|c| !crate::conditions::holds_for(doc, c, values).unwrap_or(true)) { continue; }
+                if entry["type"] == DIRECTORY_TYPE && let Some(source) = entry["properties"]["source"].as_str() {
+                    out.push(Path::new(source).strip_prefix(root)?.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"));
+                }
+                collect(&entry["properties"]["resources"], root, doc, values, out)?;
+            }
+            Ok(())
+        }
+        let mut out = Vec::new();
+        let root = plain_path(self.collection_dir.canonicalize()?);
+        collect(&self.doc["resources"], &root, &self.doc, values, &mut out)?;
+        collect(&self.doc["metadata"]["furnish"]["uninstall"], &root, &self.doc, values, &mut out)?;
+        Ok(out)
+    }
+
     /// Installer files (relative to the collection) the resources and removal steps that apply
     /// with these values use and that aren't on disk.
     fn missing_installers(&self, values: &serde_json::Map<String, Value>) -> Vec<String> {
@@ -2410,6 +2449,17 @@ pub fn find_app(query: &str) -> Result<App> {
     }
 }
 
+/// Regular files relative to a Git directory at a particular revision, including blobs left out of a sparse checkout.
+pub(crate) fn directory_tree(repo: &Path, revision: &str, folder: &str) -> Result<Vec<String>> {
+    let spec = format!("{revision}:{folder}");
+    let bytes = git_bytes(Some(repo), &["ls-tree", "-r", "-z", "--end-of-options", &spec])?;
+    std::str::from_utf8(&bytes)?.split_terminator('\0').map(|entry| {
+        let (info, name) = entry.split_once('\t').context("invalid Git tree entry")?;
+        anyhow::ensure!(info.starts_with("100644 blob ") || info.starts_with("100755 blob "), "{folder}/{name} must be a regular file");
+        Ok(name.to_string())
+    }).collect()
+}
+
 /// Installer files, which blobs_on_demand leaves out of the checkout until an app needs one.
 const INSTALLERS: [&str; 6] = ["*.msi", "*.exe", "*.pkg", "*.dmg", "*.deb", "*.rpm"];
 
@@ -2478,7 +2528,7 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&git_bytes(dir, args)?).trim().to_string())
 }
 
-fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
+pub(crate) fn git_bytes(dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>> {
     git_bytes_input(dir, args, None)
 }
 
@@ -2932,6 +2982,28 @@ mod tests {
         }
         let collection = Collection { name: format!("history-test-{}", unique()), dir: dir.clone(), managed: false };
         (collection, dir, commits)
+    }
+
+    #[test]
+    fn directory_source_snapshot_uses_only_files_from_the_chosen_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join("apps")).unwrap();
+        fs::create_dir_all(repo.join("docs/chapter")).unwrap();
+        let app = "resources: [{name: Docs, type: Furnish/Directory, properties: {path: ~/docs, source: docs/}}]";
+        fs::write(repo.join("apps/docs.dsc.yaml"), app).unwrap();
+        fs::write(repo.join("docs/chapter/page"), "original").unwrap();
+        git(Some(&repo), &["init", "-q"]).unwrap();
+        git(Some(&repo), &["add", "."]).unwrap();
+        git(Some(&repo), &["-c","user.name=Test","-c","user.email=test@example.org","-c","commit.gpgsign=false","commit","-qm","docs"]).unwrap();
+        let collection = Collection { name: "team".into(), dir: repo.clone(), managed: false };
+        let commit = collection.head().unwrap();
+        fs::write(repo.join("docs/chapter/page"), "local edit").unwrap();
+        fs::write(repo.join("docs/local-only"), "local").unwrap();
+        let snapshot = tmp.path().join("snapshot");
+        collection.extract(&commit, "apps/docs.dsc.yaml", &serde_json::Map::new(), &snapshot).unwrap();
+        assert_eq!(fs::read(snapshot.join("docs/chapter/page")).unwrap(), b"original");
+        assert!(!snapshot.join("docs/local-only").exists());
     }
 
     #[test]

@@ -369,6 +369,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.note.package.familyName': "Der Paketname <code>{name}</code> wurde über <code>{selector}</code> in <code>ID_LIKE</code> ausgewählt",
   'plan.note.package.managerName': "Der Paketname <code>{name}</code> ist für den Paketmanager <code>{selector}</code> hinterlegt",
   'plan.note.package.defaultName': "<code>{name}</code> ist der Standardpaketname",
+  'plan.note.dir.sync': 'Dateien in <code>{path}</code> abgleichen · Hinzugefügt {filesAdded}, geändert {filesChanged}, entfernt {filesRemoved}',
   'plan.note.dir.create': "Legt den Ordner <code>{path}</code> an",
   'plan.note.dir.remove': "Entfernt den leeren Ordner <code>{path}</code>",
   'plan.note.dir.keep': "Behält <code>{path}</code>, weil der Ordner nicht leer ist",

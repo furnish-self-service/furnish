@@ -371,6 +371,7 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.note.package.familyName': "Il nome del pacchetto <code>{name}</code> corrisponde a <code>{selector}</code> in <code>ID_LIKE</code>",
   'plan.note.package.managerName': "Il nome del pacchetto <code>{name}</code> è definito per il gestore <code>{selector}</code>",
   'plan.note.package.defaultName': "<code>{name}</code> è il nome predefinito del pacchetto",
+  'plan.note.dir.sync': 'Sincronizza i file in <code>{path}</code> · Aggiunti {filesAdded}, modificati {filesChanged}, rimossi {filesRemoved}',
   'plan.note.dir.create': "Crea la cartella <code>{path}</code>",
   'plan.note.dir.remove': "Rimuove la cartella vuota <code>{path}</code>",
   'plan.note.dir.keep': "Mantiene <code>{path}</code> perché non è vuota",
