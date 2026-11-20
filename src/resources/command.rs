@@ -43,6 +43,9 @@ struct Test {
     file: Option<String>,
     /// Lines of the output and of `output` or `file` to leave out of the comparison (a regex).
     ignore_lines: Option<String>,
+    /// Compare occurrences of each line independently of their order.
+    #[serde(default)]
+    ignore_line_order: bool,
     /// A place in the JSON output that must exist, and equal `value` if given.
     json_path: Option<String>,
     value: Option<Value>,
@@ -136,6 +139,9 @@ fn props(v: &Value) -> Result<Props> {
         if test.output.is_some() && test.file.is_some() {
             bail!("{what}.output and {what}.file: use one of them");
         }
+        if test.ignore_line_order && test.output.is_none() && test.file.is_none() {
+            bail!("{what}.ignoreLineOrder needs {what}.output or {what}.file");
+        }
         if let Some(pattern) = &test.ignore_lines {
             if test.output.is_none() && test.file.is_none() {
                 bail!("{what}.ignoreLines needs {what}.output or {what}.file");
@@ -177,9 +183,11 @@ fn passes(test: &Test, input: Option<&Input>, projected: &Value, show_diff: bool
     let ignore = test.ignore_lines.as_deref().map(|p| super::regex(p, "ignoreLines")).transpose()?;
     // A tool may echo the private input or values from its imported copy.
     let shown = |text: &str| if input.is_some() { "•••".to_string() } else { text.to_string() };
+    let normalize = |text: &str| normalized(text, ignore.as_ref(), test.ignore_line_order);
     let compared = match (&test.output, &test.file) {
         (Some(expected), _) => {
-            let ok = normalized(&stdout, ignore.as_ref()) == normalized(expected, ignore.as_ref());
+            let (got, want) = (normalize(&stdout), normalize(expected));
+            let ok = got == want || (test.ignore_line_order && diff::unordered_lines(&got, &want, false).is_none());
             let n = if stdout.trim().is_empty() {
                 note("test.noOutput", json!({ "command": command, "expected": shown(expected.trim()) }))
             } else {
@@ -214,13 +222,20 @@ fn passes(test: &Test, input: Option<&Input>, projected: &Value, show_diff: bool
             match file_text {
                 None => Some((false, note("test.noFile", params))),
                 Some(text) => {
-                    let (got, want) = (normalized(&stdout, ignore.as_ref()), normalized(&text.text, ignore.as_ref()));
-                    if got == want {
-                        Some((true, note("test.file", params)))
+                    let (got, want) = (normalize(&stdout), normalize(&text.text));
+                    let delta = if got == want {
+                        None
+                    } else if test.ignore_line_order {
+                        diff::unordered_lines(&got, &want, !hidden)
                     } else {
+                        Some(diff::lines(&format!("{got}\n"), &format!("{want}\n")))
+                    };
+                    if let Some(delta) = delta {
                         let mut n = note("test.fileDiffers", params);
-                        n.add_diff(Some(diff::lines(&format!("{got}\n"), &format!("{want}\n"))), hidden);
+                        n.add_diff(Some(delta), hidden);
                         Some((false, n))
+                    } else {
+                        Some((true, note("test.file", params)))
                     }
                 }
             }
@@ -261,9 +276,11 @@ fn passes(test: &Test, input: Option<&Input>, projected: &Value, show_diff: bool
 
 /// A text as the tests compare it: Windows line ends as `\n`, white space at the end of each
 /// line and blank lines at the start and end left out, and the lines that `ignore` matches.
-fn normalized(text: &str, ignore: Option<&regex::Regex>) -> String {
+fn normalized(text: &str, ignore: Option<&regex::Regex>, unordered: bool) -> String {
     let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| ignore.is_none_or(|re| !re.is_match(l))).collect();
-    lines.join("\n").trim().to_string()
+    let joined = lines.join("\n");
+    // Indentation on a nonblank line must compare the same wherever the tool moves it.
+    if unordered { joined.trim_matches('\n') } else { joined.trim() }.to_string()
 }
 
 /// At most one line of 120 characters, for showing output.
@@ -484,6 +501,34 @@ mod tests {
         assert!(check(&props).is_err());
     }
 
+    #[test]
+    fn reordered_imports_match_and_the_preview_counts_only_unmatched_copies() {
+        let mut p = json!({
+            "content": "# profile\nclient\nremote example\nremote example\n<ca>\ncertificate\n</ca>\n",
+            "test": {"command": ["printf", "<ca>\ncertificate\n</ca>\n\nremote example  \r\nclient\nremote example\n"],
+                "file": "%s", "ignoreLines": "^(#|$)"}, "set": ["false"]
+        });
+        assert!(evaluate(&p).unwrap().apply.is_some());
+        p["test"]["ignoreLineOrder"] = true.into();
+        assert!(evaluate(&p).unwrap().apply.is_none());
+
+        p["test"]["command"][1] = "client\nextra\n<ca>\ncertificate\n</ca>\nremote example\n".into();
+        p["present"] = json!({"command": ["printf", "b\na"], "output": "a\nb", "ignoreLineOrder": true});
+        let plan = evaluate(&p).unwrap();
+        assert!(plan.apply.is_some());
+        assert_eq!(plan.state["_exist"], true);
+        let hidden = &plan.steps[0].params;
+        assert_eq!(hidden["removed"], 1);
+        assert_eq!(hidden["added"], 1);
+        assert_eq!(hidden["hidden"], true);
+        assert!(!hidden.contains_key("diff"));
+        p["showDiff"] = true.into();
+        let shown = evaluate(&p).unwrap();
+        let hunks = shown.steps[0].params["diff"]["hunks"].as_array().unwrap();
+        let lines: Vec<_> = hunks.iter().flat_map(|h| h["lines"].as_array().unwrap()).collect();
+        assert_eq!(lines, vec!["-extra", "+remote example"]);
+    }
+
     fn marker_exists(path: &str) -> bool {
         std::path::Path::new(path).exists()
     }
@@ -639,6 +684,7 @@ mod tests {
         let test = |t: Value| check(&json!({"test": t, "set": ["x"]}));
         assert!(test(json!({"command": ["x"], "file": "~/a", "output": "b"})).is_err());
         assert!(test(json!({"command": ["x"], "ignoreLines": "^#"})).is_err());
+        assert!(test(json!({"command": ["x"], "ignoreLineOrder": true})).is_err());
         assert!(test(json!({"command": ["x"], "file": "~/a", "ignoreLines": "("})).is_err());
         assert!(test(json!({"command": ["x"], "output": "a", "ignoreLines": "^#"})).is_ok());
     }
@@ -646,8 +692,8 @@ mod tests {
     #[test]
     fn normalizing_ignores_line_ends_trailing_spaces_and_ignored_lines() {
         let re = regex::Regex::new("^(#|$)").unwrap();
-        assert_eq!(normalized("\r\n a  \r\n\r\n# x\r\nb\r\n\r\n", Some(&re)), "a\nb");
-        assert_eq!(normalized("  a \n\n b\n", None), "a\n\n b");
+        assert_eq!(normalized("\r\n a  \r\n\r\n# x\r\nb\r\n\r\n", Some(&re), false), "a\nb");
+        assert_eq!(normalized("  a \n\n b\n", None, false), "a\n\n b");
     }
 
     #[test]

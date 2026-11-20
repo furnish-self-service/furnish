@@ -8,7 +8,7 @@
 //! that the old text, the new text or both end there without a line break, like git's
 //! "\ No newline at end of file"; it isn't a line of the file.
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use serde_json::{Value, json};
 use similar::{ChangeTag, TextDiff};
@@ -96,6 +96,41 @@ pub fn lines(old: &str, new: &str) -> Diff {
         }
     }
     out
+}
+
+/// Compare normalized lines as a multiset. Keep the original line numbers for
+/// the preview, and match each occurrence on the opposite side at most once.
+/// Returns `None` when the counts agree.
+pub fn unordered_lines(old: &str, new: &str, show_lines: bool) -> Option<Diff> {
+    let mut out = Diff::default();
+    for (side, opposite, sign) in [(old, new, '-'), (new, old, '+')] {
+        let mut remaining = HashMap::new();
+        for line in opposite.lines() {
+            *remaining.entry(line).or_insert(0usize) += 1;
+        }
+        let mut previous = None;
+        for (i, line) in side.lines().enumerate() {
+            if let Some(count) = remaining.get_mut(line)
+                && *count > 0
+            {
+                *count -= 1;
+                continue;
+            }
+            if sign == '-' { out.removed += 1 } else { out.added += 1 }
+            if !show_lines { continue; }
+            if out.added + out.removed > MAX_LINES {
+                out.more += 1;
+                continue;
+            }
+            if previous != Some(i) {
+                let (old, new) = if sign == '-' { (i + 1, 1) } else { (1, i + 1) };
+                out.hunks.push(Hunk { old, new, lines: vec![] });
+            }
+            out.hunks.last_mut().unwrap().lines.push(format!("{sign}{}", cut(line)));
+            previous = Some(i + 1);
+        }
+    }
+    (out.added != 0 || out.removed != 0).then_some(out)
 }
 
 /// The diff of a file's bytes, `None` if either side isn't text (binary or another encoding).

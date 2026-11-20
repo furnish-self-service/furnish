@@ -612,9 +612,11 @@ An app whose steps are all kept still tests as installed after uninstalling, so 
 
 Many tools keep their own copy of a file the app writes, and the test is whether that copy still matches the file. `file` compares the output with the file's content instead of a fixed text. The path is absolute or starts with `~/`. `ignoreLines`, a regular expression, leaves out the lines it matches, in the output and in the file (or in `output`). furnish also ignores Windows line ends, spaces at the end of a line, and blank lines at the start and end, so this works the same on Windows, macOS and Linux, without a shell. The steps preview names the command and the file, and if they differ, it shows the differing lines as for a file change, or only how many if only the file's owner may read it. A file that the account checking the app's status may not read counts as matching, as with the file resources.
 
+Set `ignoreLineOrder: true` on `test` or `present` when the tool reorders lines and their order is immaterial. With either `file` or `output`, Furnish filters `ignoreLines` first and then compares how often each remaining line occurs. The file diff shows only excess or missing occurrences. Leave this option off for order-sensitive input, including ordered rules and structured data where moving a line between blocks changes its meaning.
+
 When a tool keeps its own copy, give the Command step a collection file with `source` or inline text with `content`. A command argument written as `'%s'` receives the path of a private temporary file. The file exists only while that command runs. A source file keeps its filename and extension. For `test.file` or `present.file`, `'%s'` compares the command's output directly with the supplied input. Only the tool's own copy determines whether the step is installed.
 
-For example, openvpn3 drops comment lines and adds blank lines when it exports a profile. This step recognizes a matching profile even if someone imported it by hand:
+For this example, the profile uses an inline `<auth-user-pass>` block. Its separate bare `auth-user-pass` directive is redundant and disappears on export, so the filter below ignores that exact directive along with comments and blank lines. For profiles that rely on the bare directive, keep it in the comparison.
 
 ```yaml
 - name: VPN profile in openvpn3
@@ -624,7 +626,8 @@ For example, openvpn3 drops comment lines and adds blank lines when it exports a
     test:
       command: [openvpn3, config-dump, --config, Acme]
       file: '%s'
-      ignoreLines: '^(#|$)'
+      ignoreLines: '^(#|$|auth-user-pass$)'
+      ignoreLineOrder: true
     present: { command: [openvpn3, config-manage, --config, Acme, --show] }
     set: [openvpn3, config-import, --config, '%s', --name, Acme, --persistent]
 ```
