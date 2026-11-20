@@ -32,10 +32,20 @@ function valid(v: unknown): v is AppCheck {
     && (v.external === null || external(v.external)) && (v.required === null || required(v.required));
 }
 
-export interface SavedCheck {
+interface SavedCheck {
   check: AppCheck;
   /** Older cache records predate this field. */
   checkedAt: number | null;
+}
+
+/** A changed or unknown revision can restore Installed membership, but its plan details are stale. */
+export function restoreCheck(entry: unknown, revision: string | undefined): { installed: boolean; saved?: SavedCheck } | undefined {
+  if (!object(entry) || !valid(entry.check)) return;
+  const installed = entry.check.status === 'installed' || entry.check.status === 'needsUpdate';
+  const time = entry.checkedAt;
+  const checkedAt = typeof time === 'number' && Number.isSafeInteger(time) && time > 0 && time <= 8.64e15 ? time : null;
+  const saved = revision && revision !== 'unknown' && revision === entry.revision ? { check: entry.check, checkedAt } : undefined;
+  return { installed, saved };
 }
 
 export class StatusCache {
@@ -45,16 +55,10 @@ export class StatusCache {
     this.prefix = 'furnish.appStatus.v1:' + JSON.stringify(dataDir) + ':';
   }
 
-  read(key: string, revision: string): SavedCheck | undefined {
+  entry(key: string): unknown {
     try {
       const raw = localStorage.getItem(this.prefix + key);
-      if (raw === null) return;
-      const entry = JSON.parse(raw);
-      if (entry?.revision === revision && valid(entry.check)) {
-        const time = entry.checkedAt;
-        const checkedAt = Number.isSafeInteger(time) && time > 0 && time <= 8.64e15 ? time : null;
-        return { check: entry.check, checkedAt };
-      }
+      if (raw !== null) return JSON.parse(raw);
     } catch { /* Unavailable storage or an incomplete entry: use the live check. */ }
   }
 

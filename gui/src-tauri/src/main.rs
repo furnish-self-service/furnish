@@ -36,6 +36,7 @@ struct AppInfo {
     key: String,
     id: String,
     collection: String,
+    cached_check: Option<serde_json::Value>,
     /// The name to show (`metadata.furnish.name`), if other than the id.
     name: Option<String>,
     description: String,
@@ -217,7 +218,8 @@ fn app_info(app: &App) -> AppInfo {
         .map(|r| ResourceInfo { name: r["name"].as_str().unwrap_or_default().to_string() })
         .collect();
     AppInfo {
-        key: format!("{}/{}", app.collection, app.id),
+        key: app.key(),
+        cached_check: app.cached_check(),
         id: app.id.clone(),
         collection: app.collection.clone(),
         name: app.name.clone(),
@@ -323,8 +325,13 @@ async fn list_kits() -> CmdResult<Vec<KitInfo>> {
 }
 
 #[tauri::command]
-async fn app_status(key: String) -> CmdResult<engine::Check> {
-    blocking(move || catalog::find_app(&key)?.check()).await
+async fn app_status(key: String, revision: Option<String>) -> CmdResult<engine::Check> {
+    blocking(move || {
+        let app = catalog::find_app(&key)?;
+        let check = app.check()?;
+        app.remember_check(revision.as_deref(), &check);
+        Ok(check)
+    }).await
 }
 
 /// A step progress event for the UI, tagged with the app it belongs to.
