@@ -27,7 +27,7 @@
   <footer>
     {#if status.installed}
       <span class="state" class:installed={status.complete} class:partial={!status.complete}>
-        {t('kit.partlyInstalled', { n: status.installed, total: status.applicable })}
+        <span>{t('kit.partlyInstalled', { n: status.installed, total: status.applicable })}</span>
         {#if status.complete && status.installed < status.applicable}
           <small>{t('kit.optionalRemaining')}</small>
         {/if}
