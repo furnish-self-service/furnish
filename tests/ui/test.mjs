@@ -932,6 +932,13 @@ const steps = [
     const info = JSON.parse(inContainer(['/usr/local/bin/furnish-gui', '--build-info']));
     const expected = process.env.FURNISH_TEST_RUNNING_VERSION ?? info.version;
     await waitFor('running release version', async () => (await text("//*[@id='version']")) === `furnish ${expected}`);
+    const changelog = "//*[@id='changelog']";
+    await click(`${changelog}/summary[normalize-space()='Changelog']`);
+    await waitFor('release notes inside About', async () => {
+      const notes = await text(changelog);
+      return notes.includes('0.1.0-alpha.399') && notes.includes('Kit counts') && notes.includes('0.1.0-alpha.394');
+    });
+    await click(`${changelog}/summary`);
     await click("//*[@id='build-details']/summary");
     if (await text("//*[@id='build-target']") !== info.target) throw new Error('About shows the wrong build target');
     if (info.revision && await text("//*[@id='build-revision']") !== info.revision) throw new Error('About shows the wrong source commit');
@@ -966,6 +973,8 @@ const steps = [
     await click("//select[@id='language']/option[@value='de']");
     await waitFor('German saved', () => log('data/settings.json').includes('"language": "de"'));
     await waitFor('German Settings page', async () => (await text('//h1')) === 'Einstellungen');
+    await click("//*[@id='changelog']/summary[normalize-space()='Änderungsprotokoll']");
+    await waitFor('release notes in German', async () => (await text("//*[@id='changelog']")).includes('Kits zählen nur Apps'));
     await find(button('Jetzt prüfen'));
     await click(button('Entdecken'));
     await waitFor('German Discover page', async () => (await text('//h1')) === 'Entdecken');

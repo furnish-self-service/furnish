@@ -2,6 +2,7 @@
   // Everything furnish does on its own and how it looks: startup, updates, language, reports,
   // and what it is. One section per topic, one idea per row: what it does on the left, the
   // control on the right. Settings the admin policy locks stay visible, not editable.
+  import Changelog from './Changelog.svelte';
   import * as api from './api';
   import { store, changeSettings, checkForUpdates, checkSelfUpdate, restartToUpdate, toast, isLocked } from './state.svelte';
   import { t, parts, tparts, formatTime, lang } from './i18n.svelte';
@@ -545,6 +546,7 @@
         <span class="text"><span class="label">{t('settings.version')}</span></span>
         <span class="control value" id="version">{build ? `furnish ${build.version}` : '…'}</span>
       </li>
+      <li><Changelog /></li>
       {#if build}
         <li class="build-info">
           <details id="build-details">
