@@ -109,7 +109,7 @@
               />
               <AppIcon {app} size={36} />
               <span class="text">
-                <span class="name">{appName(app)}{#if !item.required} <small>· {t('common.optional')}</small>{/if}</span>
+                <span><span class="name">{appName(app)}</span>{#if !item.required} <small>· {t('common.optional')}</small>{/if}</span>
                 <span class="desc">{appDescription(app)}</span>
               </span>
             </label>
@@ -178,7 +178,7 @@
 </section>
 
 <style>
-  .name small { font-weight: 400; color: var(--muted); }
+  .text small { font-weight: 400; color: var(--muted); }
   .detail {
     max-width: 52rem;
   }
