@@ -60,11 +60,21 @@ Resource steps and dependencies can use the DSC variable `variables('furnish.hos
 
 | Field | Value |
 |---|---|
+| `documentsDir` | Documents folder for the account installing the app. Uses the configured XDG Documents directory on Linux (defaults to `~/Documents`), the Documents known folder on Windows (including OneDrive redirection), and `~/Documents` on macOS |
 | `distribution` | Linux distribution ID from `os-release`, such as `fedora`, or an empty string when unavailable |
 | `distributionLike` | Ordered list of Linux distribution IDs from `ID_LIKE`, or an empty list when unavailable |
 | `packageManagers` | List of supported package managers available to the account running Furnish |
 | `nixSetup.system` | Boolean. The NixOS configuration is ready to accept apps through Furnish's module |
 | `nixSetup.home` | Boolean. The requesting person's Home Manager configuration is ready to accept apps through Furnish's standalone or NixOS-integrated module |
+
+For a personal app, set `metadata.furnish.perUser: true`. To let the person override a location inside their documents folder, give the app a string parameter:
+
+```yaml
+parameters:
+  location:
+    type: string
+    defaultValue: "[concat(variables('furnish.host').documentsDir, '/Team docs')]"
+```
 
 Both setup fields are `false` on Windows. On macOS only the home destination can be configured. Installing Nix or Home Manager alone leaves the corresponding field `false`. Each field describes readiness independently of the preferred install destination.
 
@@ -957,6 +967,8 @@ profiles:
 The report lists each active dependency, the install steps in execution order, the package selection and the condition behind each skip. Active dependencies include optional dependencies users can select. An applicable package step lists a missing prerequisite when its manager is absent from the profile. A preceding dependency may supply it during installation. Omit `expect` to inspect the decisions first. Each field you include checks the entire list or package map for that app. An empty list asserts that no entries apply. A mismatch prints the expected and actual values and exits with status 1. Defaults come from the collection and app documents. Supply option values for the choices you want to exercise.
 
 The family preview reports a dependency cycle as an error when its conditions hold together on one system. A cycle that depends on unresolved host facts produces a warning. Profiles check the graph again with their concrete facts and options. Profile assertions cover install-time selection. A condition or package expression that needs a live machine fact outside the profile, such as an environment variable, produces a diagnostic.
+
+Profiles that use `documentsDir` can supply a target path such as `documentsDir: /home/alice/Dokumente`. The check evaluates the app with that path independently of the computer running it.
 
 A profile assumes a fresh target with no configured Furnish NixOS or Home Manager module. A `Furnish/NixOS` step with `onlyIfSetUp: true` appears in `skipped` by default, including when `nix` is present in `packageManagers`. To test a machine with a configured destination, include `nix` in `packageManagers` and declare the ready destinations:
 

@@ -27,6 +27,13 @@ fn host_facts_gate_dependencies_steps_and_resource_properties() {
                 file("from-app", "[parameters('enable')]", &format!("[concat('distro=', {host}.distribution)]"))]
         }),
     );
+    let documents = |name: &str| install(name, json!({
+        "metadata":{"furnish":{"perUser":true}},
+        "parameters":{"location":{"type":"string","defaultValue":format!("[concat({host}.documentsDir, '/Team docs')]")}},
+        "resources":[file(name, &present, "[parameters('location')]")]
+    }));
+    documents("documents");
+    documents("other-documents");
     let git = |args: &[&str]| {
         assert!(
             Command::new("git")
@@ -48,6 +55,7 @@ fn host_facts_gate_dependencies_steps_and_resource_properties() {
             .env("FURNISH_SYSTEM_DIR", root.join("system"))
             .env("FURNISH_POLICY_FILE", root.join("policy.json"))
             .env("HOME", root)
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
             .output()
             .unwrap();
         let output = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
@@ -60,6 +68,27 @@ fn host_facts_gate_dependencies_steps_and_resource_properties() {
     assert_eq!(fs::read_to_string(root.join("from-dependency")).unwrap(), "dependency");
     assert!(fs::read_to_string(root.join("from-app")).unwrap().starts_with("distro="));
     assert!(!root.join("excluded").exists());
+
+    // Keep writes in the fixture even when Windows redirects the actual known folder to OneDrive.
+    #[cfg(target_os = "linux")]
+    let expected = {
+        furnish(&["install", "test/documents"], true);
+        assert_eq!(fs::read_to_string(root.join("documents")).unwrap(), format!("{}/Team docs", root.join("Documents").display()));
+        fs::create_dir_all(root.join("xdg")).unwrap();
+        fs::write(root.join("xdg/user-dirs.dirs"), "XDG_DOCUMENTS_DIR=\"$HOME/Mes documents\"\n").unwrap();
+        root.join("Mes documents")
+    };
+    #[cfg(target_os = "macos")]
+    let expected = root.join("Documents");
+    #[cfg(windows)]
+    let expected = dirs::document_dir().expect("Documents known folder");
+    furnish(&["install", "test/other-documents"], true);
+    assert_eq!(fs::read_to_string(root.join("other-documents")).unwrap(), format!("{}/Team docs", expected.display()));
+    #[cfg(target_os = "linux")]
+    furnish(&["uninstall", "test/documents"], true);
+    furnish(&["option", "set", "test/documents", "location", "My override"], true);
+    furnish(&["install", "test/documents"], true);
+    assert_eq!(fs::read_to_string(root.join("documents")).unwrap(), "My override");
 
     install("fedora", json!({"resources":[file("fedora-only", &format!("[equals({host}.distribution, 'fedora')]"), "fedora")]}));
     let path = repo.to_str().unwrap();
