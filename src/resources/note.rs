@@ -41,6 +41,7 @@ impl Note {
             "package.familyName" => format!("Package name {} matches {} in ID_LIKE", s("name"), s("selector")),
             "package.managerName" => format!("Package name {} comes from the mapping for {}", s("name"), s("selector")),
             "package.defaultName" => format!("{} is the default package name", s("name")),
+            "dir.sync" => format!("Synchronize files in {} (added: {}, changed: {}, removed: {})", s("path"), s("filesAdded"), s("filesChanged"), s("filesRemoved")),
             "dir.create" => format!("Create the folder {}", s("path")),
             "dir.remove" => format!("Remove the empty folder {}", s("path")),
             "dir.keep" => format!("Keep {}: it isn't empty", s("path")),

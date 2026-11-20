@@ -204,6 +204,9 @@ fn paths(source: &Value, verify_checkout: bool) -> Result<BTreeMap<String, Scrip
 pub(crate) fn stamp(doc: &mut Value) {
     fn visit(resources: &mut Value, source: &Value, service_profile: bool) {
         for r in resources.as_array_mut().into_iter().flatten() {
+            if r["type"] == catalog::DIRECTORY_TYPE && r["properties"]["source"].is_string() {
+                r["metadata"]["furnishDirectorySystem"] = service_profile.into();
+            }
             if r["type"].as_str().is_some_and(|t| t.eq_ignore_ascii_case(catalog::PACKAGE_TYPE)) {
                 if let Some(props) = r["properties"].as_object_mut() {
                     props.remove("_metadata");

@@ -397,12 +397,13 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         for (is_error, message) in crate::required::check(&name, kind, &r["properties"]) {
             findings.push(if is_error { error(message) } else { warning(message) });
         }
-        if matches!(kind, "Furnish/File" | "Furnish/Command")
+        if matches!(kind, "Furnish/File" | "Furnish/Command" | "Furnish/Directory")
             && let Some(source) = r["properties"]["source"].as_str()
         {
             // load_app made the path absolute; it may not be checked out (blobs_on_demand).
             let path = PathBuf::from(source);
-            if !path.is_file() && !in_repository(dir, &path) {
+            let present = if kind == "Furnish/Directory" { path.is_dir() } else { path.is_file() };
+            if !present && (path.exists() || !in_repository(dir, &path)) {
                 findings.push(error(format!("{name}: {} is not in the collection", relative(dir, &path))));
             }
         }

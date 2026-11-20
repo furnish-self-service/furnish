@@ -229,7 +229,7 @@ impl Declared {
     fn uses(&self, changed: &BTreeSet<String>) -> bool {
         let field = if self.kind.eq_ignore_ascii_case(super::INSTALLER_TYPE) {
             "file"
-        } else if [super::FILE_TYPE, super::COMMAND_TYPE].iter().any(|kind| self.kind.eq_ignore_ascii_case(kind)) {
+        } else if [super::FILE_TYPE, super::COMMAND_TYPE, super::DIRECTORY_TYPE].iter().any(|kind| self.kind.eq_ignore_ascii_case(kind)) {
             "source"
         } else {
             return false;
@@ -239,6 +239,10 @@ impl Declared {
         };
         let path: std::path::PathBuf = std::path::Path::new(source).components().collect();
         let normalized = path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        if self.kind.eq_ignore_ascii_case(super::DIRECTORY_TYPE) {
+            let prefix = format!("{normalized}/");
+            return changed.iter().any(|path| path.starts_with(&prefix));
+        }
         changed.contains(&normalized)
     }
 }
@@ -330,6 +334,14 @@ metadata:
             ("Configure › Tool", false, Change::Changed)
         );
         assert_eq!((changes[1].name.as_str(), changes[1].removal, changes[1].change), ("Tool", true, Change::Changed));
+    }
+
+    #[test]
+    fn directory_source_matches_descendants_only() {
+        let doc = b"resources: [{name: Docs, type: Furnish/Directory, properties: {source: docs/offline/}}]";
+        let steps = declarations(doc).unwrap();
+        assert!(steps[0].uses(&["docs/offline/chapter/index.html".to_owned()].into()));
+        assert!(!steps[0].uses(&["docs/offline-old/index.html".to_owned()].into()));
     }
 
     #[test]

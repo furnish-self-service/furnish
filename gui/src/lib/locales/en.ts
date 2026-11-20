@@ -368,6 +368,7 @@ export const en = {
   'plan.note.package.familyName': "Package name <code>{name}</code> matches <code>{selector}</code> in <code>ID_LIKE</code>",
   'plan.note.package.managerName': "Package name <code>{name}</code> comes from the mapping for <code>{selector}</code>",
   'plan.note.package.defaultName': "<code>{name}</code> is the default package name",
+  'plan.note.dir.sync': 'Synchronize files in <code>{path}</code> · Added {filesAdded}, changed {filesChanged}, removed {filesRemoved}',
   'plan.note.dir.create': "Creates the folder <code>{path}</code>",
   'plan.note.dir.remove': "Removes the empty folder <code>{path}</code>",
   'plan.note.dir.keep': "Keeps <code>{path}</code> because it isn’t empty",

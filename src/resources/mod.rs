@@ -9,6 +9,7 @@
 
 pub(crate) mod closed_apps;
 mod command;
+mod directory_copy;
 pub(crate) mod common;
 pub(crate) mod mise;
 pub mod diff;
@@ -340,6 +341,7 @@ fn exist(e: Option<bool>) -> bool {
 #[serde(deny_unknown_fields)]
 struct DirectoryProps {
     path: String,
+    source: Option<String>,
     mode: Option<String>,
     private: Option<bool>,
     #[serde(rename = "_exist")]
@@ -384,6 +386,9 @@ fn permissions(plan: &mut Plan, path: &Path, shown: &str, mode: Option<u32>, pri
 fn directory(props: &Value) -> Result<Plan> {
     let p: DirectoryProps = parse(props)?;
     p.check()?;
+    if let Some(source) = &p.source {
+        return directory_copy::plan(props, &p, Path::new(source));
+    }
     let mut plan = Plan::new(props);
     let path = common::expand(&p.path)?;
     let mode = p.mode.as_deref().map(common::parse_mode).transpose()?;
