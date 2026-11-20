@@ -1,7 +1,7 @@
 import { pausedBranch } from './install-queue.ts';
 // The desktop's recent operations. Only these summary fields go to disk: commands,
 // command output, errors and configuration diffs stay in the running webview.
-import type { LogLine, Outcome, Progress, Step, Trigger } from './api';
+import type { Action, LogLine, Outcome, Progress, Step, Trigger } from './api';
 
 import type { Queued } from './install-queue';
 
@@ -70,6 +70,16 @@ export function recordProgress(run: Run, p: Progress) {
   row.outcome = p.outcome;
 }
 
+/** Only display metadata survives restart. Free-form details and output stay in memory. */
+export interface SavedStep {
+  name: string;
+  state: RunStep['state'];
+  type?: string;
+  action?: Action;
+  outcome?: Action;
+  durationMs?: number;
+}
+
 export interface Summary {
   id: string;
   key: string;
@@ -83,7 +93,7 @@ export interface Summary {
   collectionRevision?: string;
   action?: Queued['action'];
   commit?: string;
-  steps?: { name: string; state: RunStep['state'] }[];
+  steps?: SavedStep[];
   requiresNewSession?: boolean;
   fallbackDate: string | null;
 }
@@ -121,13 +131,19 @@ export function completedActivity(key: string, run: Run, logs: LogLine[]): Recen
       failure: run.result === 'failed' ? failureReason(run, failed) : undefined,
       collectionRevision: isRevision(run.collectionRevision) ? run.collectionRevision : undefined,
       action: run.action, commit: isRevision(run.commit) ? run.commit : undefined,
-      steps: run.steps.map(row => ({ name: row.step.name, state: row.state === 'pending' ? 'notRun' : row.state })),
+      steps: run.steps.map(row => ({
+        name: row.step.name, type: row.step.type, action: row.step.action,
+        state: row.state === 'pending' ? 'notRun' : row.state,
+        outcome: row.outcome?.action, durationMs: row.durationMs,
+      })),
       requiresNewSession: (run.result === 'done' || run.result === 'fallback') && run.requiresNewSession || undefined,
       fallbackDate: run.fallbackDate ?? null,
     },
     details: { run, logs },
   };
 }
+
+const actions: Action[] = ['install', 'change', 'remove', 'nothing', 'skipped'];
 
 function isSummary(v: unknown): v is Summary {
   if (!v || typeof v !== 'object') return false;
@@ -142,6 +158,10 @@ function isSummary(v: unknown): v is Summary {
     && (s.commit === undefined || isRevision(s.commit))
     && (s.action === undefined || ['install', 'reinstall', 'uninstall', 'installVersion', 'installCurrent', 'installPrevious'].some(action => action === s.action))
     && (s.steps === undefined || (Array.isArray(s.steps) && s.steps.every(step => step && typeof step.name === 'string'
+      && (step.type === undefined || typeof step.type === 'string')
+      && (step.action === undefined || actions.includes(step.action))
+      && (step.outcome === undefined || actions.includes(step.outcome))
+      && (step.durationMs === undefined || (Number.isSafeInteger(step.durationMs) && step.durationMs >= 0))
       && ['pending', 'running', 'done', 'failed', 'skipped', 'cancelled', 'notRun'].includes(step.state))))
     && (s.failedStep === null || typeof s.failedStep === 'string')
     && (s.requiresNewSession === undefined || typeof s.requiresNewSession === 'boolean')

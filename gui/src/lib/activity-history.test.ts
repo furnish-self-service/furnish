@@ -45,16 +45,21 @@ test('recent history is bounded and profile-specific, with only summary fields s
   const entry = completedActivity('work/vpn', run, [{ level: 'output', message: 'private stdout' }]);
   assert.deepEqual(entry.details?.run.steps, run.steps);
   writeHistory('/first', Array.from({ length: historyLimit + 2 }, (_, i) => ({ ...entry, summary: { ...entry.summary, id: String(i) } })));
-  assert.doesNotMatch([...files.values()][0], /private|Furnish\/Command/);
+  assert.doesNotMatch([...files.values()][0], /private/);
   const restored = readHistory('/first');
   assert.equal(restored.length, historyLimit);
   assert.ok(!isGroup(restored[0]));
   assert.equal(restored[0].summary.failedStep, 'Configure VPN');
   assert.equal(restored[0].summary.collectionRevision, '123abcd');
-  assert.deepEqual(restored[0].summary.steps, [{ name: 'Configure VPN', state: 'failed' }]);
+  assert.deepEqual(restored[0].summary.steps, [{ name: 'Configure VPN', type: 'Furnish/Command', action: 'change', state: 'failed', outcome: 'change', durationMs: 5 }]);
   assert.equal(restored[0].summary.failure, 'step');
   assert.equal(restored[0].details, undefined);
   assert.deepEqual(readHistory('/second'), []);
+  const oldStep = { name: 'Legacy VPN step', state: 'done' };
+  files.set([...files.keys()][0], JSON.stringify([{ ...entry.summary, steps: [oldStep] }]));
+  const [legacy] = readHistory('/first');
+  assert.ok(!isGroup(legacy));
+  assert.deepEqual(legacy.summary.steps, [oldStep]);
   files.set([...files.keys()][0], '{');
   assert.deepEqual(readHistory('/first'), []);
 });
@@ -145,7 +150,7 @@ test('update groups retain their identity, skipped updates and redacted package 
       { key: 'work/old', name: 'Old', selected: true, state: 'skipped', attempts: [] },
     ],
   }]);
-  assert.doesNotMatch(raw, /sensitive|script output|arguments|Furnish\/Package/);
+  assert.doesNotMatch(raw, /sensitive|script output|arguments/);
   const [group] = readHistory('work');
   assert.ok(isGroup(group));
   assert.equal(group.kind, 'updates');
