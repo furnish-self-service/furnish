@@ -115,6 +115,21 @@ resources:
     type: Furnish/File
     properties: { path: ~/.tool, content: tool }
 YAML
+cat > /srv/org/apps/team-docs.dsc.yaml <<'YAML'
+metadata:
+  furnish:
+    perUser: true
+parameters:
+  location:
+    type: string
+    defaultValue: "[concat(variables('furnish.host').documentsDir, '/Team docs')]"
+resources:
+  - name: Team notes
+    type: Furnish/File
+    properties:
+      path: "[concat(parameters('location'), '/notes')]"
+      content: Welcome
+YAML
 cat > /srv/org/apps/guarded.dsc.yaml <<'YAML'
 resources:
   - name: First step
@@ -269,6 +284,19 @@ properties='{"name":"tool","packages":[],"options":{},"homeOptions":{},"onlyIfSe
 fingerprint=$(printf %s "$properties" | openssl dgst -sha256 -binary | base64)
 scoped remove-module true "$fingerprint" | grep -q '"done"' || fail "refused a matching removal"
 raw '{"uninstall":{"app":"org/mixed"}}' | grep -q "without the service" || fail "accepted an entire per-user removal"
+
+echo "== a preset personal app uses the installing user's documents folder"
+as alice mkdir -p /home/alice/.config
+as alice tee /home/alice/.config/user-dirs.dirs >/dev/null <<'XDG'
+XDG_DOCUMENTS_DIR="$HOME/Dokumente"
+XDG
+as alice furnish install org/team-docs || fail "could not install the personal documents app"
+notes='/home/alice/Dokumente/Team docs/notes'
+[ "$(cat "$notes")" = Welcome ] && [ "$(stat -c %U "$notes")" = alice ] || fail "wrong documents folder or account"
+as alice furnish uninstall org/team-docs || fail "could not remove the personal documents app"
+as alice furnish option set org/team-docs location /home/alice/Alternative || fail "could not change the documents option"
+as alice furnish install org/team-docs || fail "could not install with the chosen folder"
+[ -f /home/alice/Alternative/notes ] || fail "the personal documents app ignored the chosen folder"
 
 echo "== per-user installs run as the user; their dependencies go through the service"
 as alice furnish option set org/cli-tool userInstall true >/dev/null

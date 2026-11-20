@@ -391,7 +391,7 @@ jobs:
         with:
           shared-key: release
       - run: cargo build --release
-      - run: cargo test --release --locked --test cli_pipe --test installer_external --test closed_app_settings
+      - run: cargo test --release --locked --test cli_pipe --test installer_external --test closed_app_settings --test host_conditions
       - if: runner.os == 'Windows'
         run: cargo test --release --locked --lib -- package_names::tests resources::mise
       - if: runner.os == 'Windows'

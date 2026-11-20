@@ -33,6 +33,7 @@ struct Profile {
     package_managers: Vec<String>,
     #[serde(default)]
     nix_setup: NixSetup,
+    documents_dir: Option<String>,
     #[serde(default)]
     options: Map<String, Value>,
     #[serde(default)]
@@ -133,7 +134,7 @@ impl Profile {
         ensure!(native == ordered_native, "native package managers must follow Furnish priority: {}", ordered_native.join(", "));
         scripted.sort();
         let managers: Vec<_> = native.iter().chain(&scripted).collect();
-        let host = host_facts(&distro, &managers, self.nix_setup);
+        let host = host_facts(&distro, &managers, self.nix_setup, self.documents_dir.as_deref());
         let target = Target { family, host, distro, native, scripted, nix_setup: self.nix_setup };
         let mut graph = Graph::default();
         for app in apps {

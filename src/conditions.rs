@@ -8,21 +8,32 @@ use dsc_lib::{
     parser::Statement,
 };
 use serde_json::{Map, Value, json};
+use std::path::Path;
 
 use crate::{nixos_apps::NixSetup, platform::Distribution};
 
 pub(crate) const HOST: &str = "furnish.host";
 
-pub(crate) fn host_facts(distro: &Distribution, managers: &[impl serde::Serialize], nix_setup: NixSetup) -> Value {
-    json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": managers, "nixSetup": nix_setup})
+pub(crate) fn host_facts(distro: &Distribution, managers: &[impl serde::Serialize], nix_setup: NixSetup, documents: Option<&str>) -> Value {
+    let mut facts = json!({"distribution": distro.id, "distributionLike": distro.like, "packageManagers": managers, "nixSetup": nix_setup});
+    if let Some(path) = documents { facts["documentsDir"] = path.into(); }
+    facts
+}
+
+fn documents_dir() -> Option<std::path::PathBuf> {
+    let dir = dirs::document_dir();
+    #[cfg(target_os = "linux")]
+    let dir = dir.or_else(|| dirs::home_dir().map(|home| home.join("Documents")));
+    dir
 }
 
 fn host(doc: &Value, read: HostRead) -> Result<Value> {
     let distro = crate::platform::distribution();
     let mut managers: Vec<String> = crate::platform::package_managers().into_iter().map(str::to_owned).collect();
     managers.extend(crate::script_managers::available(doc)?.into_keys());
-    let setup = if read == HostRead::Full { crate::nixos_apps::nix_setup() } else { NixSetup::default() };
-    Ok(host_facts(&distro, &managers, setup))
+    let setup = if read.nix { crate::nixos_apps::nix_setup() } else { NixSetup::default() };
+    let documents = read.documents.then(documents_dir).flatten();
+    Ok(host_facts(&distro, &managers, setup, documents.as_deref().and_then(Path::to_str)))
 }
 
 fn context(values: &Map<String, Value>) -> Context {
@@ -63,12 +74,24 @@ fn family_read(function: tree_sitter::Node, src: &str) -> Option<std::ops::Range
     Some(function.start_byte()..accessor?.named_child(1)?.end_byte())
 }
 
-// Reading only platform fields shouldn't inspect the user's Home Manager configuration.
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-enum HostRead { None, Platform, Full }
+// Fetch personal facts only when read. A document may need either, both, or only its platform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HostRead { any: bool, nix: bool, documents: bool }
+
+impl HostRead {
+    const NONE: Self = Self { any: false, nix: false, documents: false };
+    const PLATFORM: Self = Self { any: true, ..Self::NONE };
+    const NIX: Self = Self { nix: true, ..Self::PLATFORM };
+    const DOCUMENTS: Self = Self { documents: true, ..Self::PLATFORM };
+    const FULL: Self = Self { any: true, nix: true, documents: true };
+
+    fn union(self, other: Self) -> Self {
+        Self { any: self.any || other.any, nix: self.nix || other.nix, documents: self.documents || other.documents }
+    }
+}
 
 fn host_read(node: tree_sitter::Node, src: &str) -> HostRead {
-    let mut read = HostRead::None;
+    let mut read = HostRead::NONE;
     if let Some(name) = node.child_by_field_name("name")
         && node.kind() == "function"
         && &src[name.byte_range()] == "variables"
@@ -77,13 +100,15 @@ fn host_read(node: tree_sitter::Node, src: &str) -> HostRead {
     {
         let field = member(node.parent().and_then(|p| p.child_by_field_name("accessor")), 0, src);
         read = match field {
-            Some("distribution" | "distributionLike" | "packageManagers") => HostRead::Platform,
-            _ => return HostRead::Full,
+            Some("distribution" | "distributionLike" | "packageManagers") => HostRead::PLATFORM,
+            Some("documentsDir") => HostRead::DOCUMENTS,
+            Some("nixSetup") => HostRead::NIX,
+            _ => return HostRead::FULL,
         };
     }
     for child in node.named_children(&mut node.walk()) {
-        read = read.max(host_read(child, src));
-        if read == HostRead::Full { break; }
+        read = read.union(host_read(child, src));
+        if read == HostRead::FULL { break; }
     }
     read
 }
@@ -95,12 +120,12 @@ fn machine_function(name: &str) -> bool {
 
 fn expression_host_read(src: &str, parser: &mut Option<tree_sitter::Parser>) -> Result<HostRead> {
     if !src.starts_with('[') || src.starts_with("[[") {
-        return Ok(HostRead::None);
+        return Ok(HostRead::NONE);
     }
     if parser.is_none() {
         *parser = Some(self::parser()?);
     }
-    Ok(parser.as_mut().unwrap().parse(src, None).map_or(HostRead::None, |tree| host_read(tree.root_node(), src)))
+    Ok(parser.as_mut().unwrap().parse(src, None).map_or(HostRead::NONE, |tree| host_read(tree.root_node(), src)))
 }
 
 /// Package managers can change between steps. Take fresh facts when an expression
@@ -108,17 +133,17 @@ fn expression_host_read(src: &str, parser: &mut Option<tree_sitter::Parser>) -> 
 pub(crate) fn supply_host(doc: &Value, context: &mut Context) -> Result<()> {
     fn read(value: &Value, parser: &mut Option<tree_sitter::Parser>) -> Result<HostRead> {
         let combine = |found: HostRead, v: &Value| {
-            if found == HostRead::Full { Ok(found) } else { Ok(found.max(read(v, parser)?)) }
+            if found == HostRead::FULL { Ok(found) } else { Ok(found.union(read(v, parser)?)) }
         };
         match value {
             Value::String(s) => expression_host_read(s, parser),
-            Value::Object(o) => o.values().try_fold(HostRead::None, combine),
-            Value::Array(a) => a.iter().try_fold(HostRead::None, combine),
-            _ => Ok(HostRead::None),
+            Value::Object(o) => o.values().try_fold(HostRead::NONE, combine),
+            Value::Array(a) => a.iter().try_fold(HostRead::NONE, combine),
+            _ => Ok(HostRead::NONE),
         }
     }
     let read = read(doc, &mut None)?;
-    if read != HostRead::None {
+    if read.any {
         context.variables.insert(HOST.into(), host(doc, read)?);
     }
     Ok(())
@@ -126,7 +151,7 @@ pub(crate) fn supply_host(doc: &Value, context: &mut Context) -> Result<()> {
 
 fn execute(doc: &Value, expr: &str, mut context: Context) -> Result<Value> {
     let read = expression_host_read(expr, &mut None)?;
-    if read != HostRead::None {
+    if read.any {
         context.variables.insert(HOST.into(), host(doc, read)?);
     }
     Ok(Statement::new()?.parse_and_execute(expr, &context)?)
@@ -184,7 +209,7 @@ impl Preview {
         // Representative values used only to validate host-dependent expressions.
         let (id, like) = if system == "Linux" { ("debian", vec!["debian"]) } else { ("", vec![]) };
         let distro = Distribution { id: id.into(), like: like.into_iter().map(str::to_owned).collect() };
-        ctx.variables.insert(HOST.into(), host_facts(&distro, &["nix"], NixSetup::default()));
+        ctx.variables.insert(HOST.into(), host_facts(&distro, &["nix"], NixSetup::default(), Some("Documents")));
         Self { system, context: ctx, unknown_parameters: Default::default(), unknown_variables: Default::default() }
     }
 
@@ -511,13 +536,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_setup_or_indirect_host_reads_probe_module_configuration() {
+    fn host_reads_request_only_relevant_personal_facts() {
         let mut parser = None;
         for expr in ["[variables('furnish.host').distribution]", "[variables('furnish.host')['packageManagers'][0]]"] {
-            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::Platform);
+            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::PLATFORM);
         }
-        for expr in ["[variables('furnish.host').nixSetup.home]", "[variables('furnish.host')]", "[variables(parameters('key'))]"] {
-            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::Full);
+        assert_eq!(expression_host_read("[variables('furnish.host').nixSetup.home]", &mut None).unwrap(), HostRead::NIX);
+        assert_eq!(expression_host_read("[variables('furnish.host').documentsDir]", &mut parser).unwrap(), HostRead::DOCUMENTS);
+        let mixed = "[and(variables('furnish.host').nixSetup.home, contains(variables('furnish.host')['documentsDir'], 'docs'))]";
+        assert_eq!(expression_host_read(mixed, &mut parser).unwrap(), HostRead::FULL);
+        for expr in ["[variables('furnish.host')]", "[variables(parameters('key'))]"] {
+            assert!(expression_host_read(expr, &mut parser).unwrap() == HostRead::FULL);
         }
     }
 

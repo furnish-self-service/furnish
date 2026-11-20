@@ -82,6 +82,25 @@ fn documented_editor_checks_options_dependencies_and_ordered_distribution_like()
 }
 
 #[test]
+fn profile_uses_its_own_documents_directory_in_parameter_defaults() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("repo");
+    let path = temp.path().join("targets.yaml");
+    let location = "/home/alice/Dokumente/Team docs";
+    app(&dir, "docs", json!({
+        "parameters":{"location":{"type":"string","defaultValue":"[concat(variables('furnish.host').documentsDir, '/Team docs')]"}},
+        "resources":[{"name":"team", "type":"Furnish/Directory", "condition":format!("[equals(parameters('location'), '{location}')]"),
+            "properties":{"path":"[parameters('location')]"}}]
+    }));
+    let target = |documents: &str, steps: &[&str]| json!({
+        "family":"Linux", "packageManagers":[], "documentsDir":documents, "expect":{"docs":{"steps":steps}}
+    });
+    let profiles = json!({"profiles":{"de":target("/home/alice/Dokumente", &["team"]), "fr":target("/home/alice/Documents", &[])}});
+    fs::write(&path, profiles.to_string()).unwrap();
+    check(temp.path(), &dir, Some(&path), true);
+}
+
+#[test]
 fn mise_profiles_select_native_mappings_first_and_accept_backend_tool_ids_on_all_platforms() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("repo");
