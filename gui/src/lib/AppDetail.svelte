@@ -57,7 +57,7 @@
     switch (status) {
       case 'installed':
         if (check?.external) return externalStatus(check?.external);
-        if (needs && required.installed) return t('app.status.unacceptable', { installed: required.installed, needs });
+        if (needs && required?.installed) return t('app.status.unacceptable', { installed: required.installed, needs });
         return t('app.status.installed');
       case 'needsUpdate': return securityUpdate ? t('app.status.securityUpdate') : t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
@@ -93,7 +93,7 @@
           <span>{t('status.checkedAt', { time: new Date(checkedAt).toLocaleString(lang(), { dateStyle: 'medium', timeStyle: 'short' }) })}</span>
         {/if}
       </div>
-      {#if securityUpdate && required.installed && checkError === undefined}
+      {#if securityUpdate && required?.installed && checkError === undefined}
         <p class="required-detail">{t('app.requiredUpdate', { collection: app.collection, needs: describeNeeds(lang(), required.needs), installed: required.installed, target: required.target ?? '' })}</p>
       {/if}
       {#if required?.unknown}

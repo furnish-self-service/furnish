@@ -1088,7 +1088,7 @@ async function updateStillNeeded(app: AppInfo) {
 async function prepareContinuation(app: AppInfo, job: Queued) {
   if (!(await checkStatus(job.key))) throw new Error(store.statusErrors[job.key] ?? t('app.status.error'));
   const status = appStatus(job.key);
-  if (status === 'error') throw new Error(store.statusErrors[job.key]);
+  if (!status || status === 'error') throw new Error(store.statusErrors[job.key] ?? t('app.status.error'));
   if (!needsRetry(job.action, !!job.updateOnly, status, app, job.commit)) {
     finishUnneeded(job.key);
     return false;
@@ -1409,7 +1409,7 @@ async function restoreDependent(group: ActivityGroup, item: ActivityGroup['items
   if (!isPending(item.key)) {
     if (!(await checkStatus(item.key))) return;
     const status = appStatus(item.key);
-    if (status === 'error' || status === 'unavailable') return;
+    if (!status || status === 'error' || status === 'unavailable') return;
     if (!needsRetry('install', updateOnly, status, app)) {
       item.state = updateOnly ? 'skipped' : 'done';
       return;
@@ -1492,7 +1492,7 @@ async function retryOperation(key: string, kind: Run['kind'], action: Queued['ac
     const item = group?.items.find(i => i.key === key);
     const interrupted = group ? interruptedDependents(group, key) : [];
     const status = appStatus(key);
-    if (status === 'error' || status === 'unavailable') return;
+    if (!status || status === 'error' || status === 'unavailable') return;
     const needed = needsRetry(action, kind === 'update', status, app, commit);
     if (!needed) {
       if (item) item.state = group?.kind === 'updates' ? 'skipped' : 'done';
