@@ -4,6 +4,7 @@
   // installed ones to uninstall (preselected: those no other installed kit needs).
   import type { KitInfo } from './api';
   import {
+    appStatus,
     store,
     appByKey,
     isInstalled,
@@ -32,7 +33,7 @@
   let removing = $state(false);
   let removePicked = $state<Record<string, boolean>>({});
 
-  const unavailable = (key: string) => store.status[key] === 'unavailable';
+  const unavailable = (key: string) => appStatus(key) === 'unavailable';
   /** Items the install checklist can't change: required, installed, running/queued or not for this OS. */
   const locked = (item: KitInfo['items'][number]) =>
     item.required || isInstalled(item.key) || isPending(item.key) || unavailable(item.key);
@@ -46,7 +47,7 @@
   const installedItems = $derived(kit.items.filter((i) => isInstalled(i.key)));
   const defaults = $derived(defaultUninstall(kit));
   const toRemove = $derived(
-    installedItems.filter((i) => !store.unremovable[i.key] && (removePicked[i.key] ?? defaults.includes(i.key))).map((i) => i.key),
+    installedItems.filter((i) => store.checks[i.key]?.removable !== false && (removePicked[i.key] ?? defaults.includes(i.key))).map((i) => i.key),
   );
 
   function badge(item: KitInfo['items'][number]) {
@@ -55,7 +56,7 @@
     if (store.queue.some((q) => q.key === key)) return t('common.queued');
     if (unavailable(key)) return t('common.notForThisSystem');
     if (requiredUpdate(key)) return t('common.securityUpdate');
-    if (store.status[key] === 'needsUpdate') return t('common.updateAvailable');
+    if (appStatus(key) === 'needsUpdate') return t('common.updateAvailable');
     if (isInstalled(key)) return t('common.installed');
     if (item.required) return t('common.required');
     return '';
@@ -130,6 +131,7 @@
     <h2>{t('kit.chooseUninstall')}</h2>
     <ul class="items">
       {#each installedItems as item (item.key)}
+        {@const check = store.checks[item.key]}
         {@const app = appByKey(item.key)}
         {@const others = otherKitsWith(item.key, kit)}
         {#if app}
@@ -138,15 +140,15 @@
               <input
                 type="checkbox"
                 checked={toRemove.includes(item.key)}
-                disabled={isPending(item.key) || !!store.unremovable[item.key]}
+                disabled={isPending(item.key) || check?.removable === false}
                 onchange={(e) => (removePicked[item.key] = e.currentTarget.checked)}
               />
               <AppIcon {app} size={36} />
               <span class="text">
                 <span class="name">{appName(app)}</span>
-                {#if store.external[item.key]}
-                  <span class="desc">{externalStatus(store.external[item.key])}</span>
-                {:else if store.unremovable[item.key]}
+                {#if check?.external}
+                  <span class="desc">{externalStatus(check?.external)}</span>
+                {:else if check?.removable === false}
                   <span class="desc">{t('kit.cantUninstall')}</span>
                 {:else if others.length}
                   <span class="desc">{t('kit.alsoIn', { kits: others.map(kitName).join(', ') })}</span>

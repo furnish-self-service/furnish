@@ -9,7 +9,8 @@ const oneOf = (v: unknown, choices: string[]) => typeof v === 'string' && choice
 
 function external(v: unknown): v is External {
   return object(v) && oneOf(v.by, ['nixos', 'home-manager', 'other'])
-    && typeof v.package === 'string' && nullableString(v.configuration) && nullableString(v.path);
+    && typeof v.package === 'string' && (v.options === undefined || (Array.isArray(v.options) && v.options.every(o => typeof o === 'string')))
+    && nullableString(v.configuration) && nullableString(v.path);
 }
 
 function need(v: unknown): v is Entry {
@@ -32,20 +33,28 @@ function valid(v: unknown): v is AppCheck {
     && (v.external === null || external(v.external)) && (v.required === null || required(v.required));
 }
 
-interface SavedCheck {
-  check: AppCheck;
-  /** Older cache records predate this field. */
+/** The last successful observation for one app. Only a live observation can drive automation. */
+export interface AppSnapshot extends AppCheck {
   checkedAt: number | null;
+  source: 'live' | 'cached' | 'previousRevision';
 }
 
-/** A changed or unknown revision can restore Installed membership, but its plan details are stale. */
-export function restoreCheck(entry: unknown, revision: string | undefined): { installed: boolean; saved?: SavedCheck } | undefined {
+function decode(entry: unknown, revision: string | undefined): AppSnapshot | undefined {
   if (!object(entry) || !valid(entry.check)) return;
-  const installed = entry.check.status === 'installed' || entry.check.status === 'needsUpdate';
   const time = entry.checkedAt;
   const checkedAt = typeof time === 'number' && Number.isSafeInteger(time) && time > 0 && time <= 8.64e15 ? time : null;
-  const saved = revision && revision !== 'unknown' && revision === entry.revision ? { check: entry.check, checkedAt } : undefined;
-  return { installed, saved };
+  // Process guards describe a live machine; a cache record can only restore display state.
+  const { runningApps: _, ...check } = entry.check;
+  const matches = revision && revision !== 'unknown' && revision === entry.revision;
+  return { ...check, checkedAt, source: matches ? 'cached' : 'previousRevision' };
+}
+
+/** Both cache formats store the same observation. Either store can be unavailable or older. */
+export function restoreCheck(native: unknown, revision: string | undefined, web?: unknown): AppSnapshot | undefined {
+  const disk = decode(native, revision);
+  const browser = decode(web, revision);
+  if (!disk || (browser && (browser.checkedAt ?? 0) > (disk.checkedAt ?? 0))) return browser;
+  return disk;
 }
 
 export class StatusCache {
@@ -62,7 +71,7 @@ export class StatusCache {
     } catch { /* Unavailable storage or an incomplete entry: use the live check. */ }
   }
 
-  write(key: string, revision: string, check: AppCheck, checkedAt: number) {
+  write(key: string, revision: string | undefined, check: AppCheck, checkedAt: number) {
     try {
       localStorage.setItem(this.prefix + key, JSON.stringify({ revision, check, checkedAt }));
     } catch { /* Checking works even when the webview cannot save data. */ }

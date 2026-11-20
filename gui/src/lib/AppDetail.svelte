@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
+  import { appStatus, store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
   import { describeNeeds, describeRequired, unmet } from './required';
   import Options from './Options.svelte';
   import OptionChanges from './OptionChanges.svelte';
@@ -41,21 +41,22 @@
   });
   const autoUpdate = $derived(!store.settings?.noAutoUpdate.includes(app.key));
 
-  const status = $derived(store.status[app.key]);
+  const check = $derived(store.checks[app.key]);
+  const status = $derived(appStatus(app.key));
   const run = $derived(store.runs[app.key]);
   const checkError = $derived(store.statusErrors[app.key]);
-  const checkedAt = $derived(store.checkedAt[app.key]);
+  const checkedAt = $derived(check?.checkedAt);
   const installed = $derived(status === 'installed' || status === 'needsUpdate');
-  const required = $derived(store.required[app.key]);
+  const required = $derived(check?.required);
   // A security update the collection requires: installs right away, automatic updates or not.
   const securityUpdate = $derived(requiredUpdate(app.key));
   // No acceptable version is offered: what the collection needs and what there is.
   const needs = $derived(unmet(required) ? describeRequired(lang(), required) : null);
   const statusText = $derived.by(() => {
-    const what = store.reasons[app.key] ?? t('common.missingTool');
+    const what = check?.reason ?? t('common.missingTool');
     switch (status) {
       case 'installed':
-        if (store.external[app.key]) return externalStatus(store.external[app.key]);
+        if (check?.external) return externalStatus(check?.external);
         if (needs && required.installed) return t('app.status.unacceptable', { installed: required.installed, needs });
         return t('app.status.installed');
       case 'needsUpdate': return securityUpdate ? t('app.status.securityUpdate') : t('app.status.needsUpdate');
@@ -96,8 +97,8 @@
         <p class="required-detail">{t('app.requiredUpdate', { collection: app.collection, needs: describeNeeds(lang(), required.needs), installed: required.installed, target: required.target ?? '' })}</p>
       {/if}
       {#if required?.unknown}
-        <p class="required-unknown">{store.external[app.key]?.path
-          ? t('app.requiredUnknownAt', { brand: store.brand.name, collection: app.collection, path: store.external[app.key].path ?? '' })
+        <p class="required-unknown">{check?.external?.path
+          ? t('app.requiredUnknownAt', { brand: store.brand.name, collection: app.collection, path: check?.external.path ?? '' })
           : t('app.requiredUnknown', { brand: store.brand.name, collection: app.collection })}</p>
       {/if}
     </div>
@@ -110,10 +111,10 @@
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}
-        {#if store.external[app.key]}
+        {#if check?.external}
           <!-- Installed outside furnish: removing it is done there. -->
-          <External external={store.external[app.key]} />
-        {:else if store.unremovable[app.key]}
+          <External external={check?.external} />
+        {:else if check?.removable === false}
           <!-- A resource can't remove what it set up, and the collection gives no removal steps. -->
           <p class="unremovable">{t('app.cantUninstall', { collection: app.collection })}</p>
         {:else if checkError === undefined}
@@ -125,7 +126,7 @@
       {#if status === 'needsUpdate' && !isPending(app.key) && checkError === undefined}
         <button class="secondary" onclick={openPreview}>{t('app.previewChanges')}{#if planOpen && previewCount !== null}{' '}({previewCount}){/if}</button>
       {/if}
-      {#if installed && !store.external[app.key]}
+      {#if installed && !check?.external}
         <label class="auto">
           <input
             type="checkbox"
@@ -140,8 +141,8 @@
     </div>
   </header>
 
-  {#if store.runningApps[app.key]?.length}
-    <p class="meta close-apps">{t('queue.closeApps', {names: store.runningApps[app.key].join(', ')})}</p>
+  {#if check?.runningApps?.length}
+    <p class="meta close-apps">{t('queue.closeApps', {names: check?.runningApps.join(', ')})}</p>
   {/if}
   <p class="description">{appDescription(app) || t('common.noDescription')}</p>
 
