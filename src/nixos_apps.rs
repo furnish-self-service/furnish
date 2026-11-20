@@ -350,12 +350,16 @@ fn in_service() -> bool {
     std::env::var("FURNISH_SERVICE").as_deref() == Ok("1") && is_root()
 }
 
+fn system_facts() -> Result<Facts> {
+    match std::fs::read_to_string(FACTS) {
+        Ok(text) => serde_json::from_str(&text).with_context(|| format!("reading {FACTS}")),
+        Err(_) => Err(missing("furnish's NixOS module (services.furnish.enable in the NixOS configuration)")),
+    }
+}
+
 impl Target {
     fn here() -> Result<Target> {
-        let facts: Facts = match std::fs::read_to_string(FACTS) {
-            Ok(text) => serde_json::from_str(&text).with_context(|| format!("reading {FACTS}"))?,
-            Err(_) => return Err(missing("furnish's NixOS module (services.furnish.enable in the NixOS configuration)")),
-        };
+        let facts = system_facts()?;
         let setup = crate::nixos::detect(&crate::nixos::Context::new(in_service()));
         let Some(setup) = setup else { return Err(missing("NixOS")) };
         let Some(found) = setup.configuration else {

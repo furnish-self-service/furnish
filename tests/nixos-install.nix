@@ -191,6 +191,14 @@ pkgs.testers.runNixOSTest {
     for path, value in [("/etc/furnish/policy.json", policy), ("/etc/furnish/nixos.json", facts)]:
         machine.succeed(f"rm {path} && echo {shlex.quote(json.dumps(value))} > {path}")
     machine.succeed("systemctl restart furnish")
+    # Root can observe a match in the shared wheel-owned git checkout, and so can a service
+    # request for alice. A writable untrusted directory must not furnish an external match.
+    probe = shlex.quote(json.dumps({"name": "preconfigured", "options": {"system.stateVersion": "25.11"}}))
+    def probe_shared(uid):
+        return json.loads(machine.succeed(f"echo {probe} | FURNISH_SERVICE=1 FURNISH_REQUESTER_UID={uid} furnish nixos-resource test"))
+    alice_uid = int(machine.succeed("id -u alice"))
+    assert probe_shared(0)["managedBy"] == "nixos"
+    assert probe_shared(alice_uid)["managedBy"] == "nixos"
     print(machine.succeed("su - alice -c 'furnish install htop' 2>&1"))
     assert list(apps()) == ["htop"] and system() == "${after}", system()
     assert shared("git log -1 --format=%s").strip() == "furnish: install htop"
@@ -210,6 +218,7 @@ pkgs.testers.runNixOSTest {
 
     # Another group that can change the folder: refused, and the message says how to trust it.
     machine.succeed("chgrp users /etc/nixos")
+    assert not probe_shared(alice_uid)["_exist"]
     out = machine.fail("su - alice -c 'furnish uninstall htop' 2>&1")
     assert "the group users can change /etc/nixos" in out and "trustedGroups" in out, out
     assert list(apps()) == ["htop"] and system() == "${after}"

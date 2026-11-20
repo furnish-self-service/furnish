@@ -46,14 +46,18 @@ pub(super) fn probe(desired: &Desired, person: &Account) -> Option<(Place, PathB
     if !dir.is_absolute() || !dir.join("flake.nix").is_file() {
         return None;
     }
-    // A service lookup evaluates as the requesting user. For root's own request, apply the
-    // rebuild ownership checks before running Nix in a repository and use the folder's owner.
+    // Check the same protected path as a system rebuild, including
+    // configured admin groups. It never gains access to option values on the caller's behalf:
+    // the caller evaluates, or for root's own request the configuration directory's owner.
     let mut owner = None;
     let mut trust = None;
-    if is_root() && person.uid == 0 {
-        let uid = may_rebuild(&chain(&dir).ok()?, 0, &[], group_name).ok()?;
-        owner = Some(lookup(uid)?);
-        trust = GitTrust::new(&dir, owner.as_ref()?, &[]).ok()?;
+    if place != Place::HomeStandalone || person.uid == 0 {
+        let trusted = system_facts().map(|f| f.nix.trusted_groups).unwrap_or_default();
+        let uid = may_rebuild(&chain(&dir).ok()?, person.uid, &trusted, group_name).ok()?;
+        if person.uid == 0 {
+            owner = Some(lookup(uid)?);
+            trust = GitTrust::new(&dir, owner.as_ref()?, &trusted).ok()?;
+        }
     }
     let mut cmd = nix(owner.as_ref().unwrap_or(person));
     if let Some(t) = &trust {
@@ -79,9 +83,11 @@ pub(super) fn response(desired: &Desired, place: Place, dir: &Path, action: &str
     match action {
         "get" => {}
         "test" => actual["_inDesiredState"] = desired.exist.into(),
+        // The engine previews every step before changing anything. Report a refusal there
+        // too, so a custom removal cannot partially run before reaching external options.
+        "set" if !desired.exist => bail!("{note}: change its options there"),
         "set" if what_if => actual["_metadata"] = json!({"whatIf":[note], "furnishChange":false}),
-        "set" if desired.exist => {}
-        "set" => bail!("{note}: remove its options there"),
+        "set" => {}
         _ => bail!("usage: get|test|set [--what-if]"),
     }
     Ok(actual)
