@@ -432,6 +432,12 @@ expect "$plan" "+ install"
 if command -v cygpath >/dev/null; then expect "$plan" "winget install --exact --id sharkdp.hyperfine "; fi
 expect "$(step list)" "·  hyperfine"   # a preview changes nothing
 expect "$(step install hyperfine)" "Installed hyperfine"
+if $real && [ "$(uname -s)" = Darwin ]; then
+    # Use the Homebrew program the package step just installed, with a Finder launch's PATH.
+    out=$(PATH=/usr/bin:/bin:/usr/sbin:/sbin "$furnish" dsc-resource command test \
+        <<< '{"test":{"command":["hyperfine","--version"]},"set":["false"]}')
+    expect "$out" '"_inDesiredState":true'
+fi
 expect "$(step list)" "✓  hyperfine"
 expect "$(step install fixture/hyperfine)" "already installed"
 plan=$(step uninstall hyperfine --dry-run)
@@ -505,6 +511,26 @@ if ! $real; then
     expect "$out" "\"_exist\":true,\"managedBy\":\"other\",\"path\":\"$tmp/home/.local/bin/elsewhere-tool\""
     out=$(HOME="$tmp/home" packageManager=pacman name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" test)
     expect "$out" '"_inDesiredState":true'
+    if [ "$(id -u)" != 0 ]; then
+        # The Command resource uses the same desktop fallback. Its child gets that PATH
+        # too, so a vendor wrapper can invoke a sibling helper by name.
+        printf '#!/bin/sh\nexec furnish-fixture-helper\n' > "$tmp/home/.local/bin/elsewhere-tool"
+        printf '#!/bin/sh\ncase ":$PATH:" in *::*|*:relative:*) exit 1 ;; esac\necho desktop\n' > "$tmp/home/.local/bin/furnish-fixture-helper"
+        chmod +x "$tmp/home/.local/bin/furnish-fixture-helper"
+        desktop_probe() {
+            env HOME="$tmp/home" PATH=":relative:$tmp/elsewhere:/usr/bin:/bin" "$furnish" dsc-resource command test \
+                <<< "{\"test\":{\"command\":[\"elsewhere-tool\"],\"output\":\"$1\"},\"set\":[\"false\"]}"
+        }
+        touch "$tmp/elsewhere/elsewhere-tool"  # a non-executable on PATH cannot shadow the tool
+        expect "$(desktop_probe desktop)" '"_inDesiredState":true'
+        if FURNISH_SERVICE=1 desktop_probe desktop >/dev/null 2>&1; then
+            echo "FAIL: service used a desktop fallback" >&2; exit 1
+        fi
+        printf '#!/bin/sh\necho inherited\n' > "$tmp/elsewhere/elsewhere-tool"
+        chmod +x "$tmp/elsewhere/elsewhere-tool"
+        expect "$(desktop_probe inherited)" '"_inDesiredState":true'
+        rm "$tmp/elsewhere/elsewhere-tool"
+    fi
     # Not something else that happens to carry the name.
     rm "$tmp/home/.local/bin/elsewhere-tool" && mkdir "$tmp/home/.local/bin/elsewhere-tool"
     out=$(HOME="$tmp/home" packageManager=pacman name=elsewhere-tool command=elsewhere-tool sh "$FURNISH_DATA_DIR/resources/furnish-package.dsc.resource.sh" get)

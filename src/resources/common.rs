@@ -390,33 +390,74 @@ impl std::fmt::Display for Missing {
 
 impl std::error::Error for Missing {}
 
+/// User install locations missing from a Finder or desktop-menu launch, in the
+/// same order as Furnish/Package's Unix find_program.
+#[cfg(unix)]
+pub(super) fn desktop_bin_dirs() -> impl Iterator<Item = PathBuf> {
+    dirs::home_dir().filter(|home| home.is_absolute()).map(|home| home.join(".local/bin"))
+        .into_iter().chain([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")])
+}
+
+/// Only user commands may acquire user-writable executable directories.
+/// The resource child of the service inherits its already-filtered PATH.
+#[cfg(unix)]
+fn command_path(inherited: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 || crate::service::in_service() || std::env::var("FURNISH_SERVICE").as_deref() == Ok("1") {
+        return inherited;
+    }
+    // A bare executable name must not depend on the resource's working directory.
+    let mut dirs: Vec<_> = inherited.as_ref()
+        .map(|p| std::env::split_paths(p).filter(|dir| dir.is_absolute()).collect())
+        .unwrap_or_default();
+    for dir in desktop_bin_dirs() {
+        if !dirs.contains(&dir) && std::env::join_paths([&dir]).is_ok() {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).ok()
+}
+
 /// Run a command (no shell) and collect its output. A program that isn't installed is [`Missing`].
 pub fn run(args: &[String]) -> Result<std::process::Output> {
     let (program, rest) = args.split_first().context("empty command")?;
-    let resolved = find_program(program).ok_or_else(|| Missing(program.clone()))?;
-    Ok(Command::new(resolved).args(rest).stdin(std::process::Stdio::null()).output()?)
+    let path = std::env::var_os("PATH");
+    #[cfg(unix)]
+    let path = command_path(path);
+    let resolved = find_program(program, path.as_deref()).ok_or_else(|| Missing(program.clone()))?;
+    let mut command = Command::new(resolved);
+    // Scripts using /usr/bin/env and tools invoking helpers need the same search
+    // path as the top-level command. Scope it to this child, outside DSC discovery.
+    #[cfg(unix)]
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    Ok(command.args(rest).stdin(std::process::Stdio::null()).output()?)
 }
 
 /// The program as given if it has a path, else where it is on PATH. On Windows also with the
 /// extensions in PATHEXT, so `bw` finds `bw.cmd`. A newly installed mise tool may only
 /// be in the shim directory until the next login.
-fn find_program(program: &str) -> Option<PathBuf> {
+fn find_program(program: &str, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     let given = Path::new(program);
     if given.components().count() > 1 {
         return given.exists().then(|| given.to_path_buf());
     }
-    let extensions: Vec<String> = if cfg!(windows) {
+    #[cfg(unix)]
+    {
+        which::which_in(program, path, ".").ok()
+            .or_else(|| which::which(super::mise::shims_dir()?.join(program)).ok())
+    }
+    #[cfg(windows)]
+    {
         let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-        pathext.split(';').filter(|e| !e.is_empty()).map(str::to_lowercase).chain(Some(String::new())).collect()
-    } else {
-        vec![String::new()]
-    };
-    let in_dir = |dir: PathBuf| {
-        extensions.iter().map(|ext| dir.join(format!("{program}{ext}"))).find(|p| p.is_file())
-    };
-    std::env::var_os("PATH")
-        .and_then(|path| std::env::split_paths(&path).find_map(&in_dir))
-        .or_else(|| super::mise::shims_dir().and_then(in_dir))
+        let extensions: Vec<_> = pathext.split(';').filter(|e| !e.is_empty()).map(str::to_lowercase).chain(Some(String::new())).collect();
+        let in_dir = |dir: PathBuf| {
+            extensions.iter().map(|ext| dir.join(format!("{program}{ext}"))).find(|p| p.is_file())
+        };
+        path.and_then(|path| std::env::split_paths(path).find_map(&in_dir))
+            .or_else(|| super::mise::shims_dir().and_then(in_dir))
+    }
 }
 
 /// Make a file or folder accessible only to the user: mode 600 (folders 700) on Unix, an access
