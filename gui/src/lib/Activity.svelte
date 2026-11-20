@@ -5,7 +5,7 @@
   import ActionButton from './ActionButton.svelte';
   import Plan from './Plan.svelte';
   import ActivityGroupRow from './ActivityGroupRow.svelte';
-  import { isGroup } from './activity-history';
+  import { isGroup, stepProgress } from './activity-history';
   import ActivityAttempt from './ActivityAttempt.svelte';
   import RunLog from './RunLog.svelte';
   import { t, lang, formatDate } from './i18n.svelte';
@@ -16,7 +16,7 @@
   const runningKey = $derived(Object.keys(store.busy)[0]);
   const running = $derived(store.apps.find((a) => a.key === runningKey));
   const run = $derived(runningKey ? store.runs[runningKey] : undefined);
-  const done = $derived(run?.steps.filter((s) => s.state !== 'pending' && s.state !== 'running').length ?? 0);
+  const progress = $derived(stepProgress(run?.steps ?? []));
   const queued = $derived(
     store.queue.map((q) => ({ ...q, app: store.apps.find((a) => a.key === q.key) })).filter((q) => q.app),
   );
@@ -38,7 +38,7 @@
             <span class="name">{appName(running)}</span>
             <span class="meta">
               {t(kindLabel[run.kind])}
-              {#if run.steps.length} · {t('run.stepOf', { n: Math.min(done + 1, run.steps.length), total: run.steps.length })}{/if}
+              {#if progress.total} · {t('run.stepOf', { n: progress.n, total: progress.total })}{/if}
             </span>
           </span>
         </button>
