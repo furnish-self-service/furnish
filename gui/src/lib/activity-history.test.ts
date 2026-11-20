@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { completedActivity, groupProgress, historyLimit, interruptedDependents, isGroup, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityGroup, type Run } from './activity-history.ts';
+import { completedActivity, groupProgress, historyLimit, interruptedDependents, isGroup, readHistory, readWaitingQueue, recordProgress, stepProgress, trimHistory, writeHistory, type ActivityGroup, type Run } from './activity-history.ts';
 
 const operation = (): Run => ({ id: 'r', name: 'VPN', trigger: 'autoInstall', kind: 'reinstall', startedAt: 0, steps: [], phaseStart: 0 });
 const plan = (name: string) => ({
@@ -10,6 +10,19 @@ const plan = (name: string) => ({
 const finished = (error: string | null) => ({
   key: 'work/vpn', event: 'finished' as const, index: 0, atMs: 20, durationMs: 5,
   outcome: { action: 'change' as const, changes: [], error, cancelled: false },
+});
+
+test('only applicable steps get numbers, including an applicable step already in the desired state', () => {
+  const run = operation();
+  const step = plan('Apply config').steps[0];
+  const skipped = { ...step, action: 'skipped' as const };
+  recordProgress(run, { ...plan(''), steps: [skipped, step, skipped, { ...step, action: 'nothing' }, skipped] });
+  assert.deepEqual(run.steps.map(row => row.state), ['skipped', 'pending', 'skipped', 'pending', 'skipped']);
+  assert.deepEqual(stepProgress(run.steps), { numbers: [null, 1, null, 2, null], n: 1, total: 2 });
+  recordProgress(run, { ...finished(null), index: 1 });
+  recordProgress(run, { key: 'work/vpn', event: 'started', index: 3, atMs: 30 });
+  assert.deepEqual(stepProgress(run.steps), { numbers: [null, 1, null, 2, null], n: 2, total: 2 });
+  assert.deepEqual(stepProgress([run.steps[0]]), { numbers: [null], n: 0, total: 0 });
 });
 
 test('reinstall and fallback keep earlier steps when the engine restarts its step indices', () => {

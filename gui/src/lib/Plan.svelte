@@ -4,7 +4,7 @@
   import * as api from './api';
   import PlanStep from './PlanStep.svelte';
   import type { AppInfo, Step } from './api';
-  import type { Run, RunStep } from './activity-history';
+  import { stepProgress, type Run, type RunStep } from './activity-history';
   import { store, appName, externalNote } from './state.svelte';
   import { stepProse } from './step-prose';
   import { describeCondition } from './conditions';
@@ -76,7 +76,7 @@
   $effect(() => oncount?.(mode === 'install' && preview && !error ? changing : null));
   const skippedCount = $derived(rows.length - active.length);
   const previewKind = $derived(mode === 'uninstall' ? 'uninstall' : status === 'needsUpdate' ? 'update' : 'install');
-  const finished = $derived(rows.filter((r) => r.state !== 'pending' && r.state !== 'running').length);
+  const progress = $derived(stepProgress(rows));
   const failedRow = $derived(rows.slice(run?.phaseStart ?? 0).find((r) => r.state === 'failed'));
   const total = $derived(run ? (run.finishedAt ?? now) - run.startedAt : 0);
 
@@ -209,12 +209,10 @@
     <p class="summary" aria-live="polite">
       {#if running}
         <span class="pulse" aria-hidden="true"></span>
-        {@render marked(
-          t('plan.runningSummary', {
-            what: t(`plan.running.${run.kind}`, { app: name }),
-            step: t('run.stepOf', { n: Math.min(finished + 1, rows.length || 1), total: rows.length || '…' }),
-          }),
-        )}
+        {@const what = t(`plan.running.${run.kind}`, { app: name })}
+        {#if progress.total}
+          {@render marked(t('plan.runningSummary', { what, step: t('run.stepOf', { n: progress.n, total: progress.total }) }))}
+        {:else}{what}{/if}
         <span class="muted">· {seconds(total)}</span>
         {#if run.stopping === 'abort'}<span class="stopping">{t('plan.stoppingAfter')}</span>
         {:else if run.stopping === 'force'}<span class="stopping">{t('plan.interrupting')}</span>{/if}
@@ -269,7 +267,7 @@
     {#each rows as row, i (i)}
       {@const step = row.step}
       <PlanStep name={step.name} type={step.type} action={step.action}
-        state={mode === 'run' ? row.state : undefined} index={i}>
+        state={mode === 'run' ? row.state : undefined} number={progress.numbers[i]}>
         {#each step.selectionNotes ?? [] as n}
           <p class="detail">{#if known(n)}{@render sentence(n)}{:else}{@render prose(n.english)}{/if}</p>
         {/each}

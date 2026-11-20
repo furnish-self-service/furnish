@@ -1122,11 +1122,18 @@ fn install_progress(work: impl FnOnce(&mut dyn FnMut(engine::Progress)) -> Resul
 fn print_progress() -> impl FnMut(engine::Progress) {
     use engine::{Action, Progress};
     let mut steps = Vec::new();
+    let mut current = 0;
+    let mut total = 0;
     move |event| match event {
-        Progress::Planned { steps: planned } => steps = planned,
+        Progress::Planned { steps: planned } => {
+            current = 0;
+            total = planned.iter().filter(|s| s.action != Action::Skipped).count();
+            steps = planned;
+        }
         Progress::Started { index, .. } => {
             let step: &engine::Step = &steps[index];
-            println!("  ▸ [{}/{}] {} …", index + 1, steps.len(), step.name);
+            current += 1;
+            println!("  ▸ [{current}/{total}] {} …", step.name);
         }
         Progress::Finished { index, duration_ms, outcome, .. } => {
             let step = &steps[index];

@@ -37,6 +37,19 @@ export interface Run {
   phaseStart: number;
 }
 
+/** Display positions count applicable steps. Engine events still address the full plan. */
+export function stepProgress(rows: ReadonlyArray<{ step: { action?: Action }; state: RunStep['state'] }>) {
+  let total = 0;
+  let next = 0;
+  const numbers = rows.map(({ step, state }) => {
+    if (step.action === 'skipped' || state === 'skipped' || state === 'notRun') return null;
+    total++;
+    if (!next && (state === 'running' || state === 'pending')) next = total;
+    return total;
+  });
+  return { numbers, n: next || total, total };
+}
+
 export function recordProgress(run: Run, p: Progress) {
   if (p.event === 'revision') {
     // A fallback is another attempt and can fail before producing its own plan.
@@ -54,7 +67,7 @@ export function recordProgress(run: Run, p: Progress) {
       if (row.state === 'pending') row.state = 'notRun';
     }
     run.phaseStart = run.steps.length;
-    for (const step of p.steps) run.steps.push({ step, state: 'pending' });
+    for (const step of p.steps) run.steps.push({ step, state: step.action === 'skipped' ? 'skipped' : 'pending' });
     return;
   }
   const row = run.steps[run.phaseStart + p.index];

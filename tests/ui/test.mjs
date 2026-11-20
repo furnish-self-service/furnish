@@ -372,6 +372,7 @@ const steps = [
     await waitFor('install preview: nothing to do', async () => (await text(panel)).includes('change nothing'));
     const skipped = `${panel}//li[contains(@class,'skipped')]`;
     await waitFor('skipped step explains the condition in prose', async () => (await text(`${skipped}//p`)).includes('Only on Windows'));
+    if ((await text(`${skipped}/span[contains(@class,'marker')]`)).trim() !== '–') throw new Error('skipped preview step numbered');
     const condition = await text(`${skipped}//code[contains(@class,'condition')]`);
     if (condition !== "[equals(context().os.family, 'Windows')]") throw new Error(`incomplete DSC condition: ${condition}`);
     await wd('POST', s('/execute/sync'), { script: "arguments[0].scrollIntoView({ block: 'center' })", args: [{ [ELEMENT]: await find(skipped) }] });
@@ -402,12 +403,9 @@ const steps = [
     if (!(await isOpen(panel))) await click(`${panel}/summary`);
     await click("//button[contains(@class,'action') and normalize-space()='Install']");
     const current = `${panel}//li[contains(concat(' ', normalize-space(@class), ' '), ' running ')]`;
-    await waitFor('a numbered running step', async () => {
-      const items = await findAll(`${panel}//ol[contains(@class, 'steps')]/li`);
-      const n = items.indexOf(await find(current)) + 1;
-      return n > 0 && (await text(`${current}/span[contains(@class, 'marker')]`)).trim() === String(n);
-    });
-    if (!/step \d of \d/.test(await text(`${panel}//p[contains(@class,'summary')]`))) throw new Error('no step counter');
+    await waitFor('only the applicable step gets a number', async () =>
+      (await text(`${current}/span[contains(@class, 'marker')]`)).trim() === '1'
+      && (await text(`${panel}//p[contains(@class,'summary')]`)).includes('step 1 of 1'));
     await waitFor('run finished', async () => /Installed hyperfine in/.test(await text(`${panel}//p[contains(@class,'summary')]`)), 30000);
     const done = await text(`${panel}//li[contains(@class,'done')]`);
     if (!/Installed/.test(done) || !/\d+(\.\d)? (ms|s)/.test(done)) throw new Error(`done step lacks result/duration: ${done}`);
