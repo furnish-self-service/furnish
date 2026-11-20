@@ -8,7 +8,7 @@
   import CollectionAvatar from './CollectionAvatar.svelte';
   import { t, lang } from './i18n.svelte';
 
-  let { app, onopen }: { app: AppInfo; onopen: () => void } = $props();
+  let { app, onopen, compact = false }: { compact?: boolean; app: AppInfo; onopen: () => void } = $props();
   const status = $derived(store.status[app.key]);
   const checkFailed = $derived(store.statusErrors[app.key] !== undefined);
   // No acceptable version is offered: what the collection needs and what there is.
@@ -26,20 +26,20 @@
   });
 </script>
 
-<article class="card">
+<article class="card" class:compact>
   <button class="open" onclick={onopen} aria-label={t('common.open', { name: appName(app) })}></button>
   <header>
-    <AppIcon {app} />
+    <AppIcon {app} size={compact ? 36 : 56} />
     <div class="title">
       <h3>{appName(app)}</h3>
-      {#if app.recommended}<span class="recommended">{t('card.recommended')}</span>{/if}
+      {#if app.recommended && !compact}<span class="recommended">{t('card.recommended')}</span>{/if}
       <p class="meta">{app.categories.map((c) => categoryName(c, app.collection)).join(' · ') || app.collection}</p>
     </div>
   </header>
   {#if store.runningApps[app.key]?.length}
     <p class="meta close-apps">{t('queue.closeApps', {names: store.runningApps[app.key].join(', ')})}</p>
   {/if}
-  <p class="description">{appDescription(app) || t('common.noDescription')}</p>
+  {#if !compact}<p class="description">{appDescription(app) || t('common.noDescription')}</p>{/if}
   <footer>
     {#if stateLabel}
       <span class="state" class:installed={status === 'installed' && !needs && !checkFailed}
@@ -74,6 +74,19 @@
     border: 1px solid var(--line);
     box-shadow: var(--shadow);
     transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .card.compact {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(40%, auto);
+    align-items: center;
+    padding: .75rem 1rem;
+  }
+  .compact header, .compact footer { min-width: 0; }
+  .compact footer { flex-wrap: wrap; }
+  .compact .close-apps { grid-column: 1 / -1; grid-row: 2; }
+  .compact h3 { font-size: 1rem; }
+  @media (max-width: 800px) {
+    .card.compact { grid-template-columns: minmax(0, 1fr); }
   }
   .card:hover {
     transform: translateY(-2px);

@@ -2,6 +2,10 @@
 // `{ one, other }` picks the plural by `n`; `<b>…</b>` marks text shown in bold.
 export const en = {
   // App.svelte: navigation and the catalog pages
+  'catalog.more': "More to explore",
+  'activity.idle': "Nothing is running or queued.",
+  'app.previewChanges': "Preview changes",
+  'plan.planned': "Planned action: {action}",
   'release.heading': "Preview collection update",
   'release.loading': "Comparing releases…",
   'release.refresh': "Refresh comparison",

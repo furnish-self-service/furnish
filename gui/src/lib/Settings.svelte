@@ -129,6 +129,16 @@
 <section class="settings">
   <h1>{t('settings.title')}</h1>
 
+  <nav class="sections" aria-label={t('settings.title')}>
+    {#if store.settings}
+      <a href="#startup-title">{t('settings.startup')}</a>
+      <a href="#updates-title">{t('settings.updates')}</a>
+      <a href="#language-title">{t('settings.language')}</a>
+      {#if destinations.length || isLocked('reporting')}<a href="#reports-title">{t('settings.reports')}</a>{/if}
+    {/if}
+    {#if nixos}<a class="platform" href="#nixos-title">{nixos.nixos ? 'NixOS' : 'Home Manager'}</a>{/if}
+    <a href="#about-title">{t('settings.about')}</a>
+  </nav>
   {#if store.warnings.length}
     <div class="notice" role="status">
       <strong>{t('settings.warnings')}</strong>
@@ -649,6 +659,10 @@
 </section>
 
 <style>
+  .sections { display: flex; flex-wrap: wrap; gap: .4rem .85rem; margin: .75rem 0 1.25rem; }
+  .sections a { font-size: .88rem; color: var(--accent-ink); text-underline-offset: .2em; }
+  .platform { padding-inline-start: .85rem; border-inline-start: 1px solid var(--line-strong); }
+  h2[id] { scroll-margin-top: 1rem; }
   .settings {
     max-width: 56rem;
     margin-inline: auto;

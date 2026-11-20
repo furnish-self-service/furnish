@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import logo from '../../logo.svg';
   import { store, start, visibleApps, visibleKits, availableAppUpdates, updateAllApps, checkForUpdates, checkInstalledDesktop, restartInstalledDesktop, desktopIdle, trayTexts, syncTray, categoryName, collectionUpdates, type View } from './lib/state.svelte';
   import DepsDialog from './lib/DepsDialog.svelte';
@@ -48,12 +49,12 @@
   const kit = $derived(view.page === 'kit' ? store.kits.find((k) => k.key === view.key) : undefined);
   // On Discover, before the full catalog: what the collections recommend for this user.
   const showRecommendations = $derived(view.page === 'discover' && !store.query);
-  const recommendedKits = $derived(showRecommendations ? kits.filter((kit) => kit.recommended) : []);
-  const recommendedApps = $derived(
-    showRecommendations
-      ? store.apps.filter((a) => a.recommended && store.status[a.key] !== 'unavailable')
-      : [],
-  );
+  const featuredLimit = 4;
+  const recommendedKits = $derived(showRecommendations ? kits.filter(kit => kit.recommended).slice(0, featuredLimit) : []);
+  const recommendedApps = $derived(showRecommendations ? apps.filter(app => app.recommended).slice(0, featuredLimit - recommendedKits.length) : []);
+  const remainingApps = $derived(apps.filter(app => !recommendedApps.includes(app)));
+  const remainingKits = $derived(kits.filter(kit => !recommendedKits.includes(kit)));
+  const compact = $derived(view.page === 'installed' || view.page === 'updates');
   const detail = $derived(view.page === 'app' ? store.apps.find((a) => a.key === view.key) : undefined);
 
   const titles = { discover: 'nav.discover', installed: 'nav.installed', updates: 'nav.updates' } as const;
@@ -65,11 +66,40 @@
     store.view = next;
   }
   // Back and forward like a browser: thumb buttons (3 back, 4 forward), Alt+Left/Right, Cmd+[ / ].
-  const pages = createHistory<View>();
-  $effect(() => pages.seen($state.snapshot(store.view) as View));
+  let main: HTMLElement;
+  type Visit = { view: View; top: number };
+  const pages = createHistory<Visit>(visit => JSON.stringify(visit.view));
+  let currentVisit: Visit | undefined;
+  let restoring: Visit | undefined;
+  $effect.pre(() => {
+    const destination = $state.snapshot(store.view) as View;
+    const first = !currentVisit;
+    if (currentVisit && JSON.stringify(destination) === JSON.stringify(currentVisit.view)) return;
+    if (currentVisit) currentVisit.top = main.scrollTop;
+    const visit = restoring ?? { view: destination, top: 0 };
+    restoring = undefined;
+    currentVisit = visit;
+    pages.seen(visit);
+    if (!first) tick().then(() => {
+      if (currentVisit !== visit) return;
+      main.scrollTop = visit.top;
+      const heading = main.querySelector('h1');
+      if (heading && !document.querySelector('dialog[open]')) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+    });
+  });
   function step(where: 'back' | 'forward') {
     const next = where === 'back' ? pages.back() : pages.forward();
-    if (next) store.view = next;
+    if (next) {
+      restoring = next;
+      store.view = next.view;
+    }
+  }
+  function backTo(destination: View) {
+    if (JSON.stringify(pages.previous()?.view) === JSON.stringify(destination)) step('back');
+    else go(destination);
   }
   function onMouse(e: MouseEvent) {
     if (e.button !== 3 && e.button !== 4) return;
@@ -136,10 +166,12 @@
     </button>
 
     {#if categories.length}
-      <h2>{t('nav.categories')}</h2>
-      {#each categories as { key, name } (key)}
-        <button aria-current={isActive('category', key) ? 'page' : undefined} onclick={() => go({ page: 'category', name: key })}>{name}</button>
-      {/each}
+      <div class="categories">
+        <h2>{t('nav.categories')}</h2>
+        {#each categories as { key, name } (key)}
+          <button aria-current={isActive('category', key) ? 'page' : undefined} onclick={() => go({ page: 'category', name: key })}>{name}</button>
+        {/each}
+      </div>
     {/if}
 
     <div class="spacer"></div>
@@ -157,7 +189,7 @@
     </button>
   </nav>
 
-  <main>
+  <main bind:this={main}>
     {#if store.installedDesktop && desktopIdle()}
       {@const installed = store.installedDesktop}
       <div class="restart-banner" data-testid="desktop-restart" role="status">
@@ -175,11 +207,11 @@
     {:else if view.page === 'kit' && kit}
       <KitDetail
         {kit}
-        onback={() => view.page === 'kit' && go(view.back)}
+        onback={() => view.page === 'kit' && backTo(view.back)}
         onopen={(key) => go({ page: 'app', key, back: view })}
       />
     {:else if view.page === 'app' && detail}
-      <AppDetail app={detail} onback={() => view.page === 'app' && go(view.back)} />
+      <AppDetail app={detail} onback={() => view.page === 'app' && backTo(view.back)} />
     {:else}
       <div class="top">
         <h1>{title}</h1>
@@ -212,13 +244,15 @@
             </span>
           </div>
         {/if}
-        <input
-          class="search"
-          type="search"
-          placeholder={t('catalog.search')}
-          aria-label={t('catalog.search')}
-          bind:value={store.query}
-        />
+        {#if store.apps.length || store.kits.length}
+          <input
+            class="search"
+            type="search"
+            placeholder={t('catalog.search')}
+            aria-label={t('catalog.search')}
+            bind:value={store.query}
+          />
+        {/if}
       </div>
 
       {#if store.loading}
@@ -250,14 +284,14 @@
               <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
             {/each}
           </div>
-          <h2 class="row-title">{t('catalog.allApps')}</h2>
+          {#if remainingApps.length || remainingKits.length}<h2 class="row-title">{t('catalog.more')}</h2>{/if}
         {/if}
-        <div class="grid">
-          {#each kits as k (k.key)}
+        <div class="grid" class:compact>
+          {#each remainingKits as k (k.key)}
             <KitCard kit={k} onopen={() => go({ page: 'kit', key: k.key, back: view })} />
           {/each}
-          {#each apps as app (app.key)}
-            <AppCard {app} onopen={() => go({ page: 'app', key: app.key, back: view })} />
+          {#each remainingApps as app (app.key)}
+            <AppCard {app} {compact} onopen={() => go({ page: 'app', key: app.key, back: view })} />
           {/each}
         </div>
       {/if}
@@ -404,6 +438,9 @@
     border-radius: 50%;
     background: var(--accent);
   }
+  .categories { display: flex; flex-direction: column; gap: .25rem; min-height: 0; overflow-y: auto; }
+  nav > button, .categories > button { flex: none; }
+  .grid.compact { grid-template-columns: minmax(0, 1fr); gap: .5rem; }
   .spacer {
     flex: 1;
   }
@@ -468,6 +505,11 @@
   }
   div.empty p {
     line-height: 1.5;
+  }
+  @media (max-height: 580px) {
+    nav { padding-block: .65rem; }
+    nav button.brand { margin-bottom: .4rem; }
+    nav h2 { margin-block: .6rem .25rem; }
   }
   @media (max-width: 760px) {
     .shell {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import * as api from './api';
   import Options from './Options.svelte';
   import CollectionRelease from './CollectionRelease.svelte';
@@ -28,6 +29,8 @@
     });
     return () => { current = false; };
   });
+  let addOpen = $state(false);
+  let addressInput = $state<HTMLInputElement>();
   let adding = $state(false);
   // HTTPS repositories that need a login: username and password (or access token).
   let username = $state('');
@@ -61,6 +64,7 @@
       needsLogin = false;
       tracking = null;
       showTracking = false;
+      addOpen = false;
       askQuestions(true); // the new collection's required options
     }
   }
@@ -98,58 +102,70 @@
   <h1>{t('collections.title')}</h1>
   <p class="lead">{t('collections.lead')}</p>
 
-  {#if store.usersCanAddCollections}
-  <form onsubmit={add}>
-    <label class="url">
-      <span>{t('collections.url')}</span>
-      <input bind:value={url} required placeholder="git@github.com:your-org/apps.git" spellcheck="false" />
-    </label>
-    <label class="name">
-      <span>{t('collections.name')} <em>{t('collections.optional')}</em></span>
-      <input bind:value={name} placeholder={t('collections.namePlaceholder')} spellcheck="false" />
-    </label>
-    <button class="primary" disabled={adding || !address || target?.input !== address}>{adding ? t('collections.adding') : t('collections.add')}</button>
-    {#if repository}
-      <details class="login" bind:open={showTracking}>
-        <summary>{t('tracking.heading')}</summary>
-        <TrackingFields bind:value={tracking} disabled={adding} />
-      </details>
-    {/if}
-    {#if https && repository}
-      <details class="login" bind:open={needsLogin}>
-        <summary>{t('collections.needsLogin')}</summary>
-        <p class="explain flush">{t('collections.loginText')}</p>
-        <label class="name">
-          <span>{t('collections.username')}</span>
-          <input bind:value={username} autocomplete="username" spellcheck="false" />
-        </label>
-        <label class="name">
-          <span>{t('collections.password')}</span>
-          <input bind:value={password} type="password" autocomplete="current-password" />
-        </label>
-      </details>
-    {/if}
-  </form>
-  {#if store.allowedCollectionUrlPatterns?.length}
-    <details class="allowed-urls">
-      <summary>{t('collections.allowedUrls')}</summary>
-      <ul>{#each store.allowedCollectionUrlPatterns as pattern}<li><code>{pattern}</code></li>{/each}</ul>
-    </details>
-  {:else if store.allowedCollectionUrlPatterns}
-    <p class="managed-note">{t('collections.noPersonalUrls')}</p>
+  {#if store.collections.length}
+    <div class="toolbar">
+      <h2>{t('collections.count', { n: store.collections.length })}</h2>
+      {#if store.usersCanAddCollections}
+        <button class="secondary" aria-expanded={addOpen} onclick={async () => {
+          addOpen = !addOpen;
+          if (addOpen) { await tick(); addressInput?.focus(); }
+        }}>{t(addOpen ? 'common.cancel' : 'collections.add')}</button>
+      {/if}
+      <button class="secondary" disabled={working !== null} onclick={() => update('*')}>
+        {working === '*' ? t('collections.updating') : t('common.updateAll')}
+      </button>
+    </div>
+
   {/if}
-  <p class="warning">{t('collections.warning')}</p>
+
+  {#if store.usersCanAddCollections}
+    {#if !store.collections.length || addOpen}
+    <form onsubmit={add}>
+      <label class="url">
+        <span>{t('collections.url')}</span>
+        <input bind:this={addressInput} bind:value={url} required placeholder="git@github.com:your-org/apps.git" spellcheck="false" />
+      </label>
+      <label class="name">
+        <span>{t('collections.name')} <em>{t('collections.optional')}</em></span>
+        <input bind:value={name} placeholder={t('collections.namePlaceholder')} spellcheck="false" />
+      </label>
+      <button class="primary" disabled={adding || !address || target?.input !== address}>{adding ? t('collections.adding') : t('collections.add')}</button>
+      {#if repository}
+        <details class="login" bind:open={showTracking}>
+          <summary>{t('tracking.heading')}</summary>
+          <TrackingFields bind:value={tracking} disabled={adding} />
+        </details>
+      {/if}
+      {#if https && repository}
+        <details class="login" bind:open={needsLogin}>
+          <summary>{t('collections.needsLogin')}</summary>
+          <p class="explain flush">{t('collections.loginText')}</p>
+          <label class="name">
+            <span>{t('collections.username')}</span>
+            <input bind:value={username} autocomplete="username" spellcheck="false" />
+          </label>
+          <label class="name">
+            <span>{t('collections.password')}</span>
+            <input bind:value={password} type="password" autocomplete="current-password" />
+          </label>
+        </details>
+      {/if}
+    </form>
+    {#if store.allowedCollectionUrlPatterns?.length}
+      <details class="allowed-urls">
+        <summary>{t('collections.allowedUrls')}</summary>
+        <ul>{#each store.allowedCollectionUrlPatterns as pattern}<li><code>{pattern}</code></li>{/each}</ul>
+      </details>
+    {:else if store.allowedCollectionUrlPatterns}
+      <p class="managed-note">{t('collections.noPersonalUrls')}</p>
+    {/if}
+    <p class="warning">{t('collections.warning')}</p>
+    {/if}
   {:else}
     <p class="managed-note">{t('collections.managedNote')}</p>
   {/if}
 
   {#if store.collections.length}
-    <div class="toolbar">
-      <h2>{t('collections.count', { n: store.collections.length })}</h2>
-      <button class="secondary" disabled={working !== null} onclick={() => update('*')}>
-        {working === '*' ? t('collections.updating') : t('common.updateAll')}
-      </button>
-    </div>
     <ul class="collection-list">
       {#each store.collections as c (c.name)}
         <li>
@@ -271,14 +287,16 @@
   }
   .toolbar {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: .5rem;
     align-items: center;
-    margin-top: 2.5rem;
+    margin-top: 1.5rem;
   }
   h2 {
     margin: 0;
     font: 650 1rem var(--font-display);
   }
+  .toolbar h2 { margin-inline-end: auto; }
   .collection-list {
     margin: 0.75rem 0 0;
     padding: 0;

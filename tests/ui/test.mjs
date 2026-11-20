@@ -256,6 +256,7 @@ const steps = [
     // By the cards' headings in the DOM (WebKit's element text leaves them out).
     const inRow = (app) => findAll(`${row}//h3[normalize-space()='${app}']`).then((l) => l.length > 0);
     await waitFor('starter, hyperfine and devtool recommended', async () => (await inRow('starter')) && (await inRow('hyperfine')) && (await inRow('devtool')), 30000);
+    if ((await findAll(card('hyperfine'))).length !== 1) throw new Error('recommended app repeated in the catalog');
     if (await inRow('toolbox')) throw new Error('toolbox recommended');
     // Avatars come with the collection list, which loads separately (and again after the update on launch).
     await waitFor('collection avatar on cards', async () => (await findAll("//article//span[contains(@class,'collection')]//img")).length > 0);
@@ -675,6 +676,7 @@ const steps = [
   }],
   ['collections: clone a release tag, switch to a branch, and resume the default source', async () => {
     await click(nav('Collections'));
+    await click(button('Add collection'));
     const allowed = "//details[summary[normalize-space()='Allowed collection URL patterns']]";
     await click(allowed + '/summary');
     if ((await text(allowed + '//code')) !== '.*/second') throw new Error('wrong collection URL policy');

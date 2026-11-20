@@ -87,9 +87,7 @@
   .desc {
     font-size: 0.83rem;
     color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   .badge {
     flex: none;

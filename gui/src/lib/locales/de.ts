@@ -3,6 +3,10 @@ import type { en } from './en.ts';
 
 export const de: Record<keyof typeof en, string | { one: string; other: string }> = {
   // App.svelte: navigation and the catalog pages
+  'catalog.more': "Weitere Angebote",
+  'activity.idle': "Es wird nichts ausgeführt und die Warteschlange ist leer.",
+  'app.previewChanges': "Änderungen ansehen",
+  'plan.planned': "Geplante Aktion: {action}",
   'release.heading': "Sammlungsupdate ansehen",
   'release.loading': "Versionen werden verglichen…",
   'release.refresh': "Vergleich aktualisieren",

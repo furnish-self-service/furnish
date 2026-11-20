@@ -208,6 +208,7 @@ export function toast(kind: Toast['kind'], title: string, detail?: string) {
   store.toasts.push({ id, kind, title, detail });
   // Errors stay until dismissed: their details may be needed.
   if (kind !== 'error') setTimeout(() => dismiss(id), 4000);
+  return id;
 }
 export function dismiss(id: number) {
   store.toasts = store.toasts.filter((t) => t.id !== id);
@@ -387,7 +388,6 @@ function installRequiredUpdate(key: string) {
   if (!action) return;
   requiredTried.set(key, checkRound);
   enqueue(key, action, 'update');
-  toast('info', t('toast.requiredUpdate', { app: appName(app) }));
 }
 
 /** The app has a security update its collection requires. */
@@ -400,7 +400,7 @@ function operationKind(job: Queued): Run['kind'] {
 }
 
 /** Run one queued operation; resolves to whether it succeeded. */
-async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed' | 'paused'> {
+async function runOperation(app: AppInfo, job: Queued, updated: string[]): Promise<'done' | 'failed' | 'paused'> {
   const {action, trigger, commit} = job;
   const kind = operationKind(job);
   const previousRun = store.runs[app.key];
@@ -408,6 +408,10 @@ async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed
   const run = startRun(app, kind, trigger, action, commit);
   store.busy[app.key] = action === 'uninstall' ? 'uninstall' : 'install';
   delete store.failed[app.key];
+  const background = trigger === 'update';
+  const progress = background ? toast('info', requiredUpdate(app.key)
+    ? t('toast.requiredUpdate', { app: appName(app) })
+    : t('toast.autoUpdating', { apps: appName(app), n: 1 })) : undefined;
   let cancelled = false;
   let ok = false;
   try {
@@ -430,7 +434,8 @@ async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed
     if (fellBack) {
       run.fallbackDate = fellBack.date;
       toast('info', t('toast.fellBack', { app: appName(app), date: formatDate(fellBack.date) }), [t('toast.fellBackDetail', { error: fellBack.error }), notice].filter(Boolean).join(' '));
-    } else toast('success', t(`run.done.${kind}`, { app: appName(app) }), notice);
+    } else if (background && kind === 'update' && !notice) updated.push(appName(app));
+    else toast('success', t(`run.done.${kind}`, { app: appName(app) }), notice);
     if (autoInstalling.has(app.key)) await api.autoInstallDone(app.key);
   } catch (e) {
     run.error = message(e);
@@ -443,6 +448,7 @@ async function runOperation(app: AppInfo, job: Queued): Promise<'done' | 'failed
       store.failed[app.key] = { error: message(e), previous: offer ? await api.previousVersion(app.key).catch(() => null) : null };
     }
   } finally {
+    if (progress !== undefined) dismiss(progress);
     if (!job.waitingForClose?.length) {
       autoInstalling.delete(app.key);
       endRun(app.key, run, cancelled ? 'cancelled' : !ok ? 'failed' : run.fallbackDate ? 'fallback' : 'done');
@@ -566,7 +572,6 @@ async function updateApps() {
   store.autoUpdate.postponed = null;
   const apps = due();
   for (const app of apps) enqueue(app.key, 'install', 'update');
-  if (apps.length) toast('info', t('toast.autoUpdating', { apps: apps.map(appName).join(', '), n: apps.length }));
 }
 
 /** Pull collections, look for app updates (package managers learn about them on their own),
@@ -1147,6 +1152,7 @@ function pauseForApps(job: Queued, names: string[]) {
 async function pump() {
   if (pumping) return;
   pumping = true;
+  const updated: string[] = [];
   try {
     for (;;) {
       const index = store.queue.findIndex(job => (!job.prerequisites.length && (!job.waitingForClose?.length || job.recheck)) || !appByKey(job.key));
@@ -1187,7 +1193,7 @@ async function pump() {
       if (app && canRun && (next.trigger !== 'autoInstall' || verifiedInstall(app))) {
         try {
           delete next.waitingForClose;
-          const outcome = await runOperation(app, next);
+          const outcome = await runOperation(app, next, updated);
           if (outcome === 'done' && next.action !== 'uninstall') releaseDependents(store.queue, next.key);
           if (next.trigger === 'update' && outcome === 'failed') declinedUpdates.add(next.key);
         } finally {
@@ -1205,6 +1211,10 @@ async function pump() {
   } finally {
     activeRequest = undefined;
     pumping = false;
+    if (updated.length) {
+      const names = updated.length <= 3 ? updated.join(', ') : t('common.apps', { n: updated.length });
+      toast('success', t('toast.updated', { names }));
+    }
   }
   if (!store.queue.length) maybeApplySelfUpdate();
 }
