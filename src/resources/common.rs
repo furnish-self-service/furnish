@@ -406,7 +406,10 @@ fn command_path(inherited: Option<std::ffi::OsString>) -> Option<std::ffi::OsStr
     if unsafe { libc::geteuid() } == 0 || crate::service::in_service() || std::env::var("FURNISH_SERVICE").as_deref() == Ok("1") {
         return inherited;
     }
-    let mut dirs: Vec<_> = inherited.as_ref().map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    // A bare executable name must not depend on the resource's working directory.
+    let mut dirs: Vec<_> = inherited.as_ref()
+        .map(|p| std::env::split_paths(p).filter(|dir| dir.is_absolute()).collect())
+        .unwrap_or_default();
     for dir in desktop_bin_dirs() {
         if !dirs.contains(&dir) && std::env::join_paths([&dir]).is_ok() {
             dirs.push(dir);

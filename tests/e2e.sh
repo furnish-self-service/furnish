@@ -515,10 +515,10 @@ if ! $real; then
         # The Command resource uses the same desktop fallback. Its child gets that PATH
         # too, so a vendor wrapper can invoke a sibling helper by name.
         printf '#!/bin/sh\nexec furnish-fixture-helper\n' > "$tmp/home/.local/bin/elsewhere-tool"
-        printf '#!/bin/sh\necho desktop\n' > "$tmp/home/.local/bin/furnish-fixture-helper"
+        printf '#!/bin/sh\ncase ":$PATH:" in *::*|*:relative:*) exit 1 ;; esac\necho desktop\n' > "$tmp/home/.local/bin/furnish-fixture-helper"
         chmod +x "$tmp/home/.local/bin/furnish-fixture-helper"
         desktop_probe() {
-            env HOME="$tmp/home" PATH="$tmp/elsewhere:/usr/bin:/bin" "$furnish" dsc-resource command test \
+            env HOME="$tmp/home" PATH=":relative:$tmp/elsewhere:/usr/bin:/bin" "$furnish" dsc-resource command test \
                 <<< "{\"test\":{\"command\":[\"elsewhere-tool\"],\"output\":\"$1\"},\"set\":[\"false\"]}"
         }
         touch "$tmp/elsewhere/elsewhere-tool"  # a non-executable on PATH cannot shadow the tool
