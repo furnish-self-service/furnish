@@ -478,7 +478,7 @@ export function visibleApps(view: View, query: string): AppInfo[] {
     const status = store.status[app.key];
     if (status === 'unavailable' && store.statusErrors[app.key] === undefined) return false;
     if (view.page === 'installed' && !isInstalled(app.key)
-      && !((!status || status === 'error') && lastInstalled.has(app.key))) return false;
+      && (status !== undefined || !lastInstalled.has(app.key))) return false;
     if (view.page === 'updates' && status !== 'needsUpdate') return false;
     if (view.page === 'category' && !app.categories.includes(view.name)) return false;
     if (!query.trim()) return true;
