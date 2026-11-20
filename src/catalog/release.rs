@@ -229,6 +229,8 @@ impl Declared {
     fn uses(&self, changed: &BTreeSet<String>) -> bool {
         let field = if self.kind.eq_ignore_ascii_case(super::INSTALLER_TYPE) {
             "file"
+        } else if self.kind.eq_ignore_ascii_case(super::PACKAGE_TYPE) && self.body["properties"]["flake"].is_string() {
+            "flake"
         } else if [super::FILE_TYPE, super::COMMAND_TYPE, super::DIRECTORY_TYPE].iter().any(|kind| self.kind.eq_ignore_ascii_case(kind)) {
             "source"
         } else {
@@ -239,7 +241,7 @@ impl Declared {
         };
         let path: std::path::PathBuf = std::path::Path::new(source).components().collect();
         let normalized = path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
-        if self.kind.eq_ignore_ascii_case(super::DIRECTORY_TYPE) {
+        if field == "flake" || self.kind.eq_ignore_ascii_case(super::DIRECTORY_TYPE) {
             let prefix = format!("{normalized}/");
             return changed.iter().any(|path| path.starts_with(&prefix));
         }

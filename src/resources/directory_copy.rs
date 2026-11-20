@@ -115,7 +115,7 @@ impl Source {
                     .to_str()
                     .context("non-UTF-8 source path")?
                     .replace(std::path::MAIN_SEPARATOR, "/");
-                for name in catalog::directory_tree(repo, "HEAD", &folder)? {
+                for (name, _) in catalog::directory_tree(repo, "HEAD", &folder)? {
                     let name = PathBuf::from(name);
                     if inspect(path, &name)? == Kind::Missing {
                         source.sparse.insert(name.clone());

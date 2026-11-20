@@ -225,6 +225,8 @@ use_nix() {
 }extra-experimental-features = nix-command flakes"
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
+    flake_lock_flag=
+    [ "${FURNISH_LOCAL_FLAKE:-}" != 1 ] || flake_lock_flag=--no-write-lock-file
     personal=${HOME:-/nonexistent}/.nix-profile
     xdg=${XDG_STATE_HOME:-${HOME:-/nonexistent}/.local/state}/nix
     if [ -e "$xdg/profile" ] && { [ ! -e "$personal" ] || [ "$(nix config show use-xdg-base-directories 2>/dev/null)" = true ]; }; then
@@ -291,7 +293,7 @@ use_nix() {
     }
     refresh_profile() { profile_version=$(version_in "$profile_path"); }
     do_install() {
-        run_step nix profile install $profile "$ref#$name" || return $?
+        run_step nix profile install $flake_lock_flag $profile "$ref#$name" || return $?
         # Nix may just have created the user's default profile and its link.
         if [ -z "$profile" ] && [ ! -e "$profile_path" ]; then
             if [ -e "${HOME:-/nonexistent}/.nix-profile" ]; then profile_path=$HOME/.nix-profile; else profile_path=$xdg/profile; fi
@@ -310,6 +312,14 @@ use_nix() {
         available=$(nix_available) || return 0
         [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
     }
+    # Two revisions of a collection flake can supply the same package version. The profile
+    # records the immutable NAR hash Nix installed; prefetch computes the current folder hash.
+    source_changed() {
+        [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ] && [ -z "$declared_by" ] && [ -n "$profile_version" ] &&
+            [ -f "$profile_path/manifest.json" ] || return 1
+        match=$(nix flake prefetch --json "$ref" | "${FURNISH_EXE:-furnish}" dsc-resource nix-profile-flake "$profile_path/manifest.json" "$name") || return 1
+        [ "$match" = changed ]
+    }
     # A declared package's version moves with the configuration, which furnish doesn't change.
     scheme=nix
     latest_version() { [ -n "$declared_by" ] || nix_available; }
@@ -318,7 +328,7 @@ use_nix() {
         # Offline, say, the check fails: the app counts as up to date, and the activity log says why.
         # Errors go to a private file (mktemp: random name, only ours), warnings on success are dropped.
         err=$(mktemp) || return 0
-        if ! available=$(nix eval --raw "$ref#$name.version" 2>"$err"); then
+        if ! available=$(nix eval $flake_lock_flag --raw "$ref#$name.version" 2>"$err"); then
             echo "{\"warn\":$(json "couldn't check $ref for a newer $name: $(tail -n1 "$err")")}" >&2
             rm -f "$err"
             return 0

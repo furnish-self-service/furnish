@@ -391,6 +391,10 @@ fn check_resources(resources: &[Value], label: &str, dir: &Path, findings: &mut 
         if kind == "Furnish/Package" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/Package needs properties.name")));
         }
+        if kind == "Furnish/Package" && let Some(flake) = r["properties"]["flake"].as_str()
+            && !dir.join(flake).join("flake.nix").is_file() {
+            findings.push(error(format!("{name}: expected {flake}/flake.nix in the collection")));
+        }
         if kind == "Furnish/NixOS" && r["properties"]["name"].as_str().is_none_or(str::is_empty) {
             findings.push(error(format!("{name}: Furnish/NixOS needs properties.name")));
         }

@@ -197,6 +197,7 @@ available_versions() { latest_version; }
 pin=false
 cant_remove=
 newer_version() { :; }
+source_changed() { return 1; }
 upgrade_desc=
 do_upgrade() { do_install; }
 
@@ -205,7 +206,7 @@ reportVersions=${reportVersions:-} targetVersion=${targetVersion:-}
 # set with targetVersion (and _exist true): sets action, step, desc and after like furnish_main.
 target_step() {
     t=$targetVersion
-    if [ "$version" = "$t" ]; then
+    if [ "$version" = "$t" ] && ! source_changed; then
         step="$subject $t is installed, the required version" after=$t
         return
     fi
@@ -243,10 +244,10 @@ furnish_main() {
     test)
         if [ "${_exist:-true}" = true ] && [ -n "$targetVersion" ]; then
             ok=false
-            [ "$version" = "$targetVersion" ] && ok=true
+            [ "$version" = "$targetVersion" ] && ! source_changed && ok=true
         elif [ "${_exist:-true}" = true ]; then
             ok=false
-            [ -n "$version" ] && [ -z "$(newer_version || true)" ] && ok=true
+            [ -n "$version" ] && [ -z "$(newer_version || true)" ] && ! source_changed && ok=true
         else
             ok=true
             [ -n "$version" ] && ok=false
@@ -265,6 +266,8 @@ furnish_main() {
             action=install step="Install $subject with $via" desc=$install_desc after='?'
         elif [ -n "$newer" ]; then
             action=upgrade step="Update $subject from $version to $newer with $via" desc=${upgrade_desc:-$install_desc} after=$newer
+        elif [ "${_exist:-true}" = true ] && [ -n "$version" ] && source_changed; then
+            action=upgrade step="Update $subject from the changed collection flake with $via" desc=$upgrade_desc after=$version
         elif [ "${_exist:-true}" != true ] && [ -n "$version" ] && [ -n "$cant_remove" ]; then
             # Plain text and an unmapped exit code, so DSC keeps the line in its error.
             [ "${2:-}" = --what-if ] || { echo "furnish: $cant_remove" >&2; exit 14; }
@@ -285,7 +288,8 @@ furnish_main() {
             detail=
             [ -n "$action" ] && detail=",$(json "Run $how: $desc")"
             state "$after"
-            printf ',"_metadata":{"whatIf":[%s%s]}}\n' "$(json "$step")" "$detail"
+            changed=false; [ -z "$action" ] || changed=true
+            printf ',"_metadata":{"whatIf":[%s%s],"furnishChange":%s}}\n' "$(json "$step")" "$detail" "$changed"
             exit 0
         fi
 

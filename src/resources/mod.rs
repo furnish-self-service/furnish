@@ -88,6 +88,10 @@ fn run(args: &[String]) -> Result<String> {
     if let [kind, manifest, name] = args && kind == "nix-profile-version" {
         return crate::nix_profile::version(Path::new(manifest), name);
     }
+    if let [kind, manifest, name] = args && kind == "nix-profile-flake" {
+        let fetched = serde_json::from_reader(std::io::stdin().lock()).context("reading nix flake prefetch output")?;
+        return Ok(if crate::nix_profile::flake_matches(Path::new(manifest), name, &fetched)? { "same" } else { "changed" }.into());
+    }
     if let [kind, op] = args && kind == "installer-download" {
         return crate::installer_download::command(op);
     }

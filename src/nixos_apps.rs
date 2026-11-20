@@ -1454,7 +1454,7 @@ pub(crate) fn package(
         anyhow::ensure!(entry.options.is_empty() && entry.packages.len() == 1,
             "the existing configuration entry for {attr} does not match a Furnish package declaration");
     }
-    let constrained = metadata["versioned"] == true || props.get("nixpkgs").is_some() || props.get("targetVersion").is_some();
+    let constrained = metadata["versioned"] == true || props.get("nixpkgs").is_some() || props.get("flake").is_some() || props.get("targetVersion").is_some();
     if constrained {
         if current.is_none() {
             return Ok(None);

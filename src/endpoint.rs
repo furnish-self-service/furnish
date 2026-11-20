@@ -188,7 +188,7 @@ fn host(origin: &str) -> &str {
     origin.split_once("://").map_or(origin, |(_, h)| h)
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -889,7 +889,7 @@ fn parse_callback(request_line: &str) -> Option<BTreeMap<String, String>> {
     })
 }
 
-fn percent_encode(s: &str) -> String {
+pub(crate) fn percent_encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),

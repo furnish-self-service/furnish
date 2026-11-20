@@ -16,6 +16,7 @@ mod release;
 pub use release::{AppChange, Change, CollectionPreview, ReviewedRevisions, StepChange};
 mod tracking;
 mod status_cache;
+pub(crate) mod flake;
 use crate::settings::Tracking;
 use tracking::Target;
 
@@ -1195,6 +1196,12 @@ impl Collection {
     /// Materialize a revision file once. Snapshots at one commit are shared by apps,
     /// so publish whole files atomically and leave files belonging to other apps in place.
     fn write_revision_file(&self, commit: &str, file: &str, into: &Path) -> Result<()> {
+        self.write_revision_file_mode(commit, file, into, false)
+    }
+
+    fn write_revision_file_mode(&self, commit: &str, file: &str, into: &Path, executable: bool) -> Result<()> {
+        #[cfg(not(unix))]
+        let _ = executable;
         let root = into.canonicalize()?;
         if root.starts_with(self.dir.canonicalize()?) {
             bail!("a version snapshot must be outside the current checkout");
@@ -1222,7 +1229,7 @@ impl Collection {
         let builder = {
             use std::os::unix::fs::PermissionsExt;
             let mut builder = builder;
-            builder.permissions(fs::Permissions::from_mode(0o666)); // creation still respects the account's umask
+            builder.permissions(fs::Permissions::from_mode(if executable { 0o777 } else { 0o666 })); // creation still respects the account's umask
             builder
         };
         let mut temp = builder.tempfile_in(parent)?;
@@ -1232,6 +1239,13 @@ impl Collection {
             Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists && fs::symlink_metadata(&target)?.is_file() => Ok(()),
             Err(e) => Err(e.error.into()),
         }
+    }
+
+    fn write_revision_folder(&self, commit: &str, folder: &str, into: &Path) -> Result<()> {
+        for (name, executable) in directory_tree(&self.dir, commit, folder)? {
+            self.write_revision_file_mode(commit, &format!("{folder}/{name}"), into, executable)?;
+        }
+        Ok(())
     }
 
     /// The Git blob identifies the exact regular-file script selected by this commit.
@@ -1284,9 +1298,7 @@ impl Collection {
         let earlier = Collection { name: self.name.clone(), dir: into.to_path_buf(), managed: self.managed };
         let app = earlier.load_app(&into.join(relative))?;
         for folder in app.directory_sources(values)? {
-            for name in directory_tree(&self.dir, commit, &folder)? {
-                self.write_revision_file(commit, &format!("{folder}/{name}"), into)?;
-            }
+            self.write_revision_folder(commit, &folder, into)?;
         }
         for file in app.missing_installers(values) {
             self.write_revision_file(commit, &file, into)?;
@@ -1444,6 +1456,9 @@ impl Collection {
             }
             if resource["properties"]["resources"].is_array() {
                 self.check_resources(&mut resource["properties"]["resources"], allowed, app)?;
+            }
+            if canonical == Some(&PACKAGE_TYPE) {
+                flake::attach(&self.dir, resource).with_context(|| format!("resource '{name}'"))?;
             }
             if canonical == Some(&BLOCK_TYPE) {
                 resource["properties"]["app"] = format!("{}/{app}", self.name).into();
@@ -2008,6 +2023,9 @@ impl App {
         fn collect(list: &Value, root: &Path, doc: &Value, values: &serde_json::Map<String, Value>, out: &mut Vec<String>) -> Result<()> {
             for entry in list.as_array().into_iter().flatten() {
                 if entry["condition"].as_str().is_some_and(|c| !crate::conditions::holds_for(doc, c, values).unwrap_or(true)) { continue; }
+                if entry["type"] == PACKAGE_TYPE && let Some(folder) = entry["properties"]["flake"].as_str() {
+                    out.push(folder.to_owned());
+                }
                 if entry["type"] == DIRECTORY_TYPE && let Some(source) = entry["properties"]["source"].as_str() {
                     out.push(Path::new(source).strip_prefix(root)?.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"));
                 }
@@ -2450,13 +2468,13 @@ pub fn find_app(query: &str) -> Result<App> {
 }
 
 /// Regular files relative to a Git directory at a particular revision, including blobs left out of a sparse checkout.
-pub(crate) fn directory_tree(repo: &Path, revision: &str, folder: &str) -> Result<Vec<String>> {
+pub(crate) fn directory_tree(repo: &Path, revision: &str, folder: &str) -> Result<Vec<(String, bool)>> {
     let spec = format!("{revision}:{folder}");
     let bytes = git_bytes(Some(repo), &["ls-tree", "-r", "-z", "--end-of-options", &spec])?;
     std::str::from_utf8(&bytes)?.split_terminator('\0').map(|entry| {
         let (info, name) = entry.split_once('\t').context("invalid Git tree entry")?;
         anyhow::ensure!(info.starts_with("100644 blob ") || info.starts_with("100755 blob "), "{folder}/{name} must be a regular file");
-        Ok(name.to_string())
+        Ok((name.to_string(), info.starts_with("100755 ")))
     }).collect()
 }
 
