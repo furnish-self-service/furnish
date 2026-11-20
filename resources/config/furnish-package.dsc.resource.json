@@ -131,6 +131,11 @@
           "type": "boolean",
           "readOnly": true
         },
+        "flake": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Folder in this collection containing flake.nix, for a Nix profile package"
+        },
         "nixpkgs": {
           "type": "string",
           "pattern": "^[A-Za-z0-9:/._?=&#+][A-Za-z0-9:/._?=&#+-]*$",

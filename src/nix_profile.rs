@@ -11,7 +11,7 @@ pub(crate) fn version(manifest: &Path, name: &str) -> Result<String> {
     Ok(installed(&state, name)?.unwrap_or_default().to_owned())
 }
 
-fn installed<'a>(state: &'a Value, name: &str) -> Result<Option<&'a str>> {
+fn element<'a>(state: &'a Value, name: &str) -> Result<Option<&'a Value>> {
     let entry = name.rsplit('.').next().unwrap_or(name);
     let element = match (state["version"].as_u64(), &state["elements"]) {
         (Some(1..=3), Value::Object(elements)) => elements.get(entry),
@@ -21,8 +21,23 @@ fn installed<'a>(state: &'a Value, name: &str) -> Result<Option<&'a str>> {
         }),
         _ => bail!("unrecognized Nix profile manifest"),
     };
-    let Some(e) = element else { return Ok(None) };
+    Ok(element)
+}
+
+fn installed<'a>(state: &'a Value, name: &str) -> Result<Option<&'a str>> {
+    let Some(e) = element(state, name)? else { return Ok(None) };
     Ok(Some(store_names(e).find_map(|s| name_version(s).1).unwrap_or("?")))
+}
+
+/// Compare the source Nix locked in this profile with the hash of the collection folder.
+pub(crate) fn flake_matches(manifest: &Path, name: &str, prefetch: &Value) -> Result<bool> {
+    let wanted = prefetch["hash"].as_str().context("missing local flake content hash")?;
+    let state = serde_json::from_slice(&std::fs::read(manifest)?)?;
+    let Some(entry) = element(&state, name)? else { return Ok(false) };
+    let url = entry["url"].as_str().or_else(|| entry["uri"].as_str()).unwrap_or_default();
+    let query = url.strip_prefix("path:").and_then(|url| url.split_once('?')).map(|(_, q)| q).unwrap_or_default();
+    Ok(query.split('&').filter_map(|param| param.strip_prefix("narHash="))
+        .any(|hash| crate::endpoint::percent_decode(hash) == wanted))
 }
 
 // The attribute and pname can differ. Nix store names use <pname>-<version>,
@@ -49,6 +64,19 @@ fn store_names(e: &Value) -> impl Iterator<Item = &str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn compares_the_locked_source_hash_of_the_selected_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let manifest = temp.path().join("manifest.json");
+        let element = json!({"url":"path:/a%20folder?lastModified=10&narHash=sha256-h%2Ba%2Fs%3D","attrPath":"packages.system.tray"});
+        for profile in [json!({"version":3,"elements":{"tray":element}}), json!({"version":2,"elements":[element]})] {
+            std::fs::write(&manifest, profile.to_string()).unwrap();
+            assert!(flake_matches(&manifest, "tray", &json!({"hash":"sha256-h+a/s="})).unwrap());
+            assert!(!flake_matches(&manifest, "tray", &json!({"hash":"updated"})).unwrap());
+            assert!(!flake_matches(&manifest, "other", &json!({"hash":"sha256-h+a/s="})).unwrap());
+        }
+    }
 
     #[test]
     fn finds_the_version_only_in_the_selected_profile_element() {

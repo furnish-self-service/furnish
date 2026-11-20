@@ -225,6 +225,8 @@ use_nix() {
 }extra-experimental-features = nix-command flakes"
     shared=/nix/var/nix/profiles/furnish
     ref=${nixpkgs:-nixpkgs}
+    flake_lock_flag=
+    [ "${FURNISH_LOCAL_FLAKE:-}" != 1 ] || flake_lock_flag=--no-write-lock-file
     personal=${HOME:-/nonexistent}/.nix-profile
     xdg=${XDG_STATE_HOME:-${HOME:-/nonexistent}/.local/state}/nix
     if [ -e "$xdg/profile" ] && { [ ! -e "$personal" ] || [ "$(nix config show use-xdg-base-directories 2>/dev/null)" = true ]; }; then
@@ -291,7 +293,7 @@ use_nix() {
     }
     refresh_profile() { profile_version=$(version_in "$profile_path"); }
     do_install() {
-        run_step nix profile install $profile "$ref#$name" || return $?
+        run_step nix profile install $flake_lock_flag $profile "$ref#$name" || return $?
         # Nix may just have created the user's default profile and its link.
         if [ -z "$profile" ] && [ ! -e "$profile_path" ]; then
             if [ -e "${HOME:-/nonexistent}/.nix-profile" ]; then profile_path=$HOME/.nix-profile; else profile_path=$xdg/profile; fi
@@ -300,15 +302,39 @@ use_nix() {
     }
     do_remove() { run_step nix profile remove $profile "$entry" && refresh_profile; }
     # Not `nix profile upgrade`: it re-resolves the reference installed from, not the current one.
-    do_upgrade() { do_remove && do_install; }
-    install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $entry"
-    upgrade_desc="nix profile remove $profile $entry && nix profile install $profile $ref#$name"
+    do_upgrade() {
+        if [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ]; then
+            # Source drift can also be a broken expression or a failed build. Keep the
+            # working profile entry until Nix has built the replacement.
+            run_step nix build --no-link "$flake_lock_flag" "$ref#$name" || return $?
+        fi
+        do_remove && do_install
+    }
+    install_desc="nix profile install${flake_lock_flag:+ $flake_lock_flag}${profile:+ $profile} $ref#$name"
+    remove_desc="nix profile remove${profile:+ $profile} $entry"
+    upgrade_desc="$remove_desc && $install_desc"
+    if [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ]; then
+        upgrade_desc="nix build --no-link $flake_lock_flag $ref#$name && $upgrade_desc"
+    fi
     # The version in the referenced nixpkgs, if it differs from the installed one. None for a
     # declared package: it moves with the configuration's inputs.
     newer_version() {
         [ -z "$declared_by" ] || return 0
         available=$(nix_available) || return 0
         [ -n "$available" ] && [ "$available" != "$(installed_version)" ] && echo "$available"
+    }
+    # Two revisions of a collection flake can supply the same package version. The profile
+    # records the immutable NAR hash Nix installed; prefetch computes the current folder hash.
+    source_changed_result=
+    source_changed() {
+        [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ] && [ -z "$declared_by" ] && [ -n "$profile_version" ] &&
+            [ -f "$profile_path/manifest.json" ] || return 1
+        if [ -z "$source_changed_result" ]; then
+            source_changed_result=$(nix flake prefetch "$flake_lock_flag" --json "$ref" |
+                "${FURNISH_EXE:-furnish}" dsc-resource nix-profile-flake "$profile_path/manifest.json" "$name") ||
+                fail 10 "could not check the collection flake for $name"
+        fi
+        [ "$source_changed_result" = changed ]
     }
     # A declared package's version moves with the configuration, which furnish doesn't change.
     scheme=nix
@@ -318,7 +344,7 @@ use_nix() {
         # Offline, say, the check fails: the app counts as up to date, and the activity log says why.
         # Errors go to a private file (mktemp: random name, only ours), warnings on success are dropped.
         err=$(mktemp) || return 0
-        if ! available=$(nix eval --raw "$ref#$name.version" 2>"$err"); then
+        if ! available=$(nix eval $flake_lock_flag --raw "$ref#$name.version" 2>"$err"); then
             echo "{\"warn\":$(json "couldn't check $ref for a newer $name: $(tail -n1 "$err")")}" >&2
             rm -f "$err"
             return 0

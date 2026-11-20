@@ -56,6 +56,10 @@ pub(crate) fn validate(props: &Value) -> Result<()> {
             }
         }
     }
+    if let Some(folder) = props.get("flake") {
+        ensure!(props.get("nixpkgs").is_none(), "use either flake or nixpkgs");
+        crate::catalog::flake::relative(folder.as_str().context("flake must be a folder in the collection")?)?;
+    }
     if let Some(id) = props.get("packageManager") {
         ensure!(expression(id) || id.as_str().is_some_and(valid_manager_id), "packageManager must be a valid package manager ID");
     }
@@ -388,6 +392,11 @@ fn native_backend(props: &Value, name: &str, manager: Option<&str>) -> Result<Co
                 backend.env(key, value.as_str().with_context(|| format!("{key} must be a string"))?);
             }
         }
+    }
+    backend.env_remove("FURNISH_LOCAL_FLAKE");
+    if manager == Some("nix") && props["flake"].is_string() {
+        backend.env("nixpkgs", crate::catalog::flake::reference(props)?);
+        backend.env("FURNISH_LOCAL_FLAKE", "1");
     }
     Ok(backend)
 }

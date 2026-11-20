@@ -51,4 +51,49 @@ furnish install hyperfine >/dev/null || fail "default Nix package install failed
 profile | grep -q hyperfine || fail "default Nix package missing from profile"
 furnish uninstall hyperfine >/dev/null || fail "default Nix package uninstall failed"
 if profile | grep -q hyperfine; then fail "default Nix package remains after uninstall"; fi
+echo "== a collection-local flake tracks source changes at the same package version"
+mkdir -p "files/nix/local package"
+cat >"files/nix/local package/flake.nix" <<'FLAKE'
+{
+  inputs.nixpkgs.url = "nixpkgs";
+  outputs = { self, nixpkgs }: {
+    packages.x86_64-linux.local-flake-demo = nixpkgs.legacyPackages.x86_64-linux.runCommand
+      "local-flake-demo-1.0" { version = "1.0"; }
+      "mkdir -p $out/share; cp ${./payload.rpm} $out/share/local-flake-payload";
+  };
+}
+FLAKE
+printf 'one' > "files/nix/local package/payload.rpm"
+(cd "files/nix/local package" && nix --extra-experimental-features 'nix-command flakes' flake lock path:.)
+cat >apps/local.dsc.yaml <<'YAML'
+resources:
+  - name: Local package
+    type: Furnish/Package
+    properties:
+      packageManager: nix
+      name: local-flake-demo
+      flake: files/nix/local package
+YAML
+git add -A && git commit -qm 'ship a local flake'
+furnish collection update org >/dev/null
+furnish install local >/dev/null
+payload=/nix/var/nix/profiles/furnish/share/local-flake-payload
+[ "$(cat "$payload")" = one ] || fail "local package missing"
+furnish list | grep -q "✓  local" || fail "installed local flake is stale"
+printf 'two' > "files/nix/local package/payload.rpm"
+git add -A && git commit -qm 'update only the package source'
+furnish collection update org >/dev/null
+furnish list | grep -q "↑  local" || fail "changed flake with the same version was missed"
+furnish install --dry-run local | grep -q "changed collection flake" || fail "missing source update preview"
+furnish install local >/dev/null
+[ "$(cat "$payload")" = two ] || fail "updated local package still has old files"
+furnish list | grep -q "✓  local" || fail "update did not converge"
+# A new folder hash may describe a flake that fails to evaluate. Keep the working package.
+printf 'not a flake' > "files/nix/local package/flake.nix"
+git add -A && git commit -qm 'broken local flake'
+furnish collection update org >/dev/null
+furnish install local >/dev/null 2>&1 || true
+[ "$(cat "$payload")" = two ] || fail "failed update removed the working profile entry"
+furnish uninstall local >/dev/null
+[ ! -f "$payload" ] || fail "local package remains in the profile"
 echo "nix OK"

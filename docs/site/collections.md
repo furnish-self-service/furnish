@@ -122,6 +122,7 @@ Installs a package with a system, per-user or collection package manager. The de
 | `packageManager` | Use this package manager, not the first one found |
 | `namesByDistribution` | Package names keyed by Linux distribution ID, including IDs used by your organization |
 | `namesByManager` | Package names keyed by package manager, such as `brew`, `pacman` or `winget` |
+| `flake` | Collection-relative folder containing `flake.nix` for a Nix profile install |
 | `nixpkgs` | An explicit flake for a Nix profile install. Profile installs default to the registry’s `nixpkgs`. Declarative installs use the configuration’s locked nixpkgs. |
 | `command` | A program the package provides, for example `claude`. If the package manager doesn't have the package but the program is there, the app shows as installed outside furnish |
 | `versions` | The versions that are acceptable (see [Required versions](#required-versions)) |
@@ -141,7 +142,20 @@ Furnish first looks up the Linux distribution's `ID` from `os-release`, then eac
       winget: Acme.CompanyTools
 ```
 
-When this step selects Nix on a machine with a configured Furnish apps input, the resolved package name is an attribute of the configuration’s nixpkgs, such as `jq` or `kdePackages.kdenlive`. Furnish can use the same step for NixOS or Home Manager. Supply `nixpkgs` or `versions` when the app must use a particular source or release. Those steps use a Nix profile. If an update adds a source or version constraint to a package that Furnish already installed in the configuration, uninstall the app and install it again to move it to the profile. [NixOS configuration](admins.md#installing-apps-into-the-configuration)
+To ship a Nix package from the collection, use `flake` with the folder containing its `flake.nix`. Commit its `flake.lock` to pin its inputs. Furnish reads the folder from its checkout, including files deferred by sparse checkout. Nix needs access to any external flake inputs.
+
+```yaml
+- name: tray icon
+  type: Furnish/Package
+  properties:
+    name: openvpn3-indicator
+    packageManager: nix
+    flake: files/nix/openvpn3-indicator
+```
+
+Furnish installs the named package into the Nix profile and compares the installed flake’s content hash on subsequent checks. Editing a file in the folder, including its lock file, makes the app eligible for update even when its version string stays the same.
+
+When this step selects Nix on a machine with a configured Furnish apps input, the resolved package name is an attribute of the configuration’s nixpkgs, such as `jq` or `kdePackages.kdenlive`. Furnish can use the same step for NixOS or Home Manager. Supply `flake`, `nixpkgs` or `versions` when the app must use a particular source or release. Those steps use a Nix profile. If an update adds a source or version constraint to a package that Furnish already installed in the configuration, uninstall the app and install it again to move it to the profile. [NixOS configuration](admins.md#installing-apps-into-the-configuration)
 
 When migrating an existing collection, move each per-manager property into `namesByManager`. For example, replace `pacmanName: libreoffice-fresh` with `namesByManager: { pacman: libreoffice-fresh }`.
 

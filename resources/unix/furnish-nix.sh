@@ -81,7 +81,7 @@ nix_stem() {
         [ -f "$file" ] && { cat "$file"; return 0; }
     fi
     # shellcheck disable=SC2016
-    s=$(nix eval --raw "$ref#$a" --apply 'p: let n = p.name; v = p.version or ""; s = builtins.substring 0 (builtins.stringLength n - builtins.stringLength v - 1) n; in if v != "" && n == "${s}-${v}" then s else p.pname or n' 2>/dev/null) || return 0
+    s=$(nix eval ${flake_lock_flag:-} --raw "$ref#$a" --apply 'p: let n = p.name; v = p.version or ""; s = builtins.substring 0 (builtins.stringLength n - builtins.stringLength v - 1) n; in if v != "" && n == "${s}-${v}" then s else p.pname or n' 2>/dev/null) || return 0
     [ -n "$s" ] || return 0
     if [ -n "$file" ] && mkdir -p "${file%/*}" 2>/dev/null; then
         printf '%s\n' "$s" >"$file.$$" && mv -f "$file.$$" "$file"
