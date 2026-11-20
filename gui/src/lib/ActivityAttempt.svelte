@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RecentActivity } from './activity-history';
+  import { type RecentActivity, stepProgress } from './activity-history';
   import { formatDuration, lang, t } from './i18n.svelte';
   import Plan from './Plan.svelte';
   import PlanStep from './PlanStep.svelte';
@@ -7,6 +7,7 @@
 
   let { entry, multiple = false }: { entry: RecentActivity; multiple?: boolean } = $props();
   const summary = $derived(entry.summary);
+  const numbers = $derived(stepProgress((summary.steps ?? []).map(step => ({ step, state: step.state }))).numbers);
   let expanded = $state(false);
 </script>
 
@@ -27,7 +28,7 @@
       <div class="saved-steps">
         <ol class="plan-steps">
           {#each summary.steps ?? [] as step, i}
-            <PlanStep name={step.name} type={step.type} action={step.action} state={step.state} index={i}>
+            <PlanStep name={step.name} type={step.type} action={step.action} state={step.state} number={numbers[i]}>
               {#snippet timing()}
                 <strong>{step.state === 'done' && step.outcome ? t(`plan.result.${step.outcome}`)
                   : step.state === 'notRun' ? t('plan.notRun') : t(`plan.state.${step.state}`)}</strong>

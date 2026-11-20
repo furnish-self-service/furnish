@@ -4,23 +4,21 @@
   import type { RunStep } from './activity-history';
   import { t } from './i18n.svelte';
 
-  let { name, type, action, state, index, children, timing }: {
-    name: string; type?: string; action?: Action; state?: RunStep['state']; index: number;
+  let { name, type, action, state, number, children, timing }: {
+    name: string; type?: string; action?: Action; state?: RunStep['state']; number: number | null;
     children?: Snippet; timing?: Snippet;
   } = $props();
   const label = $derived(state === 'notRun' ? t('plan.notRun') : state && t(`plan.state.${state}`));
 </script>
 
 <li class="{action ?? ''} {state ?? ''}" class:live={!!state}>
-  {#if state}
-    <span class="marker" title={label} aria-label={label}>
-      {#if state === 'done'}✓
-      {:else if state === 'failed'}✕
-      {:else if state === 'skipped' || state === 'notRun'}–
-      {:else if state === 'cancelled'}⊘
-      {:else}{index + 1}{/if}
-    </span>
-  {/if}
+  <span class="marker" title={label} aria-label={label}>
+    {#if state === 'done'}✓
+    {:else if state === 'failed'}✕
+    {:else if state === 'skipped' || state === 'notRun'}–
+    {:else if state === 'cancelled'}⊘
+    {:else}{number ?? '–'}{/if}
+  </span>
   {#if action && !state}<span class="badge">{t(`plan.action.${action}`)}</span>{/if}
   <div class="body">
     <div class="title">

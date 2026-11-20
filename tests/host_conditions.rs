@@ -23,8 +23,8 @@ fn host_facts_gate_dependencies_steps_and_resource_properties() {
         json!({
             "metadata":{"furnish":{"dependencies":[{"app":"dependency","required":true,"condition":"[parameters('enable')]"}]}},
             "parameters":{"enable":{"type":"bool","defaultValue": present}},
-            "resources":[file("from-app", "[parameters('enable')]", &format!("[concat('distro=', {host}.distribution)]")),
-                file("excluded", &format!("[contains({host}.packageManagers, 'a-manager-that-does-not-exist')]"), "skipped")]
+            "resources":[file("excluded", &format!("[contains({host}.packageManagers, 'a-manager-that-does-not-exist')]"), "skipped"),
+                file("from-app", "[parameters('enable')]", &format!("[concat('distro=', {host}.distribution)]"))]
         }),
     );
     let git = |args: &[&str]| {
@@ -54,7 +54,9 @@ fn host_facts_gate_dependencies_steps_and_resource_properties() {
         assert_eq!(out.status.success(), ok, "{args:?}: {output}");
         output
     };
-    furnish(&["install", "test/app"], true);
+    let output = furnish(&["install", "test/app"], true);
+    assert!(output.contains("[1/1] from-app"), "{output}");
+    assert!(output.contains("excluded skipped"), "{output}");
     assert_eq!(fs::read_to_string(root.join("from-dependency")).unwrap(), "dependency");
     assert!(fs::read_to_string(root.join("from-app")).unwrap().starts_with("distro="));
     assert!(!root.join("excluded").exists());
