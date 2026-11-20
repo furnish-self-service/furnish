@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::ErrorKind,
     path::{Component, Path, PathBuf},
@@ -181,26 +181,53 @@ impl Source {
     }
 }
 
-fn read(path: &Path) -> Result<Option<Tree>> {
+#[derive(Default, PartialEq, Serialize, Deserialize)]
+struct Record {
+    owned: Tree,
+    // An interrupted install may have published only some of its new files. Recovery
+    // may claim a pending name only when its bytes match the planned copy.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pending: BTreeMap<PathBuf, String>,
+}
+
+impl Record {
+    fn owned_at(&self, path: &Path) -> Result<Tree> {
+        let mut owned = self.owned.clone();
+        for (name, digest) in &self.pending {
+            if inspect(path, name)? == Kind::File && catalog::cache_key(&fs::read(path.join(name))?) == *digest {
+                owned.files.insert(name.clone());
+            }
+        }
+        Ok(owned)
+    }
+}
+
+fn read(path: &Path) -> Result<Option<Record>> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    let tree: Tree = serde_json::from_slice(&bytes).context("reading directory ownership record")?;
-    for name in tree.files.iter().chain(&tree.dirs) {
+    let record: Record = serde_json::from_slice(&bytes).context("reading directory ownership record")?;
+    for name in record
+        .owned
+        .files
+        .iter()
+        .chain(&record.owned.dirs)
+        .chain(record.pending.keys())
+    {
         relative(name)?;
     }
     ensure!(
-        !tree.files.contains(Path::new("")),
+        !record.owned.files.contains(Path::new("")) && !record.pending.contains_key(Path::new("")),
         "invalid directory ownership record"
     );
-    Ok(Some(tree))
+    Ok(Some(record))
 }
 
-fn save(path: &Path, tree: &Tree, shared: bool) -> Result<()> {
+fn save(path: &Path, record: &Record, shared: bool) -> Result<()> {
     let tmp = tempfile::NamedTempFile::new_in(path.parent().context("missing record directory")?)?;
-    serde_json::to_writer(tmp.as_file(), tree)?;
+    serde_json::to_writer(tmp.as_file(), record)?;
     #[cfg(unix)]
     if shared {
         use std::os::unix::fs::PermissionsExt;
@@ -247,6 +274,10 @@ impl Changes {
             for file in &wanted.files {
                 match inspect(path, file)? {
                     Kind::File if fs::read(path.join(file))? == source.bytes(file)? => continue,
+                    Kind::File if !old.files.contains(file) => bail!(
+                        "{} already exists with different contents; move the local file before copying",
+                        path.join(file).display()
+                    ),
                     Kind::File => {}
                     Kind::Missing => out.added += 1,
                     Kind::Dir if old.dirs.contains(file) => out.added += 1,
@@ -282,7 +313,11 @@ pub(super) fn plan(props: &Value, p: &DirectoryProps, source: &Path) -> Result<P
 fn prepare(props: &Value, p: &DirectoryProps, folder: &Path, path: &Path, record: &Path, shared: bool) -> Result<Plan> {
     let installing = exist(p.exist);
     let previous = read(record)?;
-    let old = previous.as_ref().cloned().unwrap_or_default();
+    let old = previous
+        .as_ref()
+        .map(|r| r.owned_at(path))
+        .transpose()?
+        .unwrap_or_default();
     let mut plan = Plan::new(props);
     // A locally populated directory left after uninstall isn't evidence of an installed copy.
     plan.observe("_exist", Some(previous.is_some().into()), Some(installing.into()));
@@ -329,7 +364,9 @@ fn prepare(props: &Value, p: &DirectoryProps, folder: &Path, path: &Path, record
     } else {
         vec![]
     };
-    if previous.as_ref() == Some(&next)
+    if previous
+        .as_ref()
+        .is_some_and(|r| r.pending.is_empty() && r.owned == next)
         && installing
         && changes.write.is_empty()
         && changes.create_dirs.is_empty()
@@ -350,15 +387,25 @@ fn prepare(props: &Value, p: &DirectoryProps, folder: &Path, path: &Path, record
             .create(true)
             .truncate(false)
             .write(true)
-            .open(record.with_extension("lock"))?;
+            .open(record.with_file_name("copies.lock"))?;
         lock.lock()?;
         ensure!(read(&record)? == previous, "directory copy changed concurrently; retry");
         // Keep a union until every change succeeds. A kill or failed write cannot lose the
         // names needed to finish an update or uninstall the partially copied tree.
-        let intent = Tree {
-            files: old.files.union(&next.files).cloned().collect(),
-            dirs: old.dirs.union(&next.dirs).cloned().collect(),
+        let mut intent = Record {
+            owned: Tree {
+                files: old.files.clone(),
+                dirs: old.dirs.union(&next.dirs).cloned().collect(),
+            },
+            ..Record::default()
         };
+        if let Some(source) = &source {
+            for rel in next.files.difference(&old.files) {
+                intent
+                    .pending
+                    .insert(rel.clone(), catalog::cache_key(&source.bytes(rel)?));
+            }
+        }
         save(&record, &intent, shared)?;
         for rel in changes.remove_files {
             if inspect(&path, &rel)? == Kind::File {
@@ -393,10 +440,39 @@ fn prepare(props: &Value, p: &DirectoryProps, folder: &Path, path: &Path, record
                     path.join(&rel).display()
                 );
                 let target = path.join(&rel);
-                let file = common::Managed::open(target.to_str().context("non-UTF-8 destination")?)?;
-                common::write(&file, &source.bytes(&rel)?, &common::WriteOptions::default())?;
+                let bytes = source.bytes(&rel)?;
+                if let Some(expected) = intent.pending.get(&rel) {
+                    ensure!(
+                        catalog::cache_key(&bytes) == *expected,
+                        "source changed during copy; retry"
+                    );
+                    // Never replace a local file created between the preview and publication.
+                    let builder = tempfile::Builder::new();
+                    #[cfg(unix)]
+                    let builder = {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mut builder = builder;
+                        builder.permissions(fs::Permissions::from_mode(0o666));
+                        builder
+                    };
+                    let mut tmp = builder.tempfile_in(target.parent().context("no destination parent")?)?;
+                    std::io::Write::write_all(tmp.as_file_mut(), &bytes)?;
+                    tmp.as_file().sync_all()?;
+                    tmp.persist_noclobber(&target)
+                        .with_context(|| format!("creating {}", target.display()))?;
+                } else {
+                    let file = common::Managed::open(target.to_str().context("non-UTF-8 destination")?)?;
+                    common::write(&file, &bytes, &common::WriteOptions::default())?;
+                }
             }
-            save(&record, &next, shared)?;
+            save(
+                &record,
+                &Record {
+                    owned: next,
+                    pending: BTreeMap::new(),
+                },
+                shared,
+            )?;
         } else {
             fs::remove_file(record)?;
         }
@@ -438,6 +514,26 @@ mod tests {
         test_plan(&folder, &path, &record, false).unwrap().apply.unwrap()().unwrap();
         assert!(path.join("keep/already-matches").is_file());
         assert!(!path.join("copied").exists());
+    }
+
+    #[test]
+    fn newly_managed_names_cannot_clobber_local_files_even_during_a_partial_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("source");
+        let path = temp.path().join("target");
+        let record = temp.path().join("data/record");
+        fs::create_dir(&folder).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::write(folder.join("a"), "managed").unwrap();
+        fs::write(folder.join("b"), "from the collection").unwrap();
+        let plan = test_plan(&folder, &path, &record, true).unwrap();
+        // The user saves b after Furnish prepares the copy, before a and b are published.
+        fs::write(path.join("b"), "mine").unwrap();
+        assert!(plan.apply.unwrap()().is_err());
+        assert!(test_plan(&folder, &path, &record, true).is_err());
+        test_plan(&folder, &path, &record, false).unwrap().apply.unwrap()().unwrap();
+        assert!(!path.join("a").exists());
+        assert_eq!(fs::read(path.join("b")).unwrap(), b"mine");
     }
 
     #[cfg(unix)]

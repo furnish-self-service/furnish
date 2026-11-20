@@ -430,7 +430,7 @@ To keep an offline copy of documentation current, give the folder a collection-r
     source: docs/offline/
 ```
 
-Furnish manages the regular files at the paths supplied by the source. An update restores their contents and removes files dropped from the collection. Uninstall removes the files Furnish copied and any empty folders it created. Other local files stay, including files that already matched when the copy was installed. The preview counts added, changed and removed files. Source and destination must be separate trees. Links inside the copied tree are refused.
+Furnish manages the regular files at the paths supplied by the source. An update restores their contents and removes files dropped from the collection. Uninstall removes the files Furnish copied and any empty folders it created. A conflicting local file is reported so you can move it before installing. Other local files stay, including files that already matched when the copy was installed. The preview counts added, changed and removed files. Source and destination must be separate trees. Links inside the copied tree are refused.
 
 #### Furnish/File
 
