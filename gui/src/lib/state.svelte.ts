@@ -1233,7 +1233,7 @@ const externalKeys = {
 /** The status of an app installed outside furnish, e.g. "Installed via Home Manager". */
 export const externalStatus = (e: api.External) => t(externalKeys[e.by][0]);
 /** Why furnish leaves an app installed outside it alone, and how to uninstall it. */
-export const externalNote = (e: api.External) => t(externalKeys[e.by][1]);
+export const externalNote = (e: api.External) => e.options?.length ? externalStatus(e) : t(externalKeys[e.by][1]);
 
 export const appName = (app: Pick<AppInfo, 'id' | 'name' | 'collection'>) =>
   translated(app.collection, (f) => f.apps?.[app.id]?.name) ?? app.name ?? app.id;

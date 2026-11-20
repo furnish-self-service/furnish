@@ -219,6 +219,9 @@ pub struct External {
     pub by: String,
     /// The nixpkgs attribute, e.g. `jq` or `kdePackages.kdenlive`; for `other` the package's name.
     pub package: String,
+    /// Option names for a Furnish/NixOS step that the configuration already supplies.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
     /// The configuration's folder, if known (the resource's `declaredIn`).
     pub configuration: Option<String>,
     /// For `other`: where the program is, e.g. `/opt/homebrew/bin/claude` (the resource's `path`).
@@ -246,6 +249,7 @@ impl External {
     /// Why furnish doesn't uninstall app `id`, and what to do instead.
     pub fn refusal(&self, id: &str) -> String {
         match self.configuration_name() {
+            Some(what) if !self.options.is_empty() => format!("{id} is in {}: change {} there", self.within(what), self.options.join(", ")),
             Some(what) => format!("{id} is in {}: remove {} there", self.within(what), self.package),
             None => format!("{id} was installed outside furnish{}: uninstall it the way it was installed", self.at()),
         }
@@ -277,7 +281,13 @@ fn external(states: &[Tested]) -> Option<External> {
         let by = t.actual["managedBy"].as_str().filter(|b| matches!(*b, "nixos" | "home-manager" | "other"))?;
         let package = t.actual["name"].as_str().or_else(|| t.actual["command"].as_str())?;
         let text = |key: &str| t.actual[key].as_str().map(String::from);
-        Some(External { by: by.to_string(), package: package.to_string(), configuration: text("declaredIn"), path: text("path") })
+        let options = if t.kind.eq_ignore_ascii_case("Furnish/NixOS") {
+            let field = if by == "nixos" { "options" } else { "homeOptions" };
+            t.actual[field].as_object().into_iter().flat_map(|m| m.keys().cloned()).collect()
+        } else {
+            vec![]
+        };
+        Some(External { by: by.to_string(), package: package.to_string(), options, configuration: text("declaredIn"), path: text("path") })
     })
 }
 

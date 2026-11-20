@@ -53,6 +53,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod external_options;
+
 /// furnish's local flake with the apps it installed.
 pub const APPS_DIR: &str = "/var/lib/furnish/apps";
 /// What the configuration's furnish/apps input points at.
@@ -1356,6 +1358,9 @@ fn resource_inner(action: &str, what_if: bool) -> Result<Value> {
 }
 
 fn operate(desired: &Desired, person: &Account, current: Option<(Place, Entry)>, action: &str, what_if: bool, label: &str) -> Result<Value> {
+    if current.is_none() && let Some((place, dir)) = external_options::probe(desired, person) {
+        return external_options::response(desired, place, &dir, action, what_if);
+    }
     let in_desired_state = match &current {
         Some((place, entry)) => desired.exist && *entry == desired.entry(*place),
         None => !desired.exist,
@@ -1514,10 +1519,7 @@ pub(crate) fn apply_service_step(properties: &Value, expected: &str) -> Result<(
     }
     let person = person()?;
     let current = find(&desired.name, &person)?;
-    if current.as_ref().map(|(place, entry)| desired.exist && *entry == desired.entry(*place)).unwrap_or(!desired.exist) {
-        return Ok(());
-    }
-    set(&desired, &person, current.map(|(p, _)| p))
+    operate(&desired, &person, current, "set", false, &desired.name).map(drop)
 }
 
 /// A changed app first leaves its previous place. Delegate the whole transition before any
