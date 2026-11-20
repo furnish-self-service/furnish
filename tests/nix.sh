@@ -88,6 +88,12 @@ furnish install --dry-run local | grep -q "changed collection flake" || fail "mi
 furnish install local >/dev/null
 [ "$(cat "$payload")" = two ] || fail "updated local package still has old files"
 furnish list | grep -q "✓  local" || fail "update did not converge"
+# A new folder hash may describe a flake that fails to evaluate. Keep the working package.
+printf 'not a flake' > "files/nix/local package/flake.nix"
+git add -A && git commit -qm 'broken local flake'
+furnish collection update org >/dev/null
+furnish install local >/dev/null 2>&1 || true
+[ "$(cat "$payload")" = two ] || fail "failed update removed the working profile entry"
 furnish uninstall local >/dev/null
 [ ! -f "$payload" ] || fail "local package remains in the profile"
 echo "nix OK"

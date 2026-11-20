@@ -302,9 +302,20 @@ use_nix() {
     }
     do_remove() { run_step nix profile remove $profile "$entry" && refresh_profile; }
     # Not `nix profile upgrade`: it re-resolves the reference installed from, not the current one.
-    do_upgrade() { do_remove && do_install; }
-    install_desc="nix profile install $profile $ref#$name" remove_desc="nix profile remove $profile $entry"
-    upgrade_desc="nix profile remove $profile $entry && nix profile install $profile $ref#$name"
+    do_upgrade() {
+        if [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ]; then
+            # Source drift can also be a broken expression or a failed build. Keep the
+            # working profile entry until Nix has built the replacement.
+            run_step nix build --no-link "$flake_lock_flag" "$ref#$name" || return $?
+        fi
+        do_remove && do_install
+    }
+    install_desc="nix profile install${flake_lock_flag:+ $flake_lock_flag}${profile:+ $profile} $ref#$name"
+    remove_desc="nix profile remove${profile:+ $profile} $entry"
+    upgrade_desc="$remove_desc && $install_desc"
+    if [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ]; then
+        upgrade_desc="nix build --no-link $flake_lock_flag $ref#$name && $upgrade_desc"
+    fi
     # The version in the referenced nixpkgs, if it differs from the installed one. None for a
     # declared package: it moves with the configuration's inputs.
     newer_version() {
@@ -314,11 +325,16 @@ use_nix() {
     }
     # Two revisions of a collection flake can supply the same package version. The profile
     # records the immutable NAR hash Nix installed; prefetch computes the current folder hash.
+    source_changed_result=
     source_changed() {
         [ "${FURNISH_LOCAL_FLAKE:-}" = 1 ] && [ -z "$declared_by" ] && [ -n "$profile_version" ] &&
             [ -f "$profile_path/manifest.json" ] || return 1
-        match=$(nix flake prefetch --json "$ref" | "${FURNISH_EXE:-furnish}" dsc-resource nix-profile-flake "$profile_path/manifest.json" "$name") || return 1
-        [ "$match" = changed ]
+        if [ -z "$source_changed_result" ]; then
+            source_changed_result=$(nix flake prefetch "$flake_lock_flag" --json "$ref" |
+                "${FURNISH_EXE:-furnish}" dsc-resource nix-profile-flake "$profile_path/manifest.json" "$name") ||
+                fail 10 "could not check the collection flake for $name"
+        fi
+        [ "$source_changed_result" = changed ]
     }
     # A declared package's version moves with the configuration, which furnish doesn't change.
     scheme=nix
