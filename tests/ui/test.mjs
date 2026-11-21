@@ -440,6 +440,7 @@ const steps = [
     if (items.length !== 1 || (await text(`${list}/li`)).trim() !== 'hyperfine') throw new Error(`expected only the Linux resource: ${await text(list)}`);
   }],
   ['preview lists the concrete steps and changes nothing', async () => {
+    const elevationBeforePreview = log('pkexec.log');
     const panel = "//details[summary[contains(., 'Steps')]]";
     if (await isOpen(panel)) throw new Error('preview open before click');
     await click(`${panel}/summary`);
@@ -452,7 +453,7 @@ const steps = [
       const plan = await text(panel);
       return plan.includes('pacman is the first available system package manager') && plan.includes('hyperfine is the default package name');
     });
-    if (log('pkexec.log').includes('-R')) throw new Error('the preview ran the removal');
+    if (log('pkexec.log') !== elevationBeforePreview) throw new Error('the preview ran an elevated command');
     await click(`${panel}//button[normalize-space()='Install']`);
     await waitFor('install preview: nothing to do', async () => (await text(panel)).includes('change nothing'));
     const skipped = `${panel}//li[contains(@class,'skipped')]`;
