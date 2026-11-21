@@ -213,7 +213,7 @@ An app or kit detail page has a **Share an action link** control. Choose Install
 - `furnish://update?collection=work&kit=workstation`
 - `furnish://uninstall?collection=work&app=editor`
 
-Each action accepts either `app` or `kit`. Use the collection name as added on the recipient’s computer and the app or kit ID. Percent-encode query values when composing a link manually. Furnish looks up the target locally and asks the person to confirm. A kit install uses its required and preselected apps. An update covers installed apps with an available update. A kit uninstall uses the normal removal defaults, preserving apps shared with other installed kits. The confirmation lists the affected kit members. Installs and updates follow the collection’s dependency rules.
+Each action accepts either `app` or `kit`. Use the collection name as added on the recipient’s computer and the app or kit ID. Percent-encode query values when composing a link manually. Furnish looks up the target locally and asks the person to confirm. A kit install uses its required and preselected apps. An update covers installed apps with an available update. A kit uninstall uses the normal removal defaults, preserving apps shared with other installed kits. The confirmation lists the affected kit members. Installs and updates follow the collection’s dependency rules. If installation requires answers to collection questions, complete them and reopen the link.
 
 If the collection is missing, the action stops. Where policy permits, the person can open Collections to add it separately and then reopen the link to review the action.
 

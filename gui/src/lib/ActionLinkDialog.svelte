@@ -55,6 +55,7 @@
     const keys = kit && link.action === 'uninstall' ? defaultUninstall(kit) : members;
     return keys.map(appByKey).filter((a): a is api.AppInfo => !!a && eligibleForLink(link.action, a));
   });
+  const needsAnswers = $derived(link.action === 'install' && apps.some(app => app.unanswered.length));
   const ready = $derived(!missingCollection && !store.loading && !store.catalogError && !!collection && !!(app || kit)
     && !failed && !checking && apps.length > 0 && !error && store.desktopRestart !== 'launching');
 
@@ -109,6 +110,9 @@
     {#if kit}
       <ul>{#each apps as member (member.key)}<li>{appName(member)} <code>{member.key}</code></li>{/each}</ul>
     {/if}
+    {#if link.action !== 'uninstall' && apps.some(a => a.dependencies.length)}
+      <p>{t('link.dependencies')}</p>
+    {/if}
     {#if link.action === 'uninstall'}<RemovalImpact keys={apps.map(a => a.key)} removingKit={kit?.key} />{/if}
   {/if}
   <div class="actions">
@@ -117,7 +121,7 @@
       <button class="secondary" onclick={collections}>{t('catalog.addCollection')}</button>
     {/if}
     {#if ready}<button class={link.action === 'uninstall' ? 'danger' : 'primary'} disabled={submitting}
-      onclick={confirm}>{t(`common.${link.action}`)}</button>{/if}
+      onclick={confirm}>{needsAnswers ? t('action.answerFirst') : t(`common.${link.action}`)}</button>{/if}
   </div>
 </dialog>
 

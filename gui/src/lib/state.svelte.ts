@@ -884,6 +884,7 @@ export async function signIn(origin: string) {
 
 // Keep the visible confirmation bound to one URL, even when more links arrive.
 const waitingLinks: string[] = [];
+let fullQueueNotice: number | undefined;
 export function dismissLink(url: string) {
   if (store.link?.url !== url) return;
   store.link = null;
@@ -893,7 +894,9 @@ export function dismissLink(url: string) {
 
 function openLink(url: string) {
   if (store.link) {
-    if (url !== store.link.url && !waitingLinks.includes(url) && waitingLinks.length < 10) waitingLinks.push(url);
+    if (url === store.link.url || waitingLinks.includes(url)) return;
+    if (waitingLinks.length < 10) waitingLinks.push(url);
+    else if (!store.toasts.some(notice => notice.id === fullQueueNotice)) fullQueueNotice = toast('info', t('link.queueFull'));
     return;
   }
   const action = parseActionLink(url);

@@ -646,6 +646,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': 'Não foi possível alterar a definição de {name}',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.dependencies': "As dependências necessárias ou selecionadas também podem ser instaladas.",
   'link.share': "Partilhar uma ligação de ação",
   'link.install': "Instalar {name}?",
   'link.update': "Atualizar {name}?",
@@ -653,6 +654,7 @@ export const pt: Record<keyof typeof en, Entry> = {
   'link.source': "Coleção: {collection}",
   'link.missingCollection': "A coleção {collection} ainda não foi adicionada.",
   'link.noAction': "Não há aplicações elegíveis para esta ação.",
+  'link.queueFull': "Há demasiadas ligações em espera. Conclua uma confirmação e volte a abrir esta ligação.",
   'link.changed': "O destino mudou. Volte a abrir a ligação para o rever.",
   'link.title': 'Adicionar as apps da sua organização?',
   'link.text': 'Uma ligação pretende adicionar <b>{name}</b> em <b>{origin}</b>. Depois de iniciar sessão, as respetivas apps aparecem aqui.',
