@@ -315,7 +315,8 @@ const steps = [
         if (installed() !== before) throw new Error(`${kind} ${action} changed the package before confirmation`);
         await click(`${dialog}${button(label)}`);
         await waitFor(`confirmed ${kind} ${action}`, () => installed() === after, 30000);
-        await waitFor('action settled', () => find(`${card('link-target')}[not(.//*[@aria-busy='true'])]${button(after ? 'Uninstall' : 'Install')}`));
+        const settled = after ? "//*[normalize-space()='Installed']" : button('Install');
+        await waitFor(`${kind} ${action} settled`, () => find(`${card('link-target')}[not(.//*[@aria-busy='true'])]${settled}`));
       }
     }
   }],
