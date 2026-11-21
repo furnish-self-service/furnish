@@ -60,7 +60,7 @@
   <label>{t('share.link')}
     <textarea bind:this={linkInput} readonly rows={format === 'html' ? 5 : 2} {value} onfocus={(event) => event.currentTarget.select()}></textarea>
   </label>
-  <p role="status">{feedback}</p>
+  {#if feedback}<p role="status">{feedback}</p>{/if}
   <div class="actions">
     <button class="secondary" onclick={() => dialog.close()}>{t('share.close')}</button>
     <button class="primary" onclick={copy}>{t('share.copyLink')}</button>
@@ -83,5 +83,5 @@
   label { display: grid; gap: .4rem; margin-top: 1rem; }
   textarea { min-width: 0; resize: vertical; font-family: var(--font-mono); }
   p { min-height: 1.4em; margin: .5rem 0; color: var(--ink-soft); }
-  .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+  .actions { margin-top: 1rem; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
 </style>
