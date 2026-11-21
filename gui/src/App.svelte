@@ -5,6 +5,7 @@
   import DepsDialog from './lib/DepsDialog.svelte';
   import QuestionsDialog from './lib/QuestionsDialog.svelte';
   import SignInBanner from './lib/SignInBanner.svelte';
+  import ActionLinkDialog from './lib/ActionLinkDialog.svelte';
   import LinkDialog from './lib/LinkDialog.svelte';
   import AppCard from './lib/AppCard.svelte';
   import AppDetail from './lib/AppDetail.svelte';
@@ -333,7 +334,12 @@
 <Toasts />
 <DepsDialog />
 <QuestionsDialog />
-<LinkDialog />
+{#if store.link}
+  {#key store.link.url}
+    {#if store.link.action}<ActionLinkDialog link={store.link.action} url={store.link.url} />
+    {:else}<LinkDialog url={store.link.url} />{/if}
+  {/key}
+{/if}
 
 <style>
   .restart-banner {

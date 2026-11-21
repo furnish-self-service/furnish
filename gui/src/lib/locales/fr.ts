@@ -646,6 +646,14 @@ export const fr: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': 'Impossible de modifier le paramètre pour {name}',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.share': "Partager un lien d’action",
+  'link.install': "Installer {name} ?",
+  'link.update': "Mettre à jour {name} ?",
+  'link.uninstall': "Désinstaller {name} ?",
+  'link.source': "Collection : {collection}",
+  'link.missingCollection': "La collection {collection} n’a pas été ajoutée.",
+  'link.noAction': "Aucune application ne peut faire l’objet de cette action.",
+  'link.changed': "La cible a changé. Rouvrez le lien pour la vérifier.",
   'link.title': 'Ajouter les apps de votre organisation ?',
   'link.text': 'Un lien veut ajouter <b>{name}</b> à l’adresse <b>{origin}</b>. Une fois connecté, ses apps s’affichent ici.',
   'link.checking': 'Vérification de l’adresse…',

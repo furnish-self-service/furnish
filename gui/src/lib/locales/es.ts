@@ -646,6 +646,14 @@ export const es: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': 'No se pudo cambiar la configuración de {name}',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.share': "Compartir un enlace de acción",
+  'link.install': "¿Instalar {name}?",
+  'link.update': "¿Actualizar {name}?",
+  'link.uninstall': "¿Desinstalar {name}?",
+  'link.source': "Colección: {collection}",
+  'link.missingCollection': "No se ha añadido la colección {collection}.",
+  'link.noAction': "No hay aplicaciones aptas para esta acción.",
+  'link.changed': "El destino ha cambiado. Abre el enlace de nuevo para revisarlo.",
   'link.title': '¿Agregar las aplicaciones de tu organización?',
   'link.text': 'Un vínculo quiere agregar <b>{name}</b> en <b>{origin}</b>. Cuando inicies sesión, sus aplicaciones aparecerán aquí.',
   'link.checking': 'Comprobando la dirección…',

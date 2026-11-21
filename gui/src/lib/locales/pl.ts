@@ -663,6 +663,14 @@ export const pl: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': 'Nie można zmienić ustawienia kolekcji {name}',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.share': "Udostępnij link do działania",
+  'link.install': "Zainstalować {name}?",
+  'link.update': "Zaktualizować {name}?",
+  'link.uninstall': "Odinstalować {name}?",
+  'link.source': "Kolekcja: {collection}",
+  'link.missingCollection': "Kolekcja {collection} nie została dodana.",
+  'link.noAction': "Brak aplikacji odpowiednich do tego działania.",
+  'link.changed': "Cel uległ zmianie. Otwórz link ponownie, aby go sprawdzić.",
   'link.title': 'Dodać aplikacje Twojej organizacji?',
   'link.text': 'Link chce dodać <b>{name}</b> z adresu <b>{origin}</b>. Po zalogowaniu się jej aplikacje pojawią się tutaj.',
   'link.checking': 'Sprawdzanie adresu…',

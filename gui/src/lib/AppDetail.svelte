@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ActionLinks from './ActionLinks.svelte';
   import { tick } from 'svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
@@ -233,6 +234,7 @@
     <!-- highlightYaml escapes the source before adding markup. -->
     <pre class="panel code">{@html highlightYaml(app.source)}</pre>
   </details>
+  <ActionLinks kind="app" collection={app.collection} id={app.id} />
 </section>
 
 <style>

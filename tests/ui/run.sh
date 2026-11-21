@@ -143,6 +143,8 @@ resources:
     type: Furnish/File
     properties: { path: "$work/preflight-free", content: ready }
 YAML
+required link-target "'>=1.0'" 'Package for confirmed links'
+echo 'items: [{app: link-target, required: true}]' > "$work/origin-src/kits/link-kit.yaml"
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'
 git -C "$work/origin-src" add -A && git -C "$work/origin-src" -c user.name=t -c user.email=t@t commit -qm "required versions"

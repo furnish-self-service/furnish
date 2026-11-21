@@ -644,6 +644,14 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'cs.changeFailed': 'Die Einstellung für {name} konnte nicht geändert werden',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.share': "Aktionslink teilen",
+  'link.install': "{name} installieren?",
+  'link.update': "{name} aktualisieren?",
+  'link.uninstall': "{name} deinstallieren?",
+  'link.source': "Sammlung: {collection}",
+  'link.missingCollection': "Die Sammlung {collection} wurde noch nicht hinzugefügt.",
+  'link.noAction': "Für diese Aktion kommen keine Apps infrage.",
+  'link.changed': "Das Ziel hat sich geändert. Öffne den Link zur erneuten Prüfung.",
   'link.title': 'Apps Ihrer Organisation hinzufügen?',
   'link.text': 'Ein Link möchte <b>{name}</b> unter <b>{origin}</b> hinzufügen. Nach der Anmeldung erscheinen die Apps dieser Adresse hier.',
   'link.checking': 'Die Adresse wird geprüft…',

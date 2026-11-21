@@ -47,3 +47,17 @@ test('opening a kit or app changes the next check without repeating work or exte
   assert.equal(scan.next().value, 'c');
   assert.deepEqual([...scan], ['b', 'e', 'f']);
 });
+
+test('reviewing a link cannot authorize follow-up actions for a status check', async () => {
+  for (const normalScanJoins of [false, true]) {
+    const checks = new StatusChecks();
+    const gate = Promise.withResolvers<void>();
+    const result = checks.check('app', async (_, allowActions) => {
+      await gate.promise;
+      return allowActions();
+    }, false);
+    if (normalScanJoins) checks.check('app', () => assert.fail('duplicate status read'));
+    gate.resolve();
+    assert.equal(await result, normalScanJoins);
+  }
+});
