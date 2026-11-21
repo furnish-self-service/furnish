@@ -81,7 +81,7 @@
 <section class="detail">
   <div class="toolbar">
     <button class="back" onclick={onback}>{t('common.back')}</button>
-    <ActionLinks kind="kit" collection={kit.collection} id={kit.id} name={kitName(kit)} />
+    <ActionLinks kind="kit" collection={kit.collection} id={kit.id} />
   </div>
 
   <header>

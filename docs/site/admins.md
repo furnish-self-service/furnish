@@ -207,7 +207,7 @@ An address the person added doesn't count as owning a collection the policy pres
 
 A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and asks before adding anything. The dialog shows the address, where people sign in (the identity provider's host), the apps the address installs right away, whether it turns reports on, and whether it changes the app's name and colors. Links only add furnish addresses, never git URLs or folders. `furnish collection add furnish.myorg.tld` prints the same before signing in.
 
-Open an app or kit and click **Share**. Choose Install, Update or Uninstall, then use **Copy link** for the URL or **Copy message** for a ready-to-send request that names the app or kit. For example:
+Open an app or kit and click **Share**. Choose Install, Update or Uninstall, then click **Copy link** to share the URL. For example:
 
 - `furnish://install?collection=work&app=editor`
 - `furnish://update?collection=work&kit=workstation`
