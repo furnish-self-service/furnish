@@ -643,6 +643,16 @@ export const en = {
   'cs.changeFailed': "Couldn't change the setting for {name}",
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.dependencies': "Required or selected dependencies may also be installed.",
+  'link.share': "Share an action link",
+  'link.install': "Install {name}?",
+  'link.update': "Update {name}?",
+  'link.uninstall': "Uninstall {name}?",
+  'link.source': "Collection: {collection}",
+  'link.missingCollection': "The collection {collection} has not been added.",
+  'link.noAction': "No eligible apps for this action.",
+  'link.queueFull': "Too many links are waiting. Finish a confirmation, then open this link again.",
+  'link.changed': "The target changed. Reopen the link to review it again.",
   'link.title': "Add your organization's apps?",
   'link.text': 'A link wants to add <b>{name}</b> at <b>{origin}</b>. After you sign in, its apps show up here.',
   'link.checking': 'Checking the address…',

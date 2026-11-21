@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ActionLinks from './ActionLinks.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   // A kit: choose which of its apps to install (required ones can't be deselected), or which
   // installed ones to uninstall (preselected: those no other installed kit needs).
@@ -175,6 +176,7 @@
       <button class="secondary big" onclick={() => ((removing = false), (removePicked = {}))}>{t('common.cancel')}</button>
     </div>
   {/if}
+  <ActionLinks kind="kit" collection={kit.collection} id={kit.id} />
 </section>
 
 <style>

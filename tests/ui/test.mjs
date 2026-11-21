@@ -290,6 +290,36 @@ const steps = [
     // Cards show until the app's status arrives; "not available here" then hides it.
     await waitFor('nowhere hidden', async () => !(await findAll(card('nowhere'))).length);
   }],
+  ['action links require consent and only operate on an existing local collection', async () => {
+    const launcher = `${workDir}/bin/launch-missing-collection`;
+    writeFileSync(launcher, "#!/bin/sh\nexec /usr/local/bin/furnish-gui 'furnish://install?collection=absent&app=link-target'\n", { mode: 0o755 });
+    await startSession(launcher);
+    const dialog = "//dialog[@open and @aria-labelledby='action-title']";
+    await waitFor('cold-start link refuses missing collection', async () => (await text(dialog)).includes('has not been added'), 30000);
+    if ((await findAll(`${dialog}${button('Install')}`)).length) throw new Error('missing collection offered an install');
+    await click(`${dialog}${button('Cancel')}`);
+    const send = (action, kind) => wd('POST', s('/execute/sync'), {
+      script: "return window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {event:'furnish://link',payload:arguments[0]})",
+      args: [`furnish://${action}?collection=fixture&${kind}=${kind === 'app' ? 'link-target' : 'link-kit'}`],
+    });
+    const installed = () => log('pkgs/link-target').trim();
+    await send('install', 'kit');
+    await waitFor('kit install consent', () => find(`${dialog}${button('Install')}`));
+    await click(`${dialog}${button('Cancel')}`);
+    if (installed()) throw new Error('cancelled link installed a package');
+    for (const kind of ['app', 'kit']) {
+      for (const [action, label, before, after] of [['install','Install','','1.0'], ['update','Update','1.0','2.0'], ['uninstall','Uninstall','2.0','']]) {
+        if (action === 'update') writeFileSync(`${workDir}/pkgs/link-target.new`, '2.0\n');
+        await send(action, kind);
+        await waitFor(`${kind} ${action} confirmation`, () => find(`${dialog}${button(label)}`));
+        if (installed() !== before) throw new Error(`${kind} ${action} changed the package before confirmation`);
+        await click(`${dialog}${button(label)}`);
+        await waitFor(`confirmed ${kind} ${action}`, () => installed() === after, 30000);
+        const settled = after ? "//*[normalize-space()='Installed']" : button('Install');
+        await waitFor(`${kind} ${action} settled`, () => find(`${card('link-target')}[not(.//*[@aria-busy='true'])]${settled}`));
+      }
+    }
+  }],
   ['a missing tool shows what is needed; prerequisites install first', async () => {
     await waitFor('brew-only shows what it needs', async () => (await text(card('brew-only'))).includes('Needs Homebrew'));
     if ((await findAll(`${card('brew-only')}${button('Install')}`)).length) throw new Error('blocked app offers Install');
@@ -410,6 +440,7 @@ const steps = [
     if (items.length !== 1 || (await text(`${list}/li`)).trim() !== 'hyperfine') throw new Error(`expected only the Linux resource: ${await text(list)}`);
   }],
   ['preview lists the concrete steps and changes nothing', async () => {
+    const elevationBeforePreview = log('pkexec.log');
     const panel = "//details[summary[contains(., 'Steps')]]";
     if (await isOpen(panel)) throw new Error('preview open before click');
     await click(`${panel}/summary`);
@@ -422,7 +453,7 @@ const steps = [
       const plan = await text(panel);
       return plan.includes('pacman is the first available system package manager') && plan.includes('hyperfine is the default package name');
     });
-    if (log('pkexec.log').includes('-R')) throw new Error('the preview ran the removal');
+    if (log('pkexec.log') !== elevationBeforePreview) throw new Error('the preview ran an elevated command');
     await click(`${panel}//button[normalize-space()='Install']`);
     await waitFor('install preview: nothing to do', async () => (await text(panel)).includes('change nothing'));
     const skipped = `${panel}//li[contains(@class,'skipped')]`;
@@ -636,7 +667,7 @@ const steps = [
     await waitFor('pending batch cannot be queued twice', () => prop(updateAll, 'disabled'));
     await search('');
     await click(nav('Activity'));
-    const group = "//li[@data-kind='updates']";
+    const group = "//li[@data-kind='updates'][.//summary/strong[normalize-space()='Update all']]";
     const summary = `${group}/details/summary`;
     await waitFor('partial Update all result', async () => (await text(summary)).includes('1 of 2 updated') && log('pkgs/hyperfine').trim() === '4.0', 30000);
     await startSession();

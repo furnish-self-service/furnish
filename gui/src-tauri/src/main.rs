@@ -899,9 +899,10 @@ fn main() -> std::process::ExitCode {
             }
             // The policy may have changed the setting, or furnish moved (AppImage).
             std::thread::spawn(autostart::sync);
-            // Links (furnish://add?endpoint=…) go to the UI, which asks before adding anything.
+            // Bring the confirmation into view, including when the desktop is hidden in the tray.
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
+                tray::show(&handle);
                 for url in event.urls() {
                     let _ = handle.emit("furnish://link", url.to_string());
                 }

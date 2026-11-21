@@ -1,5 +1,6 @@
 // App-wide state and the actions that change it. Components read `store` and call these.
 import * as api from './api';
+import { parseActionLink, type ActionLink } from './action-link';
 import { defaultDependencies, needsRetry, pausedBranch, planInstall, releaseDependents, type Queued } from './install-queue';
 export { defaultDependencies, type Queued } from './install-queue';
 import { completedActivity, historyLimit, interruptedDependents, isGroup, itemActive, readHistory, readWaitingQueue, recordProgress, trimHistory, writeHistory, type ActivityEntry, type ActivityGroup, type Summary, type Run } from './activity-history';
@@ -82,7 +83,7 @@ export const store = $state({
   /** The furnish address the sign-in in progress is for. */
   signInOrigin: null as string | null,
   /** A furnish:// link waiting for the user's yes: what it would add, or why it can't. */
-  link: null as { preview: api.LinkPreview | null; error: string | null } | null,
+  link: null as { url: string; action?: ActionLink; preview: api.LinkPreview | null; error: string | null } | null,
   /** Background collection updates: when the last one ran and how it went. */
   autoUpdate: {
     running: false,
@@ -217,7 +218,7 @@ export function appStatus(key: string): Status | 'error' | undefined {
   return store.checks[key]?.status ?? (store.statusErrors[key] === undefined ? undefined : 'error');
 }
 
-function isVerified(key: string) {
+export function isVerified(key: string) {
   return store.checks[key]?.source === 'live' && store.statusErrors[key] === undefined;
 }
 
@@ -295,6 +296,11 @@ async function listCatalog(load: number) {
 }
 
 const focusedChecks = $derived.by(() => {
+  const action = store.link?.action;
+  if (action) {
+    const key = `${action.collection}/${action.id}`;
+    return action.kind === 'app' ? [key] : store.kits.find(k => k.key === key)?.items.map(i => i.key) ?? [];
+  }
   const view = store.view;
   if (view.page === 'app') return [view.key];
   if (view.page === 'kit') return store.kits.find(kit => kit.key === view.key)?.items.map(item => item.key) ?? [];
@@ -339,12 +345,12 @@ export async function retryFailedChecks() {
 
 /** Ask for an app's status. A security update its collection requires is queued right away,
  *  whatever the automatic-update settings say. */
-export function checkStatus(key: string): Promise<boolean> {
+export function checkStatus(key: string, purpose?: 'link-preview'): Promise<boolean> {
   const load = catalogLoad;
-  return pendingChecks.check(key, current => readStatus(key, () => current() && load === catalogLoad));
+  return pendingChecks.check(key, (current, allowActions) => readStatus(key, () => current() && load === catalogLoad, allowActions), purpose !== 'link-preview');
 }
 
-async function readStatus(key: string, current: () => boolean): Promise<boolean> {
+async function readStatus(key: string, current: () => boolean, allowActions: () => boolean): Promise<boolean> {
   store.checkingStatus[key] = true;
   try {
     const check = await api.appStatus(key, revisions.get(key));
@@ -352,14 +358,16 @@ async function readStatus(key: string, current: () => boolean): Promise<boolean>
     const checkedAt = Date.now();
     store.checks[key] = { ...check, checkedAt, source: 'live' };
     delete store.statusErrors[key];
+    const { runningApps: _, ...cacheable } = check;
+    cache?.write(key, revisions.get(key), cacheable, checkedAt);
+    // Reviewing an external link only observes state until the user confirms.
+    if (!allowActions()) return true;
     // A live check can also observe a prerequisite installed outside Furnish.
     if (check.status === 'installed' && !isPending(key) && store.queue.some(q => q.prerequisites.includes(key))) {
       groupPrerequisiteAvailable(key);
       releaseDependents(store.queue, key);
       pump();
     }
-    const { runningApps: _, ...cacheable } = check;
-    cache?.write(key, revisions.get(key), cacheable, checkedAt);
     if (!store.retrying[key]) installRequiredUpdate(key);
     return true;
   } catch (error) {
@@ -504,10 +512,14 @@ export function availableAppUpdates(): AppInfo[] {
 }
 
 export function updateAllApps() {
-  const apps = availableAppUpdates();
+  updateAppsGroup(availableAppUpdates());
+}
+
+function updateAppsGroup(apps: AppInfo[], kit?: KitInfo) {
   if (!apps.length) return;
   store.recent.unshift({
     kind: 'updates', id: crypto.randomUUID(), updatedAt: Date.now(),
+    ...(kit ? { key: kit.key, name: kitName(kit) } : {}),
     items: apps.map(app => ({ key: app.key, name: appName(app), selected: true, state: 'queued', attempts: [] })),
   });
   const group = store.recent[0] as ActivityGroup;
@@ -871,20 +883,58 @@ export async function signIn(origin: string) {
   await loadAll();
 }
 
-/** A furnish://add?endpoint=… link: show what it would add and ask before adding anything (a link
- *  can come from anyone). Only furnish addresses, never git URLs or paths. */
-let linkSeq = 0;
+// Keep the visible confirmation bound to one URL, even when more links arrive.
+const waitingLinks: string[] = [];
+let fullQueueNotice: number | undefined;
+export function dismissLink(url: string) {
+  if (store.link?.url !== url) return;
+  store.link = null;
+  const next = waitingLinks.shift();
+  if (next) openLink(next);
+}
+
 function openLink(url: string) {
-  const seq = ++linkSeq; // a newer link replaces this one
-  store.link = { preview: null, error: null };
-  api
-    .linkPreview(url)
-    .then((preview) => {
-      if (seq === linkSeq && store.link) store.link = { preview, error: null };
-    })
-    .catch((e) => {
-      if (seq === linkSeq && store.link) store.link = { preview: null, error: message(e) };
-    });
+  if (store.link) {
+    if (url === store.link.url || waitingLinks.includes(url)) return;
+    if (waitingLinks.length < 10) waitingLinks.push(url);
+    else if (!store.toasts.some(notice => notice.id === fullQueueNotice)) fullQueueNotice = toast('info', t('link.queueFull'));
+    return;
+  }
+  const action = parseActionLink(url);
+  store.link = { url, action, preview: null, error: null };
+  if (action) return;
+  const current = store.link;
+  api.linkPreview(url).then(preview => {
+    if (store.link === current) current.preview = preview;
+  }).catch(error => {
+    if (store.link === current) current.error = message(error);
+  });
+}
+
+export function eligibleForLink(action: ActionLink['action'], app: AppInfo) {
+  if (!isVerified(app.key) || isPending(app.key)) return false;
+  const check = store.checks[app.key]!;
+  switch (action) {
+    case 'install': return check.status === 'notInstalled' || (check.status === 'blocked' && !check.required
+      && app.dependencies.some(d => d.required || d.selected));
+    case 'update': return check.status === 'needsUpdate';
+    case 'uninstall': return isInstalled(app.key) && check.removable;
+  }
+}
+
+/** Dispatch only the targets shown when the user confirmed. */
+export function runActionLink(link: ActionLink, apps: AppInfo[], kit?: KitInfo) {
+  if (!apps.length || apps.some(app => !eligibleForLink(link.action, app))) return false;
+  if (link.action === 'install' && apps.some(app => app.unanswered.length)) askQuestions(true);
+  else if (link.action === 'update') {
+    if (kit) updateAppsGroup(apps, kit);
+    else scheduleInstall(apps[0], defaultDependencies(apps[0]), { action: 'install', updateOnly: true, trigger: 'user' });
+  } else if (link.action === 'install') {
+    if (kit) installKit(kit, apps.map(app => app.key));
+    else requestInstall(apps[0]);
+  } else if (kit) void uninstallKit(kit, apps.map(app => app.key));
+  else void uninstall(apps[0]);
+  return true;
 }
 
 /** A first-launch install can enqueue dependencies too. Wait if any selected app's

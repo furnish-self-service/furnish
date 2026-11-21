@@ -646,6 +646,16 @@ export const it: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': "Impossibile modificare l'impostazione per {name}",
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.dependencies': "Possono essere installate anche le dipendenze necessarie o selezionate.",
+  'link.share': "Condividi un link di azione",
+  'link.install': "Installare {name}?",
+  'link.update': "Aggiornare {name}?",
+  'link.uninstall': "Disinstallare {name}?",
+  'link.source': "Raccolta: {collection}",
+  'link.missingCollection': "La raccolta {collection} non è stata aggiunta.",
+  'link.noAction': "Nessuna app idonea per questa azione.",
+  'link.queueFull': "Troppi link in attesa. Completa una conferma, poi riapri questo link.",
+  'link.changed': "La destinazione è cambiata. Riapri il link per verificarla.",
   'link.title': 'Aggiungere le app della tua organizzazione?',
   'link.text': "Un link vuole aggiungere <b>{name}</b> da <b>{origin}</b>. Dopo l'accesso, le sue app vengono mostrate qui.",
   'link.checking': "Verifica dell'indirizzo…",

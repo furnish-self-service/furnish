@@ -3,9 +3,10 @@
   // yes, since anyone can send a link. The dialog shows where the user will sign in and what the
   // address does, so a lookalike address stands out.
   import * as api from './api';
-  import { store, collectionAction, refreshEndpoints, askQuestions } from './state.svelte';
+  import { store, dismissLink, collectionAction, refreshEndpoints, askQuestions } from './state.svelte';
   import { t, tparts } from './i18n.svelte';
 
+  let { url }: { url: string } = $props();
   let dialog = $state<HTMLDialogElement>();
   $effect(() => {
     if (store.link && dialog && !dialog.open) dialog.showModal();
@@ -14,7 +15,7 @@
   const host = (origin: string) => origin.replace(/^https?:\/\//, '');
 
   function close() {
-    store.link = null;
+    dismissLink(url);
     dialog?.close();
   }
   async function add() {
@@ -35,7 +36,7 @@
   {#each tparts(key, params) as p}{#if p.tag}<strong>{p.text}</strong>{:else}{p.text}{/if}{/each}
 {/snippet}
 
-<dialog bind:this={dialog} onclose={() => (store.link = null)} aria-labelledby="link-title">
+<dialog bind:this={dialog} onclose={() => dismissLink(url)} aria-labelledby="link-title">
   <h2 id="link-title">{t('link.title')}</h2>
   {#if preview}
     <p>{@render marked('link.text', { name: preview.name, origin: host(preview.origin) })}</p>

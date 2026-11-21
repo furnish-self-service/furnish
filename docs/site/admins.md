@@ -207,6 +207,16 @@ An address the person added doesn't count as owning a collection the policy pres
 
 A link like `furnish://add?endpoint=furnish.myorg.tld`, for example in an onboarding email, opens furnish and asks before adding anything. The dialog shows the address, where people sign in (the identity provider's host), the apps the address installs right away, whether it turns reports on, and whether it changes the app's name and colors. Links only add furnish addresses, never git URLs or folders. `furnish collection add furnish.myorg.tld` prints the same before signing in.
 
+An app or kit detail page has a **Share an action link** control. Choose Install, Update or Uninstall and copy the link. For example:
+
+- `furnish://install?collection=work&app=editor`
+- `furnish://update?collection=work&kit=workstation`
+- `furnish://uninstall?collection=work&app=editor`
+
+Each action accepts either `app` or `kit`. Use the collection name as added on the recipient’s computer and the app or kit ID. Percent-encode query values when composing a link manually. Furnish looks up the target locally and asks the person to confirm. A kit install uses its required and preselected apps. An update covers installed apps with an available update. A kit uninstall uses the normal removal defaults, preserving apps shared with other installed kits. The confirmation lists the affected kit members. Installs and updates follow the collection’s dependency rules. If installation requires answers to collection questions, complete them and reopen the link.
+
+If the collection is missing, the action stops. Where policy permits, the person can open Collections to add it separately and then reopen the link to review the action.
+
 Behind the address runs a reverse proxy: it checks the token and forwards only git's two read requests for each collection to exactly one repository on your git server, with a read-only deploy token. The [endpoint setup](endpoint.md) contains the configuration for Caddy, nginx, Traefik, Envoy and HAProxy, and the tests that show what they let through. Decide who may sign in by e-mail domain only if your identity provider marks addresses as verified (`email_verified`); with Microsoft Entra ID, use groups.
 
 ## Reports

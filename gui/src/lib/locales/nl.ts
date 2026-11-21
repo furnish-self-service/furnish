@@ -646,6 +646,16 @@ export const nl: Record<keyof typeof en, Entry> = {
   'cs.changeFailed': 'Kan de instelling voor {name} niet wijzigen',
 
   // LinkDialog.svelte, SignInBanner.svelte
+  'link.dependencies': "Vereiste of geselecteerde afhankelijkheden kunnen ook worden geïnstalleerd.",
+  'link.share': "Een actielink delen",
+  'link.install': "{name} installeren?",
+  'link.update': "{name} bijwerken?",
+  'link.uninstall': "{name} verwijderen?",
+  'link.source': "Collectie: {collection}",
+  'link.missingCollection': "De collectie {collection} is nog niet toegevoegd.",
+  'link.noAction': "Geen geschikte apps voor deze actie.",
+  'link.queueFull': "Er wachten te veel links. Handel een bevestiging af en open deze link opnieuw.",
+  'link.changed': "Het doel is gewijzigd. Open de link opnieuw om het te controleren.",
   'link.title': 'Apps van uw organisatie toevoegen?',
   'link.text': 'Een link wil <b>{name}</b> op <b>{origin}</b> toevoegen. Nadat u zich hebt aangemeld, verschijnen de apps daarvan hier.',
   'link.checking': 'Het adres controleren…',
