@@ -515,10 +515,11 @@ export function updateAllApps() {
   updateAppsGroup(availableAppUpdates());
 }
 
-function updateAppsGroup(apps: AppInfo[]) {
+function updateAppsGroup(apps: AppInfo[], kit?: KitInfo) {
   if (!apps.length) return;
   store.recent.unshift({
     kind: 'updates', id: crypto.randomUUID(), updatedAt: Date.now(),
+    ...(kit ? { key: kit.key, name: kitName(kit) } : {}),
     items: apps.map(app => ({ key: app.key, name: appName(app), selected: true, state: 'queued', attempts: [] })),
   });
   const group = store.recent[0] as ActivityGroup;
@@ -925,8 +926,10 @@ export function eligibleForLink(action: ActionLink['action'], app: AppInfo) {
 export function runActionLink(link: ActionLink, apps: AppInfo[], kit?: KitInfo) {
   if (!apps.length || apps.some(app => !eligibleForLink(link.action, app))) return false;
   if (link.action === 'install' && apps.some(app => app.unanswered.length)) askQuestions(true);
-  else if (link.action === 'update') updateAppsGroup(apps);
-  else if (link.action === 'install') {
+  else if (link.action === 'update') {
+    if (kit) updateAppsGroup(apps, kit);
+    else scheduleInstall(apps[0], defaultDependencies(apps[0]), { action: 'install', updateOnly: true, trigger: 'user' });
+  } else if (link.action === 'install') {
     if (kit) installKit(kit, apps.map(app => app.key));
     else requestInstall(apps[0]);
   } else if (kit) void uninstallKit(kit, apps.map(app => app.key));

@@ -7,7 +7,7 @@
   import { formatDate, lang, t } from './i18n.svelte';
 
   let { group }: { group: ActivityGroup } = $props();
-  const kit = $derived(group.kind === 'kit' ? store.kits.find(k => group.kind === 'kit' && k.key === group.key) : undefined);
+  const kit = $derived(group.key ? store.kits.find(k => k.key === group.key) : undefined);
   const progress = $derived(groupProgress(group, store.queue, isPending));
   const failed = $derived(group.items.filter(i => i.state === 'failed'));
   const blockerNames = $derived([...new Set([...progress.blocked.values()].flat())].map(key => {
@@ -53,7 +53,7 @@
   <details>
     <summary>
       {#if group.kind === 'updates'}
-        <strong>{t('common.updateAll')}</strong> · {t('activity.updateProgress', { done: progress.done, total: progress.total, waiting: progress.waiting })}
+        <strong>{kit ? kitName(kit) : group.name ?? t('common.updateAll')}</strong> · {t('activity.updateProgress', { done: progress.done, total: progress.total, waiting: progress.waiting })}
         {#if progress.blocked.size} · {t('activity.blockedCount', { n: progress.blocked.size, apps: blockerNames })}{/if}
       {:else}
         <strong>{kit ? kitName(kit) : group.name}</strong> · {t('activity.kitProgress', { done: progress.done, total: progress.total })}
@@ -62,7 +62,7 @@
         <span class="failed"> · {t(group.kind === 'updates' && item.selected ? 'run.failed.update' : 'run.failed.install', { app: name(item) })}</span>
       {/each}
     </summary>
-    <div class="meta"><time datetime={new Date(group.updatedAt).toISOString()}>{date(group.updatedAt)}</time> · {t('activity.trigger.user')}{#if group.kind === 'kit'} · {group.key}{/if}</div>
+    <div class="meta"><time datetime={new Date(group.updatedAt).toISOString()}>{date(group.updatedAt)}</time> · {t('activity.trigger.user')}{#if group.key} · {group.key}{/if}</div>
     {#if group.kind === 'updates' && failed.length}
       <button class="secondary" disabled={failed.every(i => isPending(i.key) || store.retrying[i.key] || !appByKey(i.key) || appStatus(i.key) === 'unavailable')} onclick={() => retryFailed(group)}>{t('activity.retryFailed')}</button>
     {/if}

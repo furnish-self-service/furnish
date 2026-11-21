@@ -666,7 +666,7 @@ const steps = [
     await waitFor('pending batch cannot be queued twice', () => prop(updateAll, 'disabled'));
     await search('');
     await click(nav('Activity'));
-    const group = "//li[@data-kind='updates']";
+    const group = "//li[@data-kind='updates'][.//summary/strong[normalize-space()='Update all']]";
     const summary = `${group}/details/summary`;
     await waitFor('partial Update all result', async () => (await text(summary)).includes('1 of 2 updated') && log('pkgs/hyperfine').trim() === '4.0', 30000);
     await startSession();

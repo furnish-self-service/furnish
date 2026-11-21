@@ -197,7 +197,7 @@ export interface GroupItem {
   runId?: string;
 }
 
-export type ActivityGroup = ({ kind: 'kit'; key: string; name: string } | { kind: 'updates' }) & {
+export type ActivityGroup = ({ kind: 'kit'; key: string; name: string } | { kind: 'updates'; key?: string; name?: string }) & {
   id: string;
   updatedAt: number;
   items: GroupItem[];
@@ -286,7 +286,8 @@ function readGroup(record: Record<string, unknown>, paused: Set<string>): Activi
   }
   if (!items.length) return;
   const group = { id: record.id, updatedAt: record.updatedAt, items };
-  if (record.kind === 'updates') return { ...group, kind: 'updates' };
+  if (record.kind === 'updates') return { ...group, kind: 'updates',
+    ...(typeof record.key === 'string' && typeof record.name === 'string' ? { key: record.key, name: record.name } : {}) };
   if (typeof record.key === 'string' && typeof record.name === 'string')
     return { ...group, kind: 'kit', key: record.key, name: record.name };
 }
@@ -333,7 +334,7 @@ export function writeHistory(dataDir: string, entries: ActivityEntry[], queue: Q
     const paused = new Set(pausedBranch(queue).map(job => job.key));
     const saved: unknown[] = trimHistory(entries).map(e => isGroup(e) ? {
       kind: e.kind, id: e.id, updatedAt: e.updatedAt,
-      ...(e.kind === 'kit' ? { name: e.name, key: e.key } : {}),
+      ...(e.key ? { name: e.name, key: e.key } : {}),
       items: e.items.map(({ key, name, selected, state, attempts, waitingFor, ownsJob }) =>
         ({ key, name, selected, state, waitingFor, ownsJob: paused.has(key) && state === 'queued' ? ownsJob : undefined, attempts: attempts.map(a => a.summary) })),
     } : e.summary);
