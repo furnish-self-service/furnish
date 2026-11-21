@@ -647,6 +647,16 @@ export const it: Record<keyof typeof en, Entry> = {
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.dependencies': "Possono essere installate anche le dipendenze necessarie o selezionate.",
+  'share.open': "Condividi",
+  'share.close': "Chiudi",
+  'share.action': "Azione",
+  'share.message': "Messaggio",
+  'share.copyLink': "Copia link",
+  'share.copyMessage': "Copia messaggio",
+  'share.manual': "Copia il testo selezionato per condividerlo.",
+  'share.install': "Fai clic qui per installare {name}.",
+  'share.update': "Fai clic qui per aggiornare {name}.",
+  'share.uninstall': "Fai clic qui per disinstallare {name}.",
   'link.share': "Condividi un link di azione",
   'link.install': "Installare {name}?",
   'link.update': "Aggiornare {name}?",

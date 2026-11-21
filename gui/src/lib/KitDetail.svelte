@@ -79,7 +79,10 @@
 </script>
 
 <section class="detail">
-  <button class="back" onclick={onback}>{t('common.back')}</button>
+  <div class="toolbar">
+    <button class="back" onclick={onback}>{t('common.back')}</button>
+    <ActionLinks kind="kit" collection={kit.collection} id={kit.id} name={kitName(kit)} />
+  </div>
 
   <header>
     <AppIcon app={kit} name={kitName(kit)} size={96} />
@@ -176,7 +179,6 @@
       <button class="secondary big" onclick={() => ((removing = false), (removePicked = {}))}>{t('common.cancel')}</button>
     </div>
   {/if}
-  <ActionLinks kind="kit" collection={kit.collection} id={kit.id} />
 </section>
 
 <style>
@@ -184,8 +186,8 @@
   .detail {
     max-width: 52rem;
   }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
   .back {
-    margin-bottom: 1.5rem;
     padding: 0.3rem 0;
     border: 0;
     background: none;

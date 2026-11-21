@@ -645,6 +645,16 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.dependencies': "Erforderliche oder ausgewählte Abhängigkeiten können ebenfalls installiert werden.",
+  'share.open': "Teilen",
+  'share.close': "Schließen",
+  'share.action': "Aktion",
+  'share.message': "Nachricht",
+  'share.copyLink': "Link kopieren",
+  'share.copyMessage': "Nachricht kopieren",
+  'share.manual': "Kopiere den ausgewählten Text, um ihn zu teilen.",
+  'share.install': "Bitte klicke hier, um {name} zu installieren.",
+  'share.update': "Bitte klicke hier, um {name} zu aktualisieren.",
+  'share.uninstall': "Bitte klicke hier, um {name} zu deinstallieren.",
   'link.share': "Aktionslink teilen",
   'link.install': "{name} installieren?",
   'link.update': "{name} aktualisieren?",

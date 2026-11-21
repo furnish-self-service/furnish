@@ -73,7 +73,10 @@
 </script>
 
 <section class="detail">
-  <button class="back" onclick={onback}>{t('common.back')}</button>
+  <div class="toolbar">
+    <button class="back" onclick={onback}>{t('common.back')}</button>
+    <ActionLinks kind="app" collection={app.collection} id={app.id} name={appName(app)} />
+  </div>
 
   <header>
     <AppIcon {app} size={96} />
@@ -234,7 +237,6 @@
     <!-- highlightYaml escapes the source before adding markup. -->
     <pre class="panel code">{@html highlightYaml(app.source)}</pre>
   </details>
-  <ActionLinks kind="app" collection={app.collection} id={app.id} />
 </section>
 
 <style>
@@ -242,8 +244,8 @@
   .detail {
     max-width: 52rem;
   }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
   .back {
-    margin-bottom: 1.5rem;
     padding: 0.3rem 0;
     border: 0;
     background: none;
