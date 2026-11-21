@@ -283,6 +283,18 @@ const steps = [
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
   }],
+  ['app Share generates a link for each action', async () => {
+    await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
+    await click(button('Share'));
+    const dialog = '//dialog[@open]';
+    for (const action of ['install', 'update', 'uninstall']) {
+      await click(`${dialog}//option[@value='${action}']`);
+      const expected = `furnish://${action}?collection=fixture&app=hyperfine`;
+      await waitFor(`${action} link`, async () => (await prop(`${dialog}//textarea`, 'value')) === expected);
+    }
+    await click(`${dialog}${button('Close')}`);
+    await click(button('← Back'));
+  }],
   ['collections update on launch: an app added upstream appears', async () => {
     await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
   }],

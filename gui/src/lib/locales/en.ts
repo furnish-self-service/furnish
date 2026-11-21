@@ -644,6 +644,16 @@ export const en = {
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.dependencies': "Required or selected dependencies may also be installed.",
+  'share.open': "Share",
+  'share.close': "Close",
+  'share.action': "Action",
+  'share.format': "Format",
+  'share.install': "Install {name}",
+  'share.update': "Update {name}",
+  'share.uninstall': "Uninstall {name}",
+  'share.link': "Link",
+  'share.copyLink': "Copy link",
+  'share.manual': "Copy the selected text to share it.",
   'link.share': "Share an action link",
   'link.install': "Install {name}?",
   'link.update': "Update {name}?",

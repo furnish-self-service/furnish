@@ -647,6 +647,16 @@ export const nl: Record<keyof typeof en, Entry> = {
 
   // LinkDialog.svelte, SignInBanner.svelte
   'link.dependencies': "Vereiste of geselecteerde afhankelijkheden kunnen ook worden geïnstalleerd.",
+  'share.open': "Delen",
+  'share.close': "Sluiten",
+  'share.action': "Actie",
+  'share.format': "Opmaak",
+  'share.install': "{name} installeren",
+  'share.update': "{name} bijwerken",
+  'share.uninstall': "{name} verwijderen",
+  'share.link': "Link",
+  'share.copyLink': "Link kopiëren",
+  'share.manual': "Kopieer de geselecteerde tekst om deze te delen.",
   'link.share': "Een actielink delen",
   'link.install': "{name} installeren?",
   'link.update': "{name} bijwerken?",

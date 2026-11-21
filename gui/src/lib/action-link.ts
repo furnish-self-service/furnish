@@ -23,3 +23,17 @@ export function parseActionLink(link: string): ActionLink | undefined {
   if (params.size !== 2 || !valid(collection) || !valid(id)) return;
   return { action: match[1] as LinkAction, kind, collection, id };
 }
+
+/** Format a URL produced by actionUrl for pasting into a message or document. */
+export function formatActionLink(url: string, format: 'url' | 'html' | 'markdown', label: string) {
+  if (format === 'url') return url;
+  if (format === 'markdown') {
+    // CommonMark supports backslash escapes for ASCII punctuation.
+    const plain = label.replace(/\s+/gu, ' ').replace(/[!-/:-@\[-`{-~]/g, '\\$&');
+    return `[${plain}](${url})`;
+  }
+  const escape = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const style = 'display:inline-block;padding:8px 16px;border-radius:6px;background:#17585c;color:#fff;font-weight:600;text-decoration:none';
+  return `<a href="${escape(url)}" style="${style}">${escape(label)}</a>`;
+}
