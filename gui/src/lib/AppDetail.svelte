@@ -75,7 +75,7 @@
 <section class="detail">
   <div class="toolbar">
     <button class="back" onclick={onback}>{t('common.back')}</button>
-    <ActionLinks kind="app" collection={app.collection} id={app.id} />
+    <ActionLinks kind="app" collection={app.collection} id={app.id} name={appName(app)} />
   </div>
 
   <header>

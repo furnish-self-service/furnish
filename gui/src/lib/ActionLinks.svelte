@@ -1,24 +1,38 @@
 <script lang="ts">
-  import { actionUrl, linkActions, type ActionLink, type LinkAction } from './action-link';
+  import { actionUrl, formatActionLink, linkActions, type ActionLink, type LinkAction } from './action-link';
   import { t } from './i18n.svelte';
 
-  let { kind, collection, id }: Omit<ActionLink, 'action'> = $props();
+  let { kind, collection, id, name }: Omit<ActionLink, 'action'> & { name: string } = $props();
   const heading = $props.id();
   let dialog: HTMLDialogElement;
-  let linkInput: HTMLInputElement;
+  let linkInput: HTMLTextAreaElement;
+  let format = $state<'url' | 'html' | 'markdown'>('url');
   let action = $state<LinkAction>('install');
   let feedback = $state('');
   const url = $derived(actionUrl({ kind, collection, id, action }));
 
+  const value = $derived(formatActionLink(url, format, t(`share.${action}`, { name })));
+
   function open() {
     action = 'install';
+    format = 'url';
     feedback = '';
     dialog.showModal();
   }
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(url);
+      if (format === 'html' && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({
+            'text/html': new Blob([value], { type: 'text/html' }),
+            'text/plain': new Blob([value], { type: 'text/plain' }),
+          })]);
+          feedback = t('common.copied');
+          return;
+        } catch { /* Webviews with plain-text-only clipboard support can still copy the markup. */ }
+      }
+      await navigator.clipboard.writeText(value);
       feedback = t('common.copied');
     } catch {
       linkInput.focus();
@@ -32,12 +46,19 @@
 <dialog bind:this={dialog} aria-labelledby={heading}>
   <h2 id={heading}>{t('link.share')}</h2>
   <label>{t('share.action')}
-    <select bind:value={action} onchange={() => feedback = ''}>
+    <select aria-label={t('share.action')} bind:value={action} onchange={() => feedback = ''}>
       {#each linkActions as verb}<option value={verb}>{t(`common.${verb}`)}</option>{/each}
     </select>
   </label>
+  <label>{t('share.format')}
+    <select aria-label={t('share.format')} bind:value={format} onchange={() => feedback = ''}>
+      <option value="url">URL</option>
+      <option value="html">HTML</option>
+      <option value="markdown">Markdown</option>
+    </select>
+  </label>
   <label>{t('share.link')}
-    <input bind:this={linkInput} readonly value={url} onfocus={(event) => event.currentTarget.select()} />
+    <textarea bind:this={linkInput} readonly rows={format === 'html' ? 5 : 2} {value} onfocus={(event) => event.currentTarget.select()}></textarea>
   </label>
   <p role="status">{feedback}</p>
   <div class="actions">
@@ -60,7 +81,7 @@
   dialog::backdrop { background: rgb(10 25 28 / 0.4); }
   h2 { margin: 0; font: 700 1.35rem var(--font-display); }
   label { display: grid; gap: .4rem; margin-top: 1rem; }
-  input { min-width: 0; font-family: var(--font-mono); }
+  textarea { min-width: 0; resize: vertical; font-family: var(--font-mono); }
   p { min-height: 1.4em; margin: .5rem 0; color: var(--ink-soft); }
   .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
 </style>

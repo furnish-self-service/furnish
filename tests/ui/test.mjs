@@ -290,7 +290,7 @@ const steps = [
     for (const action of ['install', 'update', 'uninstall']) {
       await click(`${dialog}//option[@value='${action}']`);
       const expected = `furnish://${action}?collection=fixture&app=hyperfine`;
-      await waitFor(`${action} link`, async () => (await prop(`${dialog}//input`, 'value')) === expected);
+      await waitFor(`${action} link`, async () => (await prop(`${dialog}//textarea`, 'value')) === expected);
     }
     await click(`${dialog}${button('Close')}`);
     await click(button('← Back'));
