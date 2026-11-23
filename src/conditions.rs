@@ -66,9 +66,9 @@ fn member<'a>(accessor: Option<tree_sitter::Node>, index: u32, src: &'a str) -> 
     Some(&src[text.byte_range()])
 }
 
-fn family_read(function: tree_sitter::Node, src: &str) -> Option<std::ops::Range<usize>> {
+fn os_read(function: tree_sitter::Node, src: &str, field: &str) -> Option<std::ops::Range<usize>> {
     let accessor = function.parent()?.child_by_field_name("accessor");
-    if function.child_by_field_name("args").is_some() || member(accessor, 0, src) != Some("os") || member(accessor, 1, src) != Some("family") {
+    if function.child_by_field_name("args").is_some() || member(accessor, 0, src) != Some("os") || member(accessor, 1, src) != Some(field) {
         return None;
     }
     Some(function.start_byte()..accessor?.named_child(1)?.end_byte())
@@ -346,7 +346,7 @@ impl Preview {
                 !unknown.is_empty() && (a.kind() == "expression" || unknown.contains(&src[a.byte_range()])));
             match &src[name.byte_range()] {
                 name if machine_function(name) => return true,
-                "context" if family_read(node, src).is_none() => return true,
+                "context" if os_read(node, src, "family").is_none() => return true,
                 "parameters" if reads(&self.unknown_parameters) => return true,
                 "variables" if reads(&self.unknown_variables) => return true,
                 _ => {}
@@ -362,7 +362,7 @@ impl Preview {
             let first_arg = function.child_by_field_name("args").and_then(|a| a.named_child(0));
             match name {
                 "context" => {
-                    if let Some(range) = family_read(function, src) {
+                    if let Some(range) = os_read(function, src, "family") {
                         replacements.push((range, format!("string('{}')", self.system)));
                     } else {
                         *unknown = true;
@@ -441,17 +441,18 @@ fn validate_call(node: tree_sitter::Node, src: &str) -> Result<()> {
 /// Evaluate concrete target expressions with DSC's parameter, variable and property semantics.
 /// Substitute only DSC calls, never text in string literals. Facts outside the profile must
 /// produce a diagnostic instead of silently reading the machine on which CI runs.
-pub(crate) struct TargetContext {
+pub(crate) struct TargetContext<'a> {
     system: &'static str,
+    architecture: Option<&'a str>,
     grammar: tree_sitter::Parser,
     statement: Statement,
     context: Context,
 }
 
-impl TargetContext {
-    pub(crate) fn new(system: &'static str, host: Value, doc: &Value, input: Map<String, Value>) -> Result<Self> {
+impl<'a> TargetContext<'a> {
+    pub(crate) fn new(system: &'static str, architecture: Option<&'a str>, host: Value, doc: &Value, input: Map<String, Value>) -> Result<Self> {
         use dsc_lib::{configure::Configurator, progress::ProgressFormat};
-        let mut target = Self { system, grammar: parser()?, statement: Statement::new()?, context: Context::new() };
+        let mut target = Self { system, architecture, grammar: parser()?, statement: Statement::new()?, context: Context::new() };
         let mut config = json!({"$schema": doc["$schema"], "resources": [], "directives": {"resourceDiscovery": "duringDeployment"}});
         for key in ["parameters", "variables", "functions"] {
             if let Some(value) = doc.get(key) {
@@ -475,6 +476,33 @@ impl TargetContext {
         Ok(target)
     }
 
+    fn context_reads(
+        &self, node: tree_sitter::Node, src: &str, calls: &mut Vec<(std::ops::Range<usize>, &'a str)>,
+    ) -> Result<()> {
+        if node.kind() == "function" && let Some(name) = node.child_by_field_name("name") {
+            match &src[name.byte_range()] {
+                "context" if node.child_by_field_name("args").is_none() => {
+                    if let Some(range) = os_read(node, src, "family") {
+                        calls.push((range, self.system));
+                    } else if let Some(range) = os_read(node, src, "architecture") {
+                        let value = self.architecture.ok_or_else(|| {
+                            anyhow::anyhow!("set architecture in the target profile to evaluate context().os.architecture")
+                        })?;
+                        calls.push((range, value));
+                    } else {
+                        anyhow::bail!("only context().os.family and context().os.architecture are supported by the target profile");
+                    }
+                }
+                name if machine_function(name) => anyhow::bail!("{name}() requires facts outside the target profile"),
+                _ => {}
+            }
+        }
+        for child in node.named_children(&mut node.walk()) {
+            self.context_reads(child, src, calls)?;
+        }
+        Ok(())
+    }
+
     fn expression(&mut self, src: &str) -> Result<String> {
         if !src.starts_with('[') || src.starts_with("[[") {
             return Ok(src.to_owned());
@@ -483,26 +511,10 @@ impl TargetContext {
         let root = tree.root_node();
         anyhow::ensure!(!root.has_error(), "invalid DSC expression {src}");
         let mut calls = Vec::new();
-        fn visit(node: tree_sitter::Node, src: &str, calls: &mut Vec<std::ops::Range<usize>>) -> Result<()> {
-            if node.kind() == "function" && let Some(name) = node.child_by_field_name("name") {
-                match &src[name.byte_range()] {
-                    "context" if node.child_by_field_name("args").is_none() => {
-                        let range = family_read(node, src).ok_or_else(|| anyhow::anyhow!("only context().os.family is defined by the target profile"))?;
-                        calls.push(range);
-                    }
-                    name if machine_function(name) => anyhow::bail!("{name}() requires facts outside the target profile"),
-                    _ => {}
-                }
-            }
-            for child in node.named_children(&mut node.walk()) {
-                visit(child, src, calls)?;
-            }
-            Ok(())
-        }
-        visit(root, src, &mut calls)?;
+        self.context_reads(root, src, &mut calls)?;
         let mut rewritten = src.to_owned();
-        for range in calls.into_iter().rev() {
-            rewritten.replace_range(range, &format!("string('{}')", self.system));
+        for (range, value) in calls.into_iter().rev() {
+            rewritten.replace_range(range, &format!("string('{value}')"));
         }
         Ok(rewritten)
     }
