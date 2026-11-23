@@ -992,7 +992,9 @@ The preview evaluates `context().os.family` for each system. It marks a step `(d
 
 ### Check target profiles in CI
 
-Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. List the native managers available on the target in Furnish’s priority order. On Unix the order is `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix`, then `mise`. On Windows list `winget` before `mise`. Include a collection manager's ID when its script and prerequisites are available on that target.
+Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. When an expression reads `context().os.architecture`, set `architecture` to the exact DSC value for the target. Use `x86_64` for 64-bit Intel or AMD, `aarch64` for ARM64 Linux or Windows, and `arm64` for Apple silicon. Profiles that do not use this fact can omit it.
+
+List the native managers available on the target in Furnish’s priority order. On Unix the order is `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix`, then `mise`. On Windows list `winget` before `mise`. Include a collection manager's ID when its script and prerequisites are available on that target.
 
 For example, an admin can verify which package implements a step named `Editor` and which dependency applies to developers:
 
@@ -1000,6 +1002,7 @@ For example, an admin can verify which package implements a step named `Editor` 
 profiles:
   developer-laptop:
     family: Linux
+    architecture: x86_64
     distribution: cachyos
     distributionLike: [arch]
     packageManagers: [pacman, nix]

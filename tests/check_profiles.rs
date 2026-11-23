@@ -101,6 +101,29 @@ fn profile_uses_its_own_documents_directory_in_parameter_defaults() {
 }
 
 #[test]
+fn profiles_select_architecture_specific_steps_using_dsc_platform_spellings() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("repo");
+    let path = temp.path().join("profiles.yaml");
+    let mut amd = package("amd");
+    amd["condition"] = "[equals(context().os.architecture, 'x86_64')]".into();
+    let mut arm = package("arm");
+    arm["condition"] = "[or(equals(context()['os']['architecture'], 'aarch64'), equals(context().os.architecture, 'arm64'))]".into();
+    app(&dir, "tool", json!({"resources":[amd, arm]}));
+    let mut profiles = json!({});
+    for (family, target, step, skip) in [
+        ("Linux", "x86_64", "amd", "arm"), ("Windows", "aarch64", "arm", "amd"), ("macOS", "arm64", "arm", "amd"),
+    ] {
+        profiles[family] = json!({"family":family,"architecture":target,"packageManagers":[],"expect":{"tool":{"steps":[step],"skipped":[skip]}}});
+    }
+    fs::write(&path, json!({"profiles":profiles}).to_string()).unwrap();
+    let report = check(temp.path(), &dir, Some(&path), true);
+    assert!(report.contains("amd (depends on host)"), "{report}");
+    fs::write(&path, "profiles: {linux: {family: Linux, packageManagers: []}}").unwrap();
+    assert!(check(temp.path(), &dir, Some(&path), false).contains("set architecture in the target profile"));
+}
+
+#[test]
 fn mise_profiles_select_native_mappings_first_and_accept_backend_tool_ids_on_all_platforms() {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().join("repo");
@@ -160,7 +183,7 @@ fn profile_names_missing_prerequisites_and_refuses_live_machine_facts() {
     for (expression, reason) in [
         ("[equals(envvar('PATH'), 'absent')]", "envvar() requires facts outside the target profile"),
         ("[equals(tryWhich('git'), '')]", "tryWhich() requires facts outside the target profile"),
-        ("[contains(context().os, 'version')]", "only context().os.family is defined by the target profile"),
+        ("[contains(context().os, 'version')]", "only context().os.family and context().os.architecture are supported by the target profile"),
     ] {
         step["condition"] = expression.into();
         app(&dir, "tool", json!({"resources":[step]}));
