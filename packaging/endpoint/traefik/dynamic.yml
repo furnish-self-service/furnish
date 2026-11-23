@@ -36,10 +36,11 @@ http:
       middlewares: [furnish-json]
       service: files
 
-    # Per collection, only these two requests are proxied:
+    # Per collection, only these three requests are proxied:
     #   GET  /git/<public name>.git/info/refs?service=git-upload-pack
     #   POST /git/<public name>.git/git-upload-pack
-    # Git protocol v2 uses exactly these two requests too (it signals v2 in the Git-Protocol
+    #   POST /git/<public name>.git/info/lfs/objects/batch
+    # Git protocol v2 uses the refs and pack requests (it signals v2 in the Git-Protocol
     # header). Everything else, including pushes (git-receive-pack) and the dumb protocol, matches
     # no router and gets Traefik's 404. Path() compares the decoded path, Query() one decoded
     # parameter, so the uri-* middlewares then check the request URI itself (see below).
@@ -47,7 +48,6 @@ http:
 {{- range $c := $collections }}
 {{- $name := index $c 0 }}
 {{- $refs := printf "%s && Method(`GET`) && Path(`/git/%s.git/info/refs`) && Query(`service`, `git-upload-pack`)" $host $name }}
-{{- $pack := printf "%s && Method(`POST`) && Path(`/git/%s.git/git-upload-pack`)" $host $name }}
     {{ $name }}-refs:
       rule: '{{ $refs }} && {{ $bearer }}'
       priority: 200
@@ -58,16 +58,19 @@ http:
       priority: 100
       middlewares: [uri-mismatch-404, uri-only-service-query, unauthorized-401]
       service: noop@internal
-    {{ $name }}-pack:
-      rule: '{{ $pack }} && {{ $bearer }}'
+{{- range $kind, $path := dict "pack" "git-upload-pack" "lfs" "info/lfs/objects/batch" }}
+{{- $post := printf "%s && Method(`POST`) && Path(`/git/%s.git/%s`)" $host $name $path }}
+    {{ $name }}-{{ $kind }}:
+      rule: '{{ $post }} && {{ $bearer }}'
       priority: 200
-      middlewares: [uri-mismatch-404, uri-no-query, signed-in, git-rate, git-size, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-pack]
+      middlewares: [uri-mismatch-404, uri-no-query, signed-in, git-rate, git-size, gitlab-denied-502, {{ $name }}-gitlab, {{ $name }}-{{ $kind }}]
       service: gitlab
-    {{ $name }}-pack-401:
-      rule: '{{ $pack }}'
+    {{ $name }}-{{ $kind }}-401:
+      rule: '{{ $post }}'
       priority: 100
       middlewares: [uri-mismatch-404, uri-no-query, unauthorized-401]
       service: noop@internal
+{{- end }}
 {{- end }}
 
     # Reports from furnish (OpenTelemetry logs): signed-in users only, at most 1 MiB, to the OTLP
@@ -177,6 +180,8 @@ http:
       replacePath: { path: '{{ $repo }}/info/refs' }
     {{ $name }}-pack:
       replacePath: { path: '{{ $repo }}/git-upload-pack' }
+    {{ $name }}-lfs:
+      replacePath: { path: '{{ $repo }}/info/lfs/objects/batch' }
 {{- end }}
 
     events-size:
