@@ -26,6 +26,7 @@ struct Matrix {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Profile {
     family: String,
+    architecture: Option<String>,
     #[serde(default)]
     distribution: String,
     #[serde(default)]
@@ -96,6 +97,10 @@ impl Profile {
             family == "Linux" || (self.distribution.is_empty() && self.distribution_like.is_empty()),
             "only Linux profiles have distribution or distributionLike"
         );
+        if let Some(arch) = &self.architecture {
+            ensure!(!arch.is_empty() && arch.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')),
+                "architecture must be a nonempty CPU identifier");
+        }
         for id in std::iter::once(&self.distribution).filter(|id| !id.is_empty()).chain(&self.distribution_like) {
             ensure!(platform::valid_distribution_id(id), "invalid distribution identifier '{id}'");
         }
@@ -152,7 +157,7 @@ impl Profile {
                         input.insert(key.clone(), value.clone());
                     }
                 }
-                let mut ctx = TargetContext::new(family, target.host.clone(), &app.doc, input)?;
+                let mut ctx = TargetContext::new(family, self.architecture.as_deref(), target.host.clone(), &app.doc, input)?;
                 let actual = target.decisions(app, &mut ctx, &mut item.details)?;
                 for dep in &actual.dependencies {
                     graph.edge(&app.id, dep, Some(true));
@@ -185,7 +190,7 @@ struct Target<'a> {
 }
 
 impl Target<'_> {
-    fn decisions(&self, app: &App, ctx: &mut TargetContext, details: &mut Vec<String>) -> Result<Decisions> {
+    fn decisions(&self, app: &App, ctx: &mut TargetContext<'_>, details: &mut Vec<String>) -> Result<Decisions> {
         let mut result = Decisions::default();
         for dep in &app.dependencies {
             if let Some(expr) = &dep.condition
