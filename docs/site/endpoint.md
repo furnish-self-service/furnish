@@ -38,7 +38,7 @@ Besides those, it serves `GET /.well-known/furnish.json` to everyone and accepts
 
 For collections that track large files with Git LFS, configure GitLab’s LFS object storage with `proxy_download: false`. The batch response must give clients a presigned HTTPS download URL they can reach and whose certificate they trust. A download action that points back to an internal GitLab host will fail outside that network. Only batch metadata passes through the Furnish endpoint. The client downloads the object directly from storage. [GitLab object storage configuration](https://docs.gitlab.com/administration/object_storage/#proxy-download)
 
-The Windows installer bundles Git LFS. On macOS and Linux, install the `git-lfs` package and verify that `git lfs version` works for the account running Furnish.
+The Windows and macOS installers include Git LFS. Linux DEB, RPM and Nix packages provide it as a dependency. For standalone CLI and source installs, make `git lfs version` available to the account running Furnish.
 
 ## Before you start
 
