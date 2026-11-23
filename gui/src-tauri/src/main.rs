@@ -515,7 +515,7 @@ async fn check_self_update(app: tauri::AppHandle, download: bool) -> selfupdate:
 /// the main thread: on macOS the updater may ask there for an administrator's password.
 #[tauri::command]
 async fn apply_self_update(app: tauri::AppHandle, only_hidden: bool) -> CmdResult<bool> {
-    spawn_blocking(move || selfupdate::apply(&app, only_hidden)).await.map_err(|e| e.to_string())?
+    selfupdate::apply(app, only_hidden).await
 }
 
 /// Show the open-source components and their licenses: the installer's copy, else the website's.
