@@ -307,10 +307,14 @@ const steps = [
     const field = "//input[@data-option='location']";
     await waitFor('localized folder label', () => find("//label[.//span[normalize-space()='Team documents folder']]"));
     if (!(await prop(field, 'placeholder')).includes(workDir)) throw new Error('missing inherited path');
-    await click(button('Choose folder…'));
     const display = ':' + ((Number(process.env.DRIVER_PORT || 4444) % 10000) + 100);
     const xdotool = (...args) => inContainer(['env', 'DISPLAY=' + display, 'xdotool', ...args]);
-    const chooser = await waitFor('system folder chooser', () => xdotool('search', '--onlyvisible', '--name', '^Choose folder'));
+    // GTK sets _NET_WM_NAME for the Unicode title. Xvfb has no window manager to mirror it
+    // to WM_NAME, which xdotool searches. Identify the newly mapped GTK window instead.
+    const windows = () => xdotool('search', '--onlyvisible', '--class', '.+').split(/\s+/);
+    const before = new Set(windows());
+    await click(button('Choose folder…'));
+    const chooser = await waitFor('system folder chooser', () => windows().find(id => !before.has(id)));
     xdotool('windowfocus', '--sync', chooser, 'key', 'Escape');
     await waitFor('picker dismissed', async () => !(await prop(button('Choose folder…'), 'disabled')));
     if (await prop(field, 'value')) throw new Error('cancelling set an override');
