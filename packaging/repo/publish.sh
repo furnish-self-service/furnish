@@ -65,3 +65,5 @@ echo "deb [signed-by=/etc/apt/keyrings/furnish.asc] $BASE_URL/$channel/apt furni
 # What fetch.sh restores next time: the packages of every channel.
 (cd "$site" && find . \( -name '*.deb' -o -name '*.rpm' -o -path '*/macos/*' -o -path '*/windows/*' \) -type f | sed 's|^\./||' | sort) > "$site/packages.txt"
 echo "published $(ls "$apt/pool/main" | wc -l) .deb, $(ls "$rpm/x86_64" | wc -l) .rpm, $(ls "$mac" | grep -c '\.dmg$') .dmg and $(ls "$win" | grep -c '\.msi$') .msi in $channel"
+# The next deployment restores both channels, including feeds, aliases and repository signatures.
+(cd "$site" && find . -type f ! -path './files.txt' | sed 's|^\./||' | sort) > "$site/files.txt"

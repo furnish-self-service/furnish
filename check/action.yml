@@ -16,7 +16,7 @@ inputs:
     default: ""
   channel:
     description: Which furnish build to use
-    default: alpha
+    default: stable
   furnish:
     description: A furnish binary to use instead of downloading one
     default: ""

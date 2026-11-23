@@ -8,6 +8,11 @@ set -eu
 cask=${1:?usage: $0 <cask file> <dmg>}; dmg=${2:?}
 version=$(basename "$dmg" | sed -E 's/^furnish_(.+)_arm64\.dmg$/\1/; s/\+/-/g')
 case "$version" in *.dmg) echo "unexpected file name: $dmg" >&2; exit 1 ;; esac
+# Homebrew's default GitHub release strategy selects stable releases.
+case "$version" in
+    *-alpha.*) ;;
+    *) sed -i.bak '/^  # Alpha builds /,/^  end$/d' "$cask"; rm -f "$cask.bak" ;;
+esac
 sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)
 sed -i.bak -E "s/^  version \".*\"$/  version \"$version\"/; s/^  sha256 \".*\"$/  sha256 \"$sha\"/" "$cask"
 rm -f "$cask.bak"
