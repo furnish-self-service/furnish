@@ -11,7 +11,8 @@ case "$version" in *.dmg) echo "unexpected file name: $dmg" >&2; exit 1 ;; esac
 # Homebrew's default GitHub release strategy selects stable releases.
 case "$version" in
     *-alpha.*) ;;
-    *) sed -i.bak '/^  # Alpha builds /,/^  end$/d' "$cask"; rm -f "$cask.bak"
+    *) sed '/^  # Alpha builds /,/^  end$/d' "$cask" | cat -s > "$cask.tmp"
+       mv "$cask.tmp" "$cask"
        if grep -v '^  version ' "$cask" | grep -q -- '-alpha'; then echo 'Unexpected alpha-only cask configuration' >&2; exit 1; fi ;;
 esac
 sha=$(shasum -a 256 "$dmg" | cut -d' ' -f1)

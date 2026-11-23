@@ -18,6 +18,8 @@ curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --target x86_6
 . "$HOME/.cargo/env"
 
 export CARGO_TARGET_DIR="$PWD/target/jammy"  # apart from builds for the host
+# Packaging output shares a CI build cache. Ship only packages from this invocation.
+rm -rf "$CARGO_TARGET_DIR/release/bundle/deb" "$CARGO_TARGET_DIR/release/bundle/rpm"
 cd gui
 npm ci --silent
 # FURNISH_VERSION (e.g. 0.1.0-alpha.42) overrides the version, for alpha builds.
