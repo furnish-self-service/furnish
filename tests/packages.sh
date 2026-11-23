@@ -8,7 +8,7 @@ set -eu
 image=${1:?usage: $0 <image> <bundle dir>}
 dir=$(realpath "${2:?usage: $0 <image> <bundle dir>}")
 case "$image" in
-    debian*|ubuntu*) install='apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /p/deb/*.deb >/dev/null' ;;
+    debian*|ubuntu*) install='apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y -qq /p/deb/*.deb >/dev/null' ;;
     fedora*) install='dnf install -y -q /p/rpm/*.rpm >/dev/null' ;;
     # Enterprise Linux has WebKitGTK 4.1 from version 10, with EPEL and CRB (EL9 only has 4.0).
     rockylinux*|almalinux*) install='dnf install -y -q epel-release >/dev/null && dnf config-manager --set-enabled crb && dnf install -y -q /p/rpm/*.rpm >/dev/null' ;;
@@ -24,6 +24,7 @@ sh "$(dirname "$0")/distro-container.sh" "$image" "
     $install
     furnish --version
     furnish-gui --build-info | grep -F '\"target\":\"x86_64-unknown-linux-gnu\"'
+    git lfs version >/dev/null || { echo 'the package did not bring git-lfs' >&2; exit 1; }
     git --version >/dev/null || { echo 'the package did not bring git' >&2; exit 1; }
     missing=\$(ldd /usr/bin/furnish-gui | grep 'not found' || true)
     [ -z \"\$missing\" ] || { echo \"furnish-gui can't start: \$missing\" >&2; exit 1; }

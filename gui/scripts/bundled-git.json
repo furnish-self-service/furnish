@@ -10,6 +10,16 @@
     "url": "https://github.com/git-lfs/git-lfs/releases/download/v3.8.1/git-lfs-windows-amd64-v3.8.1.zip",
     "sha256": "5bb771c12b3dacc535e912d0270a010c209d4da2e63819c5918e3547c2defed9",
     "exe": "git-lfs-3.8.1/git-lfs.exe",
-    "source": "https://github.com/git-lfs/git-lfs/tree/v3.8.1"
+    "source": "https://github.com/git-lfs/git-lfs/tree/v3.8.1",
+    "darwin": {
+      "aarch64-apple-darwin": {
+        "arch": "arm64",
+        "sha256": "0ba10e897e0496412cd86eacaed4ed554c97ddc29bc5c709d28faa5eaaa2222c"
+      },
+      "x86_64-apple-darwin": {
+        "arch": "amd64",
+        "sha256": "4292b3518e717e53c20a6c2c0696e2069a21e97500ad14b80b06bd52de8f3b72"
+      }
+    }
   }
 }

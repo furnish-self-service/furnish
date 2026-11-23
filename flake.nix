@@ -75,6 +75,7 @@
         craneLib = crane.mkLib pkgs;
         commonArgs = {
           pname = "furnish-workspace";
+          FURNISH_GIT_PATH = pkgs.lib.makeBinPath [ pkgs.git pkgs.git-lfs ];
           inherit version src;
           strictDeps = true;
           # One download of all crates (as buildRustPackage's cargoHash), in crane's layout.

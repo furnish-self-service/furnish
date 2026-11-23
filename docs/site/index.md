@@ -43,7 +43,7 @@ When furnish installs a version itself, it checks the download's signature first
 
 `brew uninstall --cask furnish` keeps your settings and collections. Add `--zap` to remove them too.
 
-furnish uses git. The Windows installer includes it ([MinGit](https://github.com/git-for-windows/git/wiki/MinGit) with Git LFS); furnish uses a git you installed yourself first. On macOS, git comes with Apple's Command Line Tools: if they are missing, macOS offers to install them the first time furnish adds a collection, or run `xcode-select --install`.
+Furnish requires Git and Git LFS for collection checkouts. The Linux DEB and RPM packages install both as dependencies, and the Nix packages provide both. When using the standalone Linux CLI or building from source, install both tools and check `git lfs version`. The Windows installer includes it ([MinGit](https://github.com/git-for-windows/git/wiki/MinGit) with Git LFS); Furnish uses an installed Git first when it also provides Git LFS. The macOS app includes Git LFS. Git itself comes with Apple's Command Line Tools: if they are missing, macOS offers to install them the first time furnish adds a collection, or run `xcode-select --install`.
 
 On Linux, furnish comes from a signed package repository, so updates arrive with the system's other updates. The package contains the desktop app and the `furnish` command, and brings git along. On Debian, Ubuntu and their derivatives:
 

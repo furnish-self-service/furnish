@@ -2490,6 +2490,24 @@ pub const GIT_LOCATION_VARS: [&str; 6] =
 /// The git program (see [`git_program`]), without the variables in [`GIT_LOCATION_VARS`].
 pub fn git_command() -> Command {
     let mut cmd = git_program();
+    // Git and its smudge filters must find the same helper, including when Finder or launchd
+    // started the app with only system tools on PATH.
+    let helper_path = option_env!("FURNISH_GIT_PATH").map(std::ffi::OsString::from);
+    #[cfg(target_os = "macos")]
+    let helper_path = helper_path.or_else(|| {
+        let exe = env::current_exe().ok()?.canonicalize().ok()?;
+        let bin = exe.parent()?;
+        let helper = bin.join("git-lfs");
+        (bin.ends_with("Contents/MacOS") && helper.is_file()
+            && (!crate::service::in_service() || crate::service::admin_only(&helper)))
+            .then(|| bin.as_os_str().to_owned())
+    });
+    if let Some(prefix) = helper_path {
+        let inherited = env::var_os("PATH").unwrap_or_default();
+        if let Ok(path) = env::join_paths(env::split_paths(&prefix).chain(env::split_paths(&inherited))) {
+            cmd.env("PATH", path);
+        }
+    }
     for var in GIT_LOCATION_VARS {
         cmd.env_remove(var);
     }
@@ -2502,11 +2520,13 @@ fn git_program() -> Command {
     static BUNDLED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     let bundled = BUNDLED.get_or_init(|| {
         let on_path = env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("git.exe").is_file()));
-        if !cfg!(windows) || on_path {
+        if !cfg!(windows) {
             return None;
         }
         let git = env::current_exe().ok()?.parent()?.join("git").join("cmd").join("git.exe");
-        git.is_file().then_some(git)
+        if !git.is_file() { return None; }
+        if on_path && Command::new("git").args(["lfs", "version"]).output().is_ok_and(|r| r.status.success()) { return None; }
+        Some(git)
     });
     // The service runs as root: git from the system, not from a folder on PATH that a user may own
     // (e.g. Homebrew's). NixOS has none in /usr/bin; there the service's PATH is the system's.
