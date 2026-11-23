@@ -663,6 +663,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'link.uninstall': "Disinstallare {name}?",
   'link.source': "Raccolta: {collection}",
   'link.missingCollection': "La raccolta {collection} non è stata aggiunta.",
+  'link.alreadyInstalled': "{name} è già installata.",
+  'options.chooseFolder': "Scegli cartella…",
   'link.noAction': "Nessuna app idonea per questa azione.",
   'link.queueFull': "Troppi link in attesa. Completa una conferma, poi riapri questo link.",
   'link.changed': "La destinazione è cambiata. Riapri il link per verificarla.",

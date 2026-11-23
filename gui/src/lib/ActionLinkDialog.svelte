@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import * as api from './api';
   import type { ActionLink } from './action-link';
-  import { appByKey, appName, checkStatus, defaultUninstall, dismissLink, eligibleForLink, isVerified, kitName,
+  import { appByKey, appName, checkStatus, defaultUninstall, dismissLink, eligibleForLink, isInstalled, isVerified, kitName,
     runActionLink, store } from './state.svelte';
   import { t, terror } from './i18n.svelte';
   import RemovalImpact from './RemovalImpact.svelte';
@@ -105,7 +105,8 @@
   {:else if checking}
     <p role="status">{t('app.status.checking')}</p>
   {:else if !apps.length}
-    <p>{t('link.noAction')}</p>
+    <p>{app && link.action === 'install' && isInstalled(app.key)
+      ? t('link.alreadyInstalled', { name: target }) : t('link.noAction')}</p>
   {:else}
     {#if kit}
       <ul>{#each apps as member (member.key)}<li>{appName(member)} <code>{member.key}</code></li>{/each}</ul>

@@ -663,6 +663,8 @@ export const fr: Record<keyof typeof en, Entry> = {
   'link.uninstall': "Désinstaller {name} ?",
   'link.source': "Collection : {collection}",
   'link.missingCollection': "La collection {collection} n’a pas été ajoutée.",
+  'link.alreadyInstalled': "{name} est déjà installé.",
+  'options.chooseFolder': "Choisir un dossier…",
   'link.noAction': "Aucune application ne peut faire l’objet de cette action.",
   'link.queueFull': "Trop de liens sont en attente. Traitez une demande, puis rouvrez ce lien.",
   'link.changed': "La cible a changé. Rouvrez le lien pour la vérifier.",

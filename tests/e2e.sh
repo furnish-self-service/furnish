@@ -170,7 +170,7 @@ if [ -n "$distro" ]; then
     cat > "$tmp/repo/apps/distro-package.dsc.yaml" <<YAML
 parameters:
   backend: { type: string, defaultValue: pacman }
-  nativeName: { type: string, defaultValue: native-distro-tool }
+  nativeName: { type: string, defaultValue: native-distro-tool, metadata: { furnish: { label: Distribution package name } } }
 metadata: { furnish: { description: Package selected by distribution, categories: [Test] } }
 resources:
   - name: native-package
@@ -602,6 +602,7 @@ if ! $real; then
 fi
 
 if [ -n "$distro" ]; then
+    expect "$(step option list distro-package)" "Distribution package name"
     plan=$(step install distro-package --dry-run)
     expect "$plan" "The app selects the pacman package manager"
     expect "$plan" "Package name native-distro-tool matches distribution $distro"

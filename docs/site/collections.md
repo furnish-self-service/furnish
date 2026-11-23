@@ -872,6 +872,30 @@ parameters:
 
 An option with `allowedValues` is shown as a list to choose from. An app uses an option by declaring it as a DSC parameter, then uses it in conditions and properties. furnish takes an option's value from the first of these that sets it: a locked value in the admin policy, the user's value for the app, the policy's default for the app, the user's value for the collection, the policy's default for the collection, the default in `collection.yaml`, the app's own default. A value is used as it is: text that starts with `[` is not evaluated as a DSC expression, except the app's own default.
 
+For a folder path, add `folder: true` to a string option in `collection.yaml`:
+
+```yaml
+parameters:
+  location:
+    type: string
+    folder: true
+    label: Team documents folder
+```
+
+Apps that declare the same parameter inherit the folder picker. For an app-specific option, set the hint in its DSC parameter metadata:
+
+```yaml
+parameters:
+  location:
+    type: string
+    metadata: { furnish: { folder: true, label: Team documents folder } }
+    defaultValue: "[concat(variables('furnish.host').documentsDir, '/Team docs')]"
+```
+
+Set `metadata.furnish.label` on any app parameter to give it a display name in the collection’s own language. The desktop and `furnish option list` use it, and the parameter name stays the same for CLI commands and translations.
+
+For folder options the desktop offers a text field and a system folder chooser. The chooser starts at the current or inherited path, using the closest existing folder for a new destination. The CLI still accepts a path as text. Options with `allowedValues` keep their list of choices.
+
 ## Recommendations
 
 ```yaml

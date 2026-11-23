@@ -29,6 +29,9 @@ auto-launch = "=0.6.0"
 # Tray icons from SVG, PNG, JPEG and WebP (see tray_icon.rs). Without text: no font loading.
 resvg = { version = "=0.50.0", default-features = false, features = ["raster-images"] }
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = { version = "0.15.4", default-features = false }
+
 [dev-dependencies]
 png = "0.18"
 tempfile = "3"
@@ -36,6 +39,7 @@ tempfile = "3"
 # Same glib as Tauri's GTK stack, used to set the Wayland app ID (see main.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 glib = "0.18"
+gtk = "0.18"
 png = "0.18"
 # Whether the desktop shows tray icons (a StatusNotifierWatcher on the session bus).
 gio = "0.18"

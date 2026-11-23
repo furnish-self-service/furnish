@@ -1,6 +1,7 @@
 <script lang="ts">
   // A collection's required options ("What do you work on?"), asked when it is added and on each
   // launch until answered. "Later" postpones: that collection's apps can't be installed meanwhile.
+  import FolderInput from './FolderInput.svelte';
   import type { Option } from './api';
   import { store, unansweredCollections, answerQuestions, postponeQuestions, optionLabel, optionDescription, choiceLabel } from './state.svelte';
   import { t } from './i18n.svelte';
@@ -69,20 +70,26 @@
         </h3>
       {/if}
       {#each c.options.filter((o) => o.missing) as o (o.name)}
-        <label>
-          <span class="label">{optionLabel(c.name, o)}</span>
-          {#if optionDescription(c.name, o)}<span class="desc">{optionDescription(c.name, o)}</span>{/if}
+        {@const field = `question-${c.name}-${o.name}`}
+        <div class="question">
+          <label for={field}>
+            <span class="label">{optionLabel(c.name, o)}</span>
+            {#if optionDescription(c.name, o)}<span class="desc">{optionDescription(c.name, o)}</span>{/if}
+          </label>
           {#if choices(o).length}
-            <select data-question={o.name} bind:value={answers[c.name][o.name]}>
+            <select id={field} data-question={o.name} bind:value={answers[c.name][o.name]}>
               <option value="" disabled>{t('common.choose')}</option>
               {#each choices(o) as choice}
                 <option value={JSON.stringify(choice.value)}>{choiceLabel(c.name, o, choice.value, choice.label) ?? String(choice.value)}</option>
               {/each}
             </select>
+          {:else if o.type === 'string' && o.folder}
+            <FolderInput id={field} question={o.name} value={answers[c.name]?.[o.name] ?? ''}
+              onvalue={(path) => answers[c.name][o.name] = path} />
           {:else}
-            <input data-question={o.name} type={o.type === 'int' ? 'number' : 'text'} bind:value={answers[c.name][o.name]} />
+            <input id={field} data-question={o.name} type={o.type === 'int' ? 'number' : 'text'} bind:value={answers[c.name][o.name]} />
           {/if}
-        </label>
+        </div>
       {/each}
     </section>
   {/each}
@@ -129,11 +136,11 @@
     color: var(--ink-soft);
     line-height: 1.5;
   }
-  label {
+  .question, label {
     display: grid;
     gap: 0.3rem;
-    margin-top: 1rem;
   }
+  .question { margin-top: 1rem; }
   .label {
     font-weight: 600;
   }
