@@ -110,20 +110,27 @@ grep -q 'version 2' $OUT/clone-v2.trace && ok "v2 clone really negotiated protoc
 ! grep -q 'version 2' $OUT/clone-v0.trace && ok "v0 clone stayed on protocol v0" || bad "v0 clone negotiated v2"
 git -c http.extraHeader="$AUTH" ls-remote $E/git/acme.git >$OUT/ls-remote.log 2>&1 && ok "git ls-remote" || bad "git ls-remote"
 
-# --- 2./3. denied tokens -----------------------------------------------------------------------
-req "no token" "401 403" "$REFS"
 # Exercise batch negotiation with git-lfs and retrieve the bytes from a separate origin.
 mkdir -p /tmp/storage
 printf 'Furnish LFS fixture\n' > /tmp/storage/object
-httpd -p 127.0.0.1:8971 -h /tmp/storage
+httpd -f -p 127.0.0.1:8971 -h /tmp/storage &
+storage_pid=$!
+trap 'kill "$storage_pid" 2>/dev/null || true' EXIT
 oid=$(sha256sum /tmp/storage/object | cut -d' ' -f1)
 printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 20\n' "$oid" > /tmp/pointer
+# Use the repository-scoped header and inferred LFS endpoint, as Furnish does.
 if SSL_CERT_FILE="$CA" git -C /tmp/w/v2 -c "http.$E/git/acme.git.extraHeader=$AUTH" lfs smudge fixture \
     < /tmp/pointer > /tmp/download && cmp -s /tmp/storage/object /tmp/download; then
     ok "git-lfs downloaded the expected object"
 else
     bad "git-lfs batch or object download failed"
 fi
+kill "$storage_pid"
+wait "$storage_pid" 2>/dev/null || true
+trap - EXIT
+
+# --- 2./3. denied tokens -----------------------------------------------------------------------
+req "no token" "401 403" "$REFS"
 req "no token, LFS batch" "401 403" -X POST "$E/git/acme.git/info/lfs/objects/batch"
 req "no token, POST upload-pack" "401 403" -X POST -H 'Content-Type: application/x-git-upload-pack-request' --data-binary 0000 $E/git/acme.git/git-upload-pack
 req "empty bearer" "401 403" -H "Authorization: Bearer" "$REFS"
