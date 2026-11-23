@@ -112,7 +112,7 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
         result => {
             eprintln!("note: no update check: {result:?}");
             // Offline: an already verified download is still usable.
-            return change(app, |s| s.state = before.state);
+            return change(app, |s| s.state = if pending.is_some() { State::Ready } else { State::Idle });
         }
     };
     let prepared_version = pending.as_ref().and_then(|(u, _)| selfupdate::semver(&u.version));
@@ -208,5 +208,6 @@ pub async fn apply(app: AppHandle, only_hidden: bool) -> Result<bool, String> {
         return Err(message);
     }
     idle.commit();
-    app.restart();
+    app.request_restart();
+    Ok(true)
 }
