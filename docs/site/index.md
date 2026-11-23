@@ -12,7 +12,7 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-The downloads below follow the stable channel once v0.1.0 is published. For the latest available installer, see [GitHub Releases](https://github.com/furnish-self-service/furnish/releases) also lists alpha builds for people testing upcoming changes.
+The downloads below follow the stable channel once v0.1.0 is published. The [releases page](https://github.com/furnish-self-service/furnish/releases) lists available installers, including alpha builds for people testing upcoming changes.
 
 | System | How |
 |---|---|
