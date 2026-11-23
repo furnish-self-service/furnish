@@ -60,14 +60,14 @@ dc run --rm -T client sh /checks.sh || failed=1
 # furnish itself against the endpoint, with FURNISH_BIN (a static Linux binary).
 if [ -n "${FURNISH_BIN:-}" ]; then dc run --rm -T client sh /furnish.sh || failed=1; fi
 
-# What the fake GitLab saw: only the two fixed URIs, always with Basic auth, never the secret repo.
+# What the fake GitLab saw: only the three fixed URIs, always with Basic auth, never the secret repo.
 log=$(dc logs --no-color --no-log-prefix gitlab | grep '^upstream ' || true)
 # ok/bad always succeed, so `cond && ok || bad` is a safe if/else here.
 ok()  { echo "ok   $*"; }
 bad() { echo "FAIL $*"; failed=1; }
 [ -n "$log" ] && ok "upstream received requests ($(echo "$log" | wc -l))" || bad "upstream received no requests"
-other=$(echo "$log" | grep -vE '^upstream (GET /it/catalog\.git/info/refs\?service=git-upload-pack|POST /it/catalog\.git/git-upload-pack) ' || true)
-[ -z "$other" ] && ok "upstream saw only the two allowlisted URIs" || bad "upstream saw other requests: $other"
+other=$(echo "$log" | grep -vE '^upstream (GET /it/catalog\.git/info/refs\?service=git-upload-pack|POST /it/catalog\.git/(git-upload-pack|info/lfs/objects/batch)) ' || true)
+[ -z "$other" ] && ok "upstream saw only the three allowlisted URIs" || bad "upstream saw other requests: $other"
 echo "$log" | grep -q secret && bad "upstream saw the secret repository" || ok "upstream never saw the secret repository"
 echo "$log" | grep -vq ' auth=Basic ' && bad "upstream got a request without the deploy token (or with the client's bearer)" \
     || ok "upstream got the deploy token (Basic) on every request, never the client's bearer"

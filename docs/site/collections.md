@@ -221,7 +221,7 @@ For apps with [required versions](#required-versions), Furnish sends `reportVers
 
 ### Furnish/Installer
 
-Installs a `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe` from the collection or a vendor download. To ship the installer in the collection, set `file` to its path. Git LFS works for large files.
+Installs a `.deb`, `.rpm`, `.pkg`, `.dmg`, `.msi` or `.exe` from the collection or a vendor download. To ship the installer in the collection, set `file` to its path. For large files tracked with Git LFS, install Git LFS on macOS and Linux. The Windows installer includes it. Collections served through a Furnish address also need the [endpoint’s LFS configuration](endpoint.md#git-lfs-downloads).
 
 ```yaml
 - name: Company VPN

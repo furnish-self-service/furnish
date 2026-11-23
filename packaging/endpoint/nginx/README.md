@@ -27,6 +27,7 @@ collection `tools` mapped to the GitLab repository `/it/tools.git`, add to the
 ```nginx
 "~^GET/git/tools\.git/info/refs\?service=git-upload-pack$" "/it/tools.git/info/refs?service=git-upload-pack";
 "~^POST/git/tools\.git/git-upload-pack$"                   "/it/tools.git/git-upload-pack";
+"~^POST/git/tools\.git/info/lfs/objects/batch$"                   "/it/tools.git/info/lfs/objects/batch";
 ```
 
 and to the `$furnish_gitlab_auth` map:
@@ -34,6 +35,7 @@ and to the `$furnish_gitlab_auth` map:
 ```nginx
 "~^GET/git/tools\.git/info/refs\?service=git-upload-pack$" "Basic ${TOOLS_GITLAB_AUTH}";
 "~^POST/git/tools\.git/git-upload-pack$"                   "Basic ${TOOLS_GITLAB_AUTH}";
+"~^POST/git/tools\.git/info/lfs/objects/batch$"                   "Basic ${TOOLS_GITLAB_AUTH}";
 ```
 
 Add `TOOLS_GITLAB_AUTH: ${TOOLS_GITLAB_AUTH:?set TOOLS_GITLAB_AUTH}` to `environment` in

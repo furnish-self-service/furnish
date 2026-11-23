@@ -23,9 +23,10 @@ RUN set -e; \
     chown -R nginx:nginx /srv/git; \
     install -d -o nginx /run/fcgiwrap
 COPY gitlab/nginx.conf /etc/nginx/nginx.conf
+COPY gitlab/lfs-batch.sh /lfs-batch.sh
 COPY gitlab/start.sh /start.sh
 CMD ["/bin/sh", "/start.sh"]
 
 # The test client: git, curl, openssl (for PKCE).
 FROM base AS client
-RUN apk add --no-cache curl openssl ca-certificates
+RUN apk add --no-cache curl openssl ca-certificates git-lfs busybox-extras

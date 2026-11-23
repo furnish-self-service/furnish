@@ -16,12 +16,13 @@ furnish reads `https://furnish.myorg.tld/.well-known/furnish.json`, signs the pe
 
 ## What the proxy lets through
 
-Each collection gets a public path for exactly one GitLab repository. For the collection `acme`, kept in `/it/catalog.git`, the proxy passes on only these requests, which are all git needs to clone and fetch:
+Each collection gets a public path for exactly one GitLab repository. For the collection `acme`, kept in `/it/catalog.git`, the proxy passes on only these requests, for Git fetches and Git LFS download negotiation:
 
 | Request | Forwarded to GitLab as |
 |---|---|
 | `GET /git/acme.git/info/refs?service=git-upload-pack` | `GET /it/catalog.git/info/refs?service=git-upload-pack` |
 | `POST /git/acme.git/git-upload-pack` | `POST /it/catalog.git/git-upload-pack` |
+| `POST /git/acme.git/info/lfs/objects/batch` | `POST /it/catalog.git/info/lfs/objects/batch` |
 
 Besides those, it serves `GET /.well-known/furnish.json` to everyone and accepts reports as OpenTelemetry logs, `POST /v1/logs`, from signed-in people.
 
@@ -30,8 +31,14 @@ Besides those, it serves `GET /.well-known/furnish.json` to everyone and accepts
 - The proxy checks the token before it reads a request body, so a client that isn't signed in can't make it hold one.
 - The proxy replaces the person's token with the deploy token and removes other GitLab credentials the client sends. If GitLab rejects the deploy token, the client gets 502, so git doesn't ask the person for a password.
 - GitLab gets the client's address and the endpoint's host name in `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Host` and `X-Forwarded-Proto` from the proxy. What a client sends under these names, or in `Forwarded`, is replaced or dropped.
-- Git requests and reports are limited per signed-in user: 2 requests a second on average, in bursts of up to 60, with 429 for the rest (Caddy has no limit, see [Pick a proxy](#pick-a-proxy)). A `git-upload-pack` request may be at most 32 MiB, a report request at most 1 MiB.
+- Git requests and reports are limited per signed-in user: 2 requests a second on average, in bursts of up to 60, with 429 for the rest (Caddy has no limit, see [Pick a proxy](#pick-a-proxy)). A Git pack or LFS batch request may be at most 32 MiB, a report request at most 1 MiB.
 - The proxy names the user of a report to the receiver in `X-Furnish-User`, from the checked token. A header of that name from the client is dropped. The receiver adds the user to each log record as `user.email` and drops `user.*` attributes the client sent.
+
+## Git LFS downloads
+
+For collections that track large files with Git LFS, configure GitLab’s LFS object storage with `proxy_download: false`. The batch response must give clients a presigned HTTPS download URL they can reach and whose certificate they trust. A download action that points back to an internal GitLab host will fail outside that network. Only batch metadata passes through the Furnish endpoint. The client downloads the object directly from storage. [GitLab object storage configuration](https://docs.gitlab.com/administration/object_storage/#proxy-download)
+
+The Windows installer bundles Git LFS. On macOS and Linux, install the `git-lfs` package and verify that `git lfs version` works for the account running Furnish.
 
 ## Before you start
 

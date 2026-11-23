@@ -81,6 +81,7 @@ A collection needs three lines in `haproxy.cfg` and one environment variable. Fo
 ```
 http-request set-var(txn.upstream) str(/it/tools.git/info/refs?service=git-upload-pack) if { method GET } { pathq -m str /git/tools.git/info/refs?service=git-upload-pack }
 http-request set-var(txn.upstream) str(/it/tools.git/git-upload-pack) if { method POST } { pathq -m str /git/tools.git/git-upload-pack }
+http-request set-var(txn.upstream) str(/it/tools.git/info/lfs/objects/batch) if { method POST } { pathq -m str /git/tools.git/info/lfs/objects/batch }
 http-request set-var(txn.gitlab_auth) str("${TOOLS_GITLAB_AUTH}") if { var(txn.upstream) -m found } { pathq -m beg /git/tools.git/ }
 ```
 

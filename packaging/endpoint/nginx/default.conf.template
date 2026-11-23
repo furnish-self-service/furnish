@@ -15,11 +15,12 @@
 # regular expressions (`~`, case-sensitive; escape `.` and `?`). Git protocol v2 uses these same two
 # requests. Everything else, including pushes and the dumb protocol, gets 404.
 #
-# A collection is two lines here (upstream URI) and two lines in $furnish_gitlab_auth below.
+# A collection is three lines here (upstream URI) and three lines in $furnish_gitlab_auth below.
 map $request_method$request_uri $furnish_gitlab_uri {
     default "";
     "~^GET/git/acme\.git/info/refs\?service=git-upload-pack$" "/it/catalog.git/info/refs?service=git-upload-pack";
     "~^POST/git/acme\.git/git-upload-pack$"                   "/it/catalog.git/git-upload-pack";
+    "~^POST/git/acme\.git/info/lfs/objects/batch$"                   "/it/catalog.git/info/lfs/objects/batch";
 }
 
 # The read-only deploy token for each collection (base64 of "username:token").
@@ -27,6 +28,7 @@ map $request_method$request_uri $furnish_gitlab_auth {
     default "";
     "~^GET/git/acme\.git/info/refs\?service=git-upload-pack$" "Basic ${ACME_GITLAB_AUTH}";
     "~^POST/git/acme\.git/git-upload-pack$"                   "Basic ${ACME_GITLAB_AUTH}";
+    "~^POST/git/acme\.git/info/lfs/objects/batch$"                   "Basic ${ACME_GITLAB_AUTH}";
 }
 
 # Reports (OpenTelemetry logs): exactly POST /v1/logs, no query.
