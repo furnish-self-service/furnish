@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      stable:
+        description: Publish the configured stable version from main
+        type: boolean
+        default: false
 
 # One run per branch or pull request: a new push cancels the one before it. Each run of main has
 # a group of its own, so none is ever cancelled or held back (they publish).
@@ -13,6 +18,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
+  RELEASE_CHANNEL: ${{ inputs.stable && 'stable' || 'alpha' }}
   CARGO_TERM_COLOR: always
   HOMEBREW_NO_AUTO_UPDATE: 1
   # The release whose .msi the self-update job upgrades to the current one, with the service
@@ -500,7 +506,7 @@ jobs:
       - run: |
           # Builds of main are alpha releases: 0.1.0+alpha.<run>, rising with every run.
           version=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
             -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" -e FURNISH_BUILD_REVISION="$GITHUB_SHA" \
@@ -528,27 +534,67 @@ jobs:
           path: bundle
       - run: tests/packages.sh "${{ matrix.image }}" bundle
 
-  # The alpha channel of the package repository (GitHub Pages), from main once everything passed.
-  publish-alpha:
-    name: publish alpha packages
+  # Prepare the release only for main. A manually requested stable build stages a draft.
+  prepare-release:
+    name: Prepare release after platform tests
     if: github.ref == 'refs/heads/main'
-    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, home-manager-macos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update]
+    needs: [check, linux, service, nix, nix-declared, nixos-vm, nixos-apps, nixos-install, home-manager, home-manager-nixos, home-manager-linux, home-manager-macos, git-auth, checkout, endpoint, native, vpn, service-macos, service-windows, packages, gui, update-feed, self-update, homebrew, licenses]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage stable release assets
+        if: inputs.stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir assets
+          for artifact in furnish-linux-packages furnish-linux-x86_64 furnish-desktop-Windows furnish-desktop-macOS furnish-update-signatures; do
+            gh run download "$GITHUB_RUN_ID" --name "$artifact" --dir "input/$artifact"
+          done
+          find input -type f -exec cp -t assets -- {} +
+          mv assets/furnish assets/furnish-linux-x86_64
+          version=$(jq -er .version gui/src-tauri/tauri.conf.json)
+          test "$(chmod +x assets/furnish-linux-x86_64 && assets/furnish-linux-x86_64 --version)" = "furnish $version"
+          test -s "assets/furnish_${version}_arm64.dmg"
+          test -s "assets/furnish_${version}_x64.msi"
+          test -s "assets/furnish_${version}_amd64.deb"
+          test -s "assets/furnish-${version}-1.x86_64.rpm"
+          (cd assets && sha256sum * > ../SHA256SUMS)
+          mv SHA256SUMS assets/
+          if gh release view "v$version" --json isDraft,targetCommitish > release.json; then
+            jq -e --arg sha "$GITHUB_SHA" '.isDraft and .targetCommitish == $sha' release.json
+          else
+            gh release create "v$version" --draft --target "$GITHUB_SHA" --title "Furnish $version" --notes-file "docs/releases/$version.md"
+          fi
+          gh release upload "v$version" assets/* --clobber
+          gh release download "v$version" --dir staged
+          (cd staged && sha256sum -c ../assets/SHA256SUMS)
+          gh release edit "v$version" --draft=false --latest=false
+
+  publish-packages:
+    name: Publish package channel
+    needs: prepare-release
     # Hold the Pages lock until the public feed for this deployment has been verified.
     concurrency: pages
     permissions:
       contents: read
       pages: write
       id-token: write
-    uses: ./.github/workflows/publish-alpha.yml
+    uses: ./.github/workflows/publish-packages.yml
+    with:
+      channel: ${{ inputs.stable && 'stable' || 'alpha' }}
     secrets:
       REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
 
   # Each alpha as a GitHub pre-release with a fixed download URL, and the Homebrew cask
   # (furnish-self-service/homebrew-tap) pointed at it. The `homebrew` job tested that cask.
-  release-alpha:
-    name: release alpha and update the Homebrew tap
+  release:
+    name: Publish release and update the Homebrew tap
     if: github.ref == 'refs/heads/main'
-    needs: [publish-alpha, homebrew]
+    needs: [publish-packages, repository]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -563,12 +609,13 @@ jobs:
           path: desktop
           merge-multiple: true
       - name: Create the pre-release
+        if: ${{ !inputs.stable }}
         run: |
           # Asset names with "-" for "+": 0.1.0+alpha.42 is v0.1.0-alpha.42 (see packaging/macos/cask.sh).
           for f in desktop/*; do n=$(echo "$f" | tr + -); [ "$f" = "$n" ] || mv "$f" "$n"; done
           version=$(jq -r .version gui/src-tauri/tauri.conf.json)-alpha.$GITHUB_RUN_NUMBER
           gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" desktop/* --prerelease --target "$GITHUB_SHA" --title "furnish $version" \
-            --notes "Alpha build of $GITHUB_SHA. Install with Homebrew (\`brew install --cask furnish-self-service/tap/furnish\`) or see the [docs](https://furnish-self-service.github.io/docs/#install-furnish)."
+            --notes "Alpha build of $GITHUB_SHA. See the [docs](https://furnish-self-service.github.io/docs/#install-furnish)."
           # Keep the newest 10 alpha releases and their tags, and the one the upgrade test starts from.
           gh release list --limit 200 --json tagName,isPrerelease,createdAt \
             --jq '[.[] | select(.isPrerelease and (.tagName | test("^v[0-9.]+-alpha\\.[0-9]+$")))] | sort_by(.createdAt) | reverse | .[10:] | .[].tagName' |
@@ -592,7 +639,10 @@ jobs:
           fi
           git clone -q --depth 1 "$remote" tap
           current=$(sed -nE 's/^  version "(.*)"$/\1/p' tap/Casks/furnish.rb)
+          # The unversioned cask follows stable after the first stable release.
+          if [[ "$current" != *-alpha.* && "$RELEASE_CHANNEL" == alpha ]]; then exit 0; fi
           version=$(packaging/macos/cask.sh tap/Casks/furnish.rb desktop/*.dmg)
+          if [[ "$current" == *-alpha.* && "$version" != *-alpha.* ]]; then current=0; fi
           # A slower, older run must not replace a newer version.
           if [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ] || [ "$current" = "$version" ]; then
             echo "The tap has $current already, not changing it to $version."; exit 0
@@ -603,10 +653,13 @@ jobs:
           url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/v$version/furnish_${version}_arm64.dmg
           curl -fsSL "$url" | sha256sum | grep -q "$(sed -nE 's/^  sha256 "(.*)"$/\1/p' tap/Casks/furnish.rb)"
           echo "The tap installs $version now."
+      - name: Mark the verified stable release as latest
+        if: inputs.stable
+        run: gh release edit "v$(jq -er .version gui/src-tauri/tauri.conf.json)" --latest
 
   repository:
     name: install from the repository on ${{ matrix.image }}
-    needs: publish-alpha
+    needs: publish-packages
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -614,7 +667,7 @@ jobs:
         image: [debian:12, fedora:latest, opensuse/tumbleweed, almalinux:10]
     steps:
       - uses: actions/checkout@v4
-      - run: tests/repo.sh "${{ matrix.image }}" https://furnish-self-service.github.io/furnish alpha
+      - run: tests/repo.sh "${{ matrix.image }}" https://furnish-self-service.github.io/furnish "$RELEASE_CHANNEL"
 
   gui:
     name: GUI ${{ matrix.os }}
@@ -640,7 +693,7 @@ jobs:
       - shell: bash
         run: |
           v=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
           echo "FURNISH_VERSION=$v" >> "$GITHUB_ENV"
           echo "FURNISH_BUILD_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
@@ -797,7 +850,7 @@ jobs:
           if [ "${{ needs.changes.outputs.macos-gui }}" = true ]; then
             cp desktop/*.app.tar.gz desktop/*.app.tar.gz.sig feed/macos/ && cp next/*.app.tar.gz next/*.app.tar.gz.sig roundtrip/macos/
           fi
-          packaging/repo/update-feed.sh feed https://furnish-self-service.github.io/furnish/alpha
+          packaging/repo/update-feed.sh feed "https://furnish-self-service.github.io/furnish/$RELEASE_CHANNEL"
           node scripts/verify-update-feed.mjs feed/latest.json feed
           packaging/repo/update-feed.sh roundtrip http://127.0.0.1:8765
           node scripts/verify-update-feed.mjs roundtrip/latest.json roundtrip

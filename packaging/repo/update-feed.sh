@@ -23,10 +23,7 @@ add() { # <target> <file relative to the channel dir>
 }
 add windows-x86_64 "windows/furnish_${version}_x64.msi"
 add darwin-aarch64 "macos/furnish_${version}_arm64.app.tar.gz"
-case "$semver" in
-    *-alpha.*) notes="https://github.com/furnish-self-service/furnish/releases/tag/v$semver" ;;
-    *) notes="https://github.com/furnish-self-service/furnish/releases" ;;
-esac
+notes="https://github.com/furnish-self-service/furnish/releases/tag/v$semver"
 jq -n --arg v "$semver" --arg n "$notes" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson p "$platforms" \
     '{version: $v, notes: $n, pub_date: $d, platforms: $p}' > "$dir/latest.json"
 echo "$dir/latest.json: $semver for $(echo "$platforms" | jq -r 'keys | join(", ")')"

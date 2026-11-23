@@ -1,10 +1,17 @@
-name: Publish alpha packages
+name: Publish channel packages
 
 on:
   workflow_call:
+    inputs:
+      channel:
+        type: string
+        required: true
     secrets:
       REPO_SIGNING_KEY:
         required: true
+
+env:
+  CHANNEL: ${{ inputs.channel }}
 
 jobs:
   deploy:
@@ -47,8 +54,19 @@ jobs:
       - id: publish
         run: |
           packaging/repo/fetch.sh "$BASE_URL" site
-          packaging/repo/publish.sh alpha new site
-          version=$(jq -er '.version | strings | select(length > 0)' site/alpha/latest.json)
+          case "$CHANNEL" in
+            alpha) keep=2 ;;
+            stable) keep=1 ;;
+            *) exit 1 ;;
+          esac
+          KEEP=$keep packaging/repo/publish.sh "$CHANNEL" new site
+          # Two channels share the 1 GB Pages site.
+          test "$(du -sb site | cut -f1)" -lt 1000000000
+          version=$(jq -er '.version | strings | select(length > 0)' "site/$CHANNEL/latest.json")
+          expected=$(jq -er .version gui/src-tauri/tauri.conf.json)
+          if [ "$CHANNEL" = alpha ]; then expected="$expected-alpha.$GITHUB_RUN_NUMBER"; fi
+          test "$version" = "$expected"
+          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "site/$CHANNEL/latest.json" "site/$CHANNEL"
           echo "version=$version" >> "$GITHUB_OUTPUT"
         env:
           BASE_URL: https://furnish-self-service.github.io/furnish
@@ -77,7 +95,7 @@ jobs:
         run: |
           : "${EXPECTED_VERSION:?missing deployed version}"
           node --version
-          node scripts/verify-update-feed.mjs https://furnish-self-service.github.io/furnish/alpha/latest.json &
+          node scripts/verify-update-feed.mjs "https://furnish-self-service.github.io/furnish/$CHANNEL/latest.json" &
           verifier=$!
           echo "Waiting for verifier process $verifier"
           status=0

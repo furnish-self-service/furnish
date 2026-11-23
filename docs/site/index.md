@@ -12,16 +12,16 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-furnish is in alpha. Each change to the main branch is built and published as a [pre-release](https://github.com/furnish-self-service/furnish/releases); there are no stable releases yet.
+The downloads below follow the stable channel once v0.1.0 is published. The [releases page](https://github.com/furnish-self-service/furnish/releases) lists available installers, including alpha builds for people testing upcoming changes.
 
 | System | How |
 |---|---|
-| Windows, 64-bit | [download](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) |
-| macOS with Apple silicon | Homebrew, below, or [download](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) |
+| Windows, 64-bit | [download](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi) |
+| macOS with Apple silicon | Homebrew, below, or [download](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) |
 | Linux | the signed package repository, below |
 | Intel Macs, other systems | build from source, below |
 
-On macOS, Homebrew installs the desktop app and the `furnish` command, and `brew upgrade` brings new alphas:
+On macOS, Homebrew installs the desktop app and the `furnish` command, and `brew upgrade` brings stable updates:
 
 ```sh
 brew install --cask furnish-self-service/tap/furnish
@@ -50,11 +50,11 @@ On Linux, furnish comes from a signed package repository, so updates arrive with
 ```sh
 sudo install -d /etc/apt/keyrings
 sudo curl -fsSLo /etc/apt/keyrings/furnish.asc https://furnish-self-service.github.io/furnish/gpg-key.asc
-sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-service.github.io/furnish/alpha/furnish.list
+sudo curl -fsSLo /etc/apt/sources.list.d/furnish.list https://furnish-self-service.github.io/furnish/stable/furnish.list
 sudo apt update && sudo apt install furnish
 ```
 
-On Fedora and Enterprise Linux 10, save `https://furnish-self-service.github.io/furnish/alpha/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish` (on Enterprise Linux 10, enable EPEL and CRB first). On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. On NixOS, use the flake's NixOS module and add its binary cache `furnish.cachix.org` to `nix.settings`, or Nix builds furnish from source on every update; see [For admins](admins.md#nixos).
+On Fedora and Enterprise Linux 10, save `https://furnish-self-service.github.io/furnish/stable/furnish.repo` in `/etc/yum.repos.d/` and run `sudo dnf install furnish` (on Enterprise Linux 10, enable EPEL and CRB first). On openSUSE, run `sudo zypper addrepo` with the same URL, then `sudo zypper install furnish`. On NixOS, use the flake's NixOS module and add its binary cache `furnish.cachix.org` to `nix.settings`, or Nix builds furnish from source on every update; see [For admins](admins.md#nixos).
 
 To build from source you need git, Rust 1.91 or later and, for the desktop app, Node.js and on Linux WebKitGTK 4.1:
 
@@ -63,6 +63,12 @@ git clone https://github.com/furnish-self-service/furnish.git && cd furnish
 cargo install --path .                    # the furnish command
 cd gui && npm ci && npm run bundle        # the desktop app's installers, in target/release/bundle/
 ```
+
+### Switching from alpha to stable
+
+Windows MSI and macOS disk-image installations follow the channel of the installed build. Install the stable download once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
+
+For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.1.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.1.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
 
 ### Terminal command for the macOS download
 
