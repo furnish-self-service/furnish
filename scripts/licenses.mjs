@@ -134,7 +134,7 @@ const html = `<!doctype html>
 <h1>Open-source licenses</h1>
 <p>furnish is open source under the ${link('https://github.com/furnish-self-service/furnish/blob/main/LICENSE', 'MIT license')}. It contains the components below, under their own licenses.</p>
 <ul>
-<li><a href="#programs">Bundled programs</a>: DSC, and MinGit and Git LFS in the Windows installer</li>
+<li><a href="#programs">Bundled programs</a>: DSC, MinGit for Windows, and Git LFS for Windows and macOS</li>
 <li><a href="#npm">The desktop app's interface</a>: ${npmIds.map((id) => `${esc(id)} (${npmByLicense.get(id).length})`).join(', ')}</li>
 <li><a href="#rust">Rust crates</a> (${rustCount}): ${rustIds.map((id) => `<a href="#rust-${slug(id)}">${esc(id)}</a> (${crateCount(id)})`).join(', ')}</li>
 </ul>
@@ -151,7 +151,7 @@ ${pre(dscLicense)}
 <p>The source code of this version: ${link(git.mingit.source)}, and of its components: ${link('https://github.com/git-for-windows')}.</p>
 </section>
 <section>
-<h3>${link('https://git-lfs.com', `Git LFS ${git.lfs.version}`)} (MIT), in the Windows installer</h3>
+<h3>${link('https://git-lfs.com', `Git LFS ${git.lfs.version}`)} (MIT), in the Windows and macOS installers</h3>
 <p>Source code: ${link(git.lfs.source)}</p>
 ${pre(lfsLicense)}
 </section>

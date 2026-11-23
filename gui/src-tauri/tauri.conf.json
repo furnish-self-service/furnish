@@ -42,9 +42,7 @@
         "desktopTemplate": "furnish.desktop",
         "depends": [
           "git",
-          "libayatana-appindicator3-1"
-        ],
-        "recommends": [
+          "libayatana-appindicator3-1",
           "git-lfs"
         ]
       },
@@ -52,9 +50,7 @@
         "desktopTemplate": "furnish.desktop",
         "depends": [
           "git",
-          "libayatana-appindicator3.so.1()(64bit)"
-        ],
-        "recommends": [
+          "libayatana-appindicator3.so.1()(64bit)",
           "git-lfs"
         ]
       }

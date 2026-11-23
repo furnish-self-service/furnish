@@ -9,21 +9,16 @@
 //   other systems too (needs bsdtar), for testing.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const { mingit: MINGIT, lfs: LFS } = JSON.parse(readFileSync(new URL('./bundled-git.json', import.meta.url), 'utf8'));
 
 const tauri = fileURLToPath(new URL('../src-tauri/', import.meta.url));
 const config = `${tauri}tauri.resources.conf.json`;
-const write = (resources) => writeFileSync(config, JSON.stringify({ bundle: { resources } }, null, 2) + '\n');
+const write = (resources, extra = {}) => writeFileSync(config, JSON.stringify({ bundle: { resources, ...extra } }, null, 2) + '\n');
 copyFileSync(`${tauri}../../THIRD-PARTY-LICENSES.html`, `${tauri}THIRD-PARTY-LICENSES.html`);
 execFileSync('node', [fileURLToPath(new URL('../../scripts/fetch-dsc.mjs', import.meta.url)), `${tauri}dsc`], { stdio: 'inherit' });
-if (process.platform !== 'win32' && process.env.FURNISH_BUNDLE_GIT !== '1') {
-  write(['THIRD-PARTY-LICENSES.html', 'dsc/**/*']);
-  process.exit(0);
-}
-
 const cache = `${tauri}../../.cache/bundled-git/`;
 mkdirSync(cache, { recursive: true });
 async function download({ url, sha256 }) {
@@ -41,6 +36,28 @@ async function download({ url, sha256 }) {
   }
   return file;
 }
+if (process.platform === 'darwin') {
+  const host = execFileSync('rustc', ['-vV'], { encoding: 'utf8' }).match(/^host: (.+)$/m)[1];
+  const target = LFS.darwin[host];
+  if (!target) throw new Error(`No Git LFS binary configured for ${host}`);
+  const archive = await download({
+    url: `https://github.com/git-lfs/git-lfs/releases/download/v${LFS.version}/git-lfs-darwin-${target.arch}-v${LFS.version}.zip`,
+    sha256: target.sha256,
+  });
+  const member = `git-lfs-${LFS.version}/git-lfs`;
+  execFileSync('/usr/bin/unzip', ['-oq', archive, member, '-d', cache]);
+  const helper = `${tauri}binaries/git-lfs-${host}`;
+  mkdirSync(`${tauri}binaries`, { recursive: true });
+  copyFileSync(cache + member, helper);
+  chmodSync(helper, 0o755);
+  write(['THIRD-PARTY-LICENSES.html', 'dsc/**/*'], { externalBin: ['binaries/furnish', 'binaries/git-lfs'] });
+  process.exit(0);
+}
+if (process.platform !== 'win32' && process.env.FURNISH_BUNDLE_GIT !== '1') {
+  write(['THIRD-PARTY-LICENSES.html', 'dsc/**/*']);
+  process.exit(0);
+}
+
 // Windows' own tar (bsdtar) extracts zip files; Git Bash's GNU tar on PATH doesn't.
 const tar = process.platform === 'win32' ? `${process.env.SystemRoot}\\System32\\tar.exe` : 'bsdtar';
 const unzip = (zip, into) => execFileSync(tar, ['-xf', zip, '-C', into]);
