@@ -683,7 +683,9 @@ export async function maybeApplySelfUpdate() {
   if (!store.restartWanted && s.mode !== 'auto') return;
   applyingSelfUpdate = true;
   try {
-    await api.applySelfUpdate(!store.restartWanted); // on success furnish restarts
+    const restarted = await api.applySelfUpdate(!store.restartWanted);
+    // A final feed check may withdraw the offer. A later release needs a fresh restart request.
+    if (!restarted && store.selfUpdate?.state !== 'ready') store.restartWanted = false;
   } catch (e) {
     store.restartWanted = false;
     toast('error', t('settings.selfUpdateFailed', { brand: store.brand.name }), message(e));

@@ -43,7 +43,7 @@ sudo /bin/sh "$installer"
 current=$(version)
 [ "$current" != "$next" ] || fail "the installed version is already $next"
 echo "== $(basename "$dmg") ($current) in /Applications, the feed offers $next"
-python3 -m http.server 8765 --bind 127.0.0.1 --directory "$feed" >/dev/null 2>&1 &
+python3 -u -m http.server 8765 --bind 127.0.0.1 --directory "$feed" > "$RUNNER_TEMP/update-feed.log" 2>&1 &
 server=$!
 trap 'kill $server 2>/dev/null || true; pkill -f "$app/Contents/MacOS/" 2>/dev/null || true' EXIT
 sleep 2
@@ -73,12 +73,16 @@ tray_restart() {
     IFS=', ' read -r x y w h <<< "$pos"
     "$RUNNER_TEMP/click" $((x + w / 2)) $((y + h / 2))
     sleep 2
-    osascript - "$1" <<'OSA'
+    osascript - "$1" "${2:-restart}" <<'OSA'
 on run argv
     set thePid to (item 1 of argv) as integer
     tell application "System Events"
         set m to menu 1 of menu bar item 1 of menu bar 2 of (first process whose unix id is thePid)
         if exists menu item "Restart to update" of m then
+            if item 2 of argv is "inspect" then
+                key code 53
+                return "ready"
+            end if
             click menu item "Restart to update" of m
             return "clicked"
         end if
@@ -97,8 +101,34 @@ OSA
 echo "== Restart to update in the menu bar icon's menu, with the window open"
 install_dmg
 [ "$(version)" = "$current" ] || fail "reinstalling the .dmg left $(version)"
+# A one-minute interval lets this foreground process observe another release while Ready.
+export FURNISH_DATA_DIR="$RUNNER_TEMP/foreground-update"
+mkdir -p "$FURNISH_DATA_DIR"
+echo '{"updateIntervalMinutes":1}' > "$FURNISH_DATA_DIR/settings.json"
 "$app/Contents/MacOS/$gui" > "$RUNNER_TEMP/gui-restart.log" 2>&1 &
 before=$!
+for _ in $(seq 45); do
+    r=$(tray_restart "$before" inspect 2>&1) || true
+    [ "$r" = ready ] && break
+    sleep 2
+done
+[ "$r" = ready ] || fail "the first signed download never became ready"
+
+# Announce a later release with the old signature: its download must be attempted by the
+# interval, and the superseded installer must disappear even though its replacement fails.
+cp "$feed/latest.json" "$RUNNER_TEMP/first-manifest.json"
+jq '.version = "99.0.0" | .platforms |= with_entries(.value.url += "?replacement")' \
+    "$RUNNER_TEMP/first-manifest.json" > "$feed/new.json"
+mv "$feed/new.json" "$feed/latest.json"
+for _ in $(seq 100); do
+    grep -q '?replacement HTTP' "$RUNNER_TEMP/update-feed.log" && break
+    sleep 2
+done
+grep -q '?replacement HTTP' "$RUNNER_TEMP/update-feed.log" || fail "the pending updater never checked for the newer release"
+r=$(tray_restart "$before" inspect)
+[[ "$r" = menu:* ]] || fail "Restart still offers the superseded installer: $r"
+[ "$(version)" = "$current" ] || fail "the stale update was installed"
+cp "$RUNNER_TEMP/first-manifest.json" "$feed/new.json" && mv "$feed/new.json" "$feed/latest.json"
 clicked=""
 for _ in $(seq 60); do
     sleep 5

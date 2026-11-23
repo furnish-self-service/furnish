@@ -50,7 +50,9 @@ pub enum State {
 
 static STATUS: Mutex<Option<Status>> = Mutex::new(None);
 /// The downloaded update, checked against its signature, waiting to be installed.
-static PENDING: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>> = Mutex::new(None);
+type Prepared = (tauri_plugin_updater::Update, Vec<u8>);
+// Serialize feed checks, replacements and installs so apply cannot take superseded bytes.
+static PENDING: tauri::async_runtime::Mutex<Option<Prepared>> = tauri::async_runtime::Mutex::const_new(None);
 
 /// How furnish was installed doesn't change while it runs.
 fn method() -> Method {
@@ -95,41 +97,59 @@ fn change(app: &AppHandle, f: impl FnOnce(&mut Status)) -> Status {
 /// Ask the feed for a newer version; with `download` (or `selfUpdate` `auto`) fetch it where
 /// furnish installs its own updates. Offline or a feed that doesn't answer: nothing to show.
 pub async fn check(app: AppHandle, download: bool) -> Status {
+    let mut pending = PENDING.lock().await;
+    refresh(&app, download, &mut pending).await
+}
+
+async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>) -> Status {
     let before = status();
-    if before.mode == SelfUpdate::Off || matches!(before.state, State::Checking | State::Downloading | State::Ready) {
-        return before;
-    }
-    change(&app, |s| s.state = State::Checking);
+    if before.mode == SelfUpdate::Off { return before; }
+    change(app, |s| s.state = State::Checking);
     let current = before.current.clone();
     let found = tauri::async_runtime::spawn_blocking(move || selfupdate::check(&current)).await;
     let available = match found {
         Ok(Ok(available)) => available,
-        Ok(Err(err)) => {
-            eprintln!("note: no update check: {err:#}");
-            return change(&app, |s| s.state = State::Idle);
+        result => {
+            eprintln!("note: no update check: {result:?}");
+            // Offline: an already verified download is still usable.
+            return change(app, |s| s.state = before.state);
         }
-        Err(_) => return change(&app, |s| s.state = State::Idle),
     };
-    let status = change(&app, |s| {
-        s.state = State::Idle;
+    let prepared_version = pending.as_ref().and_then(|(u, _)| selfupdate::semver(&u.version));
+    let offered_version = available.as_ref().and_then(|a| selfupdate::semver(&a.version));
+    let same = prepared_version.is_some() && prepared_version == offered_version;
+    let mode = status();
+    let permitted = mode.method.updates_itself() && mode.mode != SelfUpdate::Off
+        && (!mode.locked || mode.mode == SelfUpdate::Auto);
+    let wanted = download || mode.mode == SelfUpdate::Auto;
+    if !same || !permitted { *pending = None; }
+    let state = if pending.is_some() { State::Ready }
+        else if permitted && wanted && available.is_some() { State::Downloading }
+        else { State::Idle };
+    let status = change(app, |s| {
         s.available = available.as_ref().map(|a| a.version.clone());
         s.notes = available.as_ref().and_then(|a| a.notes.clone());
-    });
-    let wanted = download || status.mode == SelfUpdate::Auto;
-    if status.available.is_none() || !wanted || !status.method.updates_itself() || (status.locked && status.mode != SelfUpdate::Auto) {
-        return status;
-    }
-    change(&app, |s| {
-        s.state = State::Downloading;
+        s.state = state;
         s.error = None;
     });
-    match fetch(&app).await {
-        Ok(Some(pending)) => {
-            *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending);
-            change(&app, |s| s.state = State::Ready)
+    let Some(offer) = available.filter(|_| state == State::Downloading) else { return status };
+    match fetch(app, &offer.version).await {
+        Ok(Some(prepared)) => {
+            let version = selfupdate::semver(&prepared.0.version).map(|v| selfupdate::display(&v));
+            let notes = prepared.0.body.clone();
+            *pending = Some(prepared);
+            change(app, |s| {
+                s.available = version;
+                s.notes = notes;
+                s.state = State::Ready;
+            })
         }
-        Ok(None) => change(&app, |s| s.state = State::Idle),
-        Err(err) => change(&app, |s| {
+        Ok(None) => change(app, |s| {
+            s.available = None;
+            s.notes = None;
+            s.state = State::Idle;
+        }),
+        Err(err) => change(app, |s| {
             s.state = State::Idle;
             s.error = Some(err);
         }),
@@ -137,7 +157,7 @@ pub async fn check(app: AppHandle, download: bool) -> Status {
 }
 
 /// Download the update with Tauri's updater, which checks it against the key and the version.
-async fn fetch(app: &AppHandle) -> Result<Option<(tauri_plugin_updater::Update, Vec<u8>)>, String> {
+async fn fetch(app: &AppHandle, offered: &str) -> Result<Option<Prepared>, String> {
     let current = crate::build_info::current().version;
     let url = selfupdate::feed_url(&current);
     if !selfupdate::feed_allowed(&url) {
@@ -150,6 +170,10 @@ async fn fetch(app: &AppHandle) -> Result<Option<(tauri_plugin_updater::Update, 
         .build()
         .map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else { return Ok(None) };
+    // The manifest can change between the lightweight check and the updater's signed download.
+    if selfupdate::semver(&update.version) < selfupdate::semver(offered) {
+        return Err("The update feed changed during the download. Check again.".into());
+    }
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     Ok(Some((update, bytes)))
 }
@@ -157,19 +181,32 @@ async fn fetch(app: &AppHandle) -> Result<Option<(tauri_plugin_updater::Update, 
 /// Install the downloaded update and start the new version: refused while an install runs, and
 /// with `only_hidden` while the window is open (automatic updates don't interrupt anyone). On
 /// Windows the installer replaces furnish and starts it again (this process ends here).
-pub fn apply(app: &AppHandle, only_hidden: bool) -> Result<bool, String> {
+pub async fn apply(app: AppHandle, only_hidden: bool) -> Result<bool, String> {
+    let mut pending = PENDING.lock().await;
+    if pending.is_none() { return Ok(false); }
+    if !only_hidden {
+        // The feed may have advanced since the last interval while the window was open.
+        let checked = refresh(&app, true, &mut pending).await;
+        if let Some(error) = checked.error { return Err(error); }
+    }
+    let now = status();
+    if now.mode == SelfUpdate::Off || ((only_hidden || now.locked) && now.mode != SelfUpdate::Auto) {
+        return Ok(false);
+    }
     if only_hidden && app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false)) {
         return Ok(false);
     }
-    let Some(_idle) = crate::tray::IdleRestart::reserve(app) else { return Ok(false) };
-    let Some((update, bytes)) = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take() else { return Ok(false) };
-    if let Err(err) = update.install(&bytes) {
-        let message = err.to_string();
-        change(app, |s| {
+    let Some(idle) = crate::tray::IdleRestart::reserve(&app) else { return Ok(false) };
+    let Some((update, bytes)) = pending.take() else { return Ok(false) };
+    // Off the main thread: macOS may ask for an administrator's password.
+    let result = tauri::async_runtime::spawn_blocking(move || update.install(&bytes)).await;
+    if let Err(message) = result.map_err(|e| e.to_string()).and_then(|res| res.map_err(|e| e.to_string())) {
+        change(&app, |s| {
             s.state = State::Idle;
             s.error = Some(message.clone());
         });
         return Err(message);
     }
+    idle.commit();
     app.restart();
 }
