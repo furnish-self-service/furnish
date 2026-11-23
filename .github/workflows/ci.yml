@@ -48,7 +48,7 @@ jobs:
           # What the macOS CLI jobs build (src/ embeds packaging/ and resources/ files) and run.
           macos='^(src/|Cargo\.(toml|lock)$|\.cargo/|vendor/|resources/|scripts/|packaging/(dsc\.json$|macos/|linux/furnish\.service$|linux/io\.github\.furnish\.policy$)|tests/(e2e\.sh|vpn\.sh|service-macos\.sh|home-manager\.sh|fixtures/)|flake\.(nix|lock)$|nix/|\.github/workflows/ci\.yml$)'
           # The desktop app and its installers on top (GUI macos-latest, Homebrew cask).
-          gui='^(gui/|THIRD-PARTY-LICENSES\.html$|tests/self-update-macos\.sh$)'
+          gui='^(gui/|THIRD-PARTY-LICENSES\.html$|tests/(self-update|bundled-lfs)-macos\.sh$)'
           if [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_REF" = refs/heads/main ]; then
             reason="a run of main: everything runs"; files=""; m=true; g=true
           elif base=$(git merge-base HEAD "origin/$BASE_REF"); then

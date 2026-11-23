@@ -2508,33 +2508,47 @@ pub fn git_command() -> Command {
             cmd.env("PATH", path);
         }
     }
+    cmd
+}
+
+fn git_process(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
     for var in GIT_LOCATION_VARS {
         cmd.env_remove(var);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW for GUI callers.
     }
     cmd
 }
 
-/// The git program: the system's, else the copy the Windows installer ships next to furnish
-/// (MinGit with git-lfs, in `git\` beside furnish.exe).
+#[cfg(not(windows))]
 fn git_program() -> Command {
-    static BUNDLED: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    let bundled = BUNDLED.get_or_init(|| {
-        let on_path = env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("git.exe").is_file()));
-        if !cfg!(windows) {
-            return None;
-        }
-        let git = env::current_exe().ok()?.parent()?.join("git").join("cmd").join("git.exe");
-        if !git.is_file() { return None; }
-        if on_path && Command::new("git").args(["lfs", "version"]).output().is_ok_and(|r| r.status.success()) { return None; }
-        Some(git)
-    });
-    // The service runs as root: git from the system, not from a folder on PATH that a user may own
-    // (e.g. Homebrew's). NixOS has none in /usr/bin; there the service's PATH is the system's.
-    if !cfg!(windows) && crate::service::in_service() && Path::new("/usr/bin/git").is_file() {
-        return Command::new("/usr/bin/git");
+    // Root uses the system Git. On NixOS it comes from the service's PATH.
+    if crate::service::in_service() && Path::new("/usr/bin/git").is_file() {
+        return git_process("/usr/bin/git");
     }
-    let Some(git) = bundled else { return Command::new("git") };
-    let mut cmd = Command::new(git);
+    git_process("git")
+}
+
+#[cfg(windows)]
+fn git_program() -> Command {
+    static GIT: std::sync::OnceLock<(PathBuf, bool)> = std::sync::OnceLock::new();
+    let (program, bundled) = GIT.get_or_init(|| {
+        let path = env::var_os("PATH").unwrap_or_default();
+        let system = env::split_paths(&path).filter(|dir| dir.is_absolute()).map(|dir| dir.join("git.exe")).find(|p| p.is_file());
+        let packaged = env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("git/cmd/git.exe")));
+        if let Some(git) = system
+            && (packaged.as_ref().is_none_or(|p| !p.is_file()) || git_process(&git).args(["lfs", "version"]).output().is_ok_and(|r| r.status.success()))
+        {
+            return (git, false);
+        }
+        (packaged.unwrap_or_else(|| PathBuf::from("git")), true)
+    });
+    let mut cmd = git_process(program);
+    if !*bundled { return cmd; }
     // furnish asks for logins itself; the bundled credential manager mustn't open windows.
     cmd.env("GCM_INTERACTIVE", "never");
     // Windows' own OpenSSH, so its ssh-agent service and keys work like with a system git.
