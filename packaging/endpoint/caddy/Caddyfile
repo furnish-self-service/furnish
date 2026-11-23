@@ -25,11 +25,12 @@
 
 # A collection: one public, read-only path mapped to exactly one upstream repository.
 #   import collection <public name> <upstream repository path> <credentials variable>
-# Only these two requests are proxied, compared byte for byte against the raw request URI
+# Only these three requests are proxied, compared byte for byte against the raw request URI
 # (no normalisation, so `..`, `%2e`, `%2f`, `//`, extra segments or query parameters never match):
 #   GET  /git/<public name>.git/info/refs?service=git-upload-pack
 #   POST /git/<public name>.git/git-upload-pack
-# Git protocol v2 uses exactly these two requests too (it signals v2 in the Git-Protocol header).
+#   POST /git/<public name>.git/info/lfs/objects/batch
+# Git protocol v2 uses the refs and pack requests (it signals v2 in the Git-Protocol header).
 # Everything else, including pushes (git-receive-pack) and the dumb protocol, falls through to 404.
 (collection) {
 	@{args[0]}_refs expression `{method} == "GET" && {uri} == "/git/{args[0]}.git/info/refs?service=git-upload-pack"`
@@ -39,6 +40,10 @@
 	@{args[0]}_pack expression `{method} == "POST" && {uri} == "/git/{args[0]}.git/git-upload-pack"`
 	handle @{args[0]}_pack {
 		import gitlab {args[1]}/git-upload-pack {args[2]}
+	}
+	@{args[0]}_lfs expression `{method} == "POST" && {uri} == "/git/{args[0]}.git/info/lfs/objects/batch"`
+	handle @{args[0]}_lfs {
+		import gitlab {args[1]}/info/lfs/objects/batch {args[2]}
 	}
 }
 

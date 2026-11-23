@@ -20,12 +20,12 @@ docker compose -f docker-compose.yml -f envoy/compose.yml up -d
 ## Add a collection
 
 1. Create a deploy token (`read_repository`) in the GitLab project.
-2. In `envoy/envoy.yaml`, copy the two routes under `Collection acme` and change the public name
-   in both `:path` matches (`/git/apps.git/...`), the repository path in both `substitution`
+2. In `envoy/envoy.yaml`, copy the three routes under `Collection acme` and change the public name
+   in all `:path` matches (`/git/apps.git/...`), the repository path in all `substitution`
    lines (`/it/apps.git/...`) and the credentials variable (`${APPS_GITLAB_AUTH}`). Give the
    copied `request_headers_to_add` anchor a new name (`&apps_auth`) and refer to it in the
-   second route (`*apps_auth`). The other anchors (`*gitlab_drop`, `*gitlab_drop_down`,
-   `*gitlab_filters`) are shared.
+   POST routes (`*apps_auth`). The other anchors (`*gitlab_drop`, `*gitlab_drop_down`,
+   `*gitlab_filters`) are shared. Reuse the existing `*git_post_filters` on each copied POST route.
 3. Add `APPS_GITLAB_AUTH: ${APPS_GITLAB_AUTH:?set APPS_GITLAB_AUTH}` to `environment` in
    `envoy/compose.yml` and the value to `.env`.
 4. Add the collection to `furnish.json`.

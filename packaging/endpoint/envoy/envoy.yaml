@@ -175,13 +175,14 @@ static_resources:
                     disabled: true
 
               # A collection: one public, read-only path mapped to exactly one upstream repository.
-              # Only these two requests are proxied, compared byte for byte against the raw request
+              # Only these three requests are proxied, compared byte for byte against the raw request
               # URI (":path" includes the query) and the method:
               #   GET  /git/<public name>.git/info/refs?service=git-upload-pack
               #   POST /git/<public name>.git/git-upload-pack
-              # Git protocol v2 uses exactly these two requests too (it signals v2 in the
+              #   POST /git/<public name>.git/info/lfs/objects/batch
+              # Git protocol v2 uses the refs and pack requests (it signals v2 in the
               # Git-Protocol header). Everything else, including pushes (git-receive-pack) and the
-              # dumb protocol, falls through to 404. To add a collection, copy both routes and
+              # dumb protocol, falls through to 404. To add a collection, copy all three routes and
               # change the public name, the upstream path and the credentials variable.
               #
               # Collection acme → /it/catalog.git, credentials ACME_GITLAB_AUTH.
@@ -268,13 +269,28 @@ static_resources:
                 request_headers_to_add: *acme_auth
                 request_headers_to_remove: *gitlab_drop
                 response_headers_to_remove: *gitlab_drop_down
-                typed_per_filter_config:
+                typed_per_filter_config: &git_post_filters
                   envoy.filters.http.local_ratelimit: *git_rate
                   envoy.filters.http.custom_response: *gitlab_denied_502
                   # git's upload-pack requests are small (the commits the client wants and has).
                   envoy.filters.http.buffer:
                     "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                     buffer: {max_request_bytes: 33554432}
+              - match:
+                  prefix: /
+                  headers:
+                  - {name: ":method", string_match: {exact: POST}}
+                  - {name: ":path", string_match: {exact: /git/acme.git/info/lfs/objects/batch}}
+                route:
+                  cluster: gitlab
+                  regex_rewrite: {pattern: {regex: ".*"}, substitution: /it/catalog.git/info/lfs/objects/batch}
+                  host_rewrite_literal: "${GITLAB_AUTHORITY}"
+                  timeout: 3600s
+                  idle_timeout: 300s
+                request_headers_to_add: *acme_auth
+                request_headers_to_remove: *gitlab_drop
+                response_headers_to_remove: *gitlab_drop_down
+                typed_per_filter_config: *git_post_filters
 
               # Reports from furnish (OpenTelemetry logs): signed-in users only, at most 1 MiB, to
               # the OTLP receiver with the user's e-mail, which it adds to every log record. A
