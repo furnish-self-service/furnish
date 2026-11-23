@@ -144,6 +144,13 @@ resources:
     properties: { path: "$work/preflight-free", content: ready }
 YAML
 required link-target "'>=1.0'" 'Package for confirmed links'
+cat >> "$work/origin-src/apps/link-target.dsc.yaml" <<YAML
+parameters:
+  location:
+    type: string
+    metadata: { furnish: { folder: true, label: Team documents folder } }
+    defaultValue: "$work"
+YAML
 echo 'items: [{app: link-target, required: true}]' > "$work/origin-src/kits/link-kit.yaml"
 required secure "'>=1.0'" 'Its collection requires recent versions'
 required outdated "'>=2.0'" 'Needs a version nobody offers'

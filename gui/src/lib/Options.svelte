@@ -1,6 +1,7 @@
 <script lang="ts">
   // Options (DSC parameters) of an app or a collection. Each one either follows the level above
   // (app → collection → default) or has the user's own value; the admin policy can lock it.
+  import FolderInput from './FolderInput.svelte';
   import type { Option } from './api';
   import { setOption, optionLabel, optionDescription, optionValueLabel } from './state.svelte';
   import { t } from './i18n.svelte';
@@ -49,6 +50,9 @@
           <option value="">{inherited(o)}</option>
           {#each choices(o) as c}<option value={JSON.stringify(c.value)}>{c.label}</option>{/each}
         </select>
+      {:else if o.type === 'string' && o.folder}
+        <FolderInput id={`opt-${target}-${o.name}`} option={o.name} value={String(o.ownValue ?? '')}
+          inherited={String(o.value ?? '')} placeholder={inherited(o)} onvalue={(path) => change(o, path, false)} />
       {:else}
         <input
           id="opt-{target}-{o.name}"

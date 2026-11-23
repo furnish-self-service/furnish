@@ -663,6 +663,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'link.uninstall': "{name} verwijderen?",
   'link.source': "Collectie: {collection}",
   'link.missingCollection': "De collectie {collection} is nog niet toegevoegd.",
+  'link.alreadyInstalled': "{name} is al geïnstalleerd.",
+  'options.chooseFolder': "Map kiezen…",
   'link.noAction': "Geen geschikte apps voor deze actie.",
   'link.queueFull': "Er wachten te veel links. Handel een bevestiging af en open deze link opnieuw.",
   'link.changed': "Het doel is gewijzigd. Open de link opnieuw om het te controleren.",

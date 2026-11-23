@@ -80,7 +80,7 @@
           # One download of all crates (as buildRustPackage's cargoHash), in crane's layout.
           cargoVendorDir = let vendor = pkgs.rustPlatform.fetchCargoVendor {
             inherit src;
-            hash = "sha256-o3p8RJPpitRIrJpch7MgMi3dTf+lpjFLnV8cK8f9XuQ=";
+            hash = "sha256-Si2do8IblJwZW+CsaHFg12yxKvEUB9/0i5v4qPLWGyM=";
           }; in pkgs.runCommand "furnish-vendor" { } ''
             mkdir $out
             sed "s|@vendor@|${vendor}|" ${vendor}/.cargo/config.toml > $out/config.toml

@@ -661,6 +661,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'link.uninstall': "{name} deinstallieren?",
   'link.source': "Sammlung: {collection}",
   'link.missingCollection': "Die Sammlung {collection} wurde noch nicht hinzugefügt.",
+  'link.alreadyInstalled': "{name} ist bereits installiert.",
+  'options.chooseFolder': "Ordner auswählen…",
   'link.noAction': "Für diese Aktion kommen keine Apps infrage.",
   'link.queueFull': "Zu viele Links warten. Schließe eine Bestätigung ab und öffne diesen Link erneut.",
   'link.changed': "Das Ziel hat sich geändert. Öffne den Link zur erneuten Prüfung.",

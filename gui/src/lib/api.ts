@@ -83,6 +83,7 @@ export interface Option {
   name: string;
   type: 'bool' | 'string' | 'int';
   default?: unknown;
+  folder?: boolean;
   label?: string;
   description?: string;
   /** The allowed values with what to show; empty: any value of the type. */
@@ -336,8 +337,9 @@ export const onSelfUpdate = (handler: (s: SelfUpdateStatus) => void) =>
   listen<SelfUpdateStatus>('furnish://self-update', (e) => handler(e.payload));
 /** Restart to update, chosen in the tray menu. */
 export const onRestartToUpdate = (handler: () => void) => listen('furnish://restart-to-update', () => handler());
-/** Open the list of open-source components and their licenses in the browser. */
+export const chooseFolder = (current: string, title: string) => invoke<string | null>('choose_folder', { current, title });
 export const openDirectory = (path: string) => invoke<void>('open_directory', { path });
+/** Open the list of open-source components and their licenses in the browser. */
 export const openLicenses = () => invoke<void>('open_licenses');
 /** Change a setting for one collection; null returns it to the general setting. */
 export const setCollectionSetting = (name: string, key: keyof CollectionSettings, value: unknown) =>

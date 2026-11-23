@@ -302,6 +302,20 @@ const steps = [
     // Cards show until the app's status arrives; "not available here" then hides it.
     await waitFor('nowhere hidden', async () => !(await findAll(card('nowhere'))).length);
   }],
+  ['an app-specific folder option opens the native chooser and preserves inheritance on cancel', async () => {
+    await click(`${card('link-target')}//button[@aria-label='Open link-target']`);
+    const field = "//input[@data-option='location']";
+    await waitFor('localized folder label', () => find("//label[.//span[normalize-space()='Team documents folder']]"));
+    if (!(await prop(field, 'placeholder')).includes(workDir)) throw new Error('missing inherited path');
+    await click(button('Choose folder…'));
+    const display = ':' + ((Number(process.env.DRIVER_PORT || 4444) % 10000) + 100);
+    const xdotool = (...args) => inContainer(['env', 'DISPLAY=' + display, 'xdotool', ...args]);
+    const chooser = await waitFor('system folder chooser', () => xdotool('search', '--onlyvisible', '--name', '^Choose folder'));
+    xdotool('windowfocus', '--sync', chooser, 'key', 'Escape');
+    await waitFor('picker dismissed', async () => !(await prop(button('Choose folder…'), 'disabled')));
+    if (await prop(field, 'value')) throw new Error('cancelling set an override');
+    await click(button('← Back'));
+  }],
   ['action links require consent and only operate on an existing local collection', async () => {
     const launcher = `${workDir}/bin/launch-missing-collection`;
     writeFileSync(launcher, "#!/bin/sh\nexec /usr/local/bin/furnish-gui 'furnish://install?collection=absent&app=link-target'\n", { mode: 0o755 });
@@ -329,6 +343,13 @@ const steps = [
         await waitFor(`confirmed ${kind} ${action}`, () => installed() === after, 30000);
         const settled = after ? "//*[normalize-space()='Installed']" : button('Install');
         await waitFor(`${kind} ${action} settled`, () => find(`${card('link-target')}[not(.//*[@aria-busy='true'])]${settled}`));
+        if (kind === 'app' && action === 'install') {
+          await send('install', 'app');
+          await waitFor('duplicate install link explains the current state', async () =>
+            (await text(dialog)).includes('link-target is already installed.'));
+          if ((await findAll(`${dialog}${button('Install')}`)).length) throw new Error('duplicate install offered');
+          await click(`${dialog}${button('Cancel')}`);
+        }
       }
     }
   }],

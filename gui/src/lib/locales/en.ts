@@ -660,6 +660,8 @@ export const en = {
   'link.uninstall': "Uninstall {name}?",
   'link.source': "Collection: {collection}",
   'link.missingCollection': "The collection {collection} has not been added.",
+  'link.alreadyInstalled': "{name} is already installed.",
+  'options.chooseFolder': "Choose folder…",
   'link.noAction': "No eligible apps for this action.",
   'link.queueFull': "Too many links are waiting. Finish a confirmation, then open this link again.",
   'link.changed': "The target changed. Reopen the link to review it again.",

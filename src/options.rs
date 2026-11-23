@@ -35,6 +35,9 @@ pub struct Declaration {
     /// only; DSC wants plain values in app documents).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_values: Vec<Value>,
+    /// Offer a native folder picker for a free-text string.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub folder: bool,
     /// Users must choose a value (asked when the collection is added, or on the next launch).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
@@ -140,9 +143,10 @@ pub(crate) fn raw_app_declarations(doc: &Value) -> BTreeMap<String, Declaration>
             let decl = Declaration {
                 kind: p["type"].as_str().unwrap_or("string").to_string(),
                 default: p.get("defaultValue").cloned(),
-                label: None,
+                label: p["metadata"]["furnish"]["label"].as_str().map(String::from),
                 description: p["description"].as_str().map(String::from),
                 allowed_values: p["allowedValues"].as_array().cloned().unwrap_or_default(),
+                folder: p["metadata"]["furnish"]["folder"] == true,
                 required: false,
             };
             (name.clone(), decl)
@@ -231,6 +235,7 @@ fn resolve_app_with(l: &Layers, collection: &str, app: &str, doc: &Value, shared
             let declaration = Declaration {
                 label: shared_decl.and_then(|d| d.label.clone()).or(own.label.clone()),
                 description: own.description.clone().or(shared_decl.and_then(|d| d.description.clone())),
+                folder: own.folder || shared_decl.is_some_and(|d| d.folder),
                 required: shared_decl.is_some_and(|d| d.required),
                 allowed_values,
                 ..own.clone()
@@ -502,12 +507,29 @@ mod tests {
     }
 
     #[test]
+    fn folder_hint_reaches_app_and_collection_options_without_changing_the_value() {
+        let shared = serde_yaml::from_str("location: {type: string, folder: true}").unwrap();
+        let layers = Layers { user: BTreeMap::new(), policy: BTreeMap::new() };
+        assert!(resolve_collection_with(&layers, "c", &shared)[0].declaration.folder);
+        let doc = json!({"parameters": {
+            "location": {"type": "string", "defaultValue": "/team/docs"},
+            "private": {"type": "string", "metadata": {"furnish": {"folder": true, "label": "Team documents folder"}}},
+            "text": {"type": "string"}
+        }});
+        let apps = resolve_app_with(&layers, "c", "tool", &doc, &shared);
+        assert!(apps[0].declaration.folder && apps[1].declaration.folder);
+        assert!(!apps[2].declaration.folder);
+        assert_eq!(apps[1].declaration.label.as_deref(), Some("Team documents folder"));
+        assert_eq!(apps[0].value, Some(json!("/team/docs")));
+    }
+
+    #[test]
     fn the_service_accepts_only_declared_typed_unlocked_choices() {
         let option = |name: &str, kind: &str, allowed: Vec<Value>, value: Value, locked: bool| Resolved {
             name: name.into(),
             choices: allowed.iter().map(|v| Choice { value: v.clone(), label: None }).collect(),
             missing: false,
-            declaration: Declaration { kind: kind.into(), default: None, label: None, description: None, allowed_values: allowed, required: false },
+            declaration: Declaration { kind: kind.into(), default: None, label: None, description: None, allowed_values: allowed, folder: false, required: false },
             value: Some(value),
             source: if locked { Source::Policy } else { Source::Default },
             locked,
@@ -534,7 +556,7 @@ mod tests {
         let doc = json!({"parameters": {"userInstall": {"type": "bool", "defaultValue": false}}});
         let shared = BTreeMap::from([(
             "userInstall".to_string(),
-            Declaration { kind: "bool".into(), default: Some(json!(false)), label: Some("Just for me".into()), description: None, allowed_values: vec![], required: false },
+            Declaration { kind: "bool".into(), default: Some(json!(false)), label: Some("Just for me".into()), description: None, allowed_values: vec![], folder: false, required: false },
         )]);
         let resolve = |user: Value, policy: Value| {
             let l = Layers {

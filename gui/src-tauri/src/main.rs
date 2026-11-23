@@ -789,6 +789,34 @@ fn data_dir() -> String {
     catalog::data_dir().display().to_string()
 }
 
+/// Start in the current folder, or its closest existing parent for a new destination.
+#[tauri::command]
+async fn choose_folder(window: tauri::Window, title: String, current: Option<std::path::PathBuf>) -> CmdResult<Option<String>> {
+    let directory = blocking(move || Ok(current.as_deref().filter(|p| p.is_absolute())
+        .and_then(|p| p.ancestors().find(|p| p.is_dir())).map(Path::to_owned))).await?;
+    #[cfg(target_os = "linux")]
+    let selected = glib::MainContext::default().spawn_from_within(move || async move {
+        use gtk::prelude::*;
+        let parent = window.gtk_window().map_err(|e| e.to_string())?;
+        let picker = gtk::FileChooserNative::new(Some(&title), Some(&parent), gtk::FileChooserAction::SelectFolder, None, None);
+        picker.set_modal(true);
+        if let Some(path) = directory {
+            picker.set_current_folder(path);
+        }
+        Ok::<_, String>(if picker.run_future().await == gtk::ResponseType::Accept { picker.filename() } else { None })
+    }).await.map_err(|e| e.to_string())??;
+    #[cfg(not(target_os = "linux"))]
+    let selected = {
+        let mut picker = rfd::AsyncFileDialog::new().set_title(title).set_parent(&window).set_can_create_directories(true);
+        if let Some(path) = directory {
+            picker = picker.set_directory(path);
+        }
+        picker.pick_folder().await.map(|file| file.path().to_owned())
+    };
+    selected.map(|path| path.into_os_string().into_string()
+        .map_err(|_| "The selected folder name is not valid Unicode".to_string())).transpose()
+}
+
 /// Ask the desktop's file manager to open an existing directory selected in Settings.
 #[tauri::command]
 async fn open_directory(path: std::path::PathBuf) -> CmdResult<()> {
@@ -962,6 +990,7 @@ fn main() -> std::process::ExitCode {
             apply_self_update,
             open_licenses,
             open_directory,
+            choose_folder,
             report_destinations,
             nixos_setup,
             report_inventory,

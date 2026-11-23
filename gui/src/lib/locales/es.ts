@@ -663,6 +663,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'link.uninstall': "¿Desinstalar {name}?",
   'link.source': "Colección: {collection}",
   'link.missingCollection': "No se ha añadido la colección {collection}.",
+  'link.alreadyInstalled': "{name} ya está instalada.",
+  'options.chooseFolder': "Elegir carpeta…",
   'link.noAction': "No hay aplicaciones aptas para esta acción.",
   'link.queueFull': "Hay demasiados enlaces en espera. Resuelve una confirmación y vuelve a abrir este enlace.",
   'link.changed': "El destino ha cambiado. Abre el enlace de nuevo para revisarlo.",

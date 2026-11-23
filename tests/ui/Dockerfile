@@ -7,7 +7,7 @@ RUN cargo install tauri-driver --locked --version 2.1.0
 # Runtime: what the tests need to run a prebuilt furnish-gui (CI builds it on ubuntu-24.04).
 FROM ubuntu:24.04 AS runtime
 COPY --chmod=0755 install-deps.sh /usr/local/bin/install-deps
-RUN install-deps --no-install-recommends libwebkit2gtk-4.1-0 libayatana-appindicator3-1 webkit2gtk-driver xvfb git ca-certificates fonts-dejavu-core \
+RUN install-deps --no-install-recommends libwebkit2gtk-4.1-0 libayatana-appindicator3-1 webkit2gtk-driver xvfb xdotool git ca-certificates fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=driver /usr/local/cargo/bin/tauri-driver /usr/local/bin/
 

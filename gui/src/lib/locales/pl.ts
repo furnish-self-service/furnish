@@ -680,6 +680,8 @@ export const pl: Record<keyof typeof en, Entry> = {
   'link.uninstall': "Odinstalować {name}?",
   'link.source': "Kolekcja: {collection}",
   'link.missingCollection': "Kolekcja {collection} nie została dodana.",
+  'link.alreadyInstalled': "Aplikacja {name} jest już zainstalowana.",
+  'options.chooseFolder': "Wybierz folder…",
   'link.noAction': "Brak aplikacji odpowiednich do tego działania.",
   'link.queueFull': "Zbyt wiele odnośników czeka. Zakończ jedno potwierdzenie i otwórz ten odnośnik ponownie.",
   'link.changed': "Cel uległ zmianie. Otwórz link ponownie, aby go sprawdzić.",
