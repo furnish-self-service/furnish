@@ -4,7 +4,7 @@
 
 A self-service app catalog for an organization's Windows, macOS and Linux computers, kept in git.
 
-Use the [latest stable release](https://github.com/furnish-self-service/furnish/releases/latest) for deployments. Builds of the main branch are available as alpha previews. Apps install with administrator rights, so only add collections you trust.
+The [releases page](https://github.com/furnish-self-service/furnish/releases) lists published installers and identifies alpha previews. Apps install with administrator rights, so only add collections you trust.
 
 ![furnish's Discover page with apps recommended for designers.](docs/site/images/discover.webp)
 
@@ -27,7 +27,7 @@ An organization keeps its apps in a git repository, called a collection. Each ap
 
 ## Start here
 
-Download furnish for [Windows](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi). On macOS (Apple silicon), install it with Homebrew, `brew install --cask furnish-self-service/tap/furnish`, or [download](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) it. Windows and macOS downloads use no paid publisher certificate; the [docs](https://furnish-self-service.github.io/docs/) say how to open them. On Linux, furnish comes from a signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`); the docs have the commands for each distribution and for building from source.
+Download furnish for [Windows](https://github.com/furnish-self-service/furnish/releases). On macOS (Apple silicon), install it with Homebrew, `brew install --cask furnish-self-service/tap/furnish`, or [download](https://github.com/furnish-self-service/furnish/releases) it. Windows and macOS downloads use no paid publisher certificate; the [docs](https://furnish-self-service.github.io/docs/) say how to open them. On Linux, furnish comes from a signed package repository (key [`gpg-key.asc`](packaging/repo/gpg-key.asc), fingerprint `3A87 437D E7A2 B5DE 9436  AD89 8C29 D9C7 FFF4 823E`); the docs have the commands for each distribution and for building from source.
 
 Then add the example collection and list its apps:
 
@@ -69,11 +69,11 @@ resources:
 
 ## Docs
 
-- [Get started](https://furnish-self-service.github.io/docs/0.1.0/index.html): installing furnish and adding a collection.
-- [Using the app](https://furnish-self-service.github.io/docs/0.1.0/using.html): installs, updates, options.
-- [Command line](https://furnish-self-service.github.io/docs/0.1.0/cli.html): the `furnish` command.
-- [Writing a collection](https://furnish-self-service.github.io/docs/0.1.0/collections.html): apps, kits, questions, private repositories.
-- [For admins](https://furnish-self-service.github.io/docs/0.1.0/admins.html): the policy, sign-in without a VPN, branding, the furnish service, NixOS.
+- [Get started](docs/site/index.md): installing furnish and adding a collection.
+- [Using the app](docs/site/using.md): installs, updates, options.
+- [Command line](docs/site/cli.md): the `furnish` command.
+- [Writing a collection](docs/site/collections.md): apps, kits, questions, private repositories.
+- [For admins](docs/site/admins.md): the policy, sign-in without a VPN, branding, the furnish service, NixOS.
 - [Endpoint reference setup](packaging/endpoint): the proxy for signing in from outside the network.
 - [DSC v3 guide](docs/dsc-v3-guide.md): how DSC v3.3 behaves, checked against its source code.
 - [authoring-dsc-v3 skill](.claude/skills/authoring-dsc-v3/SKILL.md): rules and a tested example for writing DSC v3 documents. Claude Code loads it in this repository; copy the folder to use it in yours.

@@ -12,7 +12,7 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-The downloads below follow the stable channel. [GitHub Releases](https://github.com/furnish-self-service/furnish/releases) also lists alpha builds for people testing upcoming changes.
+The downloads below follow the stable channel once v0.1.0 is published. For the latest available installer, see [GitHub Releases](https://github.com/furnish-self-service/furnish/releases) also lists alpha builds for people testing upcoming changes.
 
 | System | How |
 |---|---|
@@ -68,7 +68,7 @@ cd gui && npm ci && npm run bundle        # the desktop app's installers, in tar
 
 Windows MSI and macOS disk-image installations follow the channel of the installed build. Install the stable download once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
 
-For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`; select the exact stable package version explicitly when switching. Run `furnish --version` to confirm.
+For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.1.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.1.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
 
 ### Terminal command for the macOS download
 

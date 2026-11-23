@@ -568,6 +568,9 @@ jobs:
             gh release create "v$version" --draft --target "$GITHUB_SHA" --title "Furnish $version" --notes-file "docs/releases/$version.md"
           fi
           gh release upload "v$version" assets/* --clobber
+          gh release download "v$version" --dir staged
+          (cd staged && sha256sum -c ../assets/SHA256SUMS)
+          gh release edit "v$version" --draft=false --latest=false
 
   publish-packages:
     name: Publish package channel
@@ -603,11 +606,6 @@ jobs:
           pattern: furnish-desktop-*
           path: desktop
           merge-multiple: true
-      - name: Publish the verified stable draft
-        if: inputs.stable
-        run: |
-          version=$(jq -er .version gui/src-tauri/tauri.conf.json)
-          gh release edit "v$version" --draft=false --latest
       - name: Create the pre-release
         if: ${{ !inputs.stable }}
         run: |
@@ -639,9 +637,9 @@ jobs:
           fi
           git clone -q --depth 1 "$remote" tap
           current=$(sed -nE 's/^  version "(.*)"$/\1/p' tap/Casks/furnish.rb)
-          version=$(packaging/macos/cask.sh tap/Casks/furnish.rb desktop/*.dmg)
           # The unversioned cask follows stable after the first stable release.
-          if [[ "$current" != *-alpha.* && "$version" == *-alpha.* ]]; then exit 0; fi
+          if [[ "$current" != *-alpha.* && "$RELEASE_CHANNEL" == alpha ]]; then exit 0; fi
+          version=$(packaging/macos/cask.sh tap/Casks/furnish.rb desktop/*.dmg)
           if [[ "$current" == *-alpha.* && "$version" != *-alpha.* ]]; then current=0; fi
           # A slower, older run must not replace a newer version.
           if [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" != "$version" ] || [ "$current" = "$version" ]; then
@@ -653,6 +651,9 @@ jobs:
           url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/v$version/furnish_${version}_arm64.dmg
           curl -fsSL "$url" | sha256sum | grep -q "$(sed -nE 's/^  sha256 "(.*)"$/\1/p' tap/Casks/furnish.rb)"
           echo "The tap installs $version now."
+      - name: Mark the verified stable release as latest
+        if: inputs.stable
+        run: gh release edit "v$(jq -er .version gui/src-tauri/tauri.conf.json)" --latest
 
   repository:
     name: install from the repository on ${{ matrix.image }}
