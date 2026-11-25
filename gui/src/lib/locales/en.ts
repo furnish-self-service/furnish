@@ -359,6 +359,7 @@ export const en = {
   'plan.becomes': 'becomes',
   'plan.notRun': 'Not run',
   'plan.note': 'This is a preview. Nothing has been changed on this computer.',
+  'plan.note.zeroInstall.nameInUse': "Zero Install launcher <code>{name}</code> belongs to <code>{feed}</code>",
   'plan.note.package.explicit': "The app selects the <code>{manager}</code> package manager",
   'plan.note.package.mappedManager': "The app provides a package name for the available <code>{manager}</code> manager",
   'plan.note.package.native': "<code>{manager}</code> is the first available system package manager",

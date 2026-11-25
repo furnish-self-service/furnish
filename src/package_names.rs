@@ -129,13 +129,16 @@ fn distribution_name<'p, 'd>(props: &'p Value, distribution: &'d Distribution) -
         .or_else(|| distribution.like.iter().find_map(|id| names.get(id).map(|v| (v, "package.familyName", id.as_str()))))
 }
 
-/// Route an app with an active mise package through the signed-in user's account.
+/// Route an app with an active Zero Install or mise step through the signed-in user's account.
 /// Shared or scripted installations can execute multiple resources as one operation.
 pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>) -> bool {
     let applied = std::cell::LazyCell::new(|| crate::options::apply(doc, values));
     let managers = std::cell::LazyCell::new(platform::package_managers);
     let distribution = std::cell::LazyCell::new(platform::distribution);
     let selects = |step: &Value| {
+        if step["type"] == "Furnish/ZeroInstall" {
+            return true;
+        }
         if step["type"] != crate::catalog::PACKAGE_TYPE {
             return false;
         }
@@ -494,6 +497,14 @@ mod tests {
         assert_eq!((choice.manager.as_deref(), choice.name), (Some("mise"), "github:akuity/kargo"));
         let props = json!({"name":"generic"});
         assert_eq!(select(&props, &distro, &["mise"], &["org"], false).unwrap().manager.as_deref(), Some("org"));
+    }
+
+    #[test]
+    fn zero_install_runs_as_the_requesting_user() {
+        let mut doc = json!({"resources":[{"type":"Furnish/ZeroInstall"}]});
+        assert!(requires_user(&doc, &Default::default()));
+        doc["resources"][0]["condition"] = json!("[equals(1, 2)]");
+        assert!(!requires_user(&doc, &Default::default()));
     }
 
     #[test]
