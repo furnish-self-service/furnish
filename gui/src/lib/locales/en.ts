@@ -201,6 +201,8 @@ export const en = {
   'app.declaredNixos': "Your NixOS configuration installs this app, so furnish doesn't remove or update it. To uninstall it, remove its package there.",
   'app.declaredHomeManager': "Your Home Manager configuration installs this app, so furnish doesn't remove or update it. To uninstall it, remove its package there.",
   'app.installedOutside': "This app was installed outside furnish, so furnish doesn't remove or update it. To uninstall it, use what installed it.",
+  'app.autoCollectionChanges': 'Apply collection changes automatically',
+  'app.autoCollectionChangesLocked': 'Apply collection changes automatically (set by your organization)',
   'app.autoUpdate': 'Update automatically',
   'app.autoUpdateLocked': 'Update automatically (set by your organization)',
   'app.status.securityUpdate': 'Installed, security update required',

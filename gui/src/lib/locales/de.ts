@@ -202,6 +202,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'app.declaredNixos': 'Ihre NixOS-Konfiguration installiert diese App, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, entfernen Sie ihr Paket dort.',
   'app.declaredHomeManager': 'Ihre Home-Manager-Konfiguration installiert diese App, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, entfernen Sie ihr Paket dort.',
   'app.installedOutside': 'Diese App wurde außerhalb von furnish installiert, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, nutzen Sie das, womit sie installiert wurde.',
+  'app.autoCollectionChanges': 'Änderungen an der Sammlung automatisch anwenden',
+  'app.autoCollectionChangesLocked': 'Änderungen an der Sammlung automatisch anwenden (von deiner Organisation festgelegt)',
   'app.autoUpdate': 'Automatisch aktualisieren',
   'app.autoUpdateLocked': 'Automatisch aktualisieren (von Ihrer Organisation festgelegt)',
   'app.status.securityUpdate': 'Installiert, Sicherheitsupdate erforderlich',

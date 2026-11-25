@@ -204,6 +204,8 @@ export const pl: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'Tę aplikację instaluje konfiguracja NixOS, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, usuń jej pakiet z tej konfiguracji.',
   'app.declaredHomeManager': 'Tę aplikację instaluje konfiguracja Home Manager, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, usuń jej pakiet z tej konfiguracji.',
   'app.installedOutside': 'Tę aplikację zainstalowano poza furnish, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, użyj narzędzia, którym ją zainstalowano.',
+  'app.autoCollectionChanges': 'Automatycznie stosuj zmiany w kolekcji',
+  'app.autoCollectionChangesLocked': 'Automatycznie stosuj zmiany w kolekcji (ustawione przez organizację)',
   'app.autoUpdate': 'Aktualizuj automatycznie',
   'app.autoUpdateLocked': 'Aktualizuj automatycznie (ustawione przez Twoją organizację)',
   'app.status.securityUpdate': 'Zainstalowana, wymagana aktualizacja zabezpieczeń',

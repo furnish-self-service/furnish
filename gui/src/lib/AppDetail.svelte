@@ -139,7 +139,9 @@
             disabled={isLocked('noAutoUpdate')}
             onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)}
           />
-          {isLocked('noAutoUpdate') ? t('app.autoUpdateLocked') : t('app.autoUpdate')}
+          {check?.zeroInstallUpdates?.only
+            ? t(isLocked('noAutoUpdate') ? 'app.autoCollectionChangesLocked' : 'app.autoCollectionChanges')
+            : t(isLocked('noAutoUpdate') ? 'app.autoUpdateLocked' : 'app.autoUpdate')}
         </label>
         {#if securityUpdate}<p class="auto-note">{t('app.autoUpdateRequired', { collection: app.collection })}</p>{/if}
       {/if}

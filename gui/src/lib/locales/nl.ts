@@ -204,6 +204,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'Uw NixOS-configuratie installeert deze app, dus furnish verwijdert of werkt hem niet bij. Verwijder het pakket daar om de app te verwijderen.',
   'app.declaredHomeManager': 'Uw Home Manager-configuratie installeert deze app, dus furnish verwijdert of werkt hem niet bij. Verwijder het pakket daar om de app te verwijderen.',
   'app.installedOutside': 'Deze app is buiten furnish geïnstalleerd, dus furnish verwijdert of werkt hem niet bij. Gebruik om hem te verwijderen het programma waarmee hij is geïnstalleerd.',
+  'app.autoCollectionChanges': 'Wijzigingen in de collectie automatisch toepassen',
+  'app.autoCollectionChangesLocked': 'Wijzigingen in de collectie automatisch toepassen (ingesteld door je organisatie)',
   'app.autoUpdate': 'Automatisch bijwerken',
   'app.autoUpdateLocked': 'Automatisch bijwerken (ingesteld door uw organisatie)',
   'app.status.securityUpdate': 'Geïnstalleerd, beveiligingsupdate vereist',
