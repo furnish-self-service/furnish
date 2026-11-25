@@ -368,7 +368,7 @@
           npmDeps = pkgs.fetchNpmDeps {
             name = "furnish-gui-npm-deps-${version}";
             src = "${src}/gui";
-            hash = "sha256-OK0Pw41CdZTXH7csc323xVgP3FqvmY7sO3vqJqdmX6I=";
+            hash = "sha256-N1kiwiNw4FDbRWaMXrmPACxiCWHjHZv5jUhZkw9X/Ps=";
           };
           npmRoot = "gui";
           nativeBuildInputs = r.commonArgs.nativeBuildInputs

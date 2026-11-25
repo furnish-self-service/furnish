@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   // An app's dependencies: required ones are locked; optional ones not yet installed can be
   // deselected. `chosen` holds the keys to install along with the app.
   import type { AppInfo } from './api';
@@ -38,7 +39,7 @@
         {#if depApp}<AppIcon app={depApp} size={32} />{/if}
         <span class="text">
           <span class="name">{depApp ? appName(depApp) : dep.key.split('/')[1]}</span>
-          <span class="desc">{depApp ? appDescription(depApp) : t('deps.notFound')}</span>
+          <span class="desc">{#if depApp}<Description text={appDescription(depApp)} collection={depApp.collection} compact />{:else}{t('deps.notFound')}{/if}</span>
         </span>
       </label>
       <span class="badge" class:required={dep.required && !isInstalled(dep.key)}>{badge(dep)}</span>

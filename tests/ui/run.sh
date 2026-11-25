@@ -93,6 +93,7 @@ repo_from_fixture() {
 }
 mkdir -p "$work/data/collections"
 repo_from_fixture "$work/origin-src"
+sed -i 's|description: Command-line benchmarking tool|description: "Command-line **benchmarking** tool. [Guide](https://example.org/guide) ![Collection logo](icon.svg)"|' "$work/origin-src/apps/hyperfine.dsc.yaml"
 # An app whose latest version fails to install; the one before works (falling back).
 flaky() {
     printf 'metadata: { furnish: { description: Its latest version is broken, categories: [Test] } }\nresources:\n  - name: flaky\n    type: Furnish/Package\n    properties: { name: %s }\n' "$1" > "$work/origin-src/apps/flaky.dsc.yaml"

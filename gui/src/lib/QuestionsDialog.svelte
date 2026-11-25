@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   // A collection's required options ("What do you work on?"), asked when it is added and on each
   // launch until answered. "Later" postpones: that collection's apps can't be installed meanwhile.
   import FolderInput from './FolderInput.svelte';
@@ -72,10 +73,8 @@
       {#each c.options.filter((o) => o.missing) as o (o.name)}
         {@const field = `question-${c.name}-${o.name}`}
         <div class="question">
-          <label for={field}>
-            <span class="label">{optionLabel(c.name, o)}</span>
-            {#if optionDescription(c.name, o)}<span class="desc">{optionDescription(c.name, o)}</span>{/if}
-          </label>
+          <label class="label" for={field}>{optionLabel(c.name, o)}</label>
+          {#if optionDescription(c.name, o)}<div class="desc"><Description text={optionDescription(c.name, o)} collection={c.name} /></div>{/if}
           {#if choices(o).length}
             <select id={field} data-question={o.name} bind:value={answers[c.name][o.name]}>
               <option value="" disabled>{t('common.choose')}</option>

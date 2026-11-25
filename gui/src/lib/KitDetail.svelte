@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   import ActionLinks from './ActionLinks.svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   // A kit: choose which of its apps to install (required ones can't be deselected), or which
@@ -92,7 +93,7 @@
       <p class="meta">{kit.categories.map((c) => categoryName(c, kit.collection)).join(' · ')}{kit.categories.length ? t('common.metaSeparator') : ''}{t('common.from')} <CollectionAvatar name={kit.collection} size={20} /> {kit.collection}</p>
     </div>
   </header>
-  {#if kitDescription(kit)}<p class="description">{kitDescription(kit)}</p>{/if}
+  {#if kitDescription(kit)}<div class="description"><Description text={kitDescription(kit)} collection={kit.collection} /></div>{/if}
 
   {#if !removing}
     <h2>{t('kit.chooseInstall')}</h2>
@@ -114,7 +115,7 @@
               <AppIcon {app} size={36} />
               <span class="text">
                 <span><span class="name">{appName(app)}</span>{#if !item.required} <small>· {t('common.optional')}</small>{/if}</span>
-                <span class="desc">{appDescription(app)}</span>
+                <span class="desc"><Description text={appDescription(app)} collection={app.collection} compact /></span>
               </span>
             </label>
             {#if badge(item)}<span class="badge" class:required={badge(item) === t('common.required')}>{badge(item)}</span>{/if}
@@ -163,7 +164,7 @@
                 {:else if others.length}
                   <span class="desc">{t('kit.alsoIn', { kits: others.map(kitName).join(', ') })}</span>
                 {:else}
-                  <span class="desc">{appDescription(app)}</span>
+                  <span class="desc"><Description text={appDescription(app)} collection={app.collection} compact /></span>
                 {/if}
               </span>
             </label>

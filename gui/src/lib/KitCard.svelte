@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   import type { KitInfo } from './api';
   import { appByKey, kitStatus, kitName, kitDescription, categoryName } from './state.svelte';
   import AppIcon from './AppIcon.svelte';
@@ -19,7 +20,7 @@
       <h3>{kitName(kit)}</h3>
     </div>
   </header>
-  <p class="description">{kitDescription(kit) || kit.categories.map((c) => categoryName(c, kit.collection)).join(' · ')}</p>
+  <p class="description"><Description text={kitDescription(kit) || kit.categories.map((c) => categoryName(c, kit.collection)).join(' · ')} collection={kit.collection} compact /></p>
   <div class="stack" aria-hidden="true">
     {#each apps.slice(0, 5) as app (app.key)}<span class="mini"><AppIcon {app} size={26} /></span>{/each}
     {#if apps.length > 5}<span class="more">+{apps.length - 5}</span>{/if}

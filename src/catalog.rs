@@ -1357,6 +1357,21 @@ impl Collection {
         })
     }
 
+    /// Images in Markdown descriptions are addressed from this collection's root.
+    pub fn description_image(&self, relative: &str) -> Option<PathBuf> {
+        if !Path::new(relative).components().all(|part| match part {
+            Component::Normal(name) => !name.eq_ignore_ascii_case(".git"),
+            Component::CurDir => true,
+            _ => false,
+        }) {
+            return None;
+        }
+        let file = self.file_in_repo(relative)?;
+        let root = plain_path(self.dir.canonicalize().ok()?);
+        let inside = file.strip_prefix(root).ok()?;
+        (file.is_file() && !inside.components().any(|part| part.as_os_str().eq_ignore_ascii_case(".git"))).then_some(file)
+    }
+
     /// Resolve a repo-relative path; `None` if missing or pointing outside the repo.
     fn file_in_repo(&self, relative: &str) -> Option<PathBuf> {
         let path = self.dir.join(relative).canonicalize().ok()?;
@@ -2954,6 +2969,22 @@ mod tests {
         fs::remove_file(dir.join("i/x.deb")).unwrap();
         std::os::unix::fs::symlink("/nonexistent/x.deb", dir.join("i/x.deb")).unwrap();
         assert!(c.load_app(&dir.join("apps/a.dsc.yaml")).is_err(), "dangling symlink accepted");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn description_images_stay_inside_the_collection() {
+        let (collection, dir) = collection_with(&[("images/profile.png", "picture")]);
+        assert!(collection.description_image("./images/profile.png").is_some());
+        for invalid in ["../images/profile.png", ".git/config", "images", "missing.png"] {
+            assert!(collection.description_image(invalid).is_none());
+        }
+        #[cfg(unix)]
+        {
+            let outside = tempfile::NamedTempFile::new().unwrap();
+            std::os::unix::fs::symlink(outside.path(), dir.join("images/link.png")).unwrap();
+            assert!(collection.description_image("images/link.png").is_none());
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 
