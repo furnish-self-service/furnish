@@ -1567,9 +1567,10 @@ fn outside_service(
 }
 
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
-pub const RESOURCE_TYPES: [&str; 9] = [
+pub const RESOURCE_TYPES: [&str; 10] = [
     PACKAGE_TYPE,
     INSTALLER_TYPE,
+    "Furnish/ZeroInstall",
     "Furnish/NixOS",
     DIRECTORY_TYPE,
     FILE_TYPE,

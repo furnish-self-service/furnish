@@ -36,7 +36,7 @@ resources:
         winget: GIMP.GIMP.3
 ```
 
-furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
+furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, `Furnish/ZeroInstall`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
@@ -250,6 +250,30 @@ Use an HTTPS URL whose path ends in the installer extension, and pin the 64 hexa
 Set `command` to a program the installer provides when users may already have installed it another way. Furnish checks the installer's receipt, bundle or registered product first. If that identity is absent and the executable exists, Furnish shows its path as installed outside Furnish and leaves updates and removal to the original installation method. For Homebrew installed with `install.sh`, `command: brew` also finds the executable in `/opt/homebrew/bin` or `/usr/local/bin` when those directories are missing from the desktop app's PATH.
 
 For macOS packages, furnish can read a single receipt identifier from the verified download. Set `packageId` to choose a receipt explicitly or detect an existing installation before downloading the package. For disk images, set `app` to the bundle name. On Windows, `productCode` identifies an MSI before download, and an EXE uses `displayName` and `installArgs` as it does for a collection file. When the package identity comes from the installer, furnish uses the cached file for removal and retrieves it again if necessary.
+
+### Furnish/ZeroInstall
+
+Install a [Zero Install](https://docs.0install.net/) application for the signed-in user.
+Install Zero Install first, or add an app providing the `0install` command as a dependency.
+
+```yaml
+- name: Install VLC with Zero Install
+  type: Furnish/ZeroInstall
+  properties:
+    feed: https://apps.0install.net/gui/vlc.xml
+    name: vlc
+```
+
+`feed` is the HTTPS interface URL. Zero Install verifies the feed and its implementations
+using its configured trust settings. On Linux and macOS, `name` is the command-line launcher
+created by `0install add`. Furnish checks the registered feed before accepting or removing
+a launcher with that name. On Windows, Zero Install uses the feed as the identity in **My Apps**
+and applies the feed’s standard desktop integrations. Choose a feed that provides an
+implementation for the target system.
+
+The preview shows the commands without downloading the app. Furnish manages whether the
+registration exists. Zero Install handles newer feed versions and its shared implementation
+cache. Uninstalling removes the registration and its launcher or desktop integration.
 
 ### Furnish/NixOS
 

@@ -9,6 +9,7 @@
 
 pub(crate) mod closed_apps;
 mod command;
+mod zero_install;
 mod directory_copy;
 pub(crate) mod common;
 pub(crate) mod mise;
@@ -33,7 +34,8 @@ use note::{Note, note};
 pub const COMMAND: &str = "dsc-resource";
 
 /// The resource types, their names on the command line, and their manifests.
-pub const TYPES: [(&str, &str, &str); 7] = [
+pub const TYPES: [(&str, &str, &str); 8] = [
+    ("Furnish/ZeroInstall", "zero-install", include_str!("../../resources/config/furnish-zero-install.dsc.resource.json")),
     ("Furnish/Package", "package", include_str!("../../resources/config/furnish-package.dsc.resource.json")),
     ("Furnish/Directory", "directory", include_str!("../../resources/config/furnish-directory.dsc.resource.json")),
     ("Furnish/File", "file", include_str!("../../resources/config/furnish-file.dsc.resource.json")),
@@ -242,6 +244,7 @@ fn unreadable(mut plan: Plan, file: &Managed, exist: bool) -> Plan {
 
 fn evaluate(kind: &str, props: &Value) -> Result<Plan> {
     match kind {
+        "zero-install" => zero_install::evaluate(props),
         "directory" => directory(props),
         "file" => file(props),
         "block" => block(props),
@@ -266,6 +269,7 @@ pub fn check(kind: &str, props: &Value) -> Result<()> {
     }
     let Some(props) = literal(props) else { return Ok(()) };
     match *name {
+        "zero-install" => zero_install::check(&props),
         "directory" => parse::<DirectoryProps>(&props).and_then(|p| p.check()),
         "file" => parse::<FileProps>(&props).and_then(|p| p.check()),
         "block" => parse::<BlockProps>(&props).and_then(|p| p.check().map(drop)),
