@@ -36,7 +36,7 @@ resources:
         winget: GIMP.GIMP.3
 ```
 
-furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, `Furnish/ZeroInstall`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
+furnish ships resources for installing software (`Furnish/Package`, `Furnish/Installer`, and on NixOS `Furnish/NixOS`) and for configuring it (see [Configuration](#configuration)), and apps can use any other DSC resource too (see [Other DSC resources](#other-dsc-resources)). furnish skips a resource whose `condition` is false, and hides an app that has no resource for the system. To uninstall, it runs the same resources in reverse order with `_exist: false`, unless the app has [removal steps](#removal-steps).
 
 A step fails when its resource fails. This includes a command that exits with a code other than the expected one, also where the resource itself reports success, like `RunCommandOnSet`. The install stops at that step. After the last step, furnish tests the app. If a resource is still not in its desired state, the install fails and names that resource.
 
@@ -119,7 +119,8 @@ Installs a package with a system, per-user or collection package manager. The de
 | Property | Meaning |
 |---|---|
 | `name` | The default package name (required) |
-| `packageManager` | Use this package manager, not the first one found |
+| `packageManager` | Select a specific package manager |
+| `feed` | HTTPS interface URL for the `0install` manager |
 | `namesByDistribution` | Package names keyed by Linux distribution ID, including IDs used by your organization |
 | `namesByManager` | Package names keyed by package manager, such as `brew`, `pacman` or `winget` |
 | `flake` | Collection-relative folder containing `flake.nix` for a Nix profile install |
@@ -176,11 +177,38 @@ Use mise for tools distributed through its registry or a backend such as GitHub,
     command: kargo
 ```
 
-To offer mise as a fallback, use a portable `name` and put its tool ID in `namesByManager.mise`. For example, `name: jq` with `namesByManager: { brew: jq, mise: 'aqua:jqlang/jq' }` uses Homebrew on a Mac with both managers and mise on a Windows machine with winget and mise. A matching Linux distribution name selects the usual system manager first. Otherwise, when mise is available, Furnish picks the first installed manager with an explicit name, with mise last. Without mise the usual system selection applies. Use `packageManager: mise` when the tool is available only through mise.
+To offer mise as a fallback, use a portable `name` and put its tool ID in `namesByManager.mise`. For example, `name: jq` with `namesByManager: { brew: jq, mise: 'aqua:jqlang/jq' }` uses Homebrew on a Mac with both managers and mise on a Windows machine with winget and mise. A matching Linux distribution name selects the usual system manager first. Otherwise, when mise is available, Furnish picks the first installed manager with an explicit name, in the priority order shown under [target profiles](#check-target-profiles-in-ci). Without mise the usual system selection applies. Use `packageManager: mise` when the tool is available only through mise.
 
 The built-in manager reserves the ID `mise`. If your collection declares its own script manager under that name, remove the declaration to use the built-in manager, or rename the script manager and the steps that reference it.
 
 An app with a step that selects mise runs as the signed-in user, including apps in admin-preset collections. Put machine-wide prerequisites in a separate dependency if they require the Furnish service. Collection authors can check this selection across platforms with [target profiles](#check-target-profiles-in-ci).
+
+#### Per-user apps with Zero Install
+
+Install a [Zero Install](https://docs.0install.net/) application for the signed-in user.
+Install Zero Install first, or add an app providing the `0install` command as a dependency.
+
+```yaml
+- name: Install VLC with Zero Install
+  type: Furnish/Package
+  properties:
+    packageManager: 0install
+    feed: https://apps.0install.net/gui/vlc.xml
+    name: vlc
+```
+
+`feed` is the HTTPS interface URL. Zero Install verifies the feed and its implementations
+using its configured trust settings. On Linux and macOS, `name` is the command-line launcher
+created by `0install add`. A `namesByManager.0install` entry overrides that launcher name, including on Linux. Furnish checks the registered feed before accepting or removing
+a launcher with that name. On Windows, Zero Install uses the feed as the identity in **My Apps**
+and applies the feed’s standard desktop integrations. Choose a feed that provides an
+implementation for the target system.
+
+The preview shows the commands without downloading the app. Furnish manages whether the
+registration exists. Zero Install handles newer feed versions and its shared implementation
+cache. Uninstalling removes the registration and its launcher or desktop integration.
+
+To offer Zero Install as a fallback, omit `packageManager`, keep `feed`, and give the launcher name in `namesByManager.0install`. For example, `namesByManager: { brew: vlc, 0install: vlc }` uses Homebrew on a Mac with both managers and Zero Install on a Windows machine with winget and Zero Install. A matching Linux distribution name takes precedence when its system manager is available.
 
 #### Package managers supplied by a collection
 
@@ -204,7 +232,7 @@ packageManagers:
     packageManager: apk
 ```
 
-With no explicit selection, Furnish tries its built-in managers first. If none are present and exactly one collection manager is available, it uses that manager. If several are available, set `packageManager` on the step. The same `namesByDistribution` and `namesByManager` rules apply whichever manager handles it.
+With no explicit selection, Furnish tries its built-in managers first. If none are present and exactly one collection manager is available, it uses that manager. If several are available, set `packageManager` on the step. Collection managers use the same distribution and manager name lookups as system managers.
 
 The script receives one operation as its first argument and one UTF-8 JSON object on stdin. For example, an install request might contain `{"name":"ripgrep","packageManager":"apk","_exist":true}`. Return one JSON object on stdout containing the resolved `name` and boolean `_exist`. Send progress and diagnostic messages to stderr. A nonzero exit fails the operation.
 
@@ -250,30 +278,6 @@ Use an HTTPS URL whose path ends in the installer extension, and pin the 64 hexa
 Set `command` to a program the installer provides when users may already have installed it another way. Furnish checks the installer's receipt, bundle or registered product first. If that identity is absent and the executable exists, Furnish shows its path as installed outside Furnish and leaves updates and removal to the original installation method. For Homebrew installed with `install.sh`, `command: brew` also finds the executable in `/opt/homebrew/bin` or `/usr/local/bin` when those directories are missing from the desktop app's PATH.
 
 For macOS packages, furnish can read a single receipt identifier from the verified download. Set `packageId` to choose a receipt explicitly or detect an existing installation before downloading the package. For disk images, set `app` to the bundle name. On Windows, `productCode` identifies an MSI before download, and an EXE uses `displayName` and `installArgs` as it does for a collection file. When the package identity comes from the installer, furnish uses the cached file for removal and retrieves it again if necessary.
-
-### Furnish/ZeroInstall
-
-Install a [Zero Install](https://docs.0install.net/) application for the signed-in user.
-Install Zero Install first, or add an app providing the `0install` command as a dependency.
-
-```yaml
-- name: Install VLC with Zero Install
-  type: Furnish/ZeroInstall
-  properties:
-    feed: https://apps.0install.net/gui/vlc.xml
-    name: vlc
-```
-
-`feed` is the HTTPS interface URL. Zero Install verifies the feed and its implementations
-using its configured trust settings. On Linux and macOS, `name` is the command-line launcher
-created by `0install add`. Furnish checks the registered feed before accepting or removing
-a launcher with that name. On Windows, Zero Install uses the feed as the identity in **My Apps**
-and applies the feed’s standard desktop integrations. Choose a feed that provides an
-implementation for the target system.
-
-The preview shows the commands without downloading the app. Furnish manages whether the
-registration exists. Zero Install handles newer feed versions and its shared implementation
-cache. Uninstalling removes the registration and its launcher or desktop integration.
 
 ### Furnish/NixOS
 
@@ -1040,7 +1044,7 @@ The preview evaluates `context().os.family` for each system. It marks a step `(d
 
 Use `furnish check . --profiles targets.yaml` to check the same collection for specific computers. Each named profile supplies the OS family (`Linux`, `macOS`, or `Windows`) and the available package managers. Linux profiles can also supply the distribution ID and the ordered `ID_LIKE` list from `os-release`. When an expression reads `context().os.architecture`, set `architecture` to the exact DSC value for the target. Use `x86_64` for 64-bit Intel or AMD, `aarch64` for ARM64 Linux or Windows, and `arm64` for Apple silicon. Profiles that do not use this fact can omit it.
 
-List the native managers available on the target in Furnish’s priority order. On Unix the order is `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix`, then `mise`. On Windows list `winget` before `mise`. Include a collection manager's ID when its script and prerequisites are available on that target.
+List the native managers available on the target in Furnish’s priority order. On Unix the order is `pacman`, `apt`, `dnf`, `zypper`, `brew`, `nix`, then `mise` and `0install`. On Windows the order is `winget`, `mise`, `0install`. Include a collection manager's ID when its script and prerequisites are available on that target.
 
 For example, an admin can verify which package implements a step named `Editor` and which dependency applies to developers:
 

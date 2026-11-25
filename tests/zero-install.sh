@@ -26,8 +26,8 @@ cat > "$work/collection/apps/hello.dsc.yaml" <<YAML
 metadata: { furnish: { description: Test the real Zero Install client, categories: [Test] } }
 resources:
   - name: Install the greeting
-    type: Furnish/ZeroInstall
-    properties: { name: furnish-hello, feed: $feed }
+    type: Furnish/Package
+    properties: { name: hello, namesByManager: { 0install: furnish-hello }, feed: $feed }
 YAML
 git -C "$work/collection" init -q
 git -C "$work/collection" add .
@@ -40,15 +40,18 @@ test ! -e "$HOME/bin/furnish-hello"
 test "$(furnish-hello)" = hello-from-zero-install
 "$furnish" install hello
 test "$(0install show --root-uri furnish-hello)" = "$feed"
+# A package that another installer provides stays under its original ownership.
+printf '%s' '{"packageManager":"0install","name":"external-tool","feed":"https://example.test/tool.xml","command":"git"}' |
+    "$furnish" dsc-resource package get | grep -F '"managedBy":"other"'
 # Another collection sees its feed as absent. It cannot overwrite or destroy the other launcher.
-foreign='{"feed":"https://example.test/other.xml","name":"furnish-hello"}'
-printf '%s' "$foreign" | "$furnish" dsc-resource zero-install test | grep -F '"_inDesiredState":false'
-if printf '%s' "$foreign" | "$furnish" dsc-resource zero-install set >"$work/out" 2>&1; then
+foreign='{"packageManager":"0install","feed":"https://example.test/other.xml","name":"furnish-hello"}'
+printf '%s' "$foreign" | "$furnish" dsc-resource package test | grep -F '"_inDesiredState":false'
+if printf '%s' "$foreign" | "$furnish" dsc-resource package set >"$work/out" 2>&1; then
     echo 'Overwrote a different feed' >&2; exit 1
 fi
 grep -F 'belongs to' "$work/out"
-printf '%s' '{"feed":"https://example.test/other.xml","name":"furnish-hello","_exist":false}' |
-    "$furnish" dsc-resource zero-install set | grep -F '"_exist":false'
+printf '%s' '{"packageManager":"0install","feed":"https://example.test/other.xml","name":"furnish-hello","_exist":false}' |
+    "$furnish" dsc-resource package set | grep -F '"_exist":false'
 test "$(furnish-hello)" = hello-from-zero-install
 "$furnish" uninstall hello --dry-run | grep -F '0install destroy'
 test "$(furnish-hello)" = hello-from-zero-install

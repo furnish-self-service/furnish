@@ -124,7 +124,7 @@
         },
         "packageManager": {
           "type": "string",
-          "description": "Select a built-in or collection manager. A namesByManager.mise entry opts into mise after a matching system manager.",
+          "description": "Select a built-in or collection manager. A matching namesByManager entry opts into mise or 0install as a fallback.",
           "pattern": "^[a-z0-9][a-z0-9._-]*$"
         },
         "_inDesiredState": {
@@ -202,6 +202,11 @@
           "type": "string",
           "readOnly": true,
           "description": "With reportVersions: what installs it"
+        },
+        "feed": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "HTTPS interface URL required by the 0install manager"
         }
       }
     }

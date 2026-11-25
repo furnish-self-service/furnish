@@ -18,11 +18,12 @@ pub(crate) fn supported_manager(name: &str) -> bool {
     native_manager_priority(name).is_some()
 }
 
-/// Host facts list mise after the ordinary system managers on all platforms.
+/// Host facts list per-user managers after the ordinary system managers on all platforms.
 pub(crate) fn native_manager_priority(name: &str) -> Option<usize> {
     match name {
         "winget" => Some(0),
         "mise" => Some(UNIX_MANAGERS.len()),
+        "0install" => Some(UNIX_MANAGERS.len() + 1),
         _ => UNIX_MANAGERS.iter().position(|(manager, _)| *manager == name),
     }
 }
@@ -70,13 +71,21 @@ pub(crate) fn distribution() -> Distribution {
 }
 
 pub(crate) fn manager_on_platform(id: &str, windows: bool) -> bool {
-    id == "mise" || (id == "winget") == windows
+    per_user_manager(id) || (id == "winget") == windows
+}
+
+pub(crate) fn per_user_manager(id: &str) -> bool {
+    matches!(id, "mise" | "0install")
 }
 
 pub(crate) fn package_managers() -> Vec<&'static str> {
     let mut managers = system_package_managers();
     if crate::resources::mise::executable().is_some() {
         managers.push("mise");
+    }
+    if !crate::service::in_service() && std::env::var("FURNISH_SERVICE").as_deref() != Ok("1")
+        && crate::resources::common::on_command_path("0install").is_some() {
+        managers.push("0install");
     }
     managers
 }

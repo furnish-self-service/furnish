@@ -1,35 +1,26 @@
 //! Zero Install owns the feed's trust, implementation cache and launcher. Query its own
 //! registration when determining presence, including apps added outside Furnish.
 use anyhow::{Context, Result, ensure};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{Plan, common, exist, note, parse};
+use super::{Plan, common, note};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct App {
-    name: String,
-    feed: String,
-    #[serde(rename = "_exist")]
-    exists: Option<bool>,
+struct App<'a> {
+    name: &'a str,
+    feed: &'a str,
 }
 
-impl App {
-    fn checked(props: &Value) -> Result<Self> {
-        let app: Self = parse(props)?;
-        ensure!(app.name.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
-            && app.name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            && !app.name.eq_ignore_ascii_case("0install"), "invalid Zero Install launcher name");
-        let uri: ureq::http::Uri = app.feed.parse().context("invalid Zero Install feed URL")?;
-        ensure!(uri.scheme_str() == Some("https") && uri.authority().is_some_and(|a| !a.host().is_empty() && !a.as_str().contains('@'))
-            && !app.feed.contains(['#', '\\']) && !app.feed.chars().any(char::is_control), "Zero Install needs an HTTPS feed URL without credentials or fragment");
-        Ok(app)
-    }
+pub(crate) fn valid_launcher(name: &str) -> bool {
+    name.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        && !name.eq_ignore_ascii_case("0install")
 }
 
-pub(super) fn check(props: &Value) -> Result<()> {
-    App::checked(props).map(drop)
+pub(crate) fn validate_feed(feed: &str) -> Result<()> {
+    let uri: ureq::http::Uri = feed.parse().context("invalid Zero Install feed URL")?;
+    ensure!(uri.scheme_str() == Some("https") && uri.authority().is_some_and(|a| !a.host().is_empty() && !a.as_str().contains('@'))
+        && !feed.contains(['#', '\\']) && !feed.chars().any(char::is_control), "Zero Install needs an HTTPS feed URL without credentials or fragment");
+    Ok(())
 }
 
 fn argv(args: &[&str]) -> Vec<String> {
@@ -43,7 +34,7 @@ fn execute(args: &[String]) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn registered_feed(app: &App) -> Result<Option<String>> {
+fn registered_feed(app: &App<'_>) -> Result<Option<String>> {
     use std::{env, path::PathBuf};
     // The Unix CLI has no list-apps command. A missing name passed to "show" is
     // interpreted as a selections filename. Look for its registered app directory first.
@@ -56,8 +47,8 @@ fn registered_feed(app: &App) -> Result<Option<String>> {
         std::iter::once(home).chain(env::split_paths(&dirs)).map(|p| p.join("0install.net")).collect()
     };
     for root in roots {
-        if root.join("apps").join(&app.name).try_exists()? {
-            let root_uri = execute(&argv(&["show", "--root-uri", &app.name]))?;
+        if root.join("apps").join(app.name).try_exists()? {
+            let root_uri = execute(&argv(&["show", "--root-uri", app.name]))?;
             return Ok(Some(root_uri.trim().to_owned()));
         }
     }
@@ -67,39 +58,55 @@ fn registered_feed(app: &App) -> Result<Option<String>> {
 }
 
 #[cfg(windows)]
-fn registered_feed(app: &App) -> Result<Option<String>> {
-    let text = execute(&argv(&["list-apps", "--batch", "--xml", &app.feed]))?;
+fn registered_feed(app: &App<'_>) -> Result<Option<String>> {
+    let text = execute(&argv(&["list-apps", "--batch", "--xml", app.feed]))?;
     let doc = roxmltree::Document::parse(text.trim_start_matches('\u{feff}')).context("reading Zero Install application list")?;
     let root = doc.root_element();
     ensure!(root.tag_name().name() == "app-list", "unexpected Zero Install application list");
     // list-apps filters an absolute URI by the exact interface, including its URI normalization.
-    Ok(root.children().any(|node| node.has_tag_name("app")).then(|| app.feed.clone()))
+    Ok(root.children().any(|node| node.has_tag_name("app")).then(|| app.feed.to_owned()))
 }
 
-pub(super) fn evaluate(props: &Value) -> Result<Plan> {
-    let app = App::checked(props)?;
-    let want = exist(app.exists);
-    let owner = registered_feed(&app)?;
-    let present = owner.as_deref() == Some(&app.feed);
-    let mut plan = Plan::new(props);
+pub(crate) fn run(props: &Value, name: &str, op: &str, what_if: bool) -> Result<Value> {
+    let feed = props["feed"].as_str().context("0install requires a feed URL")?;
+    validate_feed(feed)?;
+    ensure!(props.get("targetVersion").is_none(), "0install manages versions through its feed and cannot pin a targetVersion");
+    let want = props.get("_exist").map(|v| v.as_bool().context("_exist must be a boolean")).transpose()?.unwrap_or(true);
+    let app = App { name, feed };
+    let owner = registered_feed(&app);
+    if let Some(command) = props["command"].as_str() {
+        ensure!(super::valid_program_name(command), "command must be a program name without a directory");
+        let missing = owner.as_ref().is_err_and(|e| e.downcast_ref::<common::Missing>().is_some());
+        if (missing || owner.as_ref().is_ok_and(|feed| feed.as_deref() != Some(app.feed)))
+            && let Some(path) = common::on_command_path(command) {
+            return super::externally_owned("0install", name, path, op, want, what_if);
+        }
+    }
+    let plan = evaluate(&app, want, owner?);
+    super::run_plan(props, op, what_if, plan, || Ok(evaluate(&app, want, registered_feed(&app)?)))
+}
+
+fn evaluate(app: &App<'_>, want: bool, owner: Option<String>) -> Plan {
+    let present = owner.as_deref() == Some(app.feed);
+    let mut plan = Plan::new(&json!({"name":app.name,"packageManager":"0install","feed":app.feed}));
     plan.observe("_exist", Some(present.into()), Some(want.into()));
     if want && let Some(other) = owner.filter(|_| !present) {
         plan.observe("_exist", Some(false.into()), Some(false.into()));
         let conflict = note("zeroInstall.nameInUse", json!({ "name": app.name, "feed": other }));
         let reason = conflict.english();
         plan.change(vec![conflict], move || anyhow::bail!("{reason}"));
-        return Ok(plan);
+        return plan;
     }
     if want != present {
         #[cfg(unix)]
-        let commands = if want { vec![argv(&["add", "--console", &app.name, &app.feed])] } else { vec![argv(&["destroy", &app.name])] };
+        let commands = if want { vec![argv(&["add", "--console", app.name, app.feed])] } else { vec![argv(&["destroy", app.name])] };
         #[cfg(windows)]
         let commands = if want {
             // Desktop integration can download in the background. Finish downloading first so
             // an unsuccessful install cannot leave an apparently installed registration.
-            vec![argv(&["download", "--batch", &app.feed]), argv(&["integrate", "--batch", "--no-download", "--add-standard", &app.feed])]
+            vec![argv(&["download", "--batch", app.feed]), argv(&["integrate", "--batch", "--no-download", "--add-standard", app.feed])]
         } else {
-            vec![argv(&["remove", "--batch", &app.feed])]
+            vec![argv(&["remove", "--batch", app.feed])]
         };
         let steps = commands.iter().map(|args| note("run", json!({ "command": args.join(" ") }))).collect();
         plan.change(steps, move || {
@@ -107,7 +114,7 @@ pub(super) fn evaluate(props: &Value) -> Result<Plan> {
             Ok(())
         });
     }
-    Ok(plan)
+    plan
 }
 
 #[cfg(test)]
@@ -116,17 +123,11 @@ mod tests {
 
     #[test]
     fn feed_and_launcher_are_validated_before_invoking_zero_install() {
-        let valid = json!({"name":"acme-tool", "feed":"https://software.example/acme.xml"});
-        assert!(check(&valid).is_ok());
         for feed in ["http://example/acme.xml", "file:///etc/acme.xml", "https://user:pass@example/acme.xml", "https://example/acme.xml#other"] {
-            let mut invalid = valid.clone();
-            invalid["feed"] = json!(feed);
-            assert!(check(&invalid).is_err(), "{feed}");
+            assert!(validate_feed(feed).is_err(), "{feed}");
         }
         for name in ["", "--help", "0install", "../other", "C:\\other"] {
-            let mut invalid = valid.clone();
-            invalid["name"] = json!(name);
-            assert!(check(&invalid).is_err(), "{name}");
+            assert!(!valid_launcher(name), "{name}");
         }
     }
 }

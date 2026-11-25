@@ -315,6 +315,11 @@ pub fn init(dir: &Path) -> Result<()> {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
         }
     }
+    // Resource discovery also sees manifests left by previous versions in this directory.
+    match fs::remove_file(dir.join("furnish-zero-install.dsc.resource.json")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+        _ => {}
+    }
     // The configuration resources run in this program (see resources::dispatch).
     for (file, contents) in crate::resources::manifests(&env::current_exe()?)? {
         fs::write(dir.join(file), contents)?;

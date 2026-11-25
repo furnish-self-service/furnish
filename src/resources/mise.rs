@@ -1,5 +1,5 @@
 //! User-scoped mise global tools. Backend-qualified names are opaque arguments to mise.
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -166,24 +166,6 @@ fn external(name: Option<&str>, dirs: Option<&Dirs>) -> Option<PathBuf> {
     which::which_in(name, Some(paths), dirs::home_dir()?).ok()
 }
 
-fn externally_owned(name: &str, path: PathBuf, op: &str, want: bool, what_if: bool) -> Result<Value> {
-    let note = format!(
-        "{name} was installed outside furnish ({}): uninstall it the way it was installed",
-        path.display()
-    );
-    let mut state = json!({"name": name, "packageManager": "mise", "_exist": true, "managedBy": "other", "path": path});
-    if op == "test" {
-        state["_inDesiredState"] = want.into();
-    }
-    if op == "set" && what_if {
-        state["_metadata"] = json!({"whatIf":[note],"furnishChange":false});
-    }
-    if op == "set" && !what_if && !want {
-        bail!("{note}");
-    }
-    Ok(state)
-}
-
 pub(crate) fn run(props: &Value, name: &str, op: &str, what_if: bool) -> Result<Value> {
     ensure!(matches!(op, "get" | "set" | "test"), "unknown mise operation '{op}'");
     let report = props["reportVersions"].as_str().unwrap_or("");
@@ -206,17 +188,14 @@ pub(crate) fn run(props: &Value, name: &str, op: &str, what_if: bool) -> Result<
     let command = props["command"].as_str().filter(|s| !s.is_empty());
     if let Some(c) = command {
         ensure!(
-            !c.starts_with('-')
-                && c.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
-                && c != "."
-                && c != "..",
+            super::valid_program_name(c),
             "command must be a program name without a directory"
         );
     }
     let want = props["_exist"].as_bool().unwrap_or(true);
     let Some(bin) = executable() else {
         if let Some(path) = external(command, None) {
-            return externally_owned(name, path, op, want, what_if);
+            return super::externally_owned("mise", name, path, op, want, what_if);
         }
         return Err(super::common::Missing("mise".into()).into());
     };
@@ -232,7 +211,7 @@ pub(crate) fn run(props: &Value, name: &str, op: &str, what_if: bool) -> Result<
         None
     };
     if !configured && let Some(path) = doctor.as_ref().and_then(|d| external(command, Some(&d.dirs))) {
-        return externally_owned(name, path, op, want, what_if);
+        return super::externally_owned("mise", name, path, op, want, what_if);
     }
     if let Some(version) = current {
         state["version"] = version.into();
