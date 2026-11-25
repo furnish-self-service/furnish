@@ -35,14 +35,17 @@ if "%*"=="remove --batch https://example.test/hello.xml" (
 exit /b 99
 '@ | Set-Content -Encoding ascii "$temp/0install.cmd"
     function Resource($Operation, $Want, $Preview = $false) {
-        $arguments = @('dsc-resource', 'zero-install', $Operation)
+        $arguments = @('dsc-resource', 'package', $Operation)
         if ($Preview) { $arguments += '--what-if' }
-        $output = @{ name = 'hello'; feed = 'https://example.test/hello.xml'; _exist = $Want } |
+        $output = @{ packageManager = '0install'; name = 'hello'; feed = 'https://example.test/hello.xml'; _exist = $Want } |
             ConvertTo-Json -Compress | & $Furnish @arguments
         if ($LASTEXITCODE -ne 0) { throw "$Operation failed with $LASTEXITCODE" }
         $output | ConvertFrom-Json
     }
     if ((Resource 'test' $true)._inDesiredState) { throw 'Already installed' }
+    $external = @{ name = 'hello'; feed = 'https://example.test/hello.xml'; packageManager = '0install'; command = 'where.exe' } |
+        ConvertTo-Json -Compress | & $Furnish dsc-resource package get | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $external.managedBy -ne 'other') { throw 'Unregistered command on PATH was not recognized' }
     $null = Resource 'set' $true $true
     if (Test-Path "$temp/cached") { throw 'Preview downloaded an app' }
     if (!(Resource 'set' $true)._exist) { throw 'Install failed' }

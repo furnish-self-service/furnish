@@ -1567,10 +1567,9 @@ fn outside_service(
 }
 
 /// The resources furnish ships (see `engine::init`). Apps may use other DSC resources too.
-pub const RESOURCE_TYPES: [&str; 10] = [
+pub const RESOURCE_TYPES: [&str; 9] = [
     PACKAGE_TYPE,
     INSTALLER_TYPE,
-    "Furnish/ZeroInstall",
     "Furnish/NixOS",
     DIRECTORY_TYPE,
     FILE_TYPE,
@@ -1731,7 +1730,7 @@ impl App {
     }
 
     /// Run in the signed-in user's account when the app declares perUser (optionally
-    /// through a DSC expression) or an active step selects a user-scoped mise tool.
+    /// through a DSC expression) or an active step selects a per-user package manager.
     pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
         let declared = match &self.doc["metadata"]["furnish"]["perUser"] {
             Value::Bool(b) => *b,

@@ -39,7 +39,11 @@ fn mise_name(name: &str) -> bool {
 }
 
 fn valid_for(name: &str, manager: Option<&str>) -> bool {
-    if manager == Some("mise") { mise_name(name) } else { valid_name(name) }
+    match manager {
+        Some("mise") => mise_name(name),
+        Some("0install") => crate::resources::zero_install::valid_launcher(name),
+        _ => valid_name(name),
+    }
 }
 
 fn expression(value: &Value) -> bool {
@@ -62,6 +66,16 @@ pub(crate) fn validate(props: &Value) -> Result<()> {
     }
     if let Some(id) = props.get("packageManager") {
         ensure!(expression(id) || id.as_str().is_some_and(valid_manager_id), "packageManager must be a valid package manager ID");
+    }
+    if props["packageManager"] == "0install" || props["namesByManager"].get("0install").is_some() {
+        ensure!(props.get("feed").is_some(), "0install requires a feed URL");
+    }
+    if props["packageManager"] == "0install" && props["namesByManager"].get("0install").is_none()
+        && !expression(&props["namesByManager"]) && !expression(&props["name"]) {
+        ensure!(props["name"].as_str().is_some_and(crate::resources::zero_install::valid_launcher), "invalid Zero Install launcher name");
+    }
+    if let Some(feed) = props.get("feed") && !expression(feed) {
+        crate::resources::zero_install::validate_feed(feed.as_str().context("feed must be an HTTPS URL")?)?;
     }
     for key in ["namesByDistribution", "namesByManager"] {
         let Some(mapping) = props.get(key) else {
@@ -112,9 +126,9 @@ fn preferred_manager<'a>(props: &'a Value, distribution: &Distribution, native: 
     if let Some(id) = props["packageManager"].as_str() {
         return Some((id, "package.explicit"));
     }
-    let default = native.iter().copied().find(|&id| id != "mise");
+    let default = native.iter().copied().find(|id| !platform::per_user_manager(id));
     let aliases = &props["namesByManager"];
-    if aliases.get("mise").is_some() && native.contains(&"mise")
+    if native.iter().any(|id| platform::per_user_manager(id) && aliases.get(*id).is_some())
         && (default.is_none() || distribution_name(props, distribution).is_none())
         && let Some(id) = native.iter().copied().find(|id| aliases.get(*id).is_some())
     {
@@ -136,20 +150,17 @@ pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>
     let managers = std::cell::LazyCell::new(platform::package_managers);
     let distribution = std::cell::LazyCell::new(platform::distribution);
     let selects = |step: &Value| {
-        if step["type"] == "Furnish/ZeroInstall" {
-            return true;
-        }
-        if step["type"] != crate::catalog::PACKAGE_TYPE {
+        if !step["type"].as_str().is_some_and(|kind| kind.eq_ignore_ascii_case(crate::catalog::PACKAGE_TYPE)) {
             return false;
         }
         let props = &step["properties"];
         let manager = &props["packageManager"];
         if let Some(id) = manager.as_str() {
             return if expression(manager) {
-                crate::conditions::value_for(doc, id, values).map_or(true, |v| v == "mise")
-            } else { id == "mise" };
+                crate::conditions::value_for(doc, id, values).map_or(true, |v| v.as_str().is_some_and(platform::per_user_manager))
+            } else { platform::per_user_manager(id) };
         }
-        if props["namesByManager"].get("mise").is_none() && !expression(&props["namesByManager"]) {
+        if !expression(&props["namesByManager"]) && !props["namesByManager"].as_object().is_some_and(|m| m.keys().any(|id| platform::per_user_manager(id))) {
             return false;
         }
         let mut selection = props.clone();
@@ -159,7 +170,7 @@ pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>
                 selection[key] = names;
             }
         }
-        matches!(preferred_manager(&selection, &distribution, &managers), Some(("mise", _)))
+        preferred_manager(&selection, &distribution, &managers).is_some_and(|(id, _)| platform::per_user_manager(id))
     };
     fn any(steps: &[Value], selects: &impl Fn(&Value) -> bool, applies: &impl Fn(&Value) -> bool) -> bool {
         steps.iter().any(|step| {
@@ -195,7 +206,7 @@ pub(crate) fn select<'a>(
     };
 
     let base = props["name"].as_str().filter(|s| valid_name(s) || (manager == Some("mise") && mise_name(s))).context("a valid package name is required")?;
-    let distro = if (manager, reason) == (Some("mise"), "package.mappedManager") { None } else { distribution_name(props, distribution) };
+    let distro = if manager == Some("0install") || (manager, reason) == (Some("mise"), "package.mappedManager") { None } else { distribution_name(props, distribution) };
     let matched = distro.or_else(|| manager.and_then(|id| props["namesByManager"].get(id).map(|v| (v, "package.managerName", id))));
     let (name, name_note) = match matched {
         Some((v, code, selector)) => {
@@ -330,10 +341,14 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
         return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
     }
 
-    if manager == Some("mise") {
+    if let Some(user_manager) = manager.filter(|id| platform::per_user_manager(id)) {
         ensure!(!crate::service::in_service() && std::env::var("FURNISH_SERVICE").as_deref() != Ok("1"),
-            "mise installs tools for the signed-in user and cannot run in the furnish service");
-        let state = crate::resources::mise::run(props, selection.name, operation, what_if)?;
+            "{user_manager} installs tools for the signed-in user and cannot run in the furnish service");
+        let state = if user_manager == "0install" {
+            crate::resources::zero_install::run(props, selection.name, operation, what_if)?
+        } else {
+            crate::resources::mise::run(props, selection.name, operation, what_if)?
+        };
         return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
     }
 
@@ -500,8 +515,29 @@ mod tests {
     }
 
     #[test]
+    fn zero_install_is_an_opt_in_package_fallback() {
+        let distro = Distribution::default();
+        let mut props = json!({"name":"hello", "namesByManager":{"brew":"native-hello","0install":"hello-cli"},
+            "feed":"https://example.org/hello.xml"});
+        assert!(validate(&props).is_ok());
+        for (native, manager, name) in [
+            (vec!["brew", "0install"], "brew", "native-hello"),
+            (vec!["winget", "0install"], "0install", "hello-cli"),
+            (vec!["winget"], "winget", "hello"),
+        ] {
+            let choice = select(&props, &distro, &native, &[], native.contains(&"winget")).unwrap();
+            assert_eq!((choice.manager.as_deref(), choice.name), (Some(manager), name));
+        }
+        props.as_object_mut().unwrap().remove("feed");
+        assert!(validate(&props).is_err());
+        let other = json!({"name":"other"});
+        let choice = select(&other, &distro, &["0install"], &[], false).unwrap();
+        assert!(choice.manager.is_none());
+    }
+
+    #[test]
     fn zero_install_runs_as_the_requesting_user() {
-        let mut doc = json!({"resources":[{"type":"Furnish/ZeroInstall"}]});
+        let mut doc = json!({"resources":[{"type":"Furnish/Package","properties":{"packageManager":"0install","name":"tool","feed":"https://example.org/tool.xml"}}]});
         assert!(requires_user(&doc, &Default::default()));
         doc["resources"][0]["condition"] = json!("[equals(1, 2)]");
         assert!(!requires_user(&doc, &Default::default()));
@@ -512,14 +548,14 @@ mod tests {
         let step = json!({"type":"Furnish/Package", "properties":{"name":"jq","packageManager":"[parameters('provider')]"}});
         let doc = json!({"parameters":{"provider":{"type":"string","defaultValue":"apt"}},
             "resources":[{"type":"Microsoft.DSC/Group","properties":{"resources":[step]}}]});
-        for (manager, expected) in [("apt", false), ("mise", true)] {
+        for (manager, expected) in [("apt", false), ("mise", true), ("0install", true)] {
             let values = serde_json::Map::from_iter([("provider".into(), json!(manager))]);
             assert_eq!(requires_user(&doc, &values), expected);
         }
         let mut variable = doc.clone();
         variable["variables"]["provider"] = json!("[parameters('provider')]");
         variable["resources"][0]["properties"]["resources"][0]["properties"]["packageManager"] = json!("[variables('provider')]");
-        for (manager, expected) in [("apt", false), ("mise", true)] {
+        for (manager, expected) in [("apt", false), ("mise", true), ("0install", true)] {
             let values = serde_json::Map::from_iter([("provider".into(), json!(manager))]);
             assert_eq!(requires_user(&variable, &values), expected);
         }

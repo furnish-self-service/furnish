@@ -9,7 +9,7 @@
 
 pub(crate) mod closed_apps;
 mod command;
-mod zero_install;
+pub(crate) mod zero_install;
 mod directory_copy;
 pub(crate) mod common;
 pub(crate) mod mise;
@@ -34,8 +34,7 @@ use note::{Note, note};
 pub const COMMAND: &str = "dsc-resource";
 
 /// The resource types, their names on the command line, and their manifests.
-pub const TYPES: [(&str, &str, &str); 8] = [
-    ("Furnish/ZeroInstall", "zero-install", include_str!("../../resources/config/furnish-zero-install.dsc.resource.json")),
+pub const TYPES: [(&str, &str, &str); 7] = [
     ("Furnish/Package", "package", include_str!("../../resources/config/furnish-package.dsc.resource.json")),
     ("Furnish/Directory", "directory", include_str!("../../resources/config/furnish-directory.dsc.resource.json")),
     ("Furnish/File", "file", include_str!("../../resources/config/furnish-file.dsc.resource.json")),
@@ -109,11 +108,15 @@ fn run(args: &[String]) -> Result<String> {
         return crate::package_names::run(&props, op, what_if);
     }
     let files = props.get_mut("_metadata").and_then(Value::as_object_mut).and_then(|m| m.remove("furnishComparisonFiles"));
-    let mut plan = if kind == "command" && what_if && op == "set" {
+    let plan = if kind == "command" && what_if && op == "set" {
         command::evaluate_with_files(&props, files.as_ref().unwrap_or(&Value::Null))?
     } else {
         evaluate(kind, &props)?
     };
+    Ok(run_plan(&props, op, what_if, plan, || evaluate(kind, &props))?.to_string())
+}
+
+fn run_plan(props: &Value, op: &str, what_if: bool, mut plan: Plan, recheck: impl FnOnce() -> Result<Plan>) -> Result<Value> {
     let action = if plan.apply.is_none() {
         crate::engine::Action::Nothing
     } else {
@@ -156,7 +159,7 @@ fn run(args: &[String]) -> Result<String> {
             }
             Some(apply) => {
                 apply()?;
-                let again = evaluate(kind, &props)?;
+                let again = recheck()?;
                 if again.apply.is_some() {
                     bail!("still not in the desired state after the change ({})", plan.steps.iter().map(Note::english).collect::<Vec<_>>().join("; "));
                 }
@@ -173,7 +176,30 @@ fn run(args: &[String]) -> Result<String> {
         }
     }
     out.retain(|k, _| !k.starts_with('_') || ["_exist", "_inDesiredState", "_metadata"].contains(&k.as_str()));
-    Ok(Value::Object(out).to_string())
+    Ok(Value::Object(out))
+}
+
+fn valid_program_name(c: &str) -> bool {
+    !c.is_empty() && !c.starts_with('-') && c.bytes().all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+        && c != "." && c != ".."
+}
+
+fn externally_owned(manager: &str, name: &str, path: std::path::PathBuf, op: &str, want: bool, what_if: bool) -> Result<Value> {
+    let note = format!(
+        "{name} was installed outside furnish ({}): uninstall it the way it was installed",
+        path.display()
+    );
+    let mut state = json!({"name": name, "packageManager": manager, "_exist": true, "managedBy": "other", "path": path});
+    if op == "test" {
+        state["_inDesiredState"] = want.into();
+    }
+    if op == "set" && what_if {
+        state["_metadata"] = json!({"whatIf":[note],"furnishChange":false});
+    }
+    if op == "set" && !what_if && !want {
+        bail!("{note}");
+    }
+    Ok(state)
 }
 
 /// Only files read by login shells. A matching basename elsewhere is an ordinary file.
@@ -244,7 +270,6 @@ fn unreadable(mut plan: Plan, file: &Managed, exist: bool) -> Plan {
 
 fn evaluate(kind: &str, props: &Value) -> Result<Plan> {
     match kind {
-        "zero-install" => zero_install::evaluate(props),
         "directory" => directory(props),
         "file" => file(props),
         "block" => block(props),
@@ -269,7 +294,6 @@ pub fn check(kind: &str, props: &Value) -> Result<()> {
     }
     let Some(props) = literal(props) else { return Ok(()) };
     match *name {
-        "zero-install" => zero_install::check(&props),
         "directory" => parse::<DirectoryProps>(&props).and_then(|p| p.check()),
         "file" => parse::<FileProps>(&props).and_then(|p| p.check()),
         "block" => parse::<BlockProps>(&props).and_then(|p| p.check().map(drop)),

@@ -418,6 +418,13 @@ fn command_path(inherited: Option<std::ffi::OsString>) -> Option<std::ffi::OsStr
     std::env::join_paths(dirs).ok()
 }
 
+pub(crate) fn on_command_path(program: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH");
+    #[cfg(unix)]
+    let path = command_path(path);
+    which::which_in(program, path, ".").ok()
+}
+
 /// Run a command (no shell) and collect its output. A program that isn't installed is [`Missing`].
 pub fn run(args: &[String]) -> Result<std::process::Output> {
     let (program, rest) = args.split_first().context("empty command")?;
