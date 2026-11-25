@@ -366,6 +366,7 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.notRun': 'Nicht ausgeführt',
   'plan.note': 'Dies ist eine Vorschau. Auf diesem Computer wurde nichts geändert.',
   'plan.note.zeroInstall.nameInUse': "Der Zero-Install-Starter <code>{name}</code> gehört zu <code>{feed}</code>",
+  'plan.note.package.recordedName': "Installierter Paketname: <code>{name}</code>",
   'plan.note.package.recorded': "Mit dem Paketmanager <code>{manager}</code> installiert",
   'plan.note.package.explicit': "Die App gibt den Paketmanager <code>{manager}</code> vor",
   'plan.note.package.mappedManager': "Die App gibt einen Paketnamen für den verfügbaren Paketmanager <code>{manager}</code> an",

@@ -360,7 +360,10 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
     let mut selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
     if let Some(receipt) = &owner {
-        selection.notes[0] = note("package.recorded", json!({"manager":receipt.manager}));
+        selection.notes = [
+            note("package.recorded", json!({"manager":receipt.manager})),
+            note("package.recordedName", json!({"name":receipt.name})),
+        ];
     }
     let manager = selection.manager.as_deref();
     if let Some(receipt) = &owner && platform::supported_manager(&receipt.manager)

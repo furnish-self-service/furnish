@@ -385,6 +385,7 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Nie uruchomiono',
   'plan.note': 'To jest podgląd. Na tym komputerze nic nie zostało zmienione.',
   'plan.note.zeroInstall.nameInUse': "Program uruchamiający Zero Install <code>{name}</code> należy do <code>{feed}</code>",
+  'plan.note.package.recordedName': "Nazwa zainstalowanego pakietu: <code>{name}</code>",
   'plan.note.package.recorded': "Zainstalowano za pomocą menedżera pakietów <code>{manager}</code>",
   'plan.note.package.explicit': "Aplikacja wskazuje menedżer pakietów <code>{manager}</code>",
   'plan.note.package.mappedManager': "Aplikacja podaje nazwę pakietu dla dostępnego menedżera <code>{manager}</code>",
