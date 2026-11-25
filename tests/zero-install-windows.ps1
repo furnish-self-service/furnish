@@ -43,6 +43,9 @@ exit /b 99
         $output | ConvertFrom-Json
     }
     if ((Resource 'test' $true)._inDesiredState) { throw 'Already installed' }
+    $external = @{ name = 'hello'; feed = 'https://example.test/hello.xml'; packageManager = '0install'; command = 'where.exe' } |
+        ConvertTo-Json -Compress | & $Furnish dsc-resource package get | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $external.managedBy -ne 'other') { throw 'Unregistered command on PATH was not recognized' }
     $null = Resource 'set' $true $true
     if (Test-Path "$temp/cached") { throw 'Preview downloaded an app' }
     if (!(Resource 'set' $true)._exist) { throw 'Install failed' }

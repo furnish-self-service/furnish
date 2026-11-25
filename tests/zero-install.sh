@@ -50,7 +50,7 @@ if printf '%s' "$foreign" | "$furnish" dsc-resource package set >"$work/out" 2>&
     echo 'Overwrote a different feed' >&2; exit 1
 fi
 grep -F 'belongs to' "$work/out"
-printf '%s' '{"packageManager":"0install","feed":"https://example.test/other.xml","name":"furnish-hello","_exist":false}' |
+printf '%s' '{"packageManager":"0install","feed":"https://example.test/other.xml","name":"furnish-hello","command":"furnish-hello","_exist":false}' |
     "$furnish" dsc-resource package set | grep -F '"_exist":false'
 test "$(furnish-hello)" = hello-from-zero-install
 "$furnish" uninstall hello --dry-run | grep -F '0install destroy'

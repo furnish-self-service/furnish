@@ -76,9 +76,11 @@ pub(crate) fn run(props: &Value, name: &str, op: &str, what_if: bool) -> Result<
     let owner = registered_feed(&app);
     if let Some(command) = props["command"].as_str() {
         ensure!(super::valid_program_name(command), "command must be a program name without a directory");
-        let missing = owner.as_ref().is_err_and(|e| e.downcast_ref::<common::Missing>().is_some());
-        if (missing || owner.as_ref().is_ok_and(|feed| feed.as_deref() != Some(app.feed)))
-            && let Some(path) = common::on_command_path(command) {
+        let unregistered = match &owner {
+            Ok(feed) => feed.is_none(),
+            Err(error) => error.downcast_ref::<common::Missing>().is_some(),
+        };
+        if unregistered && let Some(path) = common::on_command_path(command) {
             return super::externally_owned("0install", name, path, op, want, what_if);
         }
     }
