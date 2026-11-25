@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   import type { AppInfo } from './api';
   import { appStatus, store, appName, appDescription, categoryName, externalStatus, requiredUpdate } from './state.svelte';
   import { describeRequired, unmet } from './required';
@@ -40,7 +41,7 @@
   {#if check?.runningApps?.length}
     <p class="meta close-apps">{t('queue.closeApps', {names: check?.runningApps.join(', ')})}</p>
   {/if}
-  {#if !compact}<p class="description">{appDescription(app) || t('common.noDescription')}</p>{/if}
+  {#if !compact}<p class="description"><Description text={appDescription(app) || t('common.noDescription')} collection={app.collection} compact /></p>{/if}
   <footer>
     {#if stateLabel}
       <span class="state" class:installed={status === 'installed' && !needs && !checkFailed}

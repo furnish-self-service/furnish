@@ -283,6 +283,15 @@ const steps = [
   ['catalog lists hyperfine as installable', async () => {
     await waitFor('hyperfine card with Install', () => find(`${card('hyperfine')}${button('Install')}`));
   }],
+  ['app descriptions render Markdown and collection images', async () => {
+    await waitFor('formatted card summary', () => find(`${card('hyperfine')}//strong[.='benchmarking']`));
+    await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
+    const image = "//div[contains(@class,'prose')]//img[@alt='Collection logo']";
+    await waitFor('decoded collection image', async () => (await prop(image, 'naturalWidth')) > 0);
+    await click("//a[normalize-space()='Guide']");
+    await waitFor('guide opened in system browser', () => log('browser.log').includes('https://example.org/guide'));
+    await click(button('← Back'));
+  }],
   ['app Share generates a link for each action', async () => {
     await click(`${card('hyperfine')}//button[@aria-label='Open hyperfine']`);
     await click(button('Share'));
@@ -305,7 +314,7 @@ const steps = [
   ['an app-specific folder option opens the native chooser and preserves inheritance on cancel', async () => {
     await click(`${card('link-target')}//button[@aria-label='Open link-target']`);
     const field = "//input[@data-option='location']";
-    await waitFor('localized folder label', () => find("//label[.//span[normalize-space()='Team documents folder']]"));
+    await waitFor('localized folder label', () => find("//label[normalize-space()='Team documents folder']"));
     if (!(await prop(field, 'placeholder')).includes(workDir)) throw new Error('missing inherited path');
     const display = ':' + ((Number(process.env.DRIVER_PORT || 4444) % 10000) + 100);
     const xdotool = (...args) => inContainer(['env', 'DISPLAY=' + display, 'xdotool', ...args]);

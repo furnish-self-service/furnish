@@ -3,6 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { Required } from './required.ts';
 
+export const descriptionImage = (collection: string, path: string) => invoke<string | null>('description_image', { collection, path });
+export const openDescriptionLink = (url: string) => invoke<void>('open_description_link', { url });
+
 export type Status = 'installed' | 'notInstalled' | 'needsUpdate' | 'unavailable' | 'blocked';
 
 /** A resource that applies on this computer with the current options. */

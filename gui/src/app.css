@@ -215,3 +215,25 @@ button:disabled {
   display: grid;
   gap: 0.5rem;
 }
+
+/* Collection-authored Markdown inherits the surrounding type size and theme. */
+.markdown { overflow-wrap: anywhere; }
+.markdown code { font: .91em var(--font-mono); background: var(--canvas); border-radius: .25em; padding: .08em .25em; }
+.prose { min-width: 0; line-height: 1.55; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose :where(p, ul, ol, blockquote, pre, table) { margin: .65em 0; }
+.prose :where(h1, h2, h3, h4, h5, h6) { font-family: var(--font-display); line-height: 1.25; margin: 1em 0 .4em; color: var(--ink); }
+.prose h1 { font-size: 1.45em; }
+.prose h2 { font-size: 1.25em; }
+.prose :where(h3, h4, h5, h6) { font-size: 1.08em; }
+.prose a[href] { color: var(--accent-ink); text-underline-offset: .15em; }
+.prose :where(ul, ol) { padding-inline-start: 1.5em; }
+.prose blockquote { border-inline-start: 3px solid var(--line-strong); padding-inline-start: 1em; color: var(--ink-soft); }
+.prose pre { padding: .7em 1em; overflow-x: auto; background: var(--canvas); border: 1px solid var(--line); border-radius: var(--field-radius); }
+.prose pre code { padding: 0; background: none; }
+.prose img { max-width: 100%; height: auto; vertical-align: middle; border-radius: var(--field-radius); }
+.prose table { display: block; overflow-x: auto; border-collapse: collapse; }
+.prose :where(th, td) { padding: .3em .6em; border: 1px solid var(--line); }
+.prose th { background: var(--canvas); }
+.prose hr { border: 0; border-top: 1px solid var(--line); }

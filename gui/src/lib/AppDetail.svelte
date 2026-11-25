@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   import ActionLinks from './ActionLinks.svelte';
   import { tick } from 'svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
@@ -148,7 +149,7 @@
   {#if check?.runningApps?.length}
     <p class="meta close-apps">{t('queue.closeApps', {names: check?.runningApps.join(', ')})}</p>
   {/if}
-  <p class="description">{appDescription(app) || t('common.noDescription')}</p>
+  <div class="description"><Description text={appDescription(app) || t('common.noDescription')} collection={app.collection} /></div>
 
   {#if app.held?.chosen}
     <div class="differ" role="status">

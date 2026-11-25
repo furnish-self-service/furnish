@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Description from './Description.svelte';
   // Options (DSC parameters) of an app or a collection. Each one either follows the level above
   // (app → collection → default) or has the user's own value; the admin policy can lock it.
   import FolderInput from './FolderInput.svelte';
@@ -34,10 +35,10 @@
 <ul class="options preference-list">
   {#each options as o (o.name)}
     <li class="row">
-      <label class="text" for="opt-{target}-{o.name}">
-        <span class="label">{optionLabel(collection, o)}</span>
-        {#if optionDescription(collection, o)}<span class="desc">{optionDescription(collection, o)}</span>{/if}
-      </label>
+      <div class="text">
+        <label class="label" for="opt-{target}-{o.name}">{optionLabel(collection, o)}</label>
+        {#if optionDescription(collection, o)}<div class="desc"><Description text={optionDescription(collection, o)} {collection} /></div>{/if}
+      </div>
       {#if o.locked}
         <span class="value">{optionValueLabel(collection, o, o.value)} <span class="org">{t('common.setByOrg')}</span></span>
       {:else if choices(o).length}

@@ -255,7 +255,25 @@ fn items(collection: &str, items: &[catalog::Item]) -> Vec<ItemInfo> {
         .collect()
 }
 
+#[tauri::command]
+async fn description_image(collection: String, path: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let collection = catalog::get(&collection)?;
+        Ok(collection.description_image(&path).as_deref().and_then(|path| image_data_url(path, 8 * 1024 * 1024)))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn open_description_link(url: String) -> CmdResult<()> {
+    blocking(move || furnish::endpoint::open_browser(&url)).await
+}
+
 fn icon_data_url(path: &Path) -> Option<String> {
+    image_data_url(path, 1024 * 1024)
+}
+
+fn image_data_url(path: &Path, limit: u64) -> Option<String> {
     let mime = match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "png" => "image/png",
         "svg" => "image/svg+xml",
@@ -264,13 +282,12 @@ fn icon_data_url(path: &Path) -> Option<String> {
         _ => return None,
     };
     // Size first: the collection decides what the file is, and reading it all could be costly.
-    const LIMIT: u64 = 1024 * 1024;
-    if fs::metadata(path).ok()?.len() > LIMIT {
+    if fs::metadata(path).ok()?.len() > limit {
         return None;
     }
     let mut bytes = Vec::new();
-    fs::File::open(path).ok()?.take(LIMIT + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() as u64 > LIMIT {
+    fs::File::open(path).ok()?.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > limit {
         return None;
     }
     Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
@@ -962,6 +979,8 @@ fn main() -> std::process::ExitCode {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            description_image,
+            open_description_link,
             get_branding,
             endpoints,
             sign_in,

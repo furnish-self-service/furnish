@@ -818,6 +818,28 @@ A dependency can have a DSC `condition`, whether it is required or optional. Fur
 
 If a resource needs a tool that is missing, such as Homebrew on a Mac, the app shows "Needs Homebrew" instead of an Install button. A dependency can install the tool.
 
+## Descriptions
+
+App, kit and option descriptions support Markdown, including in translations. Use a YAML
+literal block (`|`) to preserve paragraphs and lists. For example, in an app definition:
+
+```yaml
+metadata:
+  furnish:
+    description: |
+      Configure **Acme VPN** before connecting.
+
+      1. Open the VPN client.
+      2. Select the profile shown below.
+
+      ![Acme profile selected in the VPN client](images/vpn-profile.png)
+```
+
+Place images relative to the collection root, or use an absolute HTTPS image URL.
+Collection images can be PNG, JPEG, WebP or SVG, up to 8 MiB each. HTTPS links open in
+the system browser. Cards and selection rows show compact formatted text, including image
+alt text. Open an app or kit for the full description. Raw HTML is displayed as text.
+
 ## Icons
 
 Apps set `metadata.furnish.icon`, kits and `collection.yaml` set `icon`: the path of an SVG, PNG, JPEG or WebP file in the repository. The collection's icon appears next to its name on the Collections page, on app cards and on app pages.
