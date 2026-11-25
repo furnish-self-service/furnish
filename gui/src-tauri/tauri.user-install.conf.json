@@ -1,0 +1,8 @@
+{
+  "productName": "Furnish (current user)",
+  "bundle": {
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

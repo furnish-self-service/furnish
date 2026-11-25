@@ -14,19 +14,15 @@ env:
   CHANNEL: ${{ inputs.channel }}
 
 jobs:
-  deploy:
-    name: Deploy the package repository
+  build:
+    name: Build the package repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       version: ${{ steps.publish.outputs.version }}
+      artifact: ${{ steps.publish.outputs.artifact }}
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -68,20 +64,34 @@ jobs:
           test "$version" = "$expected"
           REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "site/$CHANNEL/latest.json" "site/$CHANNEL"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact=github-pages-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
         env:
           BASE_URL: https://furnish-self-service.github.io/furnish
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
-          name: github-pages-${{ github.run_attempt }}
+          name: ${{ steps.publish.outputs.artifact }}
           path: site
+
+  deploy:
+    name: Deploy the package repository
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         with:
-          artifact_name: github-pages-${{ github.run_attempt }}
+          artifact_name: ${{ needs.build.outputs.artifact }}
 
   verify:
     name: Verify the public update feed
-    needs: deploy
+    needs: [build, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     permissions:
@@ -90,7 +100,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify the signed downloads for this deployment
         env:
-          EXPECTED_VERSION: ${{ needs.deploy.outputs.version }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
           REQUIRE: windows-x86_64 darwin-aarch64
         run: |
           : "${EXPECTED_VERSION:?missing deployed version}"
