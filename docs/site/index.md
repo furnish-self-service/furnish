@@ -33,7 +33,8 @@ How new versions of furnish arrive depends on how you installed it:
 
 | Installed with | New versions |
 |---|---|
-| the Windows download | furnish installs them itself |
+| the Windows MSI | furnish installs them itself |
+| the Windows current-user installer or Linux user archive | install the newer release in the same location |
 | the macOS download | furnish installs them itself |
 | Homebrew | `brew upgrade` |
 | the Linux package repository | your system updates |
@@ -63,6 +64,33 @@ git clone https://github.com/furnish-self-service/furnish.git && cd furnish
 cargo install --path .                    # the furnish command
 cd gui && npm ci && npm run bundle        # the desktop app's installers, in target/release/bundle/
 ```
+
+### Install Furnish without administrator rights
+
+Choose the download for your operating system and CPU from the [GitHub release assets](https://github.com/furnish-self-service/furnish/releases). These options run Furnish as your account. On a managed computer, your organization must allow the app to run. A catalog step that changes the system still needs administrator approval or the [IT-managed Furnish service](admins.md#people-without-administrator-rights).
+
+| System | User install |
+|---|---|
+| Windows x64 | Run the file ending in `windows-x86_64_user-setup.exe`. It installs the desktop app, CLI, DSC resources, Git and Git LFS for your account. WebView2 Runtime is needed for the desktop app. Use Installed apps to uninstall. |
+| macOS, Apple silicon | Open the disk image and drag **furnish.app** into **Applications** inside your home folder (`~/Applications`). Create the folder if necessary. The release’s `arm64.app.tar.gz` contains the same app. Run the CLI as `"$HOME/Applications/furnish.app/Contents/MacOS/furnish"`. |
+| Linux x86-64 | Extract the file ending in `linux-x86_64_user.tar.gz` into a folder you own, as shown below. It includes the static CLI, the desktop app, and DSC resources. Git and Git LFS must be available for collections. The desktop app also needs GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator. |
+
+From the folder containing the Linux download, substitute its release version for `VERSION`:
+
+```sh
+mkdir -p "$HOME/.local/opt"
+tar -xzf furnish_VERSION_linux-x86_64_user.tar.gz -C "$HOME/.local/opt"
+"$HOME/.local/opt/furnish/bin/furnish-gui"
+"$HOME/.local/opt/furnish/bin/furnish" --version
+```
+
+Quit Furnish before replacing the Linux folder with a newer release. Removing that folder removes the programs. Collections and settings stay in your user data directory.
+
+### Binary archives for packagers
+
+Each release build produces an archive ending in `_binaries.zip` on Windows or `_binaries.tar.gz` on Linux and macOS. It contains the release CLI, desktop executable, MIT license and third-party notices. The filenames identify the operating system and architecture. Verify the archive against the same release’s `SHA256SUMS`.
+
+When assembling your own package, provide Git and Git LFS for collections and include the DSC resources for apps using Microsoft’s resource types. Furnish looks for the `dsc` directory beside the executables, under `../lib/furnish` on Linux, or under `../Resources` in a macOS app. The user distributions above provide a working reference layout.
 
 ### Switching from alpha to stable
 

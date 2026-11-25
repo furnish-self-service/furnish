@@ -518,6 +518,24 @@ jobs:
             target/jammy/release/bundle/deb/*.deb
             target/jammy/release/bundle/rpm/*.rpm
 
+      - name: Build and verify unprivileged Linux and packager archives
+        run: |
+          version=$(dpkg-deb -f target/jammy/release/bundle/deb/*.deb Version)
+          dpkg-deb -x target/jammy/release/bundle/deb/*.deb "$RUNNER_TEMP/archive-payload"
+          python3 scripts/package-archives.py linux "$RUNNER_TEMP/archive-payload/usr" "$version" archives/
+          mkdir "$RUNNER_TEMP/user-install"
+          tar -xzf archives/*_user.tar.gz -C "$RUNNER_TEMP/user-install"
+          prefix="$RUNNER_TEMP/user-install/furnish"
+          "$prefix/bin/furnish" --version
+          test -x "$prefix/lib/furnish/dsc/filecontent"
+          test -s "$prefix/share/applications/furnish.desktop"
+          test "$(tar -tzf archives/*_binaries.tar.gz | sort)" = "$(printf '%s\n' LICENSE THIRD-PARTY-LICENSES.html furnish furnish-gui | sort)"
+          cmp "$prefix/bin/furnish-gui" <(tar -xOzf archives/*_binaries.tar.gz furnish-gui)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: furnish-archives-linux
+          path: archives/
+
   packages:
     name: install on ${{ matrix.image }}
     needs: linux-packages
@@ -551,7 +569,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir assets
-          for artifact in furnish-linux-packages furnish-linux-x86_64 furnish-desktop-Windows furnish-desktop-macOS furnish-update-signatures; do
+          for artifact in furnish-linux-packages furnish-archives-linux furnish-linux-x86_64 furnish-desktop-Windows furnish-desktop-macOS furnish-update-signatures; do
             gh run download "$GITHUB_RUN_ID" --name "$artifact" --dir "input/$artifact"
           done
           find input -type f -exec cp -t assets -- {} +
@@ -562,6 +580,9 @@ jobs:
           test -s "assets/furnish_${version}_x64.msi"
           test -s "assets/furnish_${version}_amd64.deb"
           test -s "assets/furnish-${version}-1.x86_64.rpm"
+          for archive in "windows-x86_64_user-setup.exe" "windows-x86_64_binaries.zip" "macos-arm64_binaries.tar.gz" "linux-x86_64_binaries.tar.gz" "linux-x86_64_user.tar.gz"; do
+            test -s "assets/furnish_${version}_${archive}"
+          done
           (cd assets && sha256sum * > ../SHA256SUMS)
           mv SHA256SUMS assets/
           if gh release view "v$version" --json isDraft,targetCommitish > release.json; then
@@ -608,12 +629,19 @@ jobs:
           pattern: furnish-desktop-*
           path: desktop
           merge-multiple: true
+      - if: ${{ !inputs.stable }}
+        uses: actions/download-artifact@v4
+        with:
+          name: furnish-archives-linux
+          path: desktop
       - name: Create the pre-release
         if: ${{ !inputs.stable }}
         run: |
           # Asset names with "-" for "+": 0.1.0+alpha.42 is v0.1.0-alpha.42 (see packaging/macos/cask.sh).
           for f in desktop/*; do n=$(echo "$f" | tr + -); [ "$f" = "$n" ] || mv "$f" "$n"; done
           version=$(jq -r .version gui/src-tauri/tauri.conf.json)-alpha.$GITHUB_RUN_NUMBER
+          (cd desktop && sha256sum * > ../SHA256SUMS)
+          mv SHA256SUMS desktop/
           gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" desktop/* --prerelease --target "$GITHUB_SHA" --title "furnish $version" \
             --notes "Alpha build of $GITHUB_SHA. See the [docs](https://furnish-self-service.github.io/docs/#install-furnish)."
           # Keep the newest 10 alpha releases and their tags, and the one the upgrade test starts from.
@@ -726,6 +754,28 @@ jobs:
                      hdiutil detach "$RUNNER_TEMP/dmg" ;;
             Windows) grep -q 'furnish.exe' target/release/wix/x64/main.wxs ;;
           esac
+      - name: Verify the Windows current-user installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = (Get-Item target/release/bundle/nsis/*-setup.exe).FullName
+          $dest = Join-Path $env:LOCALAPPDATA 'Furnish CI User'
+          $result = Start-Process $installer -ArgumentList "/S /D=$dest" -PassThru -Wait
+          if ($result.ExitCode -ne 0) { throw "User install exited with $($result.ExitCode)" }
+          node scripts/verify-desktop-build.mjs "$dest/furnish-gui.exe" "$env:FURNISH_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'User desktop build verification failed' }
+          & "$dest/furnish.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'User CLI failed' }
+          & "$dest/git/cmd/git.exe" lfs version
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path "$dest/dsc/dsc.exe")) { throw 'Missing user install resources' }
+          python scripts/package-archives.py windows "$dest" "$env:FURNISH_VERSION" desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Building the Windows archive failed' }
+          Expand-Archive (Get-Item desktop/*_binaries.zip).FullName "$env:RUNNER_TEMP/packager"
+          node scripts/verify-desktop-build.mjs "$env:RUNNER_TEMP/packager/furnish-gui.exe" "$env:FURNISH_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Archived desktop build verification failed' }
+          $result = Start-Process "$dest/uninstall.exe" -ArgumentList "/S" -PassThru -Wait
+          if ($result.ExitCode -ne 0) { throw 'User uninstall failed' }
       # Windows has no git: furnish uses the MinGit the installer ships, with git-lfs.
       - name: The installed app uses the bundled git when the system has none
         if: runner.os == 'Windows'
@@ -766,8 +816,13 @@ jobs:
           case "$RUNNER_OS" in
             # The .app.tar.gz is what furnish's updater installs (signed in the update-feed job).
             macOS)   cp target/release/bundle/dmg/*.dmg "desktop/furnish_${FURNISH_VERSION}_$(uname -m).dmg"
+                     python3 scripts/package-archives.py macos target/release/bundle/macos/furnish.app "$FURNISH_VERSION" desktop/
+                     mkdir "$RUNNER_TEMP/packager"
+                     tar -xzf desktop/*_binaries.tar.gz -C "$RUNNER_TEMP/packager"
+                     node scripts/verify-desktop-build.mjs "$RUNNER_TEMP/packager/furnish-gui" "$FURNISH_VERSION"
                      COPYFILE_DISABLE=1 tar -czf "desktop/furnish_${FURNISH_VERSION}_$(uname -m).app.tar.gz" -C target/release/bundle/macos furnish.app ;;
-            Windows) cp target/release/bundle/msi/*.msi "desktop/furnish_${FURNISH_VERSION}_x64.msi" ;;
+            Windows) cp target/release/bundle/msi/*.msi "desktop/furnish_${FURNISH_VERSION}_x64.msi"
+                     cp target/release/bundle/nsis/*-setup.exe "desktop/furnish_${FURNISH_VERSION}_windows-x86_64_user-setup.exe" ;;
           esac
       - if: runner.os != 'Linux'
         uses: actions/upload-artifact@v4
