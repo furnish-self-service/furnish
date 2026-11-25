@@ -725,8 +725,17 @@ jobs:
           echo "FURNISH_BUILD_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
       # Release build with installers: deb/rpm/AppImage, dmg/app, msi/nsis, each with the CLI.
-      - run: npm run bundle
+      - if: runner.os != 'Windows'
+        run: npm run bundle
         working-directory: gui
+      # A separate product name keeps NSIS's per-user install directory out of the
+      # registry keys WiX consults when choosing the all-users MSI destination.
+      - if: runner.os == 'Windows'
+        working-directory: gui
+        shell: bash
+        run: |
+          npm run bundle -- --bundles msi
+          npx tauri bundle --bundles nsis --config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.resources.conf.json --config src-tauri/tauri.user-install.conf.json
       - name: Installers include the CLI (the furnish service runs it) and DSC's resources
         shell: bash
         run: |

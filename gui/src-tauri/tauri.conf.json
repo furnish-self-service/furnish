@@ -56,7 +56,6 @@
       }
     },
     "windows": {
-      "nsis": { "installMode": "currentUser" },
       "wix": {
         "fragmentPaths": [
           "wix/service.wxs"
