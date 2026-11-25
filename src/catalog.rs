@@ -530,10 +530,6 @@ pub fn ensure_presets() -> Vec<String> {
         }
         // A collection of that name from another URL (added by the user, or the policy changed
         // the URL): replaced by a fresh copy, never updated from the old URL.
-        // A new personal collection can reuse the name of one that was removed.
-        if !managed && !dir.exists() {
-            crate::package_receipts::forget_collection(&data_dir(), name)?;
-        }
         let replacing = dir.exists();
         match clone(&preset.url, &preset.name, true, true, None) {
             Ok(_) if replacing => eprintln!("note: replaced collection '{}' with your organization's from {}", preset.name, preset.url),
