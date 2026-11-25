@@ -580,9 +580,7 @@ jobs:
           test -s "assets/furnish_${version}_x64.msi"
           test -s "assets/furnish_${version}_amd64.deb"
           test -s "assets/furnish-${version}-1.x86_64.rpm"
-          for archive in "windows-x86_64_user-setup.exe" "windows-x86_64_binaries.zip" "macos-arm64_binaries.tar.gz" "linux-x86_64_binaries.tar.gz" "linux-x86_64_user.tar.gz"; do
-            test -s "assets/furnish_${version}_${archive}"
-          done
+          sh scripts/verify-release-archives.sh assets "$version"
           (cd assets && sha256sum * > ../SHA256SUMS)
           mv SHA256SUMS assets/
           if gh release view "v$version" --json isDraft,targetCommitish > release.json; then
@@ -640,6 +638,7 @@ jobs:
           # Asset names with "-" for "+": 0.1.0+alpha.42 is v0.1.0-alpha.42 (see packaging/macos/cask.sh).
           for f in desktop/*; do n=$(echo "$f" | tr + -); [ "$f" = "$n" ] || mv "$f" "$n"; done
           version=$(jq -r .version gui/src-tauri/tauri.conf.json)-alpha.$GITHUB_RUN_NUMBER
+          sh scripts/verify-release-archives.sh desktop "$version"
           (cd desktop && sha256sum * > ../SHA256SUMS)
           mv SHA256SUMS desktop/
           gh release view "v$version" > /dev/null 2>&1 || gh release create "v$version" desktop/* --prerelease --target "$GITHUB_SHA" --title "furnish $version" \

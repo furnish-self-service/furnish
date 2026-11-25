@@ -76,7 +76,7 @@ On Linux, the tray icon needs libayatana-appindicator, which the furnish package
 
 furnish looks for new versions of itself when it starts and every `updateIntervalMinutes`. With `updateIntervalMinutes` at `0` and `updateOnLaunch` off, it doesn't look, and Check now on the Settings page looks once. It reads one small file per channel: `https://furnish-self-service.github.io/furnish/alpha/latest.json` for alpha builds. Offline, it shows nothing. `selfUpdate` decides what furnish does with a new version:
 
-| `selfUpdate` | Installed from the Windows or macOS download | Installed with Homebrew, a Linux package or Nix |
+| `selfUpdate` | Installed from the Windows MSI or macOS app download | Installed with the Windows user installer, Linux user archive, Homebrew, a Linux package or Nix |
 |---|---|---|
 | `auto` (default) | furnish installs it | furnish shows that it is out and how it arrives |
 | `notify` | furnish shows that it is out; people can install it with Update now | the same as `auto` |
@@ -90,7 +90,7 @@ To keep the version under your control, for example when Intune or an MDM deploy
 
 Only the policy sets `selfUpdate`; a furnish address can't. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store.
 
-Each download is signed with furnish's update key (minisign, the format of Tauri's updater). The app contains the public key. It installs nothing whose signature doesn't match, or whose signature names another version than the file says. A copy of an older version can't pass as a newer one.
+Each download used by the built-in updater is signed with furnish's update key (minisign, the format of Tauri's updater). The app contains the public key. It installs nothing whose signature doesn't match, or whose signature names another version than the file says. A copy of an older version can't pass as a newer one.
 
 On Windows, the update is the .msi, which installs for all users. Windows asks for administrator rights unless the person is an administrator. The installer stops the furnish service, if it is installed, and starts it again afterwards. On macOS, furnish replaces `furnish.app` where it is. If the person can't change that folder, macOS asks for an administrator's password. The app isn't signed with a publisher certificate, so after an update macOS may ask again before furnish reads its sign-ins from the keychain.
 

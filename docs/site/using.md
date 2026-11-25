@@ -115,7 +115,7 @@ When a package manager replaces the desktop while it is open, Furnish offers to 
 
 When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one whenever it looks for app updates. Offline, it shows nothing.
 
-If you installed furnish from the Windows or macOS download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
+If you installed furnish from the all-users Windows MSI or the macOS app download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
 
 Homebrew installations receive new versions with `brew upgrade`, and Linux repository packages receive them with system updates. Nix installations follow the flake input. Update it with `nix flake update` and rebuild your configuration. Furnish skips release-feed checks for these Nix installations.
 
