@@ -4,7 +4,7 @@
   import { tick } from 'svelte';
   import CollectionAvatar from './CollectionAvatar.svelte';
   import type { AppInfo } from './api';
-  import { appStatus, store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, requiredUpdate } from './state.svelte';
+  import { appStatus, store, appName, appDescription, categoryName, uninstall, install, reinstall, defaultDependencies, setAutoUpdate, isLocked, isPending, installPrevious, installCurrent, externalStatus, packageUpdateLabel, requiredUpdate } from './state.svelte';
   import { describeNeeds, describeRequired, unmet } from './required';
   import Options from './Options.svelte';
   import OptionChanges from './OptionChanges.svelte';
@@ -60,7 +60,7 @@
       case 'installed':
         if (check?.external) return externalStatus(check?.external);
         if (needs && required?.installed) return t('app.status.unacceptable', { installed: required.installed, needs });
-        return t('app.status.installed');
+        return packageUpdateLabel(app.key) ?? t('app.status.installed');
       case 'needsUpdate': return securityUpdate ? t('app.status.securityUpdate') : t('app.status.needsUpdate');
       case 'notInstalled': return t('app.status.notInstalled');
       case 'unavailable': return t('app.status.unavailable');
@@ -139,7 +139,9 @@
             disabled={isLocked('noAutoUpdate')}
             onchange={(e) => setAutoUpdate(app.key, e.currentTarget.checked)}
           />
-          {isLocked('noAutoUpdate') ? t('app.autoUpdateLocked') : t('app.autoUpdate')}
+          {check?.zeroInstallUpdates?.only
+            ? t(isLocked('noAutoUpdate') ? 'app.autoCollectionChangesLocked' : 'app.autoCollectionChanges')
+            : t(isLocked('noAutoUpdate') ? 'app.autoUpdateLocked' : 'app.autoUpdate')}
         </label>
         {#if securityUpdate}<p class="auto-note">{t('app.autoUpdateRequired', { collection: app.collection })}</p>{/if}
       {/if}

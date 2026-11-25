@@ -226,6 +226,7 @@ export const listKits = () => invoke<KitInfo[]>('list_kits');
 /** `required`: the collection's required versions aren't met here, or no acceptable version is offered (see required.ts). */
 /** `external`: installed outside furnish (NixOS, Home Manager, another tool); furnish leaves it alone. */
 export interface AppCheck {
+  zeroInstallUpdates?: { packages: string[]; only: boolean };
   runningApps?: string[];
   status: Status;
   reason: string | null;

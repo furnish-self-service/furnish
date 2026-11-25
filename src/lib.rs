@@ -14,6 +14,7 @@ pub mod nixos_apps;
 pub mod options;
 mod nix_profile;
 mod package_names;
+mod package_receipts;
 mod script_managers;
 pub(crate) mod platform;
 pub mod policy;

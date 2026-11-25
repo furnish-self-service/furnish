@@ -71,6 +71,7 @@ mod tests {
             removable: true,
             required: None,
             external: None,
+            zero_install_updates: None,
         };
         write(&path, Some("rev"), &check).unwrap();
         let read = || serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap();

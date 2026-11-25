@@ -180,6 +180,9 @@ export const en = {
   'kit.chooseApps': 'Choose apps',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Installed for you · Updates handled by Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install handles updates for {packages}',
+  'activity.currentState': 'Current status · {state}',
   'app.status.installed': 'Installed and up to date',
   'app.status.needsUpdate': 'Installed, update available',
   'app.status.notInstalled': 'Not installed',
@@ -198,6 +201,8 @@ export const en = {
   'app.declaredNixos': "Your NixOS configuration installs this app, so furnish doesn't remove or update it. To uninstall it, remove its package there.",
   'app.declaredHomeManager': "Your Home Manager configuration installs this app, so furnish doesn't remove or update it. To uninstall it, remove its package there.",
   'app.installedOutside': "This app was installed outside furnish, so furnish doesn't remove or update it. To uninstall it, use what installed it.",
+  'app.autoCollectionChanges': 'Apply collection changes automatically',
+  'app.autoCollectionChangesLocked': 'Apply collection changes automatically (set by your organization)',
   'app.autoUpdate': 'Update automatically',
   'app.autoUpdateLocked': 'Update automatically (set by your organization)',
   'app.status.securityUpdate': 'Installed, security update required',
@@ -360,6 +365,8 @@ export const en = {
   'plan.notRun': 'Not run',
   'plan.note': 'This is a preview. Nothing has been changed on this computer.',
   'plan.note.zeroInstall.nameInUse': "Zero Install launcher <code>{name}</code> belongs to <code>{feed}</code>",
+  'plan.note.package.recordedName': "Installed package name: <code>{name}</code>",
+  'plan.note.package.recorded': "Installed with the <code>{manager}</code> package manager",
   'plan.note.package.explicit': "The app selects the <code>{manager}</code> package manager",
   'plan.note.package.mappedManager': "The app provides a package name for the available <code>{manager}</code> manager",
   'plan.note.package.native': "<code>{manager}</code> is the first available system package manager",

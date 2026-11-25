@@ -183,6 +183,9 @@ export const nl: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Apps kiezen',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Voor jou geïnstalleerd · Zero Install beheert de updates',
+  'app.zeroInstallPackageUpdates': 'Zero Install beheert updates voor {packages}',
+  'activity.currentState': 'Huidige status · {state}',
   'app.status.installed': 'Geïnstalleerd en bijgewerkt',
   'app.status.needsUpdate': 'Geïnstalleerd, update beschikbaar',
   'app.status.notInstalled': 'Niet geïnstalleerd',
@@ -201,6 +204,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'Uw NixOS-configuratie installeert deze app, dus furnish verwijdert of werkt hem niet bij. Verwijder het pakket daar om de app te verwijderen.',
   'app.declaredHomeManager': 'Uw Home Manager-configuratie installeert deze app, dus furnish verwijdert of werkt hem niet bij. Verwijder het pakket daar om de app te verwijderen.',
   'app.installedOutside': 'Deze app is buiten furnish geïnstalleerd, dus furnish verwijdert of werkt hem niet bij. Gebruik om hem te verwijderen het programma waarmee hij is geïnstalleerd.',
+  'app.autoCollectionChanges': 'Wijzigingen in de collectie automatisch toepassen',
+  'app.autoCollectionChangesLocked': 'Wijzigingen in de collectie automatisch toepassen (ingesteld door je organisatie)',
   'app.autoUpdate': 'Automatisch bijwerken',
   'app.autoUpdateLocked': 'Automatisch bijwerken (ingesteld door uw organisatie)',
   'app.status.securityUpdate': 'Geïnstalleerd, beveiligingsupdate vereist',
@@ -363,6 +368,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Niet uitgevoerd',
   'plan.note': 'Dit is een voorbeeld. Er is niets gewijzigd op deze computer.',
   'plan.note.zeroInstall.nameInUse': "De Zero Install-starter <code>{name}</code> hoort bij <code>{feed}</code>",
+  'plan.note.package.recordedName': "Naam van het geïnstalleerde pakket: <code>{name}</code>",
+  'plan.note.package.recorded': "Geïnstalleerd met pakketbeheerder <code>{manager}</code>",
   'plan.note.package.explicit': "De app kiest pakketbeheerder <code>{manager}</code>",
   'plan.note.package.mappedManager': "De app geeft een pakketnaam op voor de beschikbare pakketbeheerder <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> is de eerste beschikbare pakketbeheerder op het systeem",

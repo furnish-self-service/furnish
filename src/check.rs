@@ -527,6 +527,7 @@ mod tests {
             .map(|d| crate::catalog::Item { app: d.clone(), required: true, selected: true, condition: None })
             .collect();
         App {
+            package_scope: String::new(),
             id: id.into(),
             collection: "c".into(),
             name: None,

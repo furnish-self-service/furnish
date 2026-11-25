@@ -128,6 +128,8 @@ struct KitFile {
 
 #[derive(Clone)]
 pub struct App {
+    /// Namespace of the originating collection's package ownership records.
+    pub(crate) package_scope: String,
     pub id: String,
     pub collection: String,
     /// The name to show (`metadata.furnish.name`, e.g. "Google Chrome"); the id stays the file
@@ -611,6 +613,10 @@ fn clone(url: &str, name: &str, managed: bool, replace: bool, requested: Option<
         collection.prepare_checkout(&settings, &target_ref.commit, true)?;
         collection.checkout(&target_ref.commit)?;
         let backup = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
+        // A new personal collection can reuse the name of one that was removed.
+        if !managed && !dir.exists() {
+            crate::package_receipts::forget_collection(&data_dir(), name)?;
+        }
         let replacing = dir.exists();
         if replacing {
             fs::rename(&dir, &backup)?;
@@ -1061,9 +1067,10 @@ impl Collection {
         paths.sort();
         let held: Vec<_> = self.held_dirs().into_iter().map(|d| (crate::versions::all(&d), d)).collect();
         let allowed = allowed_resource_types();
+        let scope = crate::package_receipts::scope(&self.name, self.managed);
         paths
             .iter()
-            .filter_map(|path| match self.load_app_allowing(path, allowed.as_deref()) {
+            .filter_map(|path| match self.load_scoped_app(path, allowed.as_deref(), &scope) {
                 Ok(app) => Some(self.with_hold(app, &held)),
                 Err(err) => {
                     eprintln!("warning: skipping {}: {err:#}", path.display());
@@ -1108,7 +1115,8 @@ impl Collection {
                 self.extract(&held.commit, &relative, &app.installed_values(), &version)?;
             }
             let file = version.join(&relative);
-            Collection { name: self.name.clone(), dir: version, managed: self.managed }.load_app(&file)
+            Collection { name: self.name.clone(), dir: version, managed: self.managed }
+                .load_scoped_app(&file, allowed_resource_types().as_deref(), &app.package_scope)
         };
         match load() {
             Ok(mut earlier) => {
@@ -1399,6 +1407,11 @@ impl Collection {
     /// Load an app whose resources are of furnish's types or, with `allowed` (the admin policy's
     /// `allowedResourceTypes`), only of those.
     pub(crate) fn load_app_allowing(&self, path: &Path, allowed: Option<&[String]>) -> Result<App> {
+        let scope = crate::package_receipts::scope(&self.name, self.managed);
+        self.load_scoped_app(path, allowed, &scope)
+    }
+
+    fn load_scoped_app(&self, path: &Path, allowed: Option<&[String]>, scope: &str) -> Result<App> {
         let yaml: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(path)?)?;
         let mut doc: Value = serde_json::to_value(yaml)?;
         anyhow::ensure!(doc.is_object(), "the app document must be an object");
@@ -1424,12 +1437,13 @@ impl Collection {
             }
             self.check_resources(steps, allowed, &id).context("metadata.furnish.uninstall")?;
         }
-        crate::nixos_apps::stamp_packages(&mut doc, &format!("{}/{id}", self.name))?;
+        crate::nixos_apps::stamp_packages(&mut doc, &format!("{}/{id}", self.name), scope)?;
         let meta = &doc["metadata"]["furnish"];
         if meta.get("requiresNewSession").is_some_and(|v| !v.is_boolean()) {
             bail!("metadata.furnish.requiresNewSession must be true or false");
         }
         Ok(App {
+            package_scope: scope.into(),
             id,
             collection: self.name.clone(),
             name: meta["name"].as_str().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()),
@@ -1732,6 +1746,14 @@ impl App {
     /// Run in the signed-in user's account when the app declares perUser (optionally
     /// through a DSC expression) or an active step selects a per-user package manager.
     pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
+        let mut profiles = vec![data_dir()];
+        if self.managed && crate::service::enabled() {
+            profiles.push(system_dir());
+        }
+        self.per_user_in(values, &profiles)
+    }
+
+    fn per_user_in(&self, values: &serde_json::Map<String, Value>, profiles: &[PathBuf]) -> bool {
         let declared = match &self.doc["metadata"]["furnish"]["perUser"] {
             Value::Bool(b) => *b,
             Value::String(expr) => crate::conditions::holds_for(&self.doc, expr, values).unwrap_or_else(|err| {
@@ -1740,7 +1762,7 @@ impl App {
             }),
             _ => false,
         };
-        declared || crate::package_names::requires_user(&self.doc, values)
+        declared || crate::package_names::requires_user_in(&self.doc, values, profiles)
     }
 
     /// Installed through the furnish service with these values.
@@ -2337,7 +2359,8 @@ impl App {
         let dir = dir.to_path_buf();
         collection.extract(&version.commit, &relative, values, &dir).with_context(|| format!("getting the version from {}", version.date))?;
         let file = dir.join(&relative);
-        let mut earlier = Collection { name: self.collection.clone(), dir, managed: self.managed }.load_app(&file)?;
+        let mut earlier = Collection { name: self.collection.clone(), dir, managed: self.managed }
+            .load_scoped_app(&file, allowed_resource_types().as_deref(), &self.package_scope)?;
         crate::required::carry(&self.current()?.doc, &mut earlier.doc);
         Ok(earlier)
     }
@@ -2375,9 +2398,11 @@ impl App {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
         let _lock = self.collection_handle().lock()?;
+        let state = self.state_dir(&values);
         self.remove_with(&values, report)?;
-        crate::versions::forget(&self.state_dir(&values), &self.key())?;
-        crate::options::forget(&self.state_dir(&values), &self.key())
+        crate::package_receipts::forget(&state, &self.key(), &self.package_scope)?;
+        crate::versions::forget(&state, &self.key())?;
+        crate::options::forget(&state, &self.key())
     }
 
     /// Apply changed options: uninstall with the old values, install with the current ones.
@@ -2390,11 +2415,15 @@ impl App {
     fn reinstall_unreported(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.require_answers()?;
         let (old, new) = (self.installed_values(), self.current_values());
-        if self.remote(&old) && self.remote(&new) {
+        // Removal follows the installed owner. After that receipt is cleared, the
+        // new install selects its own manager and may need a different account.
+        let new_remote = self.managed && crate::service::enabled() && !self.per_user_in(&new, &[]);
+        let old_remote = self.remote(&old);
+        if old_remote && new_remote {
             let install_into = crate::nixos_apps::own_install_into();
             return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new, install_into }, report);
         }
-        if self.remote(&old) || self.remote(&new) {
+        if old_remote || new_remote {
             crate::engine::preflight_install(&self.doc_for(&new))?;
             self.uninstall_unreported(&mut report)?;
             return self.install_values(new, Which::Shown, report);
@@ -2408,8 +2437,10 @@ impl App {
         collection.verify(&collection.head()?)?;
         let old = self.installed_values();
         crate::engine::preflight_install(&self.doc_here(values))?;
+        let state = self.state_dir(&old);
         self.remove_with(&old, &mut report)?;
-        crate::options::forget(&self.state_dir(&old), &self.key())?;
+        crate::package_receipts::forget(&state, &self.key(), &self.package_scope)?;
+        crate::options::forget(&state, &self.key())?;
         self.install_with(values, report)
     }
 }

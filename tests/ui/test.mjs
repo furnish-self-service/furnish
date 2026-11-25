@@ -497,7 +497,7 @@ const steps = [
     });
     await waitFor('the preview explains the selected manager and package name', async () => {
       const plan = await text(panel);
-      return plan.includes('pacman is the first available system package manager') && plan.includes('hyperfine is the default package name');
+      return plan.includes('Installed with the pacman package manager') && plan.includes('Installed package name: hyperfine');
     });
     if (log('pkexec.log') !== elevationBeforePreview) throw new Error('the preview ran an elevated command');
     await click(`${panel}//button[normalize-space()='Install']`);

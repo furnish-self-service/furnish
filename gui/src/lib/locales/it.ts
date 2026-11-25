@@ -183,6 +183,9 @@ export const it: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Scegli app',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Installata per te · Aggiornamenti gestiti da Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install gestisce gli aggiornamenti di {packages}',
+  'activity.currentState': 'Stato attuale · {state}',
   'app.status.installed': 'Installata e aggiornata',
   'app.status.needsUpdate': 'Installata, aggiornamento disponibile',
   'app.status.notInstalled': 'Non installata',
@@ -201,6 +204,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'La tua configurazione NixOS installa questa app, quindi furnish non la rimuove né la aggiorna. Per disinstallarla, togli il suo pacchetto da quella configurazione.',
   'app.declaredHomeManager': 'La tua configurazione Home Manager installa questa app, quindi furnish non la rimuove né la aggiorna. Per disinstallarla, togli il suo pacchetto da quella configurazione.',
   'app.installedOutside': 'Questa app è stata installata fuori da furnish, quindi furnish non la rimuove né la aggiorna. Per disinstallarla, usa lo strumento con cui è stata installata.',
+  'app.autoCollectionChanges': 'Applica automaticamente le modifiche alla raccolta',
+  'app.autoCollectionChangesLocked': 'Applica automaticamente le modifiche alla raccolta (impostato dalla tua organizzazione)',
   'app.autoUpdate': 'Aggiorna automaticamente',
   'app.autoUpdateLocked': 'Aggiorna automaticamente (impostato dalla tua organizzazione)',
   'app.status.securityUpdate': 'Installata, aggiornamento di sicurezza obbligatorio',
@@ -363,6 +368,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Non eseguito',
   'plan.note': "Questa è un'anteprima. Non è stato modificato nulla su questo computer.",
   'plan.note.zeroInstall.nameInUse': "Il comando di avvio Zero Install <code>{name}</code> appartiene a <code>{feed}</code>",
+  'plan.note.package.recordedName': "Nome del pacchetto installato: <code>{name}</code>",
+  'plan.note.package.recorded': "Installato con il gestore di pacchetti <code>{manager}</code>",
   'plan.note.package.explicit': "L’app seleziona il gestore di pacchetti <code>{manager}</code>",
   'plan.note.package.mappedManager': "L’app indica un nome di pacchetto per il gestore disponibile <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> è il primo gestore di pacchetti disponibile sul sistema",

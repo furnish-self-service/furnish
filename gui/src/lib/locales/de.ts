@@ -181,6 +181,9 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'kit.chooseApps': 'Apps auswählen',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Für dich installiert · Updates übernimmt Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install aktualisiert {packages}',
+  'activity.currentState': 'Aktueller Status · {state}',
   'app.status.installed': 'Installiert und auf dem neuesten Stand',
   'app.status.needsUpdate': 'Installiert, Update verfügbar',
   'app.status.notInstalled': 'Nicht installiert',
@@ -199,6 +202,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'app.declaredNixos': 'Ihre NixOS-Konfiguration installiert diese App, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, entfernen Sie ihr Paket dort.',
   'app.declaredHomeManager': 'Ihre Home-Manager-Konfiguration installiert diese App, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, entfernen Sie ihr Paket dort.',
   'app.installedOutside': 'Diese App wurde außerhalb von furnish installiert, daher entfernt oder aktualisiert furnish sie nicht. Um sie zu deinstallieren, nutzen Sie das, womit sie installiert wurde.',
+  'app.autoCollectionChanges': 'Änderungen an der Sammlung automatisch anwenden',
+  'app.autoCollectionChangesLocked': 'Änderungen an der Sammlung automatisch anwenden (von deiner Organisation festgelegt)',
   'app.autoUpdate': 'Automatisch aktualisieren',
   'app.autoUpdateLocked': 'Automatisch aktualisieren (von Ihrer Organisation festgelegt)',
   'app.status.securityUpdate': 'Installiert, Sicherheitsupdate erforderlich',
@@ -361,6 +366,8 @@ export const de: Record<keyof typeof en, string | { one: string; other: string }
   'plan.notRun': 'Nicht ausgeführt',
   'plan.note': 'Dies ist eine Vorschau. Auf diesem Computer wurde nichts geändert.',
   'plan.note.zeroInstall.nameInUse': "Der Zero-Install-Starter <code>{name}</code> gehört zu <code>{feed}</code>",
+  'plan.note.package.recordedName': "Installierter Paketname: <code>{name}</code>",
+  'plan.note.package.recorded': "Mit dem Paketmanager <code>{manager}</code> installiert",
   'plan.note.package.explicit': "Die App gibt den Paketmanager <code>{manager}</code> vor",
   'plan.note.package.mappedManager': "Die App gibt einen Paketnamen für den verfügbaren Paketmanager <code>{manager}</code> an",
   'plan.note.package.native': "<code>{manager}</code> ist der erste verfügbare Paketmanager des Systems",

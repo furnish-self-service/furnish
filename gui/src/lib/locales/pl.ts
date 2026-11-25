@@ -183,6 +183,9 @@ export const pl: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Wybierz aplikacje',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Zainstalowano dla Ciebie · Aktualizacjami zarządza Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install zarządza aktualizacjami pakietów {packages}',
+  'activity.currentState': 'Bieżący stan · {state}',
   'app.status.installed': 'Zainstalowana i aktualna',
   'app.status.needsUpdate': 'Zainstalowana, dostępna aktualizacja',
   'app.status.notInstalled': 'Niezainstalowana',
@@ -201,6 +204,8 @@ export const pl: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'Tę aplikację instaluje konfiguracja NixOS, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, usuń jej pakiet z tej konfiguracji.',
   'app.declaredHomeManager': 'Tę aplikację instaluje konfiguracja Home Manager, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, usuń jej pakiet z tej konfiguracji.',
   'app.installedOutside': 'Tę aplikację zainstalowano poza furnish, więc furnish jej nie usuwa ani nie aktualizuje. Aby ją odinstalować, użyj narzędzia, którym ją zainstalowano.',
+  'app.autoCollectionChanges': 'Automatycznie stosuj zmiany w kolekcji',
+  'app.autoCollectionChangesLocked': 'Automatycznie stosuj zmiany w kolekcji (ustawione przez organizację)',
   'app.autoUpdate': 'Aktualizuj automatycznie',
   'app.autoUpdateLocked': 'Aktualizuj automatycznie (ustawione przez Twoją organizację)',
   'app.status.securityUpdate': 'Zainstalowana, wymagana aktualizacja zabezpieczeń',
@@ -380,6 +385,8 @@ export const pl: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Nie uruchomiono',
   'plan.note': 'To jest podgląd. Na tym komputerze nic nie zostało zmienione.',
   'plan.note.zeroInstall.nameInUse': "Program uruchamiający Zero Install <code>{name}</code> należy do <code>{feed}</code>",
+  'plan.note.package.recordedName': "Nazwa zainstalowanego pakietu: <code>{name}</code>",
+  'plan.note.package.recorded': "Zainstalowano za pomocą menedżera pakietów <code>{manager}</code>",
   'plan.note.package.explicit': "Aplikacja wskazuje menedżer pakietów <code>{manager}</code>",
   'plan.note.package.mappedManager': "Aplikacja podaje nazwę pakietu dla dostępnego menedżera <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> jest pierwszym dostępnym menedżerem pakietów w systemie",

@@ -201,10 +201,26 @@ pub struct Check {
     pub reason: Option<String>,
     /// furnish can uninstall it here (see [`unremovable`]); not if it is [`Check::external`].
     pub removable: bool,
+    /// Installed package feeds whose versions are managed by Zero Install.
+    #[serde(rename = "zeroInstallUpdates", skip_serializing_if = "Option::is_none")]
+    pub zero_install_updates: Option<ZeroInstallUpdates>,
     /// Installed outside furnish (see [`External`]).
     pub external: Option<External>,
     /// A required version isn't met here (see [`crate::required`]).
     pub required: Option<crate::required::Required>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ZeroInstallUpdates {
+    packages: Vec<String>,
+    only: bool,
+}
+
+fn zero_install_updates(tested: &[Tested]) -> Option<ZeroInstallUpdates> {
+    let packages: Vec<_> = tested.iter().filter(|t| t.kind.eq_ignore_ascii_case(crate::catalog::PACKAGE_TYPE)
+        && t.actual["_exist"] == true && t.actual["packageManager"] == "0install" && t.actual["managedBy"] != "other")
+        .filter_map(|t| t.actual["name"].as_str().map(str::to_owned)).collect();
+    (!packages.is_empty()).then(|| ZeroInstallUpdates { only: packages.len() == tested.len(), packages })
 }
 
 /// A package installed outside furnish. furnish shows it as installed and leaves it to what
@@ -548,16 +564,17 @@ pub fn check(doc: &Value) -> Result<Check> {
     let _working = crate::load::activity(); // load-aware updates ignore what furnish causes
     let removable = unremovable_unlocked(doc)?.is_none();
     let Some(doc) = applicable(doc) else {
-        return Ok(Check { running_apps: vec![], status: Status::Unavailable, reason: None, removable, external: None, required: None });
+        return Ok(Check { running_apps: vec![], status: Status::Unavailable, reason: None, removable, external: None, zero_install_updates: None, required: None });
     };
     let mut tested = match test(&doc) {
         Ok(states) => states,
         Err(e) => {
             let reason = missing_resource(&e).or_else(|| missing_reason(&format!("{e:#}"))).ok_or(e)?;
-            return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external: None, required: None });
+            return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external: None, zero_install_updates: None, required: None });
         }
     };
     let external = external(&tested);
+    let zero_install_updates = zero_install_updates(&tested);
     let (mut required, mut blocked) = (None::<crate::required::Required>, None);
     for t in &mut tested {
         let Some(judged) = &t.judged else { continue };
@@ -582,11 +599,11 @@ pub fn check(doc: &Value) -> Result<Check> {
     }
     let removable = removable && external.is_none();
     if let Some(reason) = blocked {
-        return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external, required });
+        return Ok(Check { running_apps: vec![], status: Status::Blocked, reason: Some(reason), removable, external, zero_install_updates, required });
     }
     let running_apps = running_for_changes(&tested)?;
     let states: Vec<(bool, Value)> = tested.into_iter().map(|t| (t.ok, t.actual)).collect();
-    Ok(Check { running_apps, status: classify(&states), reason: None, removable, external, required })
+    Ok(Check { running_apps, status: classify(&states), reason: None, removable, external, zero_install_updates, required })
 }
 
 fn running_for_changes(tested: &[Tested]) -> Result<Vec<String>> {
@@ -1597,6 +1614,18 @@ mod tests {
 
     fn tested(desired: Value, actual: Value) -> Tested {
         Tested { name: "pkg".into(), kind: "Furnish/Package".into(), ok: true, actual, desired, judged: None }
+    }
+
+    #[test]
+    fn only_installed_feed_registrations_delegate_updates() {
+        let state = |managed: &str, manager: &str, installed: bool| tested(json!({}), json!({
+            "name":"tool", "packageManager":manager, "managedBy":managed, "_exist":installed
+        }));
+        assert!(zero_install_updates(&[state("other", "0install", true), state("", "0install", false)]).is_none());
+        assert!(zero_install_updates(&[state("", "0install", true)]).unwrap().only);
+        let mixed = zero_install_updates(&[state("", "0install", true), state("", "apt", true)]).unwrap();
+        assert_eq!(mixed.packages, ["tool"]);
+        assert!(!mixed.only);
     }
 
     #[test]

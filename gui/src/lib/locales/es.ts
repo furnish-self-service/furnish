@@ -183,6 +183,9 @@ export const es: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Elegir aplicaciones',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Instalada para ti · Zero Install gestiona las actualizaciones',
+  'app.zeroInstallPackageUpdates': 'Zero Install gestiona las actualizaciones de {packages}',
+  'activity.currentState': 'Estado actual · {state}',
   'app.status.installed': 'Instalada y actualizada',
   'app.status.needsUpdate': 'Instalada, actualización disponible',
   'app.status.notInstalled': 'No instalada',
@@ -201,6 +204,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'app.declaredNixos': 'Tu configuración de NixOS instala esta app, así que furnish no la quita ni la actualiza. Para desinstalarla, quita su paquete de esa configuración.',
   'app.declaredHomeManager': 'Tu configuración de Home Manager instala esta app, así que furnish no la quita ni la actualiza. Para desinstalarla, quita su paquete de esa configuración.',
   'app.installedOutside': 'Esta app se instaló fuera de furnish, así que furnish no la quita ni la actualiza. Para desinstalarla, usa lo que la instaló.',
+  'app.autoCollectionChanges': 'Aplicar automáticamente los cambios de la colección',
+  'app.autoCollectionChangesLocked': 'Aplicar automáticamente los cambios de la colección (definido por tu organización)',
   'app.autoUpdate': 'Actualizar automáticamente',
   'app.autoUpdateLocked': 'Actualizar automáticamente (establecido por tu organización)',
   'app.status.securityUpdate': 'Instalada, actualización de seguridad obligatoria',
@@ -363,6 +368,8 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'No ejecutado',
   'plan.note': 'Esto es una vista previa. No se ha cambiado nada en este equipo.',
   'plan.note.zeroInstall.nameInUse': "El lanzador de Zero Install <code>{name}</code> pertenece a <code>{feed}</code>",
+  'plan.note.package.recordedName': "Nombre del paquete instalado: <code>{name}</code>",
+  'plan.note.package.recorded': "Instalado con el gestor de paquetes <code>{manager}</code>",
   'plan.note.package.explicit': "La aplicación selecciona el gestor de paquetes <code>{manager}</code>",
   'plan.note.package.mappedManager': "La aplicación indica un nombre de paquete para el gestor disponible <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> es el primer gestor de paquetes disponible en el sistema",

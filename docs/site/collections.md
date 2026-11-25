@@ -164,6 +164,8 @@ Many tools are also installed some other way: with npm or pip, with the vendor's
 
 On macOS, Homebrew packages also recognize vendor-installed apps without a `command`. For example, a package named `viscosity` recognizes `/Applications/Viscosity.app` as installed outside furnish. Furnish checks the app bundles named by the cask in `/Applications` and `~/Applications`. These apps satisfy dependencies and keep their original update and uninstall method.
 
+After a package step succeeds, Furnish remembers its manager and resolved package name for this app and step. For Zero Install it also remembers the feed. Installing a higher-priority manager later keeps status checks, updates, and removal with the original manager. If that manager is missing, restore it to manage the installed package. A successful uninstall clears the record so a fresh install can select a manager again. Existing installations without a record use normal manager selection.
+
 #### Per-user tools with mise
 
 Use mise for tools distributed through its registry or a backend such as GitHub, Aqua or pipx. To require mise on Linux, macOS and Windows, set `packageManager: mise` and use the tool ID as `name`. Supply version requirements in `versions`. For example, this step installs the GitHub release of Kargo in the signed-in user's account.
