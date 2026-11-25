@@ -362,6 +362,7 @@ export const es: Record<keyof typeof en, Entry> = {
   'plan.becomes': 'pasa a',
   'plan.notRun': 'No ejecutado',
   'plan.note': 'Esto es una vista previa. No se ha cambiado nada en este equipo.',
+  'plan.note.zeroInstall.nameInUse': "El lanzador de Zero Install <code>{name}</code> pertenece a <code>{feed}</code>",
   'plan.note.package.explicit': "La aplicación selecciona el gestor de paquetes <code>{manager}</code>",
   'plan.note.package.mappedManager': "La aplicación indica un nombre de paquete para el gestor disponible <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> es el primer gestor de paquetes disponible en el sistema",

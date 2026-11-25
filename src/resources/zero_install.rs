@@ -43,7 +43,7 @@ fn execute(args: &[String]) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn installed(app: &App) -> Result<bool> {
+fn registered_feed(app: &App) -> Result<Option<String>> {
     use std::{env, path::PathBuf};
     // The Unix CLI has no list-apps command. A missing name passed to "show" is
     // interpreted as a selections filename. Look for its registered app directory first.
@@ -58,32 +58,38 @@ fn installed(app: &App) -> Result<bool> {
     for root in roots {
         if root.join("apps").join(&app.name).try_exists()? {
             let root_uri = execute(&argv(&["show", "--root-uri", &app.name]))?;
-            let selected = root_uri.trim();
-            ensure!(selected == app.feed, "Zero Install launcher '{}' belongs to {selected}, expected {}", app.name, app.feed);
-            return Ok(true);
+            return Ok(Some(root_uri.trim().to_owned()));
         }
     }
     // A missing prerequisite must surface as "Needs 0install", including during preview.
     execute(&argv(&["--version"]))?;
-    Ok(false)
+    Ok(None)
 }
 
 #[cfg(windows)]
-fn installed(app: &App) -> Result<bool> {
+fn registered_feed(app: &App) -> Result<Option<String>> {
     let text = execute(&argv(&["list-apps", "--batch", "--xml", &app.feed]))?;
     let doc = roxmltree::Document::parse(text.trim_start_matches('\u{feff}')).context("reading Zero Install application list")?;
     let root = doc.root_element();
     ensure!(root.tag_name().name() == "app-list", "unexpected Zero Install application list");
     // list-apps filters an absolute URI by the exact interface, including its URI normalization.
-    Ok(root.children().any(|node| node.has_tag_name("app")))
+    Ok(root.children().any(|node| node.has_tag_name("app")).then(|| app.feed.clone()))
 }
 
 pub(super) fn evaluate(props: &Value) -> Result<Plan> {
     let app = App::checked(props)?;
     let want = exist(app.exists);
-    let present = installed(&app)?;
+    let owner = registered_feed(&app)?;
+    let present = owner.as_deref() == Some(&app.feed);
     let mut plan = Plan::new(props);
     plan.observe("_exist", Some(present.into()), Some(want.into()));
+    if want && let Some(other) = owner.filter(|_| !present) {
+        plan.observe("_exist", Some(false.into()), Some(false.into()));
+        let conflict = note("zeroInstall.nameInUse", json!({ "name": app.name, "feed": other }));
+        let reason = conflict.english();
+        plan.change(vec![conflict], move || anyhow::bail!("{reason}"));
+        return Ok(plan);
+    }
     if want != present {
         #[cfg(unix)]
         let commands = if want { vec![argv(&["add", "--console", &app.name, &app.feed])] } else { vec![argv(&["destroy", &app.name])] };

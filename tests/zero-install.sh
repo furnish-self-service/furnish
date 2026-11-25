@@ -40,12 +40,15 @@ test ! -e "$HOME/bin/furnish-hello"
 test "$(furnish-hello)" = hello-from-zero-install
 "$furnish" install hello
 test "$(0install show --root-uri furnish-hello)" = "$feed"
-# Another collection must not claim or destroy the launcher by name.
-if printf '%s' '{"feed":"https://example.test/other.xml","name":"furnish-hello","_exist":false}' |
-   "$furnish" dsc-resource zero-install set >"$work/out" 2>&1; then
-    echo 'Removed a different feed' >&2; exit 1
+# Another collection sees its feed as absent. It cannot overwrite or destroy the other launcher.
+foreign='{"feed":"https://example.test/other.xml","name":"furnish-hello"}'
+printf '%s' "$foreign" | "$furnish" dsc-resource zero-install test | grep -F '"_inDesiredState":false'
+if printf '%s' "$foreign" | "$furnish" dsc-resource zero-install set >"$work/out" 2>&1; then
+    echo 'Overwrote a different feed' >&2; exit 1
 fi
 grep -F 'belongs to' "$work/out"
+printf '%s' '{"feed":"https://example.test/other.xml","name":"furnish-hello","_exist":false}' |
+    "$furnish" dsc-resource zero-install set | grep -F '"_exist":false'
 test "$(furnish-hello)" = hello-from-zero-install
 "$furnish" uninstall hello --dry-run | grep -F '0install destroy'
 test "$(furnish-hello)" = hello-from-zero-install

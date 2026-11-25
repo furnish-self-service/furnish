@@ -362,6 +362,7 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.becomes': 'wordt',
   'plan.notRun': 'Niet uitgevoerd',
   'plan.note': 'Dit is een voorbeeld. Er is niets gewijzigd op deze computer.',
+  'plan.note.zeroInstall.nameInUse': "De Zero Install-starter <code>{name}</code> hoort bij <code>{feed}</code>",
   'plan.note.package.explicit': "De app kiest pakketbeheerder <code>{manager}</code>",
   'plan.note.package.mappedManager': "De app geeft een pakketnaam op voor de beschikbare pakketbeheerder <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> is de eerste beschikbare pakketbeheerder op het systeem",
