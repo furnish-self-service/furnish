@@ -1732,6 +1732,14 @@ impl App {
     /// Run in the signed-in user's account when the app declares perUser (optionally
     /// through a DSC expression) or an active step selects a per-user package manager.
     pub fn per_user(&self, values: &serde_json::Map<String, Value>) -> bool {
+        let mut profiles = vec![data_dir()];
+        if self.managed && crate::service::enabled() {
+            profiles.push(system_dir());
+        }
+        self.per_user_in(values, &profiles)
+    }
+
+    fn per_user_in(&self, values: &serde_json::Map<String, Value>, profiles: &[PathBuf]) -> bool {
         let declared = match &self.doc["metadata"]["furnish"]["perUser"] {
             Value::Bool(b) => *b,
             Value::String(expr) => crate::conditions::holds_for(&self.doc, expr, values).unwrap_or_else(|err| {
@@ -1740,8 +1748,7 @@ impl App {
             }),
             _ => false,
         };
-        let shared = (self.managed && crate::service::enabled()).then(system_dir);
-        declared || crate::package_names::requires_user_in(&self.doc, values, shared.as_deref())
+        declared || crate::package_names::requires_user_in(&self.doc, values, profiles)
     }
 
     /// Installed through the furnish service with these values.
@@ -2393,11 +2400,15 @@ impl App {
     fn reinstall_unreported(&self, mut report: impl FnMut(crate::engine::Progress)) -> Result<()> {
         self.require_answers()?;
         let (old, new) = (self.installed_values(), self.current_values());
-        if self.remote(&old) && self.remote(&new) {
+        // Removal follows the installed owner. After that receipt is cleared, the
+        // new install selects its own manager and may need a different account.
+        let new_remote = self.managed && crate::service::enabled() && !self.per_user_in(&new, &[]);
+        let old_remote = self.remote(&old);
+        if old_remote && new_remote {
             let install_into = crate::nixos_apps::own_install_into();
             return crate::service::run(&crate::service::Request::Reinstall { app: self.key(), values: new, install_into }, report);
         }
-        if self.remote(&old) || self.remote(&new) {
+        if old_remote || new_remote {
             crate::engine::preflight_install(&self.doc_for(&new))?;
             self.uninstall_unreported(&mut report)?;
             return self.install_values(new, Which::Shown, report);

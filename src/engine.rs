@@ -1617,6 +1617,18 @@ mod tests {
     }
 
     #[test]
+    fn only_installed_feed_registrations_delegate_updates() {
+        let state = |managed: &str, manager: &str, installed: bool| tested(json!({}), json!({
+            "name":"tool", "packageManager":manager, "managedBy":managed, "_exist":installed
+        }));
+        assert!(zero_install_updates(&[state("other", "0install", true), state("", "0install", false)]).is_none());
+        assert!(zero_install_updates(&[state("", "0install", true)]).unwrap().only);
+        let mixed = zero_install_updates(&[state("", "0install", true), state("", "apt", true)]).unwrap();
+        assert_eq!(mixed.packages, ["tool"]);
+        assert!(!mixed.only);
+    }
+
+    #[test]
     fn only_changed_file_resources_report_matching_running_apps() {
         let exe = std::env::current_exe().unwrap();
         let name = exe.file_name().unwrap().to_str().unwrap();

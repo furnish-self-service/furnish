@@ -366,6 +366,7 @@ export const fr: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Non exécuté',
   'plan.note': 'Ceci est un aperçu. Rien n’a été modifié sur cet ordinateur.',
   'plan.note.zeroInstall.nameInUse': "Le lanceur Zero Install <code>{name}</code> appartient à <code>{feed}</code>",
+  'plan.note.package.recorded': "Installé avec le gestionnaire de paquets <code>{manager}</code>",
   'plan.note.package.explicit': "L’application sélectionne le gestionnaire de paquets <code>{manager}</code>",
   'plan.note.package.mappedManager': "L’application indique un nom de paquet pour le gestionnaire disponible <code>{manager}</code>",
   'plan.note.package.native': "<code>{manager}</code> est le premier gestionnaire de paquets disponible sur le système",

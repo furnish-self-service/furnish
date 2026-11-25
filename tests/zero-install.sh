@@ -27,7 +27,7 @@ metadata: { furnish: { description: Test the real Zero Install client, categorie
 resources:
   - name: Install the greeting
     type: Furnish/Package
-    properties: { name: hello, namesByManager: { 0install: furnish-hello, brew: brew-greeting }, feed: $feed }
+    properties: { name: hello, namesByManager: { 0install: furnish-hello, pacman: native-greeting }, feed: $feed }
 YAML
 git -C "$work/collection" init -q
 git -C "$work/collection" add .
@@ -38,9 +38,19 @@ git -C "$work/collection" -c user.name=fixture -c user.email=fixture@example.tes
 test ! -e "$HOME/bin/furnish-hello"
 "$furnish" install hello
 test "$(furnish-hello)" = hello-from-zero-install
+receipt=$(find "$FURNISH_DATA_DIR/package-owners" -type f -print -quit)
+test -n "$receipt"
+# Without the recorded client the package resource must report the prerequisite,
+# even though the package could otherwise fall back to another manager or command.
+appdir=${receipt%/*}
+key="package:${appdir##*/}:${receipt##*/}"
+mkdir "$work/empty-path"
+printf '{"name":"hello","_metadata":{"furnishNixPackage":{"key":"%s"}}}' "$key" |
+    PATH="$work/empty-path" "$furnish" dsc-resource package test >"$work/missing" 2>&1 && exit 1
+grep -F 'needs package manager 0install' "$work/missing"
 # A newly available, higher-priority manager must never see a status or removal request.
-printf '#!/bin/sh\necho unexpected-brew >> "%s"\nexit 99\n' "$work/wrong-manager" > "$HOME/bin/brew"
-chmod +x "$HOME/bin/brew"
+printf '#!/bin/sh\necho unexpected-pacman >> "%s"\nexit 99\n' "$work/wrong-manager" > "$HOME/bin/pacman"
+chmod +x "$HOME/bin/pacman"
 "$furnish" install hello
 test "$(0install show --root-uri furnish-hello)" = "$feed"
 # A package that another installer provides stays under its original ownership.

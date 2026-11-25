@@ -147,10 +147,10 @@ fn distribution_name<'p, 'd>(props: &'p Value, distribution: &'d Distribution) -
 /// Shared or scripted installations can execute multiple resources as one operation.
 #[cfg(test)]
 pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>) -> bool {
-    requires_user_in(doc, values, None)
+    requires_user_in(doc, values, &[])
 }
 
-pub(crate) fn requires_user_in(doc: &Value, values: &serde_json::Map<String, Value>, shared: Option<&std::path::Path>) -> bool {
+pub(crate) fn requires_user_in(doc: &Value, values: &serde_json::Map<String, Value>, profiles: &[std::path::PathBuf]) -> bool {
     let applied = std::cell::LazyCell::new(|| crate::options::apply(doc, values));
     let managers = std::cell::LazyCell::new(platform::package_managers);
     let distribution = std::cell::LazyCell::new(platform::distribution);
@@ -159,8 +159,8 @@ pub(crate) fn requires_user_in(doc: &Value, values: &serde_json::Map<String, Val
             return false;
         }
         let props = &step["properties"];
-        for profile in std::iter::once(crate::catalog::data_dir()).chain(shared.map(std::path::Path::to_owned)) {
-            match crate::package_receipts::lookup(&profile, &step["metadata"], props) {
+        for profile in profiles {
+            match crate::package_receipts::lookup(profile, &step["metadata"], props) {
                 Ok(Some(owner)) => return platform::per_user_manager(&owner.manager),
                 Ok(None) => {}
                 Err(_) => return true, // A live resource check reports the unreadable receipt.
@@ -327,8 +327,8 @@ fn run_script(id: &str, script: &Script, name: &str, props: &Value, operation: &
 }
 
 /// DSC starts the resource in the directory of its manifest, beside the bundled backend.
-/// A native preview returns one JSON state to annotate. During an actual operation its stdout
-/// and stderr are inherited so package manager progress and errors reach DSC as they occur.
+/// Capture the backend's JSON state for previews and install receipts. Its stderr streams
+/// package manager progress and diagnostics to DSC during the operation.
 pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<String> {
     ensure!(matches!(operation, "get" | "test" | "set"), "unknown package operation '{operation}'");
     ensure!(!what_if || operation == "set", "only set accepts --what-if");
@@ -356,16 +356,19 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
         crate::script_managers::active(props)?
     };
     let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
-    let selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
+    let mut selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
+    if let Some(receipt) = &owner {
+        selection.notes[0] = note("package.recorded", json!({"manager":receipt.manager}));
+    }
     let manager = selection.manager.as_deref();
-    if owner.is_some() && manager.is_some_and(platform::supported_manager)
-        && !platform::package_managers().iter().any(|id| Some(*id) == manager) {
-        return Err(Missing(format!("package manager {}", manager.unwrap())).into());
+    if let Some(receipt) = &owner && platform::supported_manager(&receipt.manager)
+        && !platform::package_managers().contains(&receipt.manager.as_str()) {
+        return Err(Missing(format!("package manager {}", receipt.manager)).into());
     }
     let state = run_selected(props, &selection, &scripts, operation, what_if, delegated)?;
     if operation == "set" && !what_if && owner.is_none() && props["_exist"] != false && state["_exist"] == true
         && !matches!(state["managedBy"].as_str(), Some("other" | "nixos" | "home-manager"))
-        && let Some(id) = manager {
+        && !delegated && let Some(id) = manager {
         crate::package_receipts::remember(declared, id, selection.name)?;
     }
     if what_if { selection.annotate(state) } else { Ok(state.to_string()) }
