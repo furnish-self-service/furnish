@@ -178,11 +178,11 @@ fn explicit_name(name: &str) -> bool {
 }
 
 // A separate namespace from Furnish/NixOS names, including for dotted Nix attributes.
-const PACKAGE: &str = "furnishNixPackage";
+pub(crate) const PACKAGE: &str = "furnishNixPackage";
 /// The client reads the shared profile when the service would perform the installation.
 pub(crate) const SERVICE_PROFILE: &str = "furnishNixServiceProfile";
 
-fn package_key(name: &str) -> bool {
+pub(crate) fn package_key(name: &str) -> bool {
     let mut parts = name.split(':');
     let digest = |s: &str| s.len() == 43 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
     parts.next() == Some("package") && parts.next().is_some_and(digest) && parts.next().is_some_and(digest) && parts.next().is_none()

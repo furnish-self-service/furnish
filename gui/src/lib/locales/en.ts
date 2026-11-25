@@ -180,6 +180,9 @@ export const en = {
   'kit.chooseApps': 'Choose apps',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Installed for you · Updates handled by Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install handles updates for {packages}',
+  'activity.currentState': 'Current status · {state}',
   'app.status.installed': 'Installed and up to date',
   'app.status.needsUpdate': 'Installed, update available',
   'app.status.notInstalled': 'Not installed',

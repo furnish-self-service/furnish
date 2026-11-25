@@ -403,6 +403,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./tests/zero-install-windows.ps1 target/release/furnish.exe
+      - name: Windows Zero Install My Apps lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/zero-install-windows-native.ps1 target/release/furnish.exe
       - run: cargo test --release --locked --test cli_pipe --test installer_external --test closed_app_settings --test host_conditions
       - if: runner.os == 'Windows'
         run: cargo test --release --locked --lib -- package_names::tests resources::mise

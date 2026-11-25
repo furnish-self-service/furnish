@@ -183,6 +183,9 @@ export const pl: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Wybierz aplikacje',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Zainstalowano dla Ciebie · Aktualizacjami zarządza Zero Install',
+  'app.zeroInstallPackageUpdates': 'Zero Install zarządza aktualizacjami pakietów {packages}',
+  'activity.currentState': 'Bieżący stan · {state}',
   'app.status.installed': 'Zainstalowana i aktualna',
   'app.status.needsUpdate': 'Zainstalowana, dostępna aktualizacja',
   'app.status.notInstalled': 'Niezainstalowana',

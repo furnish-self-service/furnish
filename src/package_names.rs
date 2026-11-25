@@ -145,7 +145,12 @@ fn distribution_name<'p, 'd>(props: &'p Value, distribution: &'d Distribution) -
 
 /// Route an app with an active Zero Install or mise step through the signed-in user's account.
 /// Shared or scripted installations can execute multiple resources as one operation.
+#[cfg(test)]
 pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>) -> bool {
+    requires_user_in(doc, values, None)
+}
+
+pub(crate) fn requires_user_in(doc: &Value, values: &serde_json::Map<String, Value>, shared: Option<&std::path::Path>) -> bool {
     let applied = std::cell::LazyCell::new(|| crate::options::apply(doc, values));
     let managers = std::cell::LazyCell::new(platform::package_managers);
     let distribution = std::cell::LazyCell::new(platform::distribution);
@@ -154,6 +159,13 @@ pub(crate) fn requires_user(doc: &Value, values: &serde_json::Map<String, Value>
             return false;
         }
         let props = &step["properties"];
+        for profile in std::iter::once(crate::catalog::data_dir()).chain(shared.map(std::path::Path::to_owned)) {
+            match crate::package_receipts::lookup(&profile, &step["metadata"], props) {
+                Ok(Some(owner)) => return platform::per_user_manager(&owner.manager),
+                Ok(None) => {}
+                Err(_) => return true, // A live resource check reports the unreadable receipt.
+            }
+        }
         let manager = &props["packageManager"];
         if let Some(id) = manager.as_str() {
             return if expression(manager) {
@@ -320,6 +332,16 @@ fn run_script(id: &str, script: &Script, name: &str, props: &Value, operation: &
 pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<String> {
     ensure!(matches!(operation, "get" | "test" | "set"), "unknown package operation '{operation}'");
     ensure!(!what_if || operation == "set", "only set accepts --what-if");
+    let shared = props["_metadata"][crate::nixos_apps::SERVICE_PROFILE] == true;
+    let dir = if shared { crate::catalog::system_dir() } else { crate::catalog::data_dir() };
+    let owner = crate::package_receipts::lookup(&dir, &props["_metadata"], props)?;
+    let mut effective;
+    let declared = props;
+    let props = if let Some(owner) = &owner {
+        effective = props.clone();
+        owner.apply(&mut effective);
+        &effective
+    } else { props };
     validate(props)?;
     let native = if props.get("packageManager").is_none() { platform::package_managers() } else { Vec::new() };
     // Resolving collection scripts checks the installed policy and canonical paths. Do this
@@ -336,9 +358,25 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
     let selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
     let manager = selection.manager.as_deref();
+    if owner.is_some() && manager.is_some_and(platform::supported_manager)
+        && !platform::package_managers().iter().any(|id| Some(*id) == manager) {
+        return Err(Missing(format!("package manager {}", manager.unwrap())).into());
+    }
+    let state = run_selected(props, &selection, &scripts, operation, what_if, delegated)?;
+    if operation == "set" && !what_if && owner.is_none() && props["_exist"] != false && state["_exist"] == true
+        && !matches!(state["managedBy"].as_str(), Some("other" | "nixos" | "home-manager"))
+        && let Some(id) = manager {
+        crate::package_receipts::remember(declared, id, selection.name)?;
+    }
+    if what_if { selection.annotate(state) } else { Ok(state.to_string()) }
+}
+
+fn run_selected(props: &Value, selection: &Selection, scripts: &std::collections::BTreeMap<String, Script>,
+    operation: &str, what_if: bool, delegated: bool) -> Result<Value> {
+    let manager = selection.manager.as_deref();
     if let Some((id, script)) = manager.and_then(|id| scripts.get_key_value(id)) {
         let state = run_script(id, script, selection.name, props, if what_if { "what-if" } else { operation })?;
-        return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
+        return Ok(state);
     }
 
     if let Some(user_manager) = manager.filter(|id| platform::per_user_manager(id)) {
@@ -349,7 +387,7 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
         } else {
             crate::resources::mise::run(props, selection.name, operation, what_if)?
         };
-        return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
+        return Ok(state);
     }
 
     if manager == Some("nix") {
@@ -362,7 +400,7 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
             serde_json::from_slice(&out.stdout).context("reading the installed Nix package state")
         };
         if let Some(state) = crate::nixos_apps::package(props, selection.name, operation, what_if, probe)? {
-            return if what_if { selection.annotate(state) } else { Ok(state.to_string()) };
+            return Ok(state);
         }
     }
     ensure!(!delegated, "the current preset package cannot be installed into the Nix configuration");
@@ -370,19 +408,12 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     backend.arg(operation);
     if what_if {
         backend.arg(if cfg!(windows) { "what-if" } else { "--what-if" });
-        let out = backend.stderr(Stdio::inherit()).output().context("could not run the package preview")?;
-        if !out.status.success() {
-            std::process::exit(out.status.code().unwrap_or(1));
-        }
-        return selection.annotate(serde_json::from_slice(&out.stdout).context("reading the package preview state")?);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        Err(backend.exec()).context("could not run the Unix package backend")
+    let out = backend.stderr(Stdio::inherit()).output().context("could not run the package backend")?;
+    if !out.status.success() {
+        std::process::exit(out.status.code().unwrap_or(1));
     }
-    #[cfg(windows)]
-    std::process::exit(backend.status().context("could not run the Windows package backend")?.code().unwrap_or(1))
+    serde_json::from_slice(&out.stdout).context("reading the package backend state")
 }
 
 fn native_backend(props: &Value, name: &str, manager: Option<&str>) -> Result<Command> {

@@ -29,6 +29,8 @@ function required(v: unknown): v is Required {
 
 function valid(v: unknown): v is AppCheck {
   return object(v) && oneOf(v.status, ['installed', 'notInstalled', 'needsUpdate', 'unavailable', 'blocked'])
+    && (v.zeroInstallUpdates === undefined || (object(v.zeroInstallUpdates) && typeof v.zeroInstallUpdates.only === 'boolean'
+      && Array.isArray(v.zeroInstallUpdates.packages) && v.zeroInstallUpdates.packages.every(name => typeof name === 'string')))
     && nullableString(v.reason) && typeof v.removable === 'boolean'
     && (v.external === null || external(v.external)) && (v.required === null || required(v.required));
 }

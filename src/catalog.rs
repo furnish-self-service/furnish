@@ -1740,7 +1740,8 @@ impl App {
             }),
             _ => false,
         };
-        declared || crate::package_names::requires_user(&self.doc, values)
+        let shared = (self.managed && crate::service::enabled()).then(system_dir);
+        declared || crate::package_names::requires_user_in(&self.doc, values, shared.as_deref())
     }
 
     /// Installed through the furnish service with these values.
@@ -2375,9 +2376,11 @@ impl App {
             return crate::service::run(&crate::service::Request::Uninstall { app: self.key() }, report);
         }
         let _lock = self.collection_handle().lock()?;
+        let state = self.state_dir(&values);
         self.remove_with(&values, report)?;
-        crate::versions::forget(&self.state_dir(&values), &self.key())?;
-        crate::options::forget(&self.state_dir(&values), &self.key())
+        crate::package_receipts::forget(&state, &self.key())?;
+        crate::versions::forget(&state, &self.key())?;
+        crate::options::forget(&state, &self.key())
     }
 
     /// Apply changed options: uninstall with the old values, install with the current ones.
@@ -2408,8 +2411,10 @@ impl App {
         collection.verify(&collection.head()?)?;
         let old = self.installed_values();
         crate::engine::preflight_install(&self.doc_here(values))?;
+        let state = self.state_dir(&old);
         self.remove_with(&old, &mut report)?;
-        crate::options::forget(&self.state_dir(&old), &self.key())?;
+        crate::package_receipts::forget(&state, &self.key())?;
+        crate::options::forget(&state, &self.key())?;
         self.install_with(values, report)
     }
 }

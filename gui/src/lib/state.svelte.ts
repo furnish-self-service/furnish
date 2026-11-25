@@ -1328,6 +1328,12 @@ const externalKeys = {
   other: ['app.status.other', 'app.installedOutside'],
 } as const;
 /** The status of an app installed outside furnish, e.g. "Installed via Home Manager". */
+export function packageUpdateLabel(key: string): string | undefined {
+  const updates = store.checks[key]?.zeroInstallUpdates;
+  if (!updates) return;
+  return updates.only ? t('app.zeroInstallUpdates') : t('app.zeroInstallPackageUpdates', { packages: updates.packages.join(', ') });
+}
+
 export const externalStatus = (e: api.External) => t(externalKeys[e.by][0]);
 /** Why furnish leaves an app installed outside it alone, and how to uninstall it. */
 export const externalNote = (e: api.External) => e.options?.length ? externalStatus(e) : t(externalKeys[e.by][1]);

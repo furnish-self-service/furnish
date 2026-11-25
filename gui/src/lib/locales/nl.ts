@@ -183,6 +183,9 @@ export const nl: Record<keyof typeof en, Entry> = {
   'kit.chooseApps': 'Apps kiezen',
 
   // AppDetail.svelte
+  'app.zeroInstallUpdates': 'Voor jou geïnstalleerd · Zero Install beheert de updates',
+  'app.zeroInstallPackageUpdates': 'Zero Install beheert updates voor {packages}',
+  'activity.currentState': 'Huidige status · {state}',
   'app.status.installed': 'Geïnstalleerd en bijgewerkt',
   'app.status.needsUpdate': 'Geïnstalleerd, update beschikbaar',
   'app.status.notInstalled': 'Niet geïnstalleerd',

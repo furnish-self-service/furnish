@@ -1,6 +1,7 @@
 <script lang="ts">
   import { type RecentActivity, stepProgress } from './activity-history';
   import { formatDuration, lang, t } from './i18n.svelte';
+  import { packageUpdateLabel } from './state.svelte';
   import Plan from './Plan.svelte';
   import PlanStep from './PlanStep.svelte';
   import RunLog from './RunLog.svelte';
@@ -11,6 +12,9 @@
   let expanded = $state(false);
 </script>
 
+{#if packageUpdateLabel(summary.key)}
+  <div class="meta">{t('activity.currentState', { state: packageUpdateLabel(summary.key) ?? '' })}</div>
+{/if}
 {#if summary.collectionRevision}
   <div class="meta">{t('collections.revision')} <code title={summary.collectionRevision}>{summary.collectionRevision.slice(0, 12)}</code></div>
 {/if}

@@ -22,7 +22,7 @@
     kitStatus,
     kitDescription,
     categoryName,
-    externalStatus,
+    externalStatus, packageUpdateLabel,
     requiredUpdate,
   } from './state.svelte';
   import RemovalImpact from './RemovalImpact.svelte';
@@ -61,7 +61,7 @@
     if (unavailable(key)) return t('common.notForThisSystem');
     if (requiredUpdate(key)) return t('common.securityUpdate');
     if (appStatus(key) === 'needsUpdate') return t('common.updateAvailable');
-    if (isInstalled(key)) return t('common.installed');
+    if (isInstalled(key)) return packageUpdateLabel(key) ?? t('common.installed');
     if (item.required) return t('common.required');
     return '';
   }
@@ -157,6 +157,7 @@
               <AppIcon {app} size={36} />
               <span class="text">
                 <span class="name">{appName(app)}</span>
+                {#if packageUpdateLabel(item.key)}<span class="desc">{packageUpdateLabel(item.key)}</span>{/if}
                 {#if check?.external}
                   <span class="desc">{externalStatus(check?.external)}</span>
                 {:else if check?.removable === false}

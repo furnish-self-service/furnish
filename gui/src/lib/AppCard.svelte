@@ -1,7 +1,7 @@
 <script lang="ts">
   import Description from './Description.svelte';
   import type { AppInfo } from './api';
-  import { appStatus, store, appName, appDescription, categoryName, externalStatus, requiredUpdate } from './state.svelte';
+  import { appStatus, store, appName, appDescription, categoryName, externalStatus, packageUpdateLabel, requiredUpdate } from './state.svelte';
   import { describeRequired, unmet } from './required';
   import AppIcon from './AppIcon.svelte';
   import ActionButton from './ActionButton.svelte';
@@ -18,7 +18,7 @@
   const stateLabel = $derived.by(() => {
     if (needs && (status === 'installed' || status === 'blocked')) return needs;
     switch (status) {
-      case 'installed': return check?.external ? externalStatus(check?.external) : t('common.installed');
+      case 'installed': return check?.external ? externalStatus(check?.external) : (packageUpdateLabel(app.key) ?? t('common.installed'));
       case 'needsUpdate': return requiredUpdate(app.key) ? t('common.securityUpdate') : t('common.updateAvailable');
       case 'notInstalled': return checkFailed ? t('app.status.notInstalled') : null;
       case 'unavailable': return checkFailed ? t('app.status.unavailable') : null;
