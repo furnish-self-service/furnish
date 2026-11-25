@@ -35,9 +35,10 @@ if "%*"=="remove --batch https://example.test/hello.xml" (
 exit /b 99
 '@ | Set-Content -Encoding ascii "$temp/0install.cmd"
     function Resource($Operation, $Want, $Preview = $false) {
-        $flags = if ($Preview) { @('--what-if') } else { @() }
+        $arguments = @('dsc-resource', 'zero-install', $Operation)
+        if ($Preview) { $arguments += '--what-if' }
         $output = @{ name = 'hello'; feed = 'https://example.test/hello.xml'; _exist = $Want } |
-            ConvertTo-Json -Compress | & $Furnish dsc-resource zero-install $Operation @flags
+            ConvertTo-Json -Compress | & $Furnish @arguments
         if ($LASTEXITCODE -ne 0) { throw "$Operation failed with $LASTEXITCODE" }
         $output | ConvertFrom-Json
     }
