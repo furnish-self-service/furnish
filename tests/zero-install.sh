@@ -43,9 +43,10 @@ test -n "$receipt"
 # Without the recorded client the package resource must report the prerequisite,
 # even though the package could otherwise fall back to another manager or command.
 appdir=${receipt%/*}
+collectiondir=${appdir%/*}
 key="package:${appdir##*/}:${receipt##*/}"
 mkdir "$work/empty-path"
-printf '{"name":"hello","_metadata":{"furnishNixPackage":{"key":"%s"}}}' "$key" |
+printf '{"name":"hello","_metadata":{"furnishNixPackage":{"key":"%s","collection":"%s"}}}' "$key" "${collectiondir##*/}" |
     PATH="$work/empty-path" "$furnish" dsc-resource package test >"$work/missing" 2>&1 && exit 1
 grep -F 'needs package manager 0install' "$work/missing"
 # A newly available, higher-priority manager must never see a status or removal request.

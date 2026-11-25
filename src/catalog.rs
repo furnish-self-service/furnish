@@ -530,6 +530,10 @@ pub fn ensure_presets() -> Vec<String> {
         }
         // A collection of that name from another URL (added by the user, or the policy changed
         // the URL): replaced by a fresh copy, never updated from the old URL.
+        // A new personal collection can reuse the name of one that was removed.
+        if !managed && !dir.exists() {
+            crate::package_receipts::forget_collection(&data_dir(), name)?;
+        }
         let replacing = dir.exists();
         match clone(&preset.url, &preset.name, true, true, None) {
             Ok(_) if replacing => eprintln!("note: replaced collection '{}' with your organization's from {}", preset.name, preset.url),
@@ -611,6 +615,10 @@ fn clone(url: &str, name: &str, managed: bool, replace: bool, requested: Option<
         collection.prepare_checkout(&settings, &target_ref.commit, true)?;
         collection.checkout(&target_ref.commit)?;
         let backup = collections_dir().join(".partial").join(format!("{name}+{}", unique()));
+        // A new personal collection can reuse the name of one that was removed.
+        if !managed && !dir.exists() {
+            crate::package_receipts::forget_collection(&data_dir(), name)?;
+        }
         let replacing = dir.exists();
         if replacing {
             fs::rename(&dir, &backup)?;
@@ -1424,7 +1432,8 @@ impl Collection {
             }
             self.check_resources(steps, allowed, &id).context("metadata.furnish.uninstall")?;
         }
-        crate::nixos_apps::stamp_packages(&mut doc, &format!("{}/{id}", self.name))?;
+        let scope = crate::package_receipts::scope(&self.name, self.managed);
+        crate::nixos_apps::stamp_packages(&mut doc, &format!("{}/{id}", self.name), &scope)?;
         let meta = &doc["metadata"]["furnish"];
         if meta.get("requiresNewSession").is_some_and(|v| !v.is_boolean()) {
             bail!("metadata.furnish.requiresNewSession must be true or false");
@@ -2385,7 +2394,7 @@ impl App {
         let _lock = self.collection_handle().lock()?;
         let state = self.state_dir(&values);
         self.remove_with(&values, report)?;
-        crate::package_receipts::forget(&state, &self.key())?;
+        crate::package_receipts::forget(&state, &self.key(), &crate::package_receipts::scope(&self.collection, self.managed))?;
         crate::versions::forget(&state, &self.key())?;
         crate::options::forget(&state, &self.key())
     }
@@ -2424,7 +2433,7 @@ impl App {
         crate::engine::preflight_install(&self.doc_here(values))?;
         let state = self.state_dir(&old);
         self.remove_with(&old, &mut report)?;
-        crate::package_receipts::forget(&state, &self.key())?;
+        crate::package_receipts::forget(&state, &self.key(), &crate::package_receipts::scope(&self.collection, self.managed))?;
         crate::options::forget(&state, &self.key())?;
         self.install_with(values, report)
     }

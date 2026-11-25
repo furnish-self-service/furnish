@@ -163,7 +163,9 @@ pub(crate) fn requires_user_in(doc: &Value, values: &serde_json::Map<String, Val
             match crate::package_receipts::lookup(profile, &step["metadata"], props) {
                 Ok(Some(owner)) => return platform::per_user_manager(&owner.manager),
                 Ok(None) => {}
-                Err(_) => return true, // A live resource check reports the unreadable receipt.
+                // Keep an unreadable receipt in its own account. The resource then reports
+                // the read error instead of selecting a manager from the other profile.
+                Err(_) => return *profile == crate::catalog::data_dir() && !crate::service::in_service(),
             }
         }
         let manager = &props["packageManager"];

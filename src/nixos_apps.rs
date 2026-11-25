@@ -190,13 +190,13 @@ pub(crate) fn package_key(name: &str) -> bool {
 
 /// Stamp stable ownership before the engine splits the document or strips version constraints.
 /// The collection may name a step, but cannot provide another app's ownership key.
-pub(crate) fn stamp_packages(doc: &mut Value, app: &str) -> Result<()> {
+pub(crate) fn stamp_packages(doc: &mut Value, app: &str, collection_hash: &str) -> Result<()> {
     fn component(bytes: &[u8]) -> String {
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
         use sha2::{Digest, Sha256};
         URL_SAFE_NO_PAD.encode(Sha256::digest(bytes))
     }
-    fn visit(resources: &mut Value, app_hash: &str, path: &mut Vec<String>, removal: bool) -> Result<()> {
+    fn visit(resources: &mut Value, collection_hash: &str, app_hash: &str, path: &mut Vec<String>, removal: bool) -> Result<()> {
         for r in resources.as_array_mut().into_iter().flatten() {
             path.push(r["name"].as_str().unwrap_or_default().to_owned());
             if r["type"] == crate::catalog::PACKAGE_TYPE {
@@ -207,20 +207,20 @@ pub(crate) fn stamp_packages(doc: &mut Value, app: &str) -> Result<()> {
                     metadata.remove(PACKAGE_FINGERPRINT);
                 }
                 r["metadata"][PACKAGE] = json!({
-                    "key": format!("package:{app_hash}:{step_hash}"), "versioned": versioned, "removal": removal
+                    "key": format!("package:{app_hash}:{step_hash}"), "collection": collection_hash, "versioned": versioned, "removal": removal
                 });
             }
             if let Some(children) = r["properties"].get_mut("resources") {
-                visit(children, app_hash, path, removal)?;
+                visit(children, collection_hash, app_hash, path, removal)?;
             }
             path.pop();
         }
         Ok(())
     }
     let hash = component(app.as_bytes());
-    visit(&mut doc["resources"], &hash, &mut Vec::new(), false)?;
+    visit(&mut doc["resources"], collection_hash, &hash, &mut Vec::new(), false)?;
     if let Some(steps) = doc.pointer_mut("/metadata/furnish/uninstall") {
-        visit(steps, &hash, &mut Vec::new(), true)?;
+        visit(steps, collection_hash, &hash, &mut Vec::new(), true)?;
     }
     Ok(())
 }
@@ -1574,7 +1574,7 @@ mod tests {
             "metadata":{"furnish":{"uninstall":[{"type":"Furnish/Package","name":"first","properties":{"name":"a","_exist":false}}]}}
         });
         let stamp = |mut doc: Value, app| {
-            stamp_packages(&mut doc, app).unwrap();
+            stamp_packages(&mut doc, app, &crate::catalog::cache_key(b"fixture")).unwrap();
             doc
         };
         let a = stamp(raw.clone(), "org/one");

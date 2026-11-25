@@ -18,8 +18,25 @@ pub(crate) struct Receipt {
     feed: Option<String>,
 }
 
-fn directory(profile: &Path, app_hash: &str) -> PathBuf {
-    profile.join("package-owners").join(app_hash)
+pub(crate) fn scope(collection: &str, managed: bool) -> String {
+    if managed {
+        let origin = crate::policy::load()
+            .collections
+            .preset
+            .into_iter()
+            .find(|p| p.name == collection)
+            .map(|p| p.url);
+        return catalog::cache_key(
+            serde_json::json!([collection, origin])
+                .to_string()
+                .as_bytes(),
+        );
+    }
+    catalog::cache_key(collection.as_bytes())
+}
+
+fn collection_dir(profile: &Path, collection_hash: &str) -> PathBuf {
+    profile.join("package-owners").join(collection_hash)
 }
 
 fn path(profile: &Path, metadata: &Value) -> Option<PathBuf> {
@@ -27,7 +44,15 @@ fn path(profile: &Path, metadata: &Value) -> Option<PathBuf> {
         .as_str()
         .filter(|s| nixos_apps::package_key(s))?;
     let (app, step) = key.strip_prefix("package:")?.split_once(':')?;
-    Some(directory(profile, app).join(step))
+    let collection = metadata[nixos_apps::PACKAGE]["collection"].as_str()?;
+    if collection.len() != 43
+        || !collection
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+    {
+        return None;
+    }
+    Some(collection_dir(profile, collection).join(app).join(step))
 }
 
 fn read(path: &Path) -> Result<Option<Receipt>> {
@@ -125,8 +150,19 @@ pub(crate) fn remember(props: &Value, manager: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn forget(profile: &Path, app: &str) -> Result<()> {
-    match fs::remove_dir_all(directory(profile, &catalog::cache_key(app.as_bytes()))) {
+pub(crate) fn forget(profile: &Path, app: &str, scope: &str) -> Result<()> {
+    remove_directory(&collection_dir(profile, scope).join(catalog::cache_key(app.as_bytes())))
+}
+
+pub(crate) fn forget_collection(profile: &Path, collection: &str) -> Result<()> {
+    remove_directory(&collection_dir(
+        profile,
+        &catalog::cache_key(collection.as_bytes()),
+    ))
+}
+
+fn remove_directory(path: &Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
         Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
         _ => Ok(()),
     }
