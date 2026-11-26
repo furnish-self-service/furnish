@@ -7,34 +7,59 @@
   const impact = $derived(removalImpact(keys, removingKit));
   const names = (values: string[]) => new Intl.ListFormat(lang()).format(values);
   const selection = $derived(JSON.stringify(keys));
-  let targets = $state<{ key: string; code: 'package.removal' | 'package.unrecordedRemoval'; manager: string; name: string }[]>([]);
-  let failure = $state('');
+  type Target = { key: string; code: 'package.removal' | 'package.unrecordedRemoval'; manager: string; name: string };
+  let targets = $state<Target[]>([]);
+  let failures = $state<{ key: string; reason: string }[]>([]);
+  let preparing = $state(false);
   let attempt = $state(0);
   $effect(() => {
     const apps: string[] = JSON.parse(selection);
     attempt;
     let current = true;
     ready = false;
-    failure = '';
+    failures = [];
     targets = [];
-    Promise.all(apps.map(async key => {
-      const steps = await plan(key, true);
-      return steps.flatMap(step => (step.selectionNotes ?? []).flatMap(({ code, params }) =>
-        (code === 'package.removal' || code === 'package.unrecordedRemoval')
-        ? [{ key, code: code as 'package.removal' | 'package.unrecordedRemoval', manager: String(params.manager), name: String(params.name) }] : []));
-    })).then(results => {
-      if (current) { targets = results.flat(); ready = true; }
-    }).catch(error => { if (current) failure = String(error); });
+    preparing = true;
+    async function load() {
+      const found: Target[] = [];
+      const errors = [];
+      for (const key of apps) {
+        if (!current) return;
+        try {
+          const steps = await plan(key, true);
+          for (const step of steps) {
+            for (const { code, params } of step.selectionNotes ?? []) {
+              if (code === 'package.removal' || code === 'package.unrecordedRemoval') {
+                found.push({ key, code, manager: String(params.manager), name: String(params.name) });
+              }
+            }
+          }
+        } catch (error) {
+          errors.push({ key, reason: String(error) });
+        }
+      }
+      if (current) {
+        targets = found;
+        failures = errors;
+        preparing = false;
+        ready = !errors.length;
+      }
+    }
+    void load();
     return () => { current = false; ready = false; };
   });
 </script>
 
-{#if failure}
-  <p role="alert">{t('plan.previewError', { error: terror(failure) })}</p>
+{#each failures as failure}
+  <p role="alert">{failure.key} · {t('plan.previewError', { error: terror(failure.reason) })}</p>
+{/each}
+{#if failures.length}
   <button class="secondary" onclick={() => attempt++}>{t('status.retry')}</button>
-{:else if !ready}
+{/if}
+{#if preparing}
   <p role="status">{t('plan.preparing')}</p>
-{:else if targets.length}
+{/if}
+{#if targets.length}
   <ul>
     {#each targets as target}
       <li>{#if keys.length > 1}<strong>{target.key}</strong> · {/if}{t(`plan.note.${target.code}`, { manager: target.manager, name: target.name })}</li>
