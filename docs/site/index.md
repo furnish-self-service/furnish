@@ -12,16 +12,16 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-Choose a channel and install scope. Stable is the published v0.1.0 release. Alpha builds include newer changes and the Windows and Linux current-user installers.
+Choose a channel and install scope. Stable provides tested releases. Alpha builds include upcoming changes.
 
 | System | Install scope | Channel and download | How to update |
 |---|---|---|---|
 | Windows x64, MSI | All users | [Stable MSI](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi) · [Alpha MSI](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) | Furnish updates itself on the installed channel |
-| Windows x64, current-user installer | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `windows-x86_64_user-setup.exe` | Run the newer current-user installer |
+| Windows x64, current-user installer | Your account | [Stable current-user installer](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_windows-x86_64_user-setup.exe) · [Alpha release assets](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue) | Run the newer current-user installer |
 | macOS, Apple silicon | Your account in `~/Applications` or all users in `/Applications` | [Stable disk image](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) · [Alpha disk image](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) | Furnish updates itself on the installed channel |
 | macOS, Apple silicon, Homebrew | Homebrew installation | Stable cask (command below) | `brew upgrade` |
 | Linux x86-64, DEB or RPM | System-wide | Stable repository (commands below) or its `/alpha/` counterpart | System package manager |
-| Linux x86-64, user archive | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `linux-x86_64_user.tar.gz` | Quit Furnish and replace the extracted folder |
+| Linux x86-64, user archive | Your account | [Stable user archive](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_linux-x86_64_user.tar.gz) · [Alpha release assets](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue) | Quit Furnish and replace the extracted folder |
 | NixOS | NixOS configuration | Pin the stable tag or follow the main branch | Update the flake lock and rebuild |
 
 On Intel Macs and other platforms, see the source build instructions below.
@@ -90,7 +90,7 @@ When assembling your own package, provide Git and Git LFS for collections and in
 
 In builds with an **Update channel** selector, open **Settings → About** and choose **Stable** or **Alpha**. For earlier Windows MSI and macOS disk-image installations, install the download from the desired channel once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
 
-For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.1.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.1.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
+For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.2.0+alpha.N` above `0.2.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.2.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.2.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
 
 ### Terminal command for the macOS download
 

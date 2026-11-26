@@ -3,6 +3,7 @@
 
   // Newest first. Use the first released build containing each change.
   const releases = [
+    { version: '0.2.0', notes: ['changelog.userInstalls', 'changelog.channels', 'changelog.collectionTools'] },
     { version: '0.1.0-alpha.399', notes: ['changelog.cache', 'changelog.kits', 'changelog.checks'] },
     { version: '0.1.0-alpha.394', notes: ['changelog.flakes'] },
     { version: '0.1.0-alpha.393', notes: ['changelog.folders', 'changelog.documents'] },

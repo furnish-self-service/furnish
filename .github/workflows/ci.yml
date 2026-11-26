@@ -109,7 +109,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get install -y -qq musl-tools && rustup target add x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Build and verify the standalone release CLI
+        run: |
+          export FURNISH_VERSION="$(sh scripts/ci-version.sh)"
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          test "$(target/x86_64-unknown-linux-musl/release/furnish --version)" = "furnish $FURNISH_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-x86_64
@@ -515,8 +519,7 @@ jobs:
           restore-keys: jammy-
       - run: |
           # Builds of main are alpha releases: 0.1.0+alpha.<run>, rising with every run.
-          version=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
+          version=$(sh scripts/ci-version.sh)
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
             -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" -e FURNISH_BUILD_REVISION="$GITHUB_SHA" \
@@ -536,7 +539,7 @@ jobs:
           mkdir "$RUNNER_TEMP/user-install"
           tar -xzf archives/*_user.tar.gz -C "$RUNNER_TEMP/user-install"
           prefix="$RUNNER_TEMP/user-install/furnish"
-          "$prefix/bin/furnish" --version
+          test "$("$prefix/bin/furnish" --version)" = "furnish $version"
           test -x "$prefix/lib/furnish/dsc/filecontent"
           test -s "$prefix/share/applications/furnish.desktop"
           test "$(tar -tzf archives/*_binaries.tar.gz | sort)" = "$(printf '%s\n' LICENSE THIRD-PARTY-LICENSES.html furnish furnish-gui | sort)"
@@ -729,8 +732,7 @@ jobs:
       # Builds of main are alpha releases (see linux-packages); the bundled CLI reports it.
       - shell: bash
         run: |
-          v=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
+          v=$(sh scripts/ci-version.sh)
           echo "FURNISH_VERSION=$v" >> "$GITHUB_ENV"
           echo "FURNISH_BUILD_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
@@ -824,8 +826,9 @@ jobs:
           # Preserve the package's executable. Run a distinct alpha build and replace it
           # on disk during the desktop test, as an external package manager would.
           cp target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
-          FURNISH_VERSION=0.1.0+alpha.999999 cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
-          FURNISH_TEST_RUNNING_VERSION=0.1.0-alpha.999999 tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
+          base=${FURNISH_VERSION%%+*}
+          FURNISH_VERSION="$base+alpha.999999" cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
+          FURNISH_TEST_RUNNING_VERSION="$base-alpha.999999" tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
       - name: Upgrade a populated stable desktop to the candidate
         if: runner.os == 'Linux'
         run: |
