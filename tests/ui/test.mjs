@@ -1345,9 +1345,12 @@ async function stableUpgrade() {
   await click("//button[contains(@class,'danger') and normalize-space()='Uninstall']");
   await click(nav('Discover'));
   await waitFor('remaining kit count after removal', () => kitCount(1));
-  if (!log('pkexec.log').slice(before.length).includes('pacman -R --noconfirm hyperfine') ||
-      existsSync(`${workDir}/pkgs/hyperfine`) || !existsSync(`${workDir}/pkgs/toolbox-b`))
-    throw new Error('removal did not match the preview');
+  await waitFor('confirmed package removed by pacman', () => !existsSync(`${workDir}/pkgs/hyperfine`));
+  const removals = log('removals.log').trim();
+  if (removals !== 'pacman -R --noconfirm hyperfine') throw new Error(`unexpected removal commands: ${removals}`);
+  for (const pkg of ['toolbox-a', 'toolbox-b']) {
+    if (!existsSync(`${workDir}/pkgs/${pkg}`)) throw new Error(`uninstall also removed ${pkg}`);
+  }
 }
 
 let failed = false;

@@ -60,7 +60,8 @@ case "\$1" in
       [ "\$p" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
       if [ -f "$work/pkgs/\$p.new" ]; then mv "$work/pkgs/\$p.new" "$work/pkgs/\$p"; else echo 1.0 > "$work/pkgs/\$p"; fi
       if [ "\$p" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
-  -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
+  -R) echo "pacman \$*" >> "$work/removals.log"
+      rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
 esac
 SH
 # Installing the "brew" package provides this fake Homebrew (see the homebrew fixture app).
