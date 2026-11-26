@@ -1,7 +1,7 @@
 //! Offline target matrix for collection authors. Each app gets its own DSC parameter context.
 use super::{Graph, Item, SYSTEMS, error};
 use crate::{
-    catalog::{App, PACKAGE_TYPE},
+    catalog::{App, Kit, PACKAGE_TYPE, default_selection},
     conditions::{TargetContext, host_facts},
     nixos_apps::NixSetup,
     options::Declaration,
@@ -41,6 +41,8 @@ struct Profile {
     app_options: BTreeMap<String, Map<String, Value>>,
     #[serde(default)]
     expect: BTreeMap<String, Expected>,
+    #[serde(default)]
+    expect_kits: BTreeMap<String, ExpectedKit>,
 }
 
 #[derive(Default, Deserialize)]
@@ -50,6 +52,14 @@ struct Expected {
     skipped: Option<Vec<String>>,
     dependencies: Option<Vec<String>>,
     packages: Option<BTreeMap<String, Package>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExpectedKit {
+    applicable: Option<Vec<String>>,
+    required: Option<Vec<String>>,
+    default_selection: Option<Vec<String>>,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -67,7 +77,7 @@ struct Decisions {
     packages: BTreeMap<String, Package>,
 }
 
-pub(super) fn check(path: &Path, dir: &Path, apps: &[App], shared: &BTreeMap<String, Declaration>) -> Result<Vec<Item>> {
+pub(super) fn check(path: &Path, dir: &Path, apps: &[App], kits: &[Kit], shared: &BTreeMap<String, Declaration>) -> Result<Vec<Item>> {
     let matrix: Matrix = serde_yaml::from_slice(&fs::read(path).with_context(|| format!("reading {}", path.display()))?)
         .with_context(|| format!("invalid profiles file {}", path.display()))?;
     ensure!(!matrix.profiles.is_empty(), "no target profiles in {}", path.display());
@@ -76,7 +86,7 @@ pub(super) fn check(path: &Path, dir: &Path, apps: &[App], shared: &BTreeMap<Str
     for (name, profile) in &matrix.profiles {
         let mut item =
             Item { name: name.clone(), kind: "profile", findings: Vec::new(), details: Vec::new(), systems: Vec::new(), coverage: None };
-        if let Err(err) = profile.check(apps, shared, &scripts, &mut item) {
+        if let Err(err) = profile.check(apps, kits, shared, &scripts, &mut item) {
             item.findings.push(error(format!("{err:#}")));
         }
         results.push(item);
@@ -88,6 +98,7 @@ impl Profile {
     fn check(
         &self,
         apps: &[App],
+        kits: &[Kit],
         shared: &BTreeMap<String, Declaration>,
         scripts: &BTreeMap<String, crate::script_managers::Definition>,
         item: &mut Item,
@@ -142,6 +153,7 @@ impl Profile {
         let host = host_facts(&distro, &managers, self.nix_setup, self.documents_dir.as_deref());
         let target = Target { family, host, distro, native, scripted, nix_setup: self.nix_setup };
         let mut graph = Graph::default();
+        let mut applicable = HashSet::new();
         for app in apps {
             let checked = (|| {
                 let mut input: Map<_, _> =
@@ -159,6 +171,7 @@ impl Profile {
                 }
                 let mut ctx = TargetContext::new(family, self.architecture.as_deref(), target.host.clone(), &app.doc, input)?;
                 let actual = target.decisions(app, &mut ctx, &mut item.details)?;
+                if !actual.steps.is_empty() { applicable.insert(app.id.as_str()); }
                 for dep in &actual.dependencies {
                     graph.edge(&app.id, dep, Some(true));
                 }
@@ -175,6 +188,17 @@ impl Profile {
             if let Some(finding) = graph.finding(&app.id, &item.name, false) {
                 item.findings.push(finding);
             }
+        }
+        for (id, expected) in &self.expect_kits {
+            let kit = kits.iter().find(|kit| kit.id == *id).with_context(|| format!("unknown kit '{id}'"))?;
+            let members: Vec<_> = kit.items.iter().filter(|member| applicable.contains(member.app.as_str())).collect();
+            let names: Vec<_> = members.iter().map(|m| m.app.clone()).collect();
+            let required: Vec<_> = members.iter().filter(|m| m.required).map(|m| m.app.clone()).collect();
+            let selected: Vec<_> = default_selection(&kit.items).into_iter().filter(|name| applicable.contains(name)).map(str::to_owned).collect();
+            item.details.push(format!("kit {id}: applicable {names:?}, required {required:?}, default selection {selected:?}"));
+            compare(&expected.applicable, &names, "applicable", id, item);
+            compare(&expected.required, &required, "required", id, item);
+            compare(&expected.default_selection, &selected, "defaultSelection", id, item);
         }
         Ok(())
     }
@@ -257,15 +281,16 @@ impl Target<'_> {
     }
 }
 
+fn compare<T: PartialEq + Serialize>(expected: &Option<T>, actual: &T, field: &str, app: &str, item: &mut Item) {
+    if let Some(expected) = expected
+        && expected != actual
+    {
+        item.findings.push(error(format!("{app}: expected {field} {}, got {}", json!(expected), json!(actual))));
+    }
+}
+
 impl Expected {
     fn compare(&self, result: &Decisions, app: &str, item: &mut Item) {
-        fn compare<T: PartialEq + Serialize>(expected: &Option<T>, actual: &T, field: &str, app: &str, item: &mut Item) {
-            if let Some(expected) = expected
-                && expected != actual
-            {
-                item.findings.push(error(format!("{app}: expected {field} {}, got {}", json!(expected), json!(actual))));
-            }
-        }
         compare(&self.steps, &result.steps, "steps", app, item);
         compare(&self.skipped, &result.skipped, "skipped", app, item);
         compare(&self.dependencies, &result.dependencies, "dependencies", app, item);

@@ -133,10 +133,6 @@ pub fn collection_with_profiles(dir: &Path, profiles: Option<&Path>) -> Result<V
         }
     }
     items.extend(checked);
-    if let Some(path) = profiles {
-        items.extend(profiles::check(path, &dir, &apps, &shared)?);
-    }
-
     for path in files(&dir.join("kits"), ".yaml") {
         let id = file_stem(&path, ".yaml");
         let mut item = Item { name: id, kind: "kit", findings: vec![], details: vec![], systems: vec![], coverage: None };
@@ -160,6 +156,10 @@ pub fn collection_with_profiles(dir: &Path, profiles: Option<&Path>) -> Result<V
         }
         items.push(item);
     }
+    if let Some(path) = profiles {
+        items.extend(profiles::check(path, &dir, &apps, &kits, &shared)?);
+    }
+
     items.extend(check_locales(&dir, &apps, &kits, &shared));
     Ok(items)
 }

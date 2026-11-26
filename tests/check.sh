@@ -166,4 +166,20 @@ echo "$out" | grep -qE '^[0-9]+ apps, 3 kits: [0-9]+ errors, [0-9]+ warnings?$' 
 
 out=$("$furnish" check "$fixture" 2>&1) && ok "the test fixture passes" || bad "fixture: $out"
 echo "$out" | grep -q '^✓ hyperfine .*Windows: hyperfine (winget)' && ok "shows what runs on each system" || bad "no per-system preview: $out"
+cat > "$tmp/kit-profile.yaml" <<'YAML'
+profiles:
+  kit-test:
+    family: Linux
+    packageManagers: [pacman]
+    expectKits:
+      starter:
+        applicable: []
+        required: []
+        defaultSelection: []
+YAML
+out=$("$furnish" check "$fixture" --profiles "$tmp/kit-profile.yaml" 2>&1)
+[ $? -ne 0 ] && ok "incorrect kit expectations fail" || bad "kit assertion unexpectedly passed"
+for field in applicable required defaultSelection; do
+    expect kit-test "starter: expected $field []"
+done
 exit $failed

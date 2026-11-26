@@ -16,6 +16,11 @@ profiles:
         dependencies: []
         steps: ["cli-tool (system-wide)"]
         skipped: ["cli-tool (just for you)"]
+    expectKits:
+      starter:
+        applicable: [hyperfine, toolbox, extras]
+        required: [hyperfine]
+        defaultSelection: [hyperfine, toolbox]
   windows-office:
     family: Windows
     packageManagers: [winget]
