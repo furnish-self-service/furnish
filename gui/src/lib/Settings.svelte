@@ -580,7 +580,7 @@
             {#if !updatesItself}
               <button class="link" onclick={() => api.openDescriptionLink('https://furnish-self-service.github.io/#install').catch(e => toast('error', String(e)))}>{t('settings.channelGuide')}</button>
             {/if}
-            {@render locked('updateChannel')}
+            {#if updatesItself}{@render locked('updateChannel')}{/if}
           </div>
           <span class="control value" id="update-channel">
             {#if updatesItself}

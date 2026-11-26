@@ -240,7 +240,7 @@ docker exec --user 0 "$container" install /fixtures/running /usr/local/bin/furni
 # A second launch path lets the suite exercise a Nix-managed installation of the same binary.
 docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
-case "$(docker exec "$container" /fixtures/running --build-info)" in *'"version":"'*alpha*|*'"version": "'*alpha*) offer=99.0.0-alpha.1 ;; *) offer=99.0.0 ;; esac
+case "$(docker exec "$container" /fixtures/running --build-info)" in *alpha*) offer=99.0.0-alpha.1 ;; *) offer=99.0.0 ;; esac
 printf '{"version":"%s","notes":"https://example.org/notes","platforms":{}}\n' "$offer" > "$work/feed/latest.json"
 # Sampling every second makes the load window 30 s instead of 5 minutes.
 if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${3:-${2:+replace}}"; then

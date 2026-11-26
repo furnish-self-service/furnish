@@ -108,7 +108,7 @@ pub async fn check(app: AppHandle, download: bool) -> Status {
 pub async fn set_channel(app: &AppHandle, value: serde_json::Value) -> Result<(), String> {
     let mut pending = PENDING.lock().await;
     if !method().updates_itself() { return Err("This installation follows its package source.".into()); }
-    furnish::settings::set("updateChannel", value).map_err(|e| format!("{e:#}"))?;
+    crate::blocking(move || furnish::settings::set("updateChannel", value)).await?;
     *pending = None;
     change(app, |s| *s = fresh());
     Ok(())
@@ -127,7 +127,8 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
         Ok(Ok(available)) => available,
         result => {
             eprintln!("note: no update check: {result:?}");
-            // Offline: an already verified download is still usable.
+            // Offline: an already verified download from the active channel is still usable.
+            if fresh().channel != before.channel { *pending = None; }
             return change(app, |s| s.state = if pending.is_some() { State::Ready } else { State::Idle });
         }
     };

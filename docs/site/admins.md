@@ -88,7 +88,7 @@ To keep the version under your control, for example when Intune or an MDM deploy
 { "settings": { "selfUpdate": { "value": "off", "locked": true } } }
 ```
 
-Only the policy sets `selfUpdate`; a furnish address can't. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store.
+Administrators can set or lock `updateChannel` to `"stable"` or `"alpha"` on self-updating installations. When unset, the installed build chooses the feed. Package-managed installations follow their package source. The local policy can lock `selfUpdate` and `updateChannel` independently. A furnish address cannot set either. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store.
 
 Each download used by the built-in updater is signed with furnish's update key (minisign, the format of Tauri's updater). The app contains the public key. It installs nothing whose signature doesn't match, or whose signature names another version than the file says. A copy of an older version can't pass as a newer one.
 

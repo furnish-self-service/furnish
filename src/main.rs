@@ -720,7 +720,7 @@ fn run(command: Command) -> Result<()> {
             }
             println!("reports:           {}{}{}", s.reporting, if s.report_hostname { ", with this computer's name" } else { "" }, org("reporting"));
             println!("fallback language: {} (for collection texts not in the app's language){}", s.fallback_language, org("fallbackLanguage"));
-            print_self_update(s.self_update, s.update_channel, org("selfUpdate"));
+            print_self_update(s.self_update, s.update_channel, org("selfUpdate"), org("updateChannel"));
             let general: furnish::settings::CollectionSettings = serde_json::from_value(serde_json::to_value(&s)?)?;
             print_collection_settings(&general, &effective.locked);
             if !s.collections.is_empty() {
@@ -748,7 +748,7 @@ fn arrives(method: furnish::selfupdate::Method) -> &'static str {
 }
 
 /// furnish's version, how it was installed, whether a newer one is out (unless that is off).
-fn print_self_update(mode: furnish::settings::SelfUpdate, preference: Option<furnish::selfupdate::Channel>, org: &str) {
+fn print_self_update(mode: furnish::settings::SelfUpdate, preference: Option<furnish::selfupdate::Channel>, org: &str, channel_org: &str) {
     use furnish::{selfupdate, settings::SelfUpdate};
     let method = selfupdate::detect();
     let current = selfupdate::current();
@@ -760,7 +760,7 @@ fn print_self_update(mode: furnish::settings::SelfUpdate, preference: Option<fur
     let installed = if method == selfupdate::Method::Other { String::new() } else { format!(", installed with {}", method.name()) };
     println!("furnish:           {current}{installed}");
     let channel = selfupdate::Channel::selected(current, method, preference);
-    println!("update channel:    {}", channel.name());
+    println!("update channel:    {}{}", channel.name(), if method.updates_itself() { channel_org } else { "" });
     if method == selfupdate::Method::Nix {
         println!("new versions:      {}", arrives(method));
         return;
@@ -774,7 +774,7 @@ fn print_self_update(mode: furnish::settings::SelfUpdate, preference: Option<fur
             Some(available) => println!("                   furnish {} is available. {}", available.version, arrives(method)),
             None => println!("                   this is the newest version"),
         },
-        Ok(None) => println!("                   no stable release has been published"),
+        Ok(None) => println!("                   no {} release has been published", channel.name()),
         Err(err) => println!("                   couldn't check for a newer version: {err:#}"),
     }
 }
@@ -796,7 +796,7 @@ fn self_update(check_only: bool) -> Result<()> {
     }
     let channel = selfupdate::Channel::selected(current, method, effective.settings.update_channel);
     let Some(manifest) = selfupdate::published(channel)? else {
-        println!("No stable release of furnish has been published.");
+        println!("No {} release of furnish has been published.", channel.name());
         return Ok(());
     };
     let Some(available) = manifest.available(current, channel) else {
