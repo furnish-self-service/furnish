@@ -69,16 +69,29 @@ Choose the download for your operating system and CPU from the [GitHub release a
 | macOS, Apple silicon | Open the disk image and drag **furnish.app** into **Applications** inside your home folder (`~/Applications`). Create the folder if necessary. The release’s `arm64.app.tar.gz` contains the same app. Run the CLI as `"$HOME/Applications/furnish.app/Contents/MacOS/furnish"`. |
 | Linux x86-64 | Extract the file ending in `linux-x86_64_user.tar.gz` into a folder you own, as shown below. It includes the static CLI, the desktop app, and DSC resources. Git and Git LFS must be available for collections. The desktop app also needs GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator. |
 
-From the folder containing the Linux download, substitute its release version for `VERSION`:
+### Linux current-user install
+
+On an x86-64 machine, download the [stable Linux user archive](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_linux-x86_64_user.tar.gz). From the directory containing the download, extract it into your home directory:
 
 ```sh
 mkdir -p "$HOME/.local/opt"
-tar -xzf furnish_VERSION_linux-x86_64_user.tar.gz -C "$HOME/.local/opt"
-"$HOME/.local/opt/furnish/bin/furnish-gui"
-"$HOME/.local/opt/furnish/bin/furnish" --version
+tar -xzf furnish_0.2.0_linux-x86_64_user.tar.gz -C "$HOME/.local/opt"
 ```
 
-Quit Furnish before replacing the Linux folder with a newer release. Removing that folder removes the programs. Collections and settings stay in your user data directory.
+Start the desktop with `"$HOME/.local/opt/furnish/bin/furnish-gui"`, or run the CLI directly:
+
+```sh
+"$HOME/.local/opt/furnish/bin/furnish" --version
+"$HOME/.local/opt/furnish/bin/furnish" --help
+```
+
+The desktop uses GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator from the host. If it reports a missing shared library on a managed machine, use the static CLI or ask IT to provide the desktop libraries. Both interfaces use Git and Git LFS for collections. Check that `git --version` and `git lfs version` work in your account.
+
+The archive runs with your account’s permissions. Steps that write to your home directory can run as you. Installing a system package still needs administrator approval or the [IT-managed Furnish service](admins.md#people-without-administrator-rights).
+
+**Update:** Quit Furnish, including its tray process. Move the extracted `$HOME/.local/opt/furnish` folder aside and extract the new user archive into the same parent directory. Launch the new copy and check its version before deleting the old folder.
+
+**Remove:** Quit Furnish and delete the extracted `furnish` folder. Your settings and collections stay in the data directory shown under **Settings → About → Data folder**.
 
 ### Binary archives for packagers
 
