@@ -105,7 +105,7 @@ jobs:
       - name: Verify the signed downloads for this deployment
         env:
           EXPECTED_VERSION: ${{ needs.build.outputs.version }}
-          REQUIRE: windows-x86_64 darwin-aarch64
+          REQUIRE: windows-x86_64 darwin-aarch64 linux-x86_64
         run: |
           : "${EXPECTED_VERSION:?missing deployed version}"
           node --version

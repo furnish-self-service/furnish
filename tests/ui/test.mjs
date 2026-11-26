@@ -170,6 +170,9 @@ const steps = [
     await waitFor('Activity retains the login instruction', async () => (await text(history)).includes(after));
     await click(nav('Discover'));
   }],
+  ['collections update on launch: an app added upstream appears', async () => {
+    await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
+  }],
   ['previewing a collection update shows how an installed app would change', async () => {
     const git = (dir, ...args) => {
       const result = spawnSync('git', ['-C', `${workDir}/${dir}`, ...args], { encoding: 'utf8' });
@@ -193,7 +196,9 @@ const steps = [
       const preview = await text(panel);
       const expected = [current.slice(0, 7), candidate.slice(0, 7), 'release-preview-test', 'session-notice',
         'Recorded as installed', 'Removed · Session setup', 'Added · Refreshed session setup'];
-      return expected.every((part) => preview.includes(part));
+      const missing = expected.filter(part => !preview.includes(part));
+      if (missing.length) throw new Error(`missing ${missing.join(', ')} in ${preview}`);
+      return true;
     }, 30000);
     if (git(checkout, 'rev-parse', 'HEAD') !== current || log('session-notice') !== 'ready') {
       throw new Error('opening a preview changed the checkout or its installed app');
@@ -303,9 +308,6 @@ const steps = [
     }
     await click(`${dialog}${button('Close')}`);
     await click(button('← Back'));
-  }],
-  ['collections update on launch: an app added upstream appears', async () => {
-    await waitFor('fresh app from the update', () => find(card('fresh')), 30000);
   }],
   ['apps without a resource for this OS are hidden', async () => {
     // Cards show until the app's status arrives; "not available here" then hides it.
