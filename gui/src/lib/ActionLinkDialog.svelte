@@ -5,6 +5,7 @@
   import { appByKey, appName, checkStatus, defaultUninstall, dismissLink, eligibleForLink, isInstalled, isVerified, kitName,
     runActionLink, store } from './state.svelte';
   import { t, terror } from './i18n.svelte';
+  let removalReady = $state(false);
   import RemovalImpact from './RemovalImpact.svelte';
 
   let { link, url }: { link: ActionLink; url: string } = $props();
@@ -65,7 +66,7 @@
   }
 
   async function confirm() {
-    if (!ready || submitting || !collection) return;
+    if (!ready || submitting || !collection || (link.action === 'uninstall' && !removalReady)) return;
     const request = store.link;
     const shown = apps;
     const source = collection;
@@ -114,14 +115,14 @@
     {#if link.action !== 'uninstall' && apps.some(a => a.dependencies.length)}
       <p>{t('link.dependencies')}</p>
     {/if}
-    {#if link.action === 'uninstall'}<RemovalImpact keys={apps.map(a => a.key)} removingKit={kit?.key} />{/if}
+    {#if link.action === 'uninstall'}<RemovalImpact bind:ready={removalReady} keys={apps.map(a => a.key)} removingKit={kit?.key} />{/if}
   {/if}
   <div class="actions">
     <button class="secondary" onclick={() => dismissLink(url)}>{t('common.cancel')}</button>
     {#if !store.loading && !store.catalogError && (missingCollection || !collection) && store.usersCanAddCollections}
       <button class="secondary" onclick={collections}>{t('catalog.addCollection')}</button>
     {/if}
-    {#if ready}<button class={link.action === 'uninstall' ? 'danger' : 'primary'} disabled={submitting}
+    {#if ready}<button class={link.action === 'uninstall' ? 'danger' : 'primary'} disabled={submitting || (link.action === 'uninstall' && !removalReady)}
       onclick={confirm}>{needsAnswers ? t('action.answerFirst') : t(`common.${link.action}`)}</button>{/if}
   </div>
 </dialog>

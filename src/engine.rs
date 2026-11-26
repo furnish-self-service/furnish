@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use dsc_lib::{
-    configure::{Configurator, config_doc::ExecutionKind, config_result::ResourceTestResult},
+    configure::{Configurator, config_doc::ExecutionKind, config_result::{ResourceSetResult, ResourceTestResult}},
     discovery::{Discovery, command_discovery::ImportedManifest, discovery_trait::{DiscoveryFilter, DiscoveryKind}},
     dscerror::DscError,
     dscresources::{
@@ -964,6 +964,20 @@ pub struct SelectionNote {
     pub english: String,
 }
 
+fn collect_package_notes(result: &ResourceSetResult, notes: &mut Vec<SelectionNote>) -> Result<()> {
+    if result.resource_type.to_string().eq_ignore_ascii_case("Furnish/Package")
+        && let Some(value) = result.metadata.as_ref().and_then(|m| m.other.get("furnishPackageSelection"))
+    {
+        notes.extend(serde_json::from_value::<Vec<SelectionNote>>(value.clone())?);
+    }
+    if let SetResult::Group(children) = &result.result {
+        for child in children {
+            collect_package_notes(child, notes)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     pub property: String,
@@ -1382,11 +1396,8 @@ fn preview(doc: &Value, files: &mut PreviewFiles) -> Result<Step> {
     };
     let other = r.metadata.as_ref().map(|m| &m.other);
     let notes = other.and_then(|m| m.get("furnish")).and_then(Value::as_array).cloned().unwrap_or_default();
-    let selection_notes = if kind.eq_ignore_ascii_case("Furnish/Package") {
-        other.and_then(|m| m.get("furnishPackageSelection")).cloned().map(serde_json::from_value).transpose()?.unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let mut selection_notes = Vec::new();
+    collect_package_notes(r, &mut selection_notes)?;
     let action = reported_action(&kind, r.metadata.as_ref(), &before, &after, false);
     if let Some(path) = after["path"].as_str().and_then(comparison_path)
         && (action != Action::Nothing || files.contains_key(&path))

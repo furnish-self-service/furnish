@@ -826,6 +826,15 @@ jobs:
           cp target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
           FURNISH_VERSION=0.1.0+alpha.999999 cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
           FURNISH_TEST_RUNNING_VERSION=0.1.0-alpha.999999 tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
+      - name: Upgrade a populated stable desktop to the candidate
+        if: runner.os == 'Linux'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fLsS --retry 4 -o stable.deb https://github.com/furnish-self-service/furnish/releases/download/v0.1.0/furnish_0.1.0_amd64.deb
+          echo 'd25298477409fd656ac9558bf61daaf93c81e5f3b8fa65ab2dc8a96ea290bdf3  stable.deb' | sha256sum -c -
+          dpkg-deb -x stable.deb stable
+          cd "$GITHUB_WORKSPACE"
+          tests/ui/run.sh "$RUNNER_TEMP/stable/usr/bin/furnish-gui" "$RUNNER_TEMP/installed-furnish-gui" upgrade
       # The macOS and Windows installers for the package repository (publish-alpha), by version.
       - if: runner.os != 'Linux'
         shell: bash

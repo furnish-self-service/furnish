@@ -25,6 +25,7 @@
     externalStatus, packageUpdateLabel,
     requiredUpdate,
   } from './state.svelte';
+  let removalReady = $state(false);
   import RemovalImpact from './RemovalImpact.svelte';
   import AppIcon from './AppIcon.svelte';
   import { t } from './i18n.svelte';
@@ -173,9 +174,9 @@
         {/if}
       {/each}
     </ul>
-    <RemovalImpact keys={toRemove} removingKit={kit.key} />
+    <RemovalImpact bind:ready={removalReady} keys={toRemove} removingKit={kit.key} />
     <div class="actions">
-      <button class="danger big" disabled={!toRemove.length} onclick={uninstall}>
+      <button class="danger big" disabled={!toRemove.length || !removalReady} onclick={uninstall}>
         {toRemove.length ? t('kit.uninstall', { n: toRemove.length }) : t('kit.nothingSelected')}
       </button>
       <button class="secondary big" onclick={() => ((removing = false), (removePicked = {}))}>{t('common.cancel')}</button>

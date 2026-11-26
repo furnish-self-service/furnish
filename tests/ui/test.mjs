@@ -1237,7 +1237,7 @@ const steps = [
   }],
 ];
 
-if (replaceDesktop) steps.push(['a Nix generation switch compares the desktop behind the profile wrapper', async () => {
+if (replaceDesktop === 'replace') steps.push(['a Nix generation switch compares the desktop behind the profile wrapper', async () => {
   const profile = '/run/current-system/sw/bin/furnish-gui';
   const offer = "//*[@data-testid='desktop-restart']";
   const installed = JSON.parse(inContainer(['/fixtures/replacement', '--build-info']));
@@ -1263,7 +1263,7 @@ if (replaceDesktop) steps.push(['a Nix generation switch compares the desktop be
   await waitFor('restart offer withdrawn after restoring the running generation', async () => !(await findAll(offer)).length);
 }]);
 
-if (replaceDesktop) steps.push(['restart into the installed desktop only when the queue is idle', async () => {
+if (replaceDesktop === 'replace') steps.push(['restart into the installed desktop only when the queue is idle', async () => {
   const settings = 'preflight-settings';
   const offer = "//*[@data-testid='desktop-restart']";
   const running = JSON.parse(inContainer(['/fixtures/running', '--build-info']));
@@ -1300,10 +1300,63 @@ if (replaceDesktop) steps.push(['restart into the installed desktop only when th
   }
 }]);
 
+async function stableUpgrade() {
+  const installed = app => find(`${card(app)}//*[normalize-space()='Installed']`);
+  const kitCount = n => find(`${card('starter')}//*[normalize-space()='${n} of 3 installed']`);
+  const hash = name => createHash('sha256').update(name).digest('base64url');
+  const cached = app => JSON.parse(log(`data/app-status-v1/${hash('fixture')}/${hash(app)}`));
+  await click(card('hyperfine') + button('Install'));
+  await waitFor('stable installed hyperfine', () => installed('hyperfine'));
+  await click("//button[@aria-label='Open kit starter']");
+  await click(button('Install 1 app'));
+  await click(button('Discover'));
+  await waitFor('stable installed the selected kit members', () => kitCount(2));
+  await waitFor('stable wrote both installed states', () =>
+    ['hyperfine', 'toolbox'].every(app => cached(app).check.status === 'installed'));
+  await wd('DELETE', s(''));
+  session = null;
+
+  const gate = `${workDir}/hold-upgrade-scan`;
+  writeFileSync(gate, '');
+  const sources = ['origin.git', 'feed/latest.json'].map(file => `${workDir}/${file}`);
+  for (const path of sources) renameSync(path, path + '.offline');
+  const lastCheck = cached('hyperfine').checkedAt;
+  try {
+    inContainer(['sh', '-ec', 'install /fixtures/replacement /usr/local/bin/furnish-next && mv /usr/local/bin/furnish-next /usr/local/bin/furnish-gui'], true);
+    await startSession();
+    for (const app of ['hyperfine', 'toolbox']) await waitFor('cached Discover badge for ' + app, () => installed(app));
+    await waitFor('cached kit count', () => kitCount(2));
+    await click(nav('Installed'));
+    for (const app of ['hyperfine', 'toolbox']) await waitFor('cached Installed entry for ' + app, () => find(card(app)));
+    if (cached('hyperfine').checkedAt !== lastCheck) throw new Error('live status replaced the stable record during offline startup');
+  } finally {
+    for (const path of sources) renameSync(path + '.offline', path);
+    rmSync(gate, { force: true });
+  }
+  await click(nav('Discover'));
+  await click(card('hyperfine') + "//button[@aria-label='Open hyperfine']");
+  await click(button('Check status'));
+  await waitFor('reconnected status verified', () => cached('hyperfine').checkedAt > lastCheck);
+  const before = log('pkexec.log');
+  await click(button('Uninstall'));
+  await waitFor('confirmation identifies the legacy removal', () =>
+    find("//li[contains(., 'The original package manager was not recorded. pacman will remove hyperfine.')]"));
+  if (before !== log('pkexec.log')) throw new Error('preview changed the installed package');
+  await click("//button[contains(@class,'danger') and normalize-space()='Uninstall']");
+  await click(nav('Discover'));
+  await waitFor('remaining kit count after removal', () => kitCount(1));
+  await waitFor('confirmed package removed by pacman', () => !existsSync(`${workDir}/pkgs/hyperfine`));
+  const removals = log('removals.log').trim();
+  if (removals !== 'pacman -R --noconfirm hyperfine') throw new Error(`unexpected removal commands: ${removals}`);
+  for (const pkg of ['toolbox-a', 'toolbox-b']) {
+    if (!existsSync(`${workDir}/pkgs/${pkg}`)) throw new Error(`uninstall also removed ${pkg}`);
+  }
+}
+
 let failed = false;
 try {
   await startSession();
-  for (const [name, step] of steps) {
+  for (const [name, step] of (replaceDesktop === 'upgrade' ? [['upgrade a populated v0.1.0 catalog offline', stableUpgrade]] : steps)) {
     try {
       await step();
       console.log(`ok    ${name}`);

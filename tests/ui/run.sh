@@ -43,6 +43,9 @@ for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of op
 if [ "\$1" = -Q ] && [ "\$2" = hyperfine ]; then
     while [ -f "$work/hold-hyperfine-status" ]; do sleep 0.1; done
 fi
+if [ "\$1" = -Q ]; then
+    while [ -f "$work/hold-upgrade-scan" ]; do sleep 0.1; done
+fi
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
@@ -57,7 +60,8 @@ case "\$1" in
       [ "\$p" = broken ] && { echo "error: failed to install broken" >&2; exit 1; }
       if [ -f "$work/pkgs/\$p.new" ]; then mv "$work/pkgs/\$p.new" "$work/pkgs/\$p"; else echo 1.0 > "$work/pkgs/\$p"; fi
       if [ "\$p" = brew ]; then cp "$work/fake-brew" "$work/bin/brew"; fi ;;
-  -R) rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
+  -R) echo "pacman \$*" >> "$work/removals.log"
+      rm "$work/pkgs/\$3"; if [ "\$3" = brew ]; then rm -f "$work/bin/brew"; fi ;;
 esac
 SH
 # Installing the "brew" package provides this fake Homebrew (see the homebrew fixture app).
@@ -238,7 +242,7 @@ docker exec --user 0 "$container" install /fixtures/running /usr/local/bin/furni
 docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
-if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${2:+replace}"; then
+if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${3:-${2:+replace}}"; then
     echo "UI tests passed"
 else
     echo "--- container log"; docker logs "$container" 2>&1 | grep -v -e MESA -e '^$' | tail -30

@@ -30,6 +30,8 @@ impl Note {
         let s = |k| self.s(k);
         match self.code {
             "zeroInstall.nameInUse" => format!("Zero Install launcher '{}' belongs to {}", s("name"), s("feed")),
+            "package.removal" => format!("{} will remove {}.", s("manager"), s("name")),
+            "package.unrecordedRemoval" => format!("The original package manager was not recorded. {} will remove {}.", s("manager"), s("name")),
             "package.recordedName" => format!("Installed package name: {}", s("name")),
             "package.recorded" => format!("Installed with the {} package manager", s("manager")),
             "package.explicit" => format!("The app selects the {} package manager", s("manager")),

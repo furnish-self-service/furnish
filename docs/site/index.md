@@ -12,14 +12,19 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-The downloads below follow the stable channel once v0.1.0 is published. The [releases page](https://github.com/furnish-self-service/furnish/releases) lists available installers, including alpha builds for people testing upcoming changes.
+Choose a channel and install scope. Stable is the published v0.1.0 release. Alpha builds include newer changes and the Windows and Linux current-user installers.
 
-| System | How |
-|---|---|
-| Windows, 64-bit | [download](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi) |
-| macOS with Apple silicon | Homebrew, below, or [download](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) |
-| Linux | the signed package repository, below |
-| Intel Macs, other systems | build from source, below |
+| System | Install scope | Channel and download | How to update |
+|---|---|---|---|
+| Windows x64, MSI | All users | [Stable MSI](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi) · [Alpha MSI](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) | Furnish updates itself on the installed channel |
+| Windows x64, current-user installer | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `windows-x86_64_user-setup.exe` | Run the newer current-user installer |
+| macOS, Apple silicon | Your account in `~/Applications` or all users in `/Applications` | [Stable disk image](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) · [Alpha disk image](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) | Furnish updates itself on the installed channel |
+| macOS, Apple silicon, Homebrew | Homebrew installation | Stable cask (command below) | `brew upgrade` |
+| Linux x86-64, DEB or RPM | System-wide | Stable repository (commands below) or its `/alpha/` counterpart | System package manager |
+| Linux x86-64, user archive | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `linux-x86_64_user.tar.gz` | Quit Furnish and replace the extracted folder |
+| NixOS | NixOS configuration | Pin the stable tag or follow the main branch | Update the flake lock and rebuild |
+
+On Intel Macs and other platforms, see the source build instructions below.
 
 On macOS, Homebrew installs the desktop app and the `furnish` command, and `brew upgrade` brings stable updates:
 
@@ -28,17 +33,6 @@ brew install --cask furnish-self-service/tap/furnish
 ```
 
 The Windows and macOS builds aren't signed with a publisher certificate. On Windows, choose More info → Run anyway when SmartScreen warns. On macOS, open furnish from Applications once, then allow it under System Settings → Privacy & Security → Open Anyway. Do this before you use the `furnish` command. macOS may ask again after an update.
-
-How new versions of furnish arrive depends on how you installed it:
-
-| Installed with | New versions |
-|---|---|
-| the Windows MSI | furnish installs them itself |
-| the Windows current-user installer or Linux user archive | install the newer release in the same location |
-| the macOS download | furnish installs them itself |
-| Homebrew | `brew upgrade` |
-| the Linux package repository | your system updates |
-| Nix | `nix flake update` |
 
 When furnish installs a version itself, it checks the download's signature first. It restarts into the new version once nothing is installing and its window is closed. Settings → About shows how furnish was installed and whether a new version is out. See [New versions of furnish](using.md#new-versions-of-furnish).
 
