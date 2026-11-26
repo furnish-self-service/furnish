@@ -73,8 +73,8 @@ fn documented_editor_checks_options_dependencies_and_ordered_distribution_like()
         }),
     );
     fs::write(dir.join("collection.yaml"), "parameters: {role: {type: string, default: office}}").unwrap();
-    let guide = include_str!("../docs/site/collections.md");
-    let yaml = guide.split("### Check target profiles in CI").nth(1).unwrap().split("```yaml\n").nth(1).unwrap().split("```").next().unwrap();
+    let guide = include_str!("../docs/site/validation.md");
+    let yaml = guide.split("## Check target profiles in CI").nth(1).unwrap().split("```yaml\n").nth(1).unwrap().split("```").next().unwrap();
     let path = dir.join("targets.yaml");
     fs::write(&path, yaml).unwrap();
     let output = check(temp.path(), &dir, Some(&path), true);
