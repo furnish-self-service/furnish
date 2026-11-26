@@ -1,5 +1,6 @@
 """Build the release archives from the same payloads as the platform installers."""
 import argparse
+import io
 from pathlib import Path
 import platform
 import plistlib
@@ -53,6 +54,14 @@ def main():
                 out.add(file, arcname=name)
     if args.system == "linux":
         with tarfile.open(args.output / f"{prefix}_user.tar.gz", "w:gz") as out:
+            directory = tarfile.TarInfo("furnish")
+            directory.type = tarfile.DIRTYPE
+            directory.mode = 0o755
+            out.addfile(directory)
+            marker = b"furnish-linux-user-v1\n"
+            info = tarfile.TarInfo("furnish/.furnish-user-install")
+            info.size = len(marker)
+            out.addfile(info, io.BytesIO(marker))
             for name in ("bin", "lib/furnish", "share/applications", "share/icons"):
                 out.add(root / name, arcname="furnish/" + name)
             out.add(repo / "LICENSE", arcname="furnish/lib/furnish/LICENSE")

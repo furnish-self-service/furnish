@@ -38,6 +38,10 @@ jobs:
         with:
           name: furnish-linux-x86_64
           path: new/cli
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-archives-linux
+          path: new/archives
       # The updater's signatures of the .msi and .app.tar.gz (update-feed job): publish.sh writes the feed.
       - uses: actions/download-artifact@v4
         with:
@@ -62,7 +66,7 @@ jobs:
           expected=$(jq -er .version gui/src-tauri/tauri.conf.json)
           if [ "$CHANNEL" = alpha ]; then expected="$expected-alpha.$GITHUB_RUN_NUMBER"; fi
           test "$version" = "$expected"
-          REQUIRE="windows-x86_64 darwin-aarch64" node scripts/verify-update-feed.mjs "site/$CHANNEL/latest.json" "site/$CHANNEL"
+          REQUIRE="windows-x86_64 darwin-aarch64 linux-x86_64" node scripts/verify-update-feed.mjs "site/$CHANNEL/latest.json" "site/$CHANNEL"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "artifact=github-pages-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
         env:

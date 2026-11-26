@@ -109,7 +109,7 @@ On GNOME, tray icons only show with the AppIndicator extension. Without a tray, 
 
 Settings → **About** shows the version of the running desktop, including the alpha number for published releases. Expand **Build details** to see the build target and, when available, the source commit and date.
 
-**Update channel** shows whether Furnish follows **Stable** or **Alpha**. On the Windows all-users MSI and the downloaded macOS app, select either channel in About, or run `furnish settings --update-channel stable` or `--update-channel alpha`. The selected feed can offer an older version when switching channels. Your update mode still applies. With **Only tell me**, select **Update now** when ready. With checks turned off, the preference is saved until checks resume.
+**Update channel** shows whether Furnish follows **Stable** or **Alpha**. On the Windows all-users MSI, downloaded macOS app and Linux current-user archive (v0.2.0 onward), select either channel in About, or run `furnish settings --update-channel stable` or `--update-channel alpha`. The selected feed can offer an older version when switching channels. Your update mode still applies. With **Only tell me**, select **Update now** when ready. With checks turned off, the preference is saved until checks resume.
 
 For package-managed and manual installs, About shows the channel of the installed build and instructions for changing the package source. The Homebrew cask follows stable. To use alpha on macOS, uninstall the cask without `--zap` and install the alpha disk image. For Linux packages, change the repository between `/stable/` and `/alpha/`. For Nix, change the Furnish flake input between a release tag and the main branch and rebuild.
 
@@ -119,7 +119,7 @@ When a package manager replaces the desktop while it is open, Furnish offers to 
 
 When a new version of furnish is out, a dot appears next to Settings in the sidebar, and Settings → About names the version. furnish looks for one whenever it looks for app updates. Offline, it shows nothing.
 
-If you installed furnish from the all-users Windows MSI or the macOS app download, furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
+If you installed furnish from the all-users Windows MSI, macOS app download or Linux current-user archive (v0.2.0 onward), furnish downloads the new version and checks its signature. It installs the version and restarts once nothing is installing and its window is closed. To do it right away, choose Restart to update in About or in the tray menu. furnish waits for an install that is running. On Windows, the installer may ask for administrator rights.
 
 Homebrew installations receive new versions with `brew upgrade`, and Linux repository packages receive them with system updates. Nix installations follow the flake input. Update it with `nix flake update` and rebuild your configuration. Furnish skips release-feed checks for these Nix installations.
 

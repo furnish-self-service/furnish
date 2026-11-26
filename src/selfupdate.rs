@@ -120,6 +120,9 @@ pub fn feed_allowed(url: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
+#[cfg(target_os = "linux")]
+mod linux_user;
+
 // --- How furnish was installed
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +132,7 @@ pub enum Method {
     Msi,
     /// The macOS app, dragged from the .dmg.
     App,
+    LinuxUser,
     Homebrew,
     /// The .deb package (APT).
     Deb,
@@ -142,13 +146,14 @@ pub enum Method {
 impl Method {
     /// Whether furnish installs new versions itself (nothing else would).
     pub fn updates_itself(self) -> bool {
-        matches!(self, Method::Msi | Method::App)
+        matches!(self, Method::Msi | Method::App | Method::LinuxUser)
     }
 
     /// For people: how furnish got here.
     pub fn name(self) -> &'static str {
         match self {
             Method::Msi => "the Windows installer",
+            Method::LinuxUser => "the Linux current-user archive",
             Method::App => "the macOS app download",
             Method::Homebrew => "Homebrew",
             Method::Deb => "the APT package",
@@ -161,7 +166,7 @@ impl Method {
     /// For people: how a new version arrives.
     pub fn how(self) -> &'static str {
         match self {
-            Method::Msi | Method::App => "furnish self-update",
+            Method::Msi | Method::App | Method::LinuxUser => "furnish self-update",
             Method::Homebrew => "brew upgrade",
             Method::Deb | Method::Rpm => "with your system updates",
             Method::Nix => "nix flake update",
@@ -225,6 +230,8 @@ pub fn classify(exe: &Path, os: &str, probe: &Probe) -> Method {
             Some(_) => Method::App,
             None => Method::Other,
         },
+        #[cfg(target_os = "linux")]
+        "linux" if probe.package.is_none() && linux_user::root(exe).is_some() => Method::LinuxUser,
         "linux" => probe.package.unwrap_or(Method::Other),
         _ => Method::Other,
     }
@@ -472,6 +479,22 @@ pub fn install(manifest: &Manifest, method: Method) -> Result<Installed> {
     if !method.updates_itself() {
         bail!("furnish was installed with {}, which also updates it: {}", method.name(), method.how());
     }
+    let bytes = download_verified(manifest)?;
+    match method {
+        Method::Msi => install_msi(&bytes, &manifest.version),
+        Method::App => install_app(&bytes),
+        #[cfg(target_os = "linux")]
+        Method::LinuxUser => install_linux_user(&bytes),
+        _ => bail!("unsupported install method"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn install_linux_user(verified_archive: &[u8]) -> Result<Installed> {
+    linux_user::replace(verified_archive)
+}
+
+pub fn download_verified(manifest: &Manifest) -> Result<Vec<u8>> {
     let target = target();
     let platform = manifest.platforms.get(&target).with_context(|| format!("the update feed has no download for {target}"))?;
     if !feed_allowed(&platform.url) {
@@ -480,10 +503,7 @@ pub fn install(manifest: &Manifest, method: Method) -> Result<Installed> {
     let mut response = crate::endpoint::http().get(&platform.url).call().with_context(|| format!("downloading {}", platform.url))?;
     let bytes = response.body_mut().with_config().limit(1 << 30).read_to_vec().with_context(|| format!("downloading {}", platform.url))?;
     verify(&bytes, &platform.signature, PUBLIC_KEY, &manifest.version)?;
-    match method {
-        Method::Msi => install_msi(&bytes, &manifest.version),
-        _ => install_app(&bytes),
-    }
+    Ok(bytes)
 }
 
 fn install_msi(bytes: &[u8], version: &str) -> Result<Installed> {

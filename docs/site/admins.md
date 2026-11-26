@@ -76,7 +76,7 @@ On Linux, the tray icon needs libayatana-appindicator, which the furnish package
 
 furnish looks for new versions of itself when it starts and every `updateIntervalMinutes`. With `updateIntervalMinutes` at `0` and `updateOnLaunch` off, it doesn't look, and Check now on the Settings page looks once. It reads one small file per channel: `https://furnish-self-service.github.io/furnish/alpha/latest.json` for alpha builds. Offline, it shows nothing. `selfUpdate` decides what furnish does with a new version:
 
-| `selfUpdate` | Installed from the Windows MSI or macOS app download | Installed with the Windows user installer, Linux user archive, Homebrew, a Linux package or Nix |
+| `selfUpdate` | Installed from the Windows MSI, macOS app download or Linux user archive (v0.2.0 onward) | Installed with the Windows user installer, Homebrew, a Linux package or Nix |
 |---|---|---|
 | `auto` (default) | furnish installs it | furnish shows that it is out and how it arrives |
 | `notify` | furnish shows that it is out; people can install it with Update now | the same as `auto` |
@@ -88,7 +88,7 @@ To keep the version under your control, for example when Intune or an MDM deploy
 { "settings": { "selfUpdate": { "value": "off", "locked": true } } }
 ```
 
-Administrators can set or lock `updateChannel` to `"stable"` or `"alpha"` on self-updating installations. When unset, the installed build chooses the feed. Package-managed installations follow their package source. The local policy can lock `selfUpdate` and `updateChannel` independently. A furnish address cannot set either. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store.
+Administrators can set or lock `updateChannel` to `"stable"` or `"alpha"` on self-updating installations. When unset, the installed build chooses the feed. Package-managed installations follow their package source. The local policy can lock `selfUpdate` and `updateChannel` independently. A furnish address cannot set either. Settings → About and `furnish settings` show how furnish was installed: from the MSI's entry in the Windows registry, from `furnish.app` and Homebrew's Caskroom on macOS, and on Linux from the package that contains the program or the Nix store, or from the marker shipped in the current-user archive.
 
 Each download used by the built-in updater is signed with furnish's update key (minisign, the format of Tauri's updater). The app contains the public key. It installs nothing whose signature doesn't match, or whose signature names another version than the file says. A copy of an older version can't pass as a newer one.
 
