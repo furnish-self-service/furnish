@@ -65,7 +65,7 @@ The furnish service ignores people's own settings for this. It takes the locatio
 
 ## Installing apps into the configuration
 
-The configuration can hold ordinary Nix packages as well as apps that declare NixOS options. [Writing a collection](collections.md#furnishnixos) describes the resources. furnish doesn't edit the configuration's files. Add these lines to its `flake.nix` once, next to the furnish input:
+The configuration can hold ordinary Nix packages as well as apps that declare NixOS options. [Writing a collection](nix-resources.md#furnish-nixos) describes the resources. furnish doesn't edit the configuration's files. Add these lines to its `flake.nix` once, next to the furnish input:
 
 ```nix
 inputs.furnish.url = "github:furnish-self-service/furnish";

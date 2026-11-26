@@ -5,7 +5,7 @@ group: Administrators
 ---
 # Deploy an endpoint
 
-A furnish address such as `furnish.myorg.tld` lets people get your organization's collections from an internal GitLab with their organization account, without a VPN, and sends their [reports](reports.md#reports) to your log system. Behind the address runs a reverse proxy. This page sets one up with Docker Compose, with Caddy, nginx, Traefik, Envoy or HAProxy. 
+A furnish address such as `furnish.myorg.tld` lets people get your organization's collections from an internal GitLab with their organization account, without a VPN, and sends their [reports](reports.md#reports) to your log system. Behind the address runs a reverse proxy. This page sets one up with Docker Compose, with Caddy, nginx, Traefik, Envoy or HAProxy.
 
 ```
 furnish ── HTTPS, Bearer <ID token> ──▶ proxy: is the token valid?

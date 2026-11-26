@@ -8,7 +8,7 @@ previous: admins
 
 ## Installing apps into Home Manager
 
-People who keep their programs in Home Manager can get furnish's apps there instead of in the system. furnish's flake has a Home Manager module for this, `homeManagerModules.default`. With the module set up for a person, their Home Manager configuration can receive Nix packages and apps with a `Furnish/NixOS` resource. The setting `osSpecific.nixos.installInto` (`system` or `home`) overrides this, in the policy or on the Settings page. If an app only has options for one of the two (`options` for NixOS, `homeOptions` for Home Manager, see [Writing a collection](collections.md#furnishnixos)), it goes there if that is set up, and otherwise shows "Needs ...". A step with `onlyIfSetUp` is skipped instead.
+People who keep their programs in Home Manager can get furnish's apps there instead of in the system. furnish's flake has a Home Manager module for this, `homeManagerModules.default`. With the module set up for a person, their Home Manager configuration can receive Nix packages and apps with a `Furnish/NixOS` resource. The setting `osSpecific.nixos.installInto` (`system` or `home`) overrides this, in the policy or on the Settings page. If an app only has options for one of the two (`options` for NixOS, `homeOptions` for Home Manager, see [Writing a collection](nix-resources.md#furnish-nixos)), it goes there if that is set up, and otherwise shows "Needs ...". A step with `onlyIfSetUp` is skipped instead.
 
 ### Standalone Home Manager
 

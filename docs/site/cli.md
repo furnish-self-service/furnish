@@ -9,42 +9,39 @@ The `furnish` command does what the app does. `furnish --help` and `furnish <com
 
 On macOS, Homebrew sets up the command when it installs furnish. If you dragged furnish from a disk image, [enable the Terminal command in Settings](install.md#terminal-command-for-the-macos-download).
 
-| Command | What it does |
+## Install and update apps
+
+```sh
+furnish list
+furnish install gimp --dry-run
+furnish install gimp
+furnish upgrade
+```
+
+| Task | Command |
 |---|---|
-| `furnish list` | The catalog, with texts in your language (see [Translations](catalog.md#translations)), and each app's state: ✓ installed, ↑ update available, · not installed, ★ recommended |
-| `furnish install <app>` | Install or update an app or a kit; `--dry-run` shows the steps, `--with`/`--without` choose optional dependencies or kit items, `--previous` installs the app's previous version, `--version <day or commit>` the version of that day or commit and keeps the app there, `--current` the collection's version of an app held at an earlier one |
-| `furnish versions <app>` | The versions of an app you can install with `--version`, newest first: day, commit and the versions the collection's file accepted; ✓ marks the installed one |
-| `furnish uninstall <app>` | Uninstall; for a kit, `--only` picks the apps |
-| `furnish reinstall <app>` | Apply changed options |
-| `furnish upgrade` | Install available updates (`--all` includes apps with automatic updates off) |
-| `furnish collection add <url or address>` | Add a Git collection, optionally with `--branch NAME` or `--tag-pattern REGEX [--tag-order version\|newest]`, or add the collections from your organization's Furnish address. `--option name=value` answers a question, `--username` (with `--password-stdin` in scripts) logs in to a private HTTPS repository |
-| `furnish login <address>`, `logout <address>` | Sign in to your organization's furnish address again, or remove the sign-in |
-| `furnish collection list`, `update`, `remove` | Manage collections |
-| `furnish collection update [name] --dry-run` | Compare the current and candidate collection releases, including changes to declared steps and apps with recorded installations. Omit the name to compare all existing checkouts. |
-| `furnish collection update <name> --reviewed <current> <candidate>` | Apply the reviewed update if the checkout and the configured remote target still match both full commit IDs. |
-| `furnish option list <collection or app>` | Options, their values and where each value comes from |
-| `furnish option set`, `reset` | Change an option, or go back to the collection's value |
-| `furnish check [<dir>]` | Check a collection's files before people install from it; shows which resources run on each system |
-| `furnish settings` | Show or change automatic updates, the general download and fallback settings, and the fallback language for collection texts (`--fallback-language <tag>`). Also shows furnish's version, how it was installed and whether a new version is out; `--self-update auto\|notify\|off` sets what furnish does with new versions of itself |
-| `furnish self-update` | Install the newest version of furnish, for the Windows MSI, macOS app download and Linux current-user archive. Elsewhere it says how the new version arrives. `--check` only says whether there is one |
-| `furnish collection settings <collection>` | Set its update source with `--branch NAME`, `--tag-pattern REGEX [--tag-order version\|newest]`, `--default-branch`, or `--inherit-tracking`. Download and fallback settings include `--fallback ask\|automatic\|off`, `--fallback-max-age <days>`, `--choose-version <bool>`, `--blobs-on-demand <bool>`, `--checkout-depth <commits>`; `--reset` returns to the general settings |
+| Select optional dependencies or kit members | `furnish install <app> --with <id>` or `--without <id>` |
+| List available revisions | `furnish versions <app>` |
+| Install an earlier revision or return to the collection’s version | `furnish install <app> --version <day-or-commit>` or `--current` |
+| Remove an app or selected kit members | `furnish uninstall <app>` or `furnish uninstall <kit> --only <id>` |
+| Apply changed options | `furnish reinstall <app>` |
+| Include apps with automatic updates disabled | `furnish upgrade --all` |
 
-`-v` shows what DSC and the package manager do. In a terminal, furnish asks a collection's unanswered questions; in scripts, it prints the `furnish option set` command that answers them.
+Use `-v` to show output from DSC and the package manager.
 
-```
-$ furnish install gimp --dry-run
-Installing gimp would:
+## Manage collections
 
-    skipped        gimp (winget)  (Furnish/Package)
-                   Not on this system: [equals(context().os.family, 'Windows')]
+- Add a catalog with `furnish collection add <git-url-or-address>`. Use `--option name=value` to answer a question in a script. For private HTTPS repositories, use `--username` with `--password-stdin`.
+- Use `furnish login <address>` to renew an organization sign-in and `furnish logout <address>` to remove it.
+- Use `furnish collection list`, `update` and `remove` to manage existing checkouts.
+- Preview a revision with `furnish collection update <name> --dry-run`. Apply that comparison with `--reviewed <current> <candidate>`. See [collection tracking rules](collection-updates.md) for branch and tag selectors.
+- Run [`furnish check`](validation.md) in a collection repository to validate its files.
 
-  + install        gimp  (Furnish/Package)
-                   Install gimp with pacman
-                   Run as administrator: pacman -S --noconfirm --needed gimp
+## Inspect settings
 
-$ furnish list
-   App          Collection  Categories             Description
-✓  firefox      example     Internet               ★ Web browser from Mozilla.
-✓  git          example     Development            Distributed version control system.
-·  thunderbird  example     Communication, Office  ★ Email, calendar and contacts.
-```
+| Command | What it shows or changes |
+|---|---|
+| `furnish settings` | Update schedule, fallback settings, language and Furnish’s installed version and channel |
+| `furnish collection settings <name>` | Tracking, download and rollback preferences for a collection |
+| `furnish option list <collection-or-app>` | Available options, current values and their source. Use `option set` or `option reset` to change them. |
+| `furnish self-update --check` | Availability on the selected channel. Use [`furnish self-update`](furnish-updates.md) to install on supported installations. |

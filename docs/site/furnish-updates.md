@@ -19,6 +19,8 @@ Open **Settings → About** to see your version, install method and update chann
 
 Choose **Only tell me** for notifications or turn off checks under **New versions of Furnish**. Your organization can lock this setting. When a package manager replaces the running desktop, **Restart** opens the installed build once your queue and paused work are cleared.
 
+For the running version, source revision and build target, open **Settings → About → Build details**. **Data folder** opens the directory containing local settings and collections.
+
 ## Switch update channels
 
 For self-updating installations, choose **Stable** or **Alpha** in About, or run `furnish settings --update-channel stable`. A channel switch may offer an older version. Other installations follow their package source.
