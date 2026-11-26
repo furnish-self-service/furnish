@@ -1092,6 +1092,8 @@ profiles:
 
 Use `home` for Home Manager on Linux or macOS and `system` for the NixOS system configuration on Linux. These values also supply `variables('furnish.host').nixSetup.home` and `.nixSetup.system` in target expressions. Each defaults to `false`. Steps declaring only `homeOptions` require the home destination. Steps declaring only `options` require the system destination. For packages alone or options for both destinations, the profile uses home when configured and system otherwise. Windows profiles always skip guarded steps. A step without the guard keeps its normal condition.
 
+Use `expectKits` to check what a kit offers on a fresh installation. Each optional assertion lists app IDs in kit order. `applicable` includes members with at least one active resource on the target, `required` includes the applicable required members, and `defaultSelection` also includes preselected optional members. An empty list asserts that no members qualify. These checks evaluate collection conditions offline. Package availability in external repositories and installed state still require a live check.
+
 The [two-profile example](https://github.com/furnish-self-service/furnish/blob/main/docs/examples/target-profiles.yaml) runs against Furnish's test collection:
 
 ```sh

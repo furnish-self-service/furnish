@@ -833,6 +833,7 @@ fn list() -> Result<()> {
     let none = furnish::locale::Locales::default();
     let texts = |collection: &str| locales.get(collection).unwrap_or(&none);
     let mut installed = std::collections::HashSet::new();
+    let mut unavailable = std::collections::HashSet::new();
     let mut inventory = Vec::new();
     for app in &apps {
         let check = app.check();
@@ -854,7 +855,7 @@ fn list() -> Result<()> {
                 Status::Installed => "✓",
                 Status::NeedsUpdate => "↑",
                 Status::NotInstalled => "·",
-                Status::Unavailable => "–",
+                Status::Unavailable => { unavailable.insert((app.collection.clone(), app.id.clone())); "–" },
                 Status::Blocked => {
                     let needs = c.reason.unwrap_or_default();
                     let deps_now = app.dependencies_for(&app.current_values());
@@ -907,8 +908,11 @@ fn list() -> Result<()> {
         let mut rows = vec![row(["", "Kit", "Collection", "Items", "Description"])];
         for kit in &kits {
             let have = kit.items.iter().filter(|i| installed.contains(&(kit.collection.clone(), i.app.clone()))).count();
-            let symbol = if have == kit.items.len() { "✓" } else if have > 0 { "◐" } else { "·" };
-            let items = format!("{have} of {} installed", kit.items.len());
+            let applicable = kit.items.iter().filter(|i| !unavailable.contains(&(kit.collection.clone(), i.app.clone())));
+            let total = applicable.clone().count();
+            let complete = have > 0 && applicable.filter(|i| i.required).all(|i| installed.contains(&(kit.collection.clone(), i.app.clone())));
+            let symbol = if complete { "✓" } else if have > 0 { "◐" } else { "·" };
+            let items = format!("{have} of {total} installed");
             let l = texts(&kit.collection);
             let mut description = l.kit_description(&wanted, &kit.id, &kit.description).to_string();
             let name = l.kit_name(&wanted, &kit.id, kit.name.as_deref());
@@ -1537,6 +1541,10 @@ fn install_kit(kit: &catalog::Kit, with: &[String], without: &[String], dry_run:
             continue;
         }
         let app = apps.iter().find(|a| a.id == item.app).expect("kit items are validated");
+        if matches!(app.status(), Ok(Status::Unavailable)) {
+            println!("– {} (not available on this operating system)", item.app);
+            continue;
+        }
         if dry_run { print_plan(app, false)?; } else { install_app(app)?; }
     }
     Ok(())
@@ -1546,13 +1554,14 @@ fn uninstall_kit(kit: &catalog::Kit, only: &[String], dry_run: bool) -> Result<(
     check_items(kit, only)?;
     let apps = kit_apps(kit)?;
     let selected: Vec<String> = if only.is_empty() {
-        let kits = catalog::all_kits()?;
-        // Status of every app any kit mentions, to tell which other kits are installed.
+        let mut kits = catalog::all_kits()?;
         let mut installed = std::collections::HashSet::new();
-        for k in &kits {
+        for k in &mut kits {
             for a in kit_apps(k)? {
-                if matches!(a.status(), Ok(Status::Installed | Status::NeedsUpdate)) {
-                    installed.insert((k.collection.clone(), a.id.clone()));
+                match a.status() {
+                    Ok(Status::Installed | Status::NeedsUpdate) => { installed.insert((k.collection.clone(), a.id)); }
+                    Ok(Status::Unavailable) => k.items.retain(|i| i.app != a.id),
+                    _ => {}
                 }
             }
         }

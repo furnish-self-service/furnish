@@ -75,6 +75,16 @@ fi
 
 # Collections are git repos: turn the fixture into one.
 cp -r "$fixture" "$tmp/repo"
+if ! $real; then
+    cat > "$tmp/repo/apps/inapplicable.dsc.yaml" <<'YAML'
+resources:
+  - name: excluded
+    type: Furnish/Package
+    condition: "[equals(1, 2)]"
+    properties: { name: excluded }
+YAML
+    echo '  - { app: inapplicable, required: true }' >> "$tmp/repo/kits/starter.yaml"
+fi
 
 # Real installer files for whatever this platform supports (Furnish/Installer). Each line of
 # $tmp/installers: file name, then extra YAML properties.
@@ -619,11 +629,12 @@ fi
 if ! $real; then
     expect "$(step list)" "·  starter"
     plan=$(step install starter --without toolbox --with extras --dry-run)
+    expect "$plan" "inapplicable (not available on this operating system)"
     expect "$plan" "toolbox (not selected)"
     expect "$plan" "+ install        extras"
     if step install starter --without hyperfine >/dev/null 2>&1; then echo "FAIL: a required item was deselected" >&2; exit 1; fi
     expect "$(step install starter)" "Installed toolbox"   # default selection: hyperfine + toolbox
-    expect "$(step list)" "◐  starter"                    # extras is not installed
+    expect "$(step list)" "✓  starter.*2 of 3 installed"   # optional extras stays available
     expect "$(step install starter --with extras)" "Installed extras"
     expect "$(step list)" "✓  starter"
     expect "$(step uninstall starter --only extras)" "Uninstalled extras"
