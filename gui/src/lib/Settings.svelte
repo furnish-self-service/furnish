@@ -570,6 +570,36 @@
           <span class="control value" id="install-method">{methods[self.method]}</span>
         </li>
       {/if}
+      {#if self}
+        <li class="row">
+          <div class="text">
+            <span class="label" id="channel-label">{t('settings.channel')}</span>
+            <span class="desc" id="channel-help">{t(updatesItself ? 'settings.channelChoose'
+              : self.method === 'nix' ? 'settings.channelNix' : self.method === 'homebrew' ? 'settings.channelBrew'
+              : self.method === 'deb' || self.method === 'rpm' ? 'settings.channelRepo' : 'settings.channelManual')}</span>
+            {#if !updatesItself}
+              <button class="link" onclick={() => api.openDescriptionLink('https://furnish-self-service.github.io/#install').catch(e => toast('error', String(e)))}>{t('settings.channelGuide')}</button>
+            {/if}
+            {@render locked('updateChannel')}
+          </div>
+          <span class="control value" id="update-channel">
+            {#if updatesItself}
+              <select aria-labelledby="channel-label" aria-describedby="channel-help" value={self.channel}
+                disabled={isLocked('updateChannel') || !store.settings || !!store.installedDesktop}
+                onchange={(e) => {
+                  const channel = e.currentTarget.value as 'alpha' | 'stable';
+                  e.currentTarget.value = self.channel;
+                  changeSettings({ updateChannel: channel });
+                }}>
+                <option value="stable">{t('settings.channelStable')}</option>
+                <option value="alpha">{t('settings.channelAlpha')}</option>
+              </select>
+            {:else}
+              {t(self.channel === 'stable' ? 'settings.channelStable' : 'settings.channelAlpha')}
+            {/if}
+          </span>
+        </li>
+      {/if}
       {#if macDownload}
         <li class="row">
           <span class="text">

@@ -73,6 +73,9 @@ $server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bin
 Start-Sleep 2
 $env:FURNISH_UPDATE_FEED = 'http://127.0.0.1:8765/latest.json'
 try {
+    $channel = if ($next -like '*+alpha.*') { 'alpha' } else { 'stable' }
+    & "$app\furnish.exe" settings --update-channel $channel
+    if ($LASTEXITCODE) { Fail "could not select $channel" }
     Write-Host "== the desktop app ($($gui.Name), hidden) updates itself"
     Start-Process $gui.FullName -ArgumentList '--hidden'
     Wait-Installed 'the desktop app'

@@ -109,6 +109,10 @@ On GNOME, tray icons only show with the AppIndicator extension. Without a tray, 
 
 Settings → **About** shows the version of the running desktop, including the alpha number for published releases. Expand **Build details** to see the build target and, when available, the source commit and date.
 
+**Update channel** shows whether Furnish follows **Stable** or **Alpha**. On the Windows all-users MSI and the downloaded macOS app, select either channel in About, or run `furnish settings --update-channel stable` or `--update-channel alpha`. The selected feed can offer an older version when switching channels. Your update mode still applies. With **Only tell me**, select **Update now** when ready. With checks turned off, the preference is saved until checks resume.
+
+For package-managed and manual installs, About shows the channel of the installed build and instructions for changing the package source. The Homebrew cask follows stable. To use alpha on macOS, uninstall the cask without `--zap` and install the alpha disk image. For Linux packages, change the repository between `/stable/` and `/alpha/`. For Nix, change the Furnish flake input between a release tag and the main branch and rebuild.
+
 The **Data folder** row opens Furnish’s local data in your file manager. On NixOS, Settings also shows the configuration folder and the generated flake under **Generated NixOS files**. Standalone Home Manager shows its own generated folder, including a custom path configured in the flake input. Choose **Open folder** next to the path to inspect its files.
 
 When a package manager replaces the desktop while it is open, Furnish offers to restart into the installed version. The offer appears once the queue is empty and active work has finished, including updates paused in Activity. Choose **Restart** to launch the installed build. This also works when a package manager rolls back a version. For a portable AppImage, automatic detection requires a FUSE-mounted image and the system’s `unsquashfs` tool. If Furnish cannot identify the replacement, quit and reopen the AppImage.

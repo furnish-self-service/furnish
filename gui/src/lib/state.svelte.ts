@@ -977,9 +977,10 @@ export async function changeSettings(change: Partial<Settings>) {
     if (change.language) setLanguage(change.language);
     schedule();
     if ('loadAwareUpdates' in change) await updateApps(); // postponed updates may go ahead now
-    if ('selfUpdate' in change) {
+    if ('selfUpdate' in change || 'updateChannel' in change) {
+      selfCheckedAt = 0;
       store.selfUpdate = await api.selfUpdateStatus();
-      if (change.selfUpdate !== 'off') checkSelfUpdate(change.selfUpdate === 'auto');
+      if (store.settings.selfUpdate !== 'off') checkSelfUpdate(store.settings.selfUpdate === 'auto');
     }
   } catch (e) {
     toast('error', t('toast.saveSettings'), message(e));

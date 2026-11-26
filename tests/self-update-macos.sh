@@ -49,6 +49,8 @@ trap 'kill $server 2>/dev/null || true; pkill -f "$app/Contents/MacOS/" 2>/dev/n
 sleep 2
 export FURNISH_UPDATE_FEED=http://127.0.0.1:8765/latest.json
 
+case "$next" in *+alpha.*) channel=alpha ;; *) channel=stable ;; esac
+furnish settings --update-channel "$channel"
 gui=$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")
 echo "== the desktop app ($gui, hidden) updates itself and restarts"
 "$app/Contents/MacOS/$gui" --hidden > "$RUNNER_TEMP/gui.log" 2>&1 &
@@ -104,7 +106,7 @@ install_dmg
 # A one-minute interval lets this foreground process observe another release while Ready.
 export FURNISH_DATA_DIR="$RUNNER_TEMP/foreground-update"
 mkdir -p "$FURNISH_DATA_DIR"
-echo '{"updateIntervalMinutes":1}' > "$FURNISH_DATA_DIR/settings.json"
+printf '{"updateIntervalMinutes":1,"updateChannel":"%s"}\n' "$channel" > "$FURNISH_DATA_DIR/settings.json"
 "$app/Contents/MacOS/$gui" > "$RUNNER_TEMP/gui-restart.log" 2>&1 &
 before=$!
 for _ in $(seq 45); do
@@ -117,7 +119,7 @@ done
 # Announce a later release with the old signature: its download must be attempted by the
 # interval, and the superseded installer must disappear even though its replacement fails.
 cp "$feed/latest.json" "$RUNNER_TEMP/first-manifest.json"
-jq '.version = "99.0.0" | .platforms |= with_entries(.value.url += "?replacement")' \
+jq '.version |= sub("^[0-9]+[.][0-9]+[.][0-9]+"; "99.0.0") | .platforms |= with_entries(.value.url += "?replacement")' \
     "$RUNNER_TEMP/first-manifest.json" > "$feed/new.json"
 mv "$feed/new.json" "$feed/latest.json"
 for _ in $(seq 100); do
