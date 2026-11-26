@@ -318,6 +318,7 @@ export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'nix' |
 /** furnish's own updates (src-tauri/src/selfupdate.rs). */
 export interface SelfUpdateStatus {
   method: InstallMethod;
+  channel: 'stable' | 'alpha';
   /** The setting as it applies here: `auto` only where furnish installs its updates. */
   mode: 'auto' | 'notify' | 'off';
   locked: boolean;
@@ -441,6 +442,7 @@ export interface Settings {
   /** Collection texts not translated into the app's language show in this one (a language tag). */
   fallbackLanguage: string;
   /** New versions of furnish: install them where furnish can, only say so, or don't check. */
+  updateChannel: 'stable' | 'alpha' | null;
   selfUpdate: 'auto' | 'notify' | 'off';
 }
 

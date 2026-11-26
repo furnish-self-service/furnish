@@ -73,6 +73,9 @@ $server = Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bin
 Start-Sleep 2
 $env:FURNISH_UPDATE_FEED = 'http://127.0.0.1:8765/latest.json'
 try {
+    $channel = if ($next -like '*+alpha.*') { 'alpha' } else { 'stable' }
+    & "$app\furnish.exe" settings --update-channel $channel
+    if ($LASTEXITCODE) { Fail "could not select $channel" }
     Write-Host "== the desktop app ($($gui.Name), hidden) updates itself"
     Start-Process $gui.FullName -ArgumentList '--hidden'
     Wait-Installed 'the desktop app'
@@ -91,12 +94,31 @@ try {
     Write-Host "== Restart to update in Settings → About (the window open)"
     Install-Msi $old.FullName
     if ((Version) -ne $current) { Fail "reinstalling $($old.Name) left $(Version)" }
+    $originalChannel = if ($current -like '*+alpha.*') { 'alpha' } else { 'stable' }
+    & "$app\furnish.exe" settings --update-channel $originalChannel
+    if ($LASTEXITCODE) { Fail "could not restore $originalChannel" }
     $running = Start-Process $gui.FullName -PassThru
     for ($i = 0; $i -lt 60 -and (Get-Process -Id $running.Id).MainWindowHandle -eq [IntPtr]::Zero; $i++) { Start-Sleep 1 }
     $handle = (Get-Process -Id $running.Id).MainWindowHandle
     if ($handle -eq [IntPtr]::Zero) { Fail 'the desktop app shows no window' }
     $window = $UIA::FromHandle($handle)
     Press (Find-Button $window 'Settings*')
+    $selector = $null
+    for ($i = 0; $i -lt 60 -and -not $selector; $i++) {
+        $selector = $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new($UIA::NameProperty, 'Update channel'))
+        if ($selector -and $selector.Current.ControlType -ne [System.Windows.Automation.ControlType]::ComboBox) {
+            $combo = [System.Windows.Automation.PropertyCondition]::new($UIA::ControlTypeProperty, [System.Windows.Automation.ControlType]::ComboBox)
+            $selector = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $combo) |
+                Where-Object { $_.Current.Name -eq 'Update channel' } | Select-Object -First 1
+        }
+        if (-not $selector) { Start-Sleep 1 }
+    }
+    if (-not $selector) { Fail 'Update channel selector missing in Settings' }
+    $selector.SetFocus()
+    Add-Type -AssemblyName System.Windows.Forms
+    $key = if ($channel -eq 'alpha') { '{END}' } else { '{HOME}' }
+    [System.Windows.Forms.SendKeys]::SendWait($key)
     $restart = Find-Button $window 'Restart to update' 120
     # Downloaded, and still not installed while the window is open: only the button installs it.
     Start-Sleep 10

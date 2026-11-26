@@ -55,6 +55,8 @@ pub struct Settings {
     /// furnish's own updates (see `selfupdate`): install new versions where furnish can, only
     /// say that one is out, or don't check. Only the admin policy can lock it.
     pub self_update: SelfUpdate,
+    /// Override the installed build’s channel on self-updating deployments.
+    pub update_channel: Option<crate::selfupdate::Channel>,
     /// Settings for one operating system, by system (see `OS_SPECIFIC`). Each value counts on
     /// its own: the policy can set or lock one and leave the others to the user.
     pub os_specific: OsSpecific,
@@ -195,6 +197,7 @@ impl Default for Settings {
             language: Language::System,
             fallback_language: "en".into(),
             self_update: SelfUpdate::Auto,
+            update_channel: None,
             os_specific: OsSpecific::default(),
         }
     }

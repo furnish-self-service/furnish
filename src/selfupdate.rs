@@ -68,7 +68,7 @@ pub fn display(version: &semver::Version) -> String {
 }
 
 /// Builds of main update to newer builds of main; releases (later) to newer releases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Channel {
     Alpha,
@@ -80,6 +80,16 @@ impl Channel {
         if version.pre.as_str().starts_with("alpha") { Channel::Alpha } else { Channel::Stable }
     }
 
+    pub fn selected(current: &str, method: Method, preference: Option<Self>) -> Self {
+        if method.updates_itself() && let Some(channel) = preference { return channel; }
+        semver(current).map_or(Self::Stable, |version| Self::of(&version))
+    }
+
+    /// An explicit channel switch can move to an older version. Within a channel only advance.
+    pub fn offers(self, current: &semver::Version, candidate: &semver::Version) -> bool {
+        Self::of(candidate) == self && (Self::of(current) != self || candidate > current)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Channel::Alpha => "alpha",
@@ -89,11 +99,10 @@ impl Channel {
 }
 
 /// The feed for this build's channel; FURNISH_UPDATE_FEED overrides it (tests).
-pub fn feed_url(current: &str) -> String {
+pub fn feed_url(channel: Channel) -> String {
     if let Some(url) = std::env::var("FURNISH_UPDATE_FEED").ok().filter(|u| !u.is_empty()) {
         return url;
     }
-    let channel = semver(current).map_or(Channel::Stable, |v| Channel::of(&v));
     format!("{FEEDS}/{}/latest.json", channel.name())
 }
 
@@ -379,10 +388,10 @@ pub struct Available {
 
 impl Manifest {
     /// The feed's version if it is newer than `current`.
-    pub fn newer_than(&self, current: &str) -> Option<Available> {
+    pub fn available(&self, current: &str, channel: Channel) -> Option<Available> {
         let theirs = semver(&self.version)?;
         let ours = semver(current)?;
-        (theirs > ours).then(|| Available { version: display(&theirs), notes: self.notes.clone() })
+        channel.offers(&ours, &theirs).then(|| Available { version: display(&theirs), notes: self.notes.clone() })
     }
 }
 
@@ -402,8 +411,8 @@ pub fn fetch(url: &str) -> Result<Manifest> {
 
 /// A channel without its first release has no manifest. Other endpoints and HTTP errors
 /// remain visible, including a missing alpha feed or a misconfigured custom feed.
-pub fn published(current: &str) -> Result<Option<Manifest>> {
-    let url = feed_url(current);
+pub fn published(channel: Channel) -> Result<Option<Manifest>> {
+    let url = feed_url(channel);
     published_result(&url, fetch(&url))
 }
 
@@ -416,8 +425,8 @@ fn published_result(url: &str, result: Result<Manifest>) -> Result<Option<Manife
 }
 
 /// Whether the feed for `current` has a newer version.
-pub fn check(current: &str) -> Result<Option<Available>> {
-    Ok(published(current)?.and_then(|m| m.newer_than(current)))
+pub fn check(current: &str, channel: Channel) -> Result<Option<Available>> {
+    Ok(published(channel)?.and_then(|m| m.available(current, channel)))
 }
 
 /// The feed's key for this system, as Tauri's updater names it.
@@ -565,8 +574,8 @@ mod tests {
     fn the_feed_follows_the_channel() {
         // SAFETY: no other test reads or writes this variable.
         unsafe { std::env::remove_var("FURNISH_UPDATE_FEED") };
-        assert_eq!(feed_url("0.1.0+alpha.5"), "https://furnish-self-service.github.io/furnish/alpha/latest.json");
-        assert_eq!(feed_url("1.0.0"), "https://furnish-self-service.github.io/furnish/stable/latest.json");
+        assert_eq!(feed_url(Channel::Alpha), "https://furnish-self-service.github.io/furnish/alpha/latest.json");
+        assert_eq!(feed_url(Channel::Stable), "https://furnish-self-service.github.io/furnish/stable/latest.json");
         assert!(feed_allowed("https://example.org/latest.json"));
         assert!(feed_allowed("http://127.0.0.1:8123/latest.json"));
         assert!(feed_allowed("http://localhost/latest.json"));
@@ -579,11 +588,15 @@ mod tests {
     #[test]
     fn newer_versions_only() {
         let manifest = |v: &str| Manifest { version: v.into(), notes: Some("n".into()), pub_date: None, platforms: BTreeMap::new() };
-        assert_eq!(manifest("0.1.0-alpha.146").newer_than("0.1.0+alpha.145").unwrap().version, "0.1.0+alpha.146");
-        assert!(manifest("0.1.0-alpha.145").newer_than("0.1.0+alpha.145").is_none());
-        assert!(manifest("0.1.0-alpha.144").newer_than("0.1.0+alpha.145").is_none());
-        assert!(manifest("0.1.0-alpha.146").newer_than("0.1.0").is_none());
-        assert!(manifest("garbage").newer_than("0.1.0").is_none());
+        assert_eq!(manifest("0.1.0-alpha.146").available("0.1.0+alpha.145", Channel::Alpha).unwrap().version, "0.1.0+alpha.146");
+        assert!(manifest("0.1.0-alpha.145").available("0.1.0+alpha.145", Channel::Alpha).is_none());
+        assert!(manifest("0.1.0-alpha.144").available("0.1.0+alpha.145", Channel::Alpha).is_none());
+        assert!(manifest("0.1.0-alpha.146").available("0.1.0", Channel::Stable).is_none());
+        assert!(manifest("0.1.0-alpha.146").available("0.1.0", Channel::Alpha).is_some());
+        assert!(manifest("0.1.0").available("0.2.0-alpha.1", Channel::Stable).is_some());
+        assert!(manifest("1.0.0").available("0.1.0", Channel::Alpha).is_none());
+        assert_eq!(Channel::selected("1.0.0", Method::Nix, Some(Channel::Alpha)), Channel::Stable);
+        assert!(manifest("garbage").available("0.1.0", Channel::Stable).is_none());
         let parsed: Manifest = serde_json::from_str(
             r#"{"version":"0.1.0-alpha.2","pub_date":"2026-11-16T12:00:00Z","platforms":{"windows-x86_64":{"url":"https://x/a.msi","signature":"s"}}}"#,
         )

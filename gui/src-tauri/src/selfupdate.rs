@@ -12,7 +12,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use furnish::selfupdate::{self, Method, SelfUpdate};
+use furnish::selfupdate::{self, Channel, Method, SelfUpdate};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
@@ -23,6 +23,7 @@ use tauri_plugin_updater::UpdaterExt;
 pub struct Status {
     /// How furnish was installed.
     pub method: Method,
+    pub channel: Channel,
     /// The `selfUpdate` setting as it applies here (`auto` only where furnish installs updates).
     pub mode: SelfUpdate,
     /// The admin policy locks `selfUpdate`.
@@ -63,11 +64,13 @@ fn method() -> Method {
 fn fresh() -> Status {
     let effective = furnish::settings::effective();
     let method = method();
+    let current = crate::build_info::current().version;
     Status {
+        channel: Channel::selected(&current, method, effective.settings.update_channel),
         method,
         mode: selfupdate::effective(effective.settings.self_update, method),
         locked: effective.locked.iter().any(|k| k == "selfUpdate"),
-        current: crate::build_info::current().version,
+        current,
         available: None,
         notes: None,
         state: State::Idle,
@@ -80,6 +83,7 @@ pub fn status() -> Status {
     let mut guard = STATUS.lock().unwrap_or_else(|e| e.into_inner());
     let now = fresh();
     let status = guard.get_or_insert_with(|| now.clone());
+    if status.channel != now.channel { *status = now.clone(); }
     status.mode = now.mode;
     status.locked = now.locked;
     status.clone()
@@ -101,17 +105,30 @@ pub async fn check(app: AppHandle, download: bool) -> Status {
     refresh(&app, download, &mut pending).await
 }
 
+pub async fn set_channel(app: &AppHandle, value: serde_json::Value) -> Result<(), String> {
+    let mut pending = PENDING.lock().await;
+    if !method().updates_itself() { return Err("This installation follows its package source.".into()); }
+    crate::blocking(move || furnish::settings::set("updateChannel", value)).await?;
+    *pending = None;
+    change(app, |s| *s = fresh());
+    Ok(())
+}
+
 async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>) -> Status {
     let before = status();
+    if pending.as_ref().is_some_and(|(u, _)| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != before.channel)) {
+        *pending = None;
+    }
     if before.mode == SelfUpdate::Off { return before; }
     change(app, |s| s.state = State::Checking);
     let current = before.current.clone();
-    let found = tauri::async_runtime::spawn_blocking(move || selfupdate::check(&current)).await;
+    let found = tauri::async_runtime::spawn_blocking(move || selfupdate::check(&current, before.channel)).await;
     let available = match found {
         Ok(Ok(available)) => available,
         result => {
             eprintln!("note: no update check: {result:?}");
-            // Offline: an already verified download is still usable.
+            // Offline: an already verified download from the active channel is still usable.
+            if fresh().channel != before.channel { *pending = None; }
             return change(app, |s| s.state = if pending.is_some() { State::Ready } else { State::Idle });
         }
     };
@@ -119,6 +136,7 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
     let offered_version = available.as_ref().and_then(|a| selfupdate::semver(&a.version));
     let same = prepared_version.is_some() && prepared_version == offered_version;
     let mode = status();
+    if mode.channel != before.channel { *pending = None; return mode; }
     let permitted = mode.method.updates_itself() && mode.mode != SelfUpdate::Off
         && (!mode.locked || mode.mode == SelfUpdate::Auto);
     let wanted = download || mode.mode == SelfUpdate::Auto;
@@ -133,8 +151,9 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
         s.error = None;
     });
     let Some(offer) = available.filter(|_| state == State::Downloading) else { return status };
-    match fetch(app, &offer.version).await {
+    match fetch(app, before.channel, &offer.version).await {
         Ok(Some(prepared)) => {
+            if fresh().channel != before.channel { return change(app, |_| {}); }
             let version = selfupdate::semver(&prepared.0.version).map(|v| selfupdate::display(&v));
             let notes = prepared.0.body.clone();
             *pending = Some(prepared);
@@ -157,14 +176,15 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
 }
 
 /// Download the update with Tauri's updater, which checks it against the key and the version.
-async fn fetch(app: &AppHandle, offered: &str) -> Result<Option<Prepared>, String> {
-    let current = crate::build_info::current().version;
-    let url = selfupdate::feed_url(&current);
+async fn fetch(app: &AppHandle, channel: Channel, offered: &str) -> Result<Option<Prepared>, String> {
+    let current = selfupdate::semver(&crate::build_info::current().version).ok_or("invalid installed version")?;
+    let url = selfupdate::feed_url(channel);
     if !selfupdate::feed_allowed(&url) {
         return Err(format!("the update feed {url} doesn't use HTTPS"));
     }
     let updater = app
         .updater_builder()
+        .version_comparator(move |_, release| channel.offers(&current, &release.version))
         .endpoints(vec![url.parse().map_err(|e| format!("{url}: {e}"))?])
         .map_err(|e| e.to_string())?
         .build()
@@ -190,6 +210,11 @@ pub async fn apply(app: AppHandle, only_hidden: bool) -> Result<bool, String> {
         if let Some(error) = checked.error { return Err(error); }
     }
     let now = status();
+    if pending.as_ref().is_some_and(|(u, _)| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != now.channel)) {
+        *pending = None;
+        change(&app, |_| {});
+        return Ok(false);
+    }
     if now.mode == SelfUpdate::Off || ((only_hidden || now.locked) && now.mode != SelfUpdate::Auto) {
         return Ok(false);
     }

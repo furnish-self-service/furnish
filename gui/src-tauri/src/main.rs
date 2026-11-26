@@ -624,7 +624,8 @@ fn get_settings() -> furnish::settings::Effective {
 
 /// Change one setting for this user (refused for settings the admin policy locks).
 #[tauri::command]
-fn set_setting(key: String, value: serde_json::Value) -> CmdResult<()> {
+async fn set_setting(app: tauri::AppHandle, key: String, value: serde_json::Value) -> CmdResult<()> {
+    if key == "updateChannel" { return selfupdate::set_channel(&app, value).await; }
     furnish::settings::set(&key, value).map_err(|e| format!("{e:#}"))?;
     if key == "startAtSignIn" {
         autostart::apply(furnish::settings::load().start_at_sign_in).map_err(|e| format!("{e:#}"))?;

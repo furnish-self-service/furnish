@@ -870,9 +870,11 @@ jobs:
         shell: bash
         working-directory: gui
         run: |
-          base=${FURNISH_VERSION%%+*}; rest=${FURNISH_VERSION#"$base"}
-          IFS=. read -r major minor patch <<< "$base"
-          next="$major.$minor.$((patch + 1))$rest"
+          # Exercise a signed cross-channel switch even when its SemVer is lower.
+          case "$FURNISH_VERSION" in
+            *+alpha.*) next=${FURNISH_VERSION%%+*} ;;
+            *) next="$FURNISH_VERSION+alpha.1" ;;
+          esac
           FURNISH_VERSION=$next npm run bundle
           mkdir -p ../next
           case "$RUNNER_OS" in

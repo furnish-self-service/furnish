@@ -1027,7 +1027,9 @@ const steps = [
     await waitFor('dot on Settings', () => find("//nav//button[starts-with(normalize-space(), 'Settings')]//*[@aria-label='A new version of Acme Apps is available']"), 30000);
     await click(nav('Settings'));
     const row = "//*[@id='self-update']";
-    await waitFor('the new version in About', async () => (await text(row)).includes('Version 99.0.0 is available.'));
+    const offer = JSON.parse(log('feed/latest.json')).version;
+    await waitFor('channel shown for manual installations', async () => (await text("//*[@id='update-channel']")).trim() === (offer.includes('alpha') ? 'Alpha' : 'Stable'));
+    await waitFor('the new version in About', async () => (await text(row)).includes(`Version ${offer.replace('-alpha.', '+alpha.')} is available.`));
     if (!(await text(row)).includes('Install it the way you installed Acme Apps.')) throw new Error(`how it arrives: ${await text(row)}`);
     // Built from source: furnish doesn't install it, and doesn't offer to.
     if ((await findAll(`${row}//button`)).length) throw new Error('offers to install a version it cannot install here');

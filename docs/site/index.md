@@ -88,7 +88,7 @@ When assembling your own package, provide Git and Git LFS for collections and in
 
 ### Switching from alpha to stable
 
-Windows MSI and macOS disk-image installations follow the channel of the installed build. Install the stable download once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
+In builds with an **Update channel** selector, open **Settings → About** and choose **Stable** or **Alpha**. For earlier Windows MSI and macOS disk-image installations, install the download from the desired channel once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
 
 For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.1.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.1.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
 
