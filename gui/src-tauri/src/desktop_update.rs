@@ -16,7 +16,7 @@ use std::{
 /// No caller-supplied path, command, URL or launch arguments in either desktop command.
 static LOCATION: OnceLock<Option<Location>> = OnceLock::new();
 static CACHE: Mutex<Option<(Stamp, Option<Installed>)>> = Mutex::new(None);
-static RESTART: Mutex<Option<Candidate>> = Mutex::new(None);
+static RESTART: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Installed {
@@ -298,7 +298,7 @@ pub async fn restart_desktop(app: tauri::AppHandle, expected: Installed) -> crat
         if installed != expected {
             return Ok(false);
         }
-        *RESTART.lock().unwrap_or_else(|e| e.into_inner()) = Some(candidate);
+        *RESTART.lock().unwrap_or_else(|e| e.into_inner()) = Some(candidate.launcher);
         idle.commit();
         app.exit(0);
         Ok(true)
@@ -306,14 +306,20 @@ pub async fn restart_desktop(app: tauri::AppHandle, expected: Installed) -> crat
     .await
 }
 
+#[cfg(target_os = "linux")]
+pub fn restart_user_install(app: &tauri::AppHandle, root: PathBuf) {
+    *RESTART.lock().unwrap_or_else(|e| e.into_inner()) = Some(root.join("bin/furnish-gui"));
+    app.exit(0);
+}
+
 /// run_return has already released Tauri's named mutex, D-Bus name or socket. A healthy
 /// replacement can now become the first instance, including when the older app predates this
 /// handoff. Don't replay a previous deep link or the sign-in launcher's --hidden argument.
 pub fn finish(code: i32) -> ExitCode {
     if let Some(candidate) = RESTART.lock().unwrap_or_else(|e| e.into_inner()).take()
-        && let Err(error) = launch(&candidate.launcher)
+        && let Err(error) = launch(&candidate)
     {
-        eprintln!("furnish: couldn't reopen {}: {error}", candidate.launcher.display());
+        eprintln!("furnish: couldn't reopen {}: {error}", candidate.display());
         return ExitCode::FAILURE;
     }
     ExitCode::from(code as u8)

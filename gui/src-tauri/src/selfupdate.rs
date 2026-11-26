@@ -51,7 +51,16 @@ pub enum State {
 
 static STATUS: Mutex<Option<Status>> = Mutex::new(None);
 /// The downloaded update, checked against its signature, waiting to be installed.
-type Prepared = (tauri_plugin_updater::Update, Vec<u8>);
+struct Prepared {
+    version: String,
+    notes: Option<String>,
+    payload: Payload,
+}
+enum Payload {
+    Native(tauri_plugin_updater::Update, Vec<u8>),
+    #[cfg(target_os = "linux")]
+    LinuxUser(Vec<u8>),
+}
 // Serialize feed checks, replacements and installs so apply cannot take superseded bytes.
 static PENDING: tauri::async_runtime::Mutex<Option<Prepared>> = tauri::async_runtime::Mutex::const_new(None);
 
@@ -116,7 +125,7 @@ pub async fn set_channel(app: &AppHandle, value: serde_json::Value) -> Result<()
 
 async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>) -> Status {
     let before = status();
-    if pending.as_ref().is_some_and(|(u, _)| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != before.channel)) {
+    if pending.as_ref().is_some_and(|u| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != before.channel)) {
         *pending = None;
     }
     if before.mode == SelfUpdate::Off { return before; }
@@ -132,7 +141,7 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
             return change(app, |s| s.state = if pending.is_some() { State::Ready } else { State::Idle });
         }
     };
-    let prepared_version = pending.as_ref().and_then(|(u, _)| selfupdate::semver(&u.version));
+    let prepared_version = pending.as_ref().and_then(|u| selfupdate::semver(&u.version));
     let offered_version = available.as_ref().and_then(|a| selfupdate::semver(&a.version));
     let same = prepared_version.is_some() && prepared_version == offered_version;
     let mode = status();
@@ -154,8 +163,8 @@ async fn refresh(app: &AppHandle, download: bool, pending: &mut Option<Prepared>
     match fetch(app, before.channel, &offer.version).await {
         Ok(Some(prepared)) => {
             if fresh().channel != before.channel { return change(app, |_| {}); }
-            let version = selfupdate::semver(&prepared.0.version).map(|v| selfupdate::display(&v));
-            let notes = prepared.0.body.clone();
+            let version = selfupdate::semver(&prepared.version).map(|v| selfupdate::display(&v));
+            let notes = prepared.notes.clone();
             *pending = Some(prepared);
             change(app, |s| {
                 s.available = version;
@@ -182,6 +191,18 @@ async fn fetch(app: &AppHandle, channel: Channel, offered: &str) -> Result<Optio
     if !selfupdate::feed_allowed(&url) {
         return Err(format!("the update feed {url} doesn't use HTTPS"));
     }
+    #[cfg(target_os = "linux")]
+    if method() == Method::LinuxUser {
+        let offered = selfupdate::semver(offered);
+        return crate::blocking(move || {
+            let Some(manifest) = selfupdate::published(channel)? else { return Ok(None) };
+            let version = selfupdate::semver(&manifest.version);
+            if !version.as_ref().is_some_and(|v| channel.offers(&current, v)) { return Ok(None); }
+            anyhow::ensure!(version >= offered, "The update feed changed during the download. Check again.");
+            let bytes = selfupdate::download_verified(&manifest)?;
+            Ok(Some(Prepared { version: manifest.version, notes: manifest.notes, payload: Payload::LinuxUser(bytes) }))
+        }).await;
+    }
     let updater = app
         .updater_builder()
         .version_comparator(move |_, release| channel.offers(&current, &release.version))
@@ -195,7 +216,7 @@ async fn fetch(app: &AppHandle, channel: Channel, offered: &str) -> Result<Optio
         return Err("The update feed changed during the download. Check again.".into());
     }
     let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    Ok(Some((update, bytes)))
+    Ok(Some(Prepared { version: update.version.clone(), notes: update.body.clone(), payload: Payload::Native(update, bytes) }))
 }
 
 /// Install the downloaded update and start the new version: refused while an install runs, and
@@ -210,7 +231,7 @@ pub async fn apply(app: AppHandle, only_hidden: bool) -> Result<bool, String> {
         if let Some(error) = checked.error { return Err(error); }
     }
     let now = status();
-    if pending.as_ref().is_some_and(|(u, _)| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != now.channel)) {
+    if pending.as_ref().is_some_and(|u| selfupdate::semver(&u.version).is_none_or(|v| Channel::of(&v) != now.channel)) {
         *pending = None;
         change(&app, |_| {});
         return Ok(false);
@@ -222,9 +243,28 @@ pub async fn apply(app: AppHandle, only_hidden: bool) -> Result<bool, String> {
         return Ok(false);
     }
     let Some(idle) = crate::tray::IdleRestart::reserve(&app) else { return Ok(false) };
-    let Some((update, bytes)) = pending.take() else { return Ok(false) };
+    let Some(prepared) = pending.take() else { return Ok(false) };
     // Off the main thread: macOS may ask for an administrator's password.
-    let result = tauri::async_runtime::spawn_blocking(move || update.install(&bytes)).await;
+    #[cfg(target_os = "linux")]
+    if let Payload::LinuxUser(bytes) = prepared.payload {
+        match crate::blocking(move || selfupdate::install_linux_user(&bytes)).await {
+            Ok(selfupdate::Installed::Replaced(root)) => {
+                idle.commit();
+                crate::desktop_update::restart_user_install(&app, root);
+                return Ok(true);
+            }
+            Ok(_) => unreachable!("Linux user updates replace the installation"),
+            Err(error) => {
+                change(&app, |s| { s.state = State::Idle; s.error = Some(error.clone()); });
+                return Err(error);
+            }
+        }
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || match prepared.payload {
+        Payload::Native(update, bytes) => update.install(&bytes),
+        #[cfg(target_os = "linux")]
+        Payload::LinuxUser(_) => unreachable!(),
+    }).await;
     if let Err(message) = result.map_err(|e| e.to_string()).and_then(|res| res.map_err(|e| e.to_string())) {
         change(&app, |s| {
             s.state = State::Idle;

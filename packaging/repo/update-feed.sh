@@ -10,6 +10,7 @@
 set -eu
 dir=${1:?usage: $0 <channel dir> <its URL>}; url=${2:?usage: $0 <channel dir> <its URL>}
 versions=$( { ls "$dir/windows" 2>/dev/null | sed -nE 's/^furnish_(.*)_x64\.msi\.sig$/\1/p'
+              ls "$dir/linux" 2>/dev/null | sed -nE 's/^furnish_(.*)_linux-x86_64_user\.tar\.gz\.sig$/\1/p'
               ls "$dir/macos" 2>/dev/null | sed -nE 's/^furnish_(.*)_arm64\.app\.tar\.gz\.sig$/\1/p'; } | sort -V)
 version=$(echo "$versions" | tail -n 1)
 if [ -z "$version" ]; then echo "no signed downloads in $dir"; exit 1; fi
@@ -21,6 +22,7 @@ add() { # <target> <file relative to the channel dir>
         platforms=$(echo "$platforms" | jq --arg t "$1" --arg u "$url/$2" --arg s "$(cat "$dir/$2.sig")" '. + {($t): {url: $u, signature: $s}}')
     fi
 }
+add linux-x86_64 "linux/furnish_${version}_linux-x86_64_user.tar.gz"
 add windows-x86_64 "windows/furnish_${version}_x64.msi"
 add darwin-aarch64 "macos/furnish_${version}_arm64.app.tar.gz"
 notes="https://github.com/furnish-self-service/furnish/releases/tag/v$semver"

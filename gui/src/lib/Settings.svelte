@@ -67,11 +67,11 @@
 
   const brand = $derived(store.brand.name);
 
-  // furnish's own updates: it installs them itself only when installed from the .msi or .dmg.
   const self = $derived(store.selfUpdate);
-  const updatesItself = $derived(self?.method === 'msi' || self?.method === 'app');
+  const updatesItself = $derived(self?.method === 'msi' || self?.method === 'app' || self?.method === 'linuxUser');
   const methods: Record<api.InstallMethod, string> = $derived({
     msi: t('settings.methodMsi'),
+    linuxUser: t('settings.methodApp'),
     app: t('settings.methodApp'),
     homebrew: t('settings.methodHomebrew'),
     deb: t('settings.methodDeb'),

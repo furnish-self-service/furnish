@@ -313,8 +313,8 @@ export interface DesktopUpdateStatus {
 export const desktopUpdateStatus = () => invoke<DesktopUpdateStatus>('desktop_update_status');
 export const restartDesktop = (expected: NonNullable<DesktopUpdateStatus['installed']>) => invoke<boolean>('restart_desktop', { expected });
 
-/** How furnish was installed: furnish installs its own updates only for `msi` and `app`. */
-export type InstallMethod = 'msi' | 'app' | 'homebrew' | 'deb' | 'rpm' | 'nix' | 'other';
+/** How furnish was installed: furnish installs its own updates for `msi`, `app` and `linuxUser`. */
+export type InstallMethod = 'msi' | 'app' | 'linuxUser' | 'homebrew' | 'deb' | 'rpm' | 'nix' | 'other';
 /** furnish's own updates (src-tauri/src/selfupdate.rs). */
 export interface SelfUpdateStatus {
   method: InstallMethod;

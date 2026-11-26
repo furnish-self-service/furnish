@@ -1,6 +1,6 @@
 [package]
 name = "furnish"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # NixOS stable (nixos-25.11) ships Rust 1.91; cargo picks dependency versions that support it.
 rust-version = "1.91"

@@ -12,16 +12,16 @@ The catalog is a git repository, called a collection. Each app in it is a short 
 
 ## Install furnish
 
-Choose a channel and install scope. Stable is the published v0.1.0 release. Alpha builds include newer changes and the Windows and Linux current-user installers.
+Choose a channel and install scope. Stable provides tested releases. Alpha builds include upcoming changes.
 
 | System | Install scope | Channel and download | How to update |
 |---|---|---|---|
 | Windows x64, MSI | All users | [Stable MSI](https://furnish-self-service.github.io/furnish/stable/furnish-windows.msi) · [Alpha MSI](https://furnish-self-service.github.io/furnish/alpha/furnish-windows.msi) | Furnish updates itself on the installed channel |
-| Windows x64, current-user installer | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `windows-x86_64_user-setup.exe` | Run the newer current-user installer |
+| Windows x64, current-user installer | Your account | [Stable current-user installer](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_windows-x86_64_user-setup.exe) · [Alpha release assets](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue) | Run the newer current-user installer |
 | macOS, Apple silicon | Your account in `~/Applications` or all users in `/Applications` | [Stable disk image](https://furnish-self-service.github.io/furnish/stable/furnish-macos.dmg) · [Alpha disk image](https://furnish-self-service.github.io/furnish/alpha/furnish-macos.dmg) | Furnish updates itself on the installed channel |
 | macOS, Apple silicon, Homebrew | Homebrew installation | Stable cask (command below) | `brew upgrade` |
 | Linux x86-64, DEB or RPM | System-wide | Stable repository (commands below) or its `/alpha/` counterpart | System package manager |
-| Linux x86-64, user archive | Your account | [Alpha releases](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue), asset ending in `linux-x86_64_user.tar.gz` | Quit Furnish and replace the extracted folder |
+| Linux x86-64, user archive | Your account | [Stable user archive](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_linux-x86_64_user.tar.gz) · [Alpha release assets](https://github.com/furnish-self-service/furnish/releases?q=prerelease%3Atrue) | Signed updates from the selected channel |
 | NixOS | NixOS configuration | Pin the stable tag or follow the main branch | Update the flake lock and rebuild |
 
 On Intel Macs and other platforms, see the source build instructions below.
@@ -69,16 +69,31 @@ Choose the download for your operating system and CPU from the [GitHub release a
 | macOS, Apple silicon | Open the disk image and drag **furnish.app** into **Applications** inside your home folder (`~/Applications`). Create the folder if necessary. The release’s `arm64.app.tar.gz` contains the same app. Run the CLI as `"$HOME/Applications/furnish.app/Contents/MacOS/furnish"`. |
 | Linux x86-64 | Extract the file ending in `linux-x86_64_user.tar.gz` into a folder you own, as shown below. It includes the static CLI, the desktop app, and DSC resources. Git and Git LFS must be available for collections. The desktop app also needs GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator. |
 
-From the folder containing the Linux download, substitute its release version for `VERSION`:
+### Linux current-user install
+
+On an x86-64 machine, download the [stable Linux user archive](https://github.com/furnish-self-service/furnish/releases/download/v0.2.0/furnish_0.2.0_linux-x86_64_user.tar.gz). From the directory containing the download, extract it into your home directory:
 
 ```sh
-mkdir -p "$HOME/.local/opt"
-tar -xzf furnish_VERSION_linux-x86_64_user.tar.gz -C "$HOME/.local/opt"
-"$HOME/.local/opt/furnish/bin/furnish-gui"
-"$HOME/.local/opt/furnish/bin/furnish" --version
+mkdir -p -m 700 "$HOME/.local/opt"
+tar -xzf furnish_0.2.0_linux-x86_64_user.tar.gz -C "$HOME/.local/opt"
 ```
 
-Quit Furnish before replacing the Linux folder with a newer release. Removing that folder removes the programs. Collections and settings stay in your user data directory.
+Start the desktop with `"$HOME/.local/opt/furnish/bin/furnish-gui"`, or run the CLI directly:
+
+```sh
+"$HOME/.local/opt/furnish/bin/furnish" --version
+"$HOME/.local/opt/furnish/bin/furnish" --help
+```
+
+The desktop uses GTK 3, WebKitGTK 4.1 and Ayatana AppIndicator from the host. If it reports a missing shared library on a managed machine, use the static CLI or ask IT to provide the desktop libraries. Both interfaces use Git and Git LFS for collections. Check that `git --version` and `git lfs version` work in your account.
+
+The archive runs with your account’s permissions. Steps that write to your home directory can run as you. Installing a system package still needs administrator approval or the [IT-managed Furnish service](admins.md#people-without-administrator-rights).
+
+**Update:** Starting with v0.2.0, the desktop verifies signed archives and updates automatically when idle in the tray. Select Stable or Alpha in **Settings → About**, or run `"$HOME/.local/opt/furnish/bin/furnish" self-update` to update immediately. Keep the extracted directory and its parent owned by your account and writable only by you. The updater replaces the entire extracted directory in one filesystem operation, so keep personal files outside it.
+
+**Migrate from an older archive or recover manually:** Quit Furnish, including its tray process. Move the extracted `$HOME/.local/opt/furnish` folder aside and extract the new user archive into the same parent directory. Launch the new copy and check its version before deleting the old folder.
+
+**Remove:** Quit Furnish and delete the extracted `furnish` folder. Your settings and collections stay in the data directory shown under **Settings → About → Data folder**.
 
 ### Binary archives for packagers
 
@@ -90,7 +105,7 @@ When assembling your own package, provide Git and Git LFS for collections and in
 
 In builds with an **Update channel** selector, open **Settings → About** and choose **Stable** or **Alpha**. For earlier Windows MSI and macOS disk-image installations, install the download from the desired channel once to switch. If Windows reports a newer version is already installed, uninstall the alpha MSI through Installed apps first. On macOS quit Furnish before replacing the app in Applications. Keep your Furnish data folder to retain collections and settings.
 
-For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For Linux, replace the alpha repository with the stable repository above. A package manager may rank `0.1.0+alpha.N` above `0.1.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.1.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.1.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
+For Homebrew, run `brew update` and `brew reinstall --cask furnish-self-service/tap/furnish`. For DEB and RPM installs, replace the alpha repository with the stable repository above. A package manager may rank `0.2.0+alpha.N` above `0.2.0`. On Debian or Ubuntu, run `sudo apt update` and `sudo apt install --allow-downgrades furnish=0.2.0`. On Fedora, refresh metadata and use `sudo dnf downgrade furnish-0.2.0` if an ordinary upgrade retains the alpha. Run `furnish --version` to confirm.
 
 ### Terminal command for the macOS download
 

@@ -109,7 +109,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get install -y -qq musl-tools && rustup target add x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Build and verify the standalone release CLI
+        run: |
+          export FURNISH_VERSION="$(sh scripts/ci-version.sh)"
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          test "$(target/x86_64-unknown-linux-musl/release/furnish --version)" = "furnish $FURNISH_VERSION"
       - uses: actions/upload-artifact@v4
         with:
           name: furnish-linux-x86_64
@@ -515,8 +519,7 @@ jobs:
           restore-keys: jammy-
       - run: |
           # Builds of main are alpha releases: 0.1.0+alpha.<run>, rising with every run.
-          version=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then version="$version+alpha.$GITHUB_RUN_NUMBER"; fi
+          version=$(sh scripts/ci-version.sh)
           mkdir -p .cache/cargo-registry
           docker run --rm -v "$PWD:/src" -v "$PWD/.cache/cargo-registry:/root/.cargo/registry" -w /src \
             -e HOST_UID=$(id -u) -e FURNISH_VERSION="$version" -e FURNISH_BUILD_REVISION="$GITHUB_SHA" \
@@ -536,7 +539,7 @@ jobs:
           mkdir "$RUNNER_TEMP/user-install"
           tar -xzf archives/*_user.tar.gz -C "$RUNNER_TEMP/user-install"
           prefix="$RUNNER_TEMP/user-install/furnish"
-          "$prefix/bin/furnish" --version
+          test "$("$prefix/bin/furnish" --version)" = "furnish $version"
           test -x "$prefix/lib/furnish/dsc/filecontent"
           test -s "$prefix/share/applications/furnish.desktop"
           test "$(tar -tzf archives/*_binaries.tar.gz | sort)" = "$(printf '%s\n' LICENSE THIRD-PARTY-LICENSES.html furnish furnish-gui | sort)"
@@ -729,8 +732,7 @@ jobs:
       # Builds of main are alpha releases (see linux-packages); the bundled CLI reports it.
       - shell: bash
         run: |
-          v=$(jq -r .version gui/src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$RELEASE_CHANNEL" = alpha ]; then v="$v+alpha.$GITHUB_RUN_NUMBER"; fi
+          v=$(sh scripts/ci-version.sh)
           echo "FURNISH_VERSION=$v" >> "$GITHUB_ENV"
           echo "FURNISH_BUILD_REVISION=$GITHUB_SHA" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
@@ -824,8 +826,9 @@ jobs:
           # Preserve the package's executable. Run a distinct alpha build and replace it
           # on disk during the desktop test, as an external package manager would.
           cp target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
-          FURNISH_VERSION=0.1.0+alpha.999999 cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
-          FURNISH_TEST_RUNNING_VERSION=0.1.0-alpha.999999 tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
+          base=${FURNISH_VERSION%%+*}
+          FURNISH_VERSION="$base+alpha.999999" cargo build --release --locked -p furnish-gui --features tauri/custom-protocol
+          FURNISH_TEST_RUNNING_VERSION="$base-alpha.999999" tests/ui/run.sh target/release/furnish-gui "$RUNNER_TEMP/installed-furnish-gui"
       - name: Upgrade a populated stable desktop to the candidate
         if: runner.os == 'Linux'
         run: |
@@ -866,7 +869,6 @@ jobs:
       # The same app as a higher version (patch + 1), for the self-update job to update to. Last:
       # it replaces target/release/bundle/.
       - name: Build the next version for the self-update test
-        if: runner.os != 'Linux'
         shell: bash
         working-directory: gui
         run: |
@@ -875,14 +877,20 @@ jobs:
             *+alpha.*) next=${FURNISH_VERSION%%+*} ;;
             *) next="$FURNISH_VERSION+alpha.1" ;;
           esac
+          if [ "$RUNNER_OS" = Linux ]; then
+            FURNISH_VERSION=$next cargo build --release --locked -p furnish -p furnish-gui --features tauri/custom-protocol
+            cp ../target/release/{furnish,furnish-gui} "$RUNNER_TEMP/bundle/usr/bin/"
+            python3 ../scripts/package-archives.py linux "$RUNNER_TEMP/bundle/usr" "$next" ../next
+            rm ../next/*_binaries.tar.gz
+            exit
+          fi
           FURNISH_VERSION=$next npm run bundle
           mkdir -p ../next
           case "$RUNNER_OS" in
             macOS)   COPYFILE_DISABLE=1 tar -czf "../next/furnish_${next}_$(uname -m).app.tar.gz" -C ../target/release/bundle/macos furnish.app ;;
             Windows) cp ../target/release/bundle/msi/*.msi "../next/furnish_${next}_x64.msi" ;;
           esac
-      - if: runner.os != 'Linux'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: furnish-next-${{ runner.os }}
           path: next/
@@ -892,7 +900,7 @@ jobs:
   # next version (gui job), signed, with a feed on 127.0.0.1 for the self-update job.
   update-feed:
     name: update feed (signed, verified against the app's key)
-    needs: [changes, gui]
+    needs: [changes, gui, linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -901,6 +909,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: gui/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: furnish-archives-linux
+          path: desktop
       - uses: actions/download-artifact@v4
         with:
           pattern: furnish-desktop-*
@@ -920,17 +932,20 @@ jobs:
         run: |
           [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::TAURI_SIGNING_PRIVATE_KEY isn't available (a pull request from a fork?)"; exit 1; }
           # Each signature names its version, as SemVer (0.1.0+alpha.42 signs as 0.1.0-alpha.42).
-          for f in $(ls desktop/*.msi desktop/*.app.tar.gz next/*.msi next/*.app.tar.gz 2>/dev/null); do
-            v=$(basename "$f" | sed -E 's/^furnish_(.*)_(x64|arm64)\..*$/\1/; s/\+alpha\./-alpha./')
+          shopt -s nullglob
+          for f in {desktop,next}/*.msi {desktop,next}/*.app.tar.gz {desktop,next}/*_linux-x86_64_user.tar.gz; do
+            v=$(basename "$f" | sed -E 's/^furnish_(.*)_(x64|arm64|linux-x86_64_user)\..*$/\1/; s/\+alpha\./-alpha./')
             (cd gui && npx tauri signer sign --app-version "$v" "../$f" > /dev/null)
             echo "signed $f for $v"
           done
       - name: The feed for this build verifies against the app's public key
         env:
           # On branches without macOS changes there is no macOS build (see the changes job).
-          REQUIRE: windows-x86_64${{ needs.changes.outputs.macos-gui == 'true' && ' darwin-aarch64' || '' }}
+          REQUIRE: linux-x86_64 windows-x86_64${{ needs.changes.outputs.macos-gui == 'true' && ' darwin-aarch64' || '' }}
         run: |
-          mkdir -p feed/windows feed/macos roundtrip/windows roundtrip/macos
+          mkdir -p {feed,roundtrip}/{windows,macos,linux}
+          cp desktop/*_user.tar.gz{,.sig} feed/linux/
+          cp next/*_user.tar.gz{,.sig} roundtrip/linux/
           cp desktop/*.msi desktop/*.msi.sig feed/windows/ && cp next/*.msi next/*.msi.sig roundtrip/windows/
           if [ "${{ needs.changes.outputs.macos-gui }}" = true ]; then
             cp desktop/*.app.tar.gz desktop/*.app.tar.gz.sig feed/macos/ && cp next/*.app.tar.gz next/*.app.tar.gz.sig roundtrip/macos/
@@ -960,17 +975,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.changes.outputs.macos-gui == 'true' && '["windows-latest","macos-latest"]' || '["windows-latest"]') }}
+        os: ${{ fromJSON(needs.changes.outputs.macos-gui == 'true' && '["windows-latest","macos-latest","ubuntu-latest"]' || '["windows-latest","ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: furnish-desktop-${{ runner.os }}
+          name: ${{ runner.os == 'Linux' && 'furnish-archives-linux' || format('furnish-desktop-{0}', runner.os) }}
           path: desktop
       - uses: actions/download-artifact@v4
         with:
           name: furnish-selfupdate-feed
           path: feed
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-0 libayatana-appindicator3-1 xvfb
+          dbus-run-session -- xvfb-run -a bash tests/self-update-linux.sh desktop/*_user.tar.gz feed
       # An earlier release's .msi, with the service running, upgraded to this build.
       - name: Upgrade from ${{ env.UPGRADE_FROM_RELEASE }} with the service running
         if: runner.os == 'Windows'
