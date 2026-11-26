@@ -368,6 +368,8 @@ export const nl: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Niet uitgevoerd',
   'plan.note': 'Dit is een voorbeeld. Er is niets gewijzigd op deze computer.',
   'plan.note.zeroInstall.nameInUse': "De Zero Install-starter <code>{name}</code> hoort bij <code>{feed}</code>",
+  'plan.note.package.removal': "{manager} verwijdert {name}.",
+  'plan.note.package.unrecordedRemoval': "De oorspronkelijke pakketbeheerder is niet vastgelegd. {manager} verwijdert {name}.",
   'plan.note.package.recordedName': "Naam van het geïnstalleerde pakket: <code>{name}</code>",
   'plan.note.package.recorded': "Geïnstalleerd met pakketbeheerder <code>{manager}</code>",
   'plan.note.package.explicit': "De app kiest pakketbeheerder <code>{manager}</code>",

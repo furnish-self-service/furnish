@@ -104,12 +104,12 @@ pub(crate) fn validate(props: &Value) -> Result<()> {
 pub(crate) struct Selection<'a> {
     pub name: &'a str,
     pub manager: Option<String>,
-    notes: [Note; 2],
+    notes: Vec<Note>,
 }
 
 impl Selection<'_> {
     pub(crate) fn explanation(&self) -> String {
-        self.notes.each_ref().map(Note::english).join(". ")
+        self.notes.iter().map(Note::english).collect::<Vec<_>>().join(". ")
     }
 
     fn annotate(&self, mut state: Value) -> Result<String> {
@@ -233,7 +233,7 @@ pub(crate) fn select<'a>(
         }
     };
     let manager_note = note(reason, manager.map_or_else(|| json!({}), |id| json!({"manager": id})));
-    Ok(Selection { name, manager: manager.map(str::to_owned), notes: [manager_note, name_note] })
+    Ok(Selection { name, manager: manager.map(str::to_owned), notes: vec![manager_note, name_note] })
 }
 
 #[cfg(windows)]
@@ -360,7 +360,7 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     let ids: Vec<_> = scripts.keys().map(String::as_str).collect();
     let mut selection = select(props, &distribution, &native, &ids, cfg!(windows))?;
     if let Some(receipt) = &owner {
-        selection.notes = [
+        selection.notes = vec![
             note("package.recorded", json!({"manager":receipt.manager})),
             note("package.recordedName", json!({"name":receipt.name})),
         ];
@@ -369,6 +369,10 @@ pub(crate) fn run(props: &Value, operation: &str, what_if: bool) -> Result<Strin
     if let Some(receipt) = &owner && platform::supported_manager(&receipt.manager)
         && !platform::package_managers().contains(&receipt.manager.as_str()) {
         return Err(Missing(format!("package manager {}", receipt.manager)).into());
+    }
+    if what_if && props["_exist"] == false && let Some(id) = manager {
+        let code = if owner.is_some() { "package.removal" } else { "package.unrecordedRemoval" };
+        selection.notes.push(note(code, json!({"manager":id, "name":selection.name})));
     }
     let state = run_selected(props, &selection, &scripts, operation, what_if, delegated)?;
     if operation == "set" && !what_if && owner.is_none() && props["_exist"] != false && state["_exist"] == true

@@ -365,6 +365,8 @@ export const en = {
   'plan.notRun': 'Not run',
   'plan.note': 'This is a preview. Nothing has been changed on this computer.',
   'plan.note.zeroInstall.nameInUse': "Zero Install launcher <code>{name}</code> belongs to <code>{feed}</code>",
+  'plan.note.package.removal': "{manager} will remove {name}.",
+  'plan.note.package.unrecordedRemoval': "The original package manager was not recorded. {manager} will remove {name}.",
   'plan.note.package.recordedName': "Installed package name: <code>{name}</code>",
   'plan.note.package.recorded': "Installed with the <code>{manager}</code> package manager",
   'plan.note.package.explicit': "The app selects the <code>{manager}</code> package manager",

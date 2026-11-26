@@ -17,6 +17,7 @@
   import Plan from './Plan.svelte';
   import Versions from './Versions.svelte';
   import { t, formatDate, lang, terror } from './i18n.svelte';
+  let removalReady = $state(false);
   import RemovalImpact from './RemovalImpact.svelte';
   import External from './External.svelte';
 
@@ -110,9 +111,9 @@
     <div class="cta">
       {#if status === 'installed' && confirming && checkError === undefined}
         <p class="confirm">{t('app.confirmUninstall', { app: appName(app) })}</p>
-        <RemovalImpact keys={[app.key]} />
+        <RemovalImpact bind:ready={removalReady} keys={[app.key]} />
         <div class="row">
-          <button class="danger" onclick={() => { confirming = false; return uninstall(app); }}>{t('common.uninstall')}</button>
+          <button class="danger" disabled={!removalReady} onclick={() => { confirming = false; return uninstall(app); }}>{t('common.uninstall')}</button>
           <button class="secondary" onclick={() => (confirming = false)}>{t('common.cancel')}</button>
         </div>
       {:else if status === 'installed' && !store.busy[app.key] && !store.queue.some((q) => q.key === app.key)}

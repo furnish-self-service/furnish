@@ -43,6 +43,9 @@ for a do shift; [ "\$a" = -- ] || set -- "\$@" "\$a"; done  # drop the end of op
 if [ "\$1" = -Q ] && [ "\$2" = hyperfine ]; then
     while [ -f "$work/hold-hyperfine-status" ]; do sleep 0.1; done
 fi
+if [ "\$1" = -Q ]; then
+    while [ -f "$work/hold-upgrade-scan" ]; do sleep 0.1; done
+fi
 case "\$1" in
   -Q) [ -f "$work/pkgs/\$2" ] && echo "\$2 \$(cat "$work/pkgs/\$2")" ;;
   -Qu) [ -f "$work/pkgs/\$2.new" ] && echo "\$2 \$(cat "$work/pkgs/\$2") -> \$(cat "$work/pkgs/\$2.new")" ;;
@@ -238,7 +241,7 @@ docker exec --user 0 "$container" install /fixtures/running /usr/local/bin/furni
 docker exec --user 0 "$container" install -D /usr/local/bin/furnish-gui /nix/store/fixture-furnish/bin/furnish-gui
 
 # Sampling every second makes the load window 30 s instead of 5 minutes.
-if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${2:+replace}"; then
+if node "$repo/tests/ui/test.mjs" "$work" "$shot" "$container" "${3:-${2:+replace}}"; then
     echo "UI tests passed"
 else
     echo "--- container log"; docker logs "$container" 2>&1 | grep -v -e MESA -e '^$' | tail -30

@@ -368,6 +368,8 @@ export const it: Record<keyof typeof en, Entry> = {
   'plan.notRun': 'Non eseguito',
   'plan.note': "Questa è un'anteprima. Non è stato modificato nulla su questo computer.",
   'plan.note.zeroInstall.nameInUse': "Il comando di avvio Zero Install <code>{name}</code> appartiene a <code>{feed}</code>",
+  'plan.note.package.removal': "{manager} rimuoverà {name}.",
+  'plan.note.package.unrecordedRemoval': "Il gestore di pacchetti originale non è stato registrato. {manager} rimuoverà {name}.",
   'plan.note.package.recordedName': "Nome del pacchetto installato: <code>{name}</code>",
   'plan.note.package.recorded': "Installato con il gestore di pacchetti <code>{manager}</code>",
   'plan.note.package.explicit': "L’app seleziona il gestore di pacchetti <code>{manager}</code>",
