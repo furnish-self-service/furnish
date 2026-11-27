@@ -65,6 +65,8 @@ pub const SETUP_LINES: [&str; 2] =
 /// The local flake's flake.nix (the NixOS module writes the same, `appsFlake`).
 const APPS_FLAKE: &str = "{ outputs = _: { furnish = builtins.fromJSON (builtins.readFile ./apps.json); }; }\n";
 const FACTS: &str = "/etc/furnish/nixos.json";
+/// The unit switch-to-configuration runs in.
+const SWITCH_UNIT: &str = "furnish-switch-to-configuration";
 /// furnish's input for the apps it installs into a standalone Home Manager configuration.
 pub const HOME_INPUT: &str = "furnish/home-apps";
 
@@ -1275,14 +1277,16 @@ fn apply(target: &Target, desired: &Desired, place: Place, person: &Account) -> 
     let mut profile = Command::new("nix-env");
     profile.args(["-p", "/nix/var/nix/profiles/system", "--set", &system]);
     run(profile, "setting the system profile")?;
-    // Outside the furnish service, which the new system may restart; as nixos-rebuild does.
+    // Outside the furnish service, as nixos-rebuild does, and with its output in the journal, not
+    // in a pipe to the service: a switch that stops the service (an older furnish.service, which
+    // doesn't say X-RestartIfChanged=false) would otherwise end when it next writes a line.
     let mut switch = Command::new("systemd-run");
     switch
-        .args(["-E", "LOCALE_ARCHIVE", "-E", "NIXOS_INSTALL_BOOTLOADER", "--collect", "--no-ask-password", "--pipe", "--quiet"])
-        .args(["--service-type=exec", "--unit=furnish-switch-to-configuration", "--wait"])
+        .args(["-E", "LOCALE_ARCHIVE", "-E", "NIXOS_INSTALL_BOOTLOADER", "--collect", "--no-ask-password", "--quiet"])
+        .args(["--service-type=exec", &format!("--unit={SWITCH_UNIT}"), "--wait"])
         .arg(format!("{system}/bin/switch-to-configuration"))
         .arg(mode);
-    run(switch, "switch-to-configuration")?;
+    run(switch, "switch-to-configuration").with_context(|| format!("switching to the new system (its output: journalctl -u {SWITCH_UNIT})"))?;
     commit(git(), dir, clean, desired);
     Ok(())
 }
