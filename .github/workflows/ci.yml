@@ -251,7 +251,7 @@ jobs:
         with:
           name: furnish
           skipPush: true
-      - run: nix build -L .#checks.x86_64-linux.nixos-install
+      - run: nix build -L .#checks.x86_64-linux.nixos-install .#checks.x86_64-linux.nixos-switch
 
   home-manager:
     name: NixOS VM (apps in Home Manager)
