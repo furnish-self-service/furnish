@@ -424,6 +424,9 @@ enum ServiceAction {
     },
     /// Stop and unregister the service (as administrator)
     Uninstall,
+    /// Restart the service once it has finished what it is doing (as root, Linux). NixOS does
+    /// this when a switch changed the service.
+    Restart,
 }
 
 #[derive(Subcommand)]
@@ -512,8 +515,12 @@ fn main() -> ExitCode {
     if cli.verbose {
         engine::capture_logs(print_log_line);
     }
-    // Comparing Git snapshots only needs collection metadata, even on a machine without DSC.
-    let result = if matches!(cli.command, Command::Collection(CollectionCommand::Update { dry_run: true, .. })) {
+    // Comparing Git snapshots only needs collection metadata, even on a machine without DSC, and
+    // asking the service to restart (from a systemd unit, flake.nix) nothing at all.
+    let result = if matches!(
+        cli.command,
+        Command::Collection(CollectionCommand::Update { dry_run: true, .. }) | Command::Service { action: Some(ServiceAction::Restart) }
+    ) {
         run(cli.command)
     } else {
         engine::init(&catalog::data_dir().join("resources")).and_then(|()| run(cli.command))
@@ -556,6 +563,11 @@ fn run(command: Command) -> Result<()> {
         Command::Service { action: Some(ServiceAction::Uninstall) } => {
             furnish::service::uninstall()?;
             println!("✓ Removed the furnish service");
+            Ok(())
+        }
+        Command::Service { action: Some(ServiceAction::Restart) } => {
+            furnish::service::restart()?;
+            println!("✓ The furnish service restarts once it has finished what it is doing");
             Ok(())
         }
         Command::NixosResource(_) => unreachable!("run before anything else"),

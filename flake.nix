@@ -255,8 +255,11 @@
               wantedBy = [ "multi-user.target" ];
               wants = [ "network-online.target" ];
               after = [ "network-online.target" ];
-              # systemd-run: switching to a new system runs outside the service, which it may restart.
+              # systemd-run: switching to a new system runs outside the service.
               path = with pkgs; [ bash coreutils git git-lfs nix config.systemd.package ];
+              # The switch may be the service's own (src/nixos_apps.rs): it mustn't stop the
+              # service midway. furnish-restart restarts it once it has finished instead.
+              restartIfChanged = false;
               # It reads the policy once for its resources (FURNISH_CONFIG__*): restart on changes.
               restartTriggers = [ (builtins.toJSON policy) ];
               serviceConfig = {
@@ -264,6 +267,21 @@
                 Restart = "on-failure";
                 UMask = "0022";
                 StateDirectory = "furnish";
+              };
+            };
+            # Changes with furnish.service, so a switch that changes the service reloads this unit,
+            # which asks the service to restart once it has finished what it is doing.
+            systemd.services.furnish-restart = lib.mkIf cfg.service.enable {
+              description = "Restart the furnish service once it is idle after a switch";
+              wantedBy = [ "multi-user.target" ];
+              after = [ "furnish.service" ];
+              reloadIfChanged = true;
+              restartTriggers = [ config.systemd.units."furnish.service".unit ];
+              serviceConfig = {
+                Type = "oneshot";
+                RemainAfterExit = true;
+                ExecStart = "${pkgs.coreutils}/bin/true";
+                ExecReload = "${packages.furnish}/bin/furnish service restart";
               };
             };
           }] ++ map (s: lib.mkIf (allowed s.name) (lib.setAttrByPath (lib.splitString "." s.name) s.value)) appSettings));
@@ -422,6 +440,13 @@
         nixos-apps = import ./tests/nixos-apps.nix { inherit pkgs nixpkgs; nixosModule = offlineModule; furnish = self; };
         # NixOS VM: installing such an app through the furnish service.
         nixos-install = import ./tests/nixos-install.nix {
+          inherit pkgs nixpkgs;
+          nixosModule = offlineModule;
+          furnish = self;
+          module = offlineModule apps;
+        };
+        # NixOS VM: switching to the system it built doesn't stop the furnish service midway.
+        nixos-switch = import ./tests/nixos-switch.nix {
           inherit pkgs nixpkgs;
           nixosModule = offlineModule;
           furnish = self;

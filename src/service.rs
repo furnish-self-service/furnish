@@ -91,6 +91,10 @@ pub enum Request {
     },
     /// The versions of an app people can choose from (`catalog::App::versions`).
     Versions { app: String },
+    /// Root only (Linux): restart the service once no operation runs and its answers are written.
+    /// NixOS asks for this after a switch changed the service (flake.nix), which may be the
+    /// service's own switch: the switch itself mustn't stop it (src/nixos_apps.rs).
+    Restart,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -172,6 +176,18 @@ fn preset_headers() -> BTreeMap<String, String> {
     crate::auth::headers_for(crate::policy::load().collections.preset.into_iter().map(|p| p.url))
 }
 
+/// Ask the service to restart once it is idle (`Request::Restart`). A service that isn't running
+/// starts with its new definition anyway: nothing to do, and no failed reload in a switch.
+pub fn restart() -> Result<()> {
+    if connect().is_err() {
+        return Ok(());
+    }
+    match call(&Request::Restart, &mut |_| {})? {
+        Reply::Done => Ok(()),
+        other => bail!("unexpected answer from the furnish service: {other:?}"),
+    }
+}
+
 /// Ask the service to stop what it is running (no-op without the service).
 pub fn stop(force: bool) -> Result<()> {
     if enabled() {
@@ -243,6 +259,27 @@ const MAX_CONNECTIONS: usize = 64;
 /// Answers waiting for a client; a client that lets more pile up gets no more.
 const QUEUE: usize = 1024;
 static CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+/// Someone asked for a restart (`Request::Restart`) that hasn't happened yet.
+static RESTART: AtomicBool = AtomicBool::new(false);
+
+/// Restart if asked to and no operation runs. Called once a connection's answers are written, so
+/// the restart cuts off no operation and no answer to one.
+fn restart_if_idle() {
+    let _idle = match RUNNING.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    if !RESTART.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    // --no-block: systemd stops this process, which it can't while systemctl waits for it.
+    match std::process::Command::new("systemctl").args(["restart", "--no-block", "furnish.service"]).status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => eprintln!("warning: restarting the furnish service: systemctl {status}"),
+        Err(err) => eprintln!("warning: restarting the furnish service: {err}"),
+    }
+}
 
 /// Never blocks: the operation goes on whether or not the client reads.
 fn send(out: &Out, reply: &Reply) {
@@ -303,12 +340,11 @@ where
     let writer = std::thread::Builder::new().name("furnish-out".into()).spawn(move || {
         let _slot = writer_slot;
         // Ends when the request is answered (all senders gone), or when the client stops reading.
-        for line in answers {
-            if output.write_all(format!("{line}\n").as_bytes()).and_then(|()| output.flush()).is_err() {
-                return;
-            }
+        let written = answers.iter().all(|line| output.write_all(format!("{line}\n").as_bytes()).and_then(|()| output.flush()).is_ok());
+        if written {
+            finish(output);
         }
-        finish(output);
+        restart_if_idle();
     });
     if let Err(err) = writer {
         return eprintln!("warning: can't answer a connection: {err}");
@@ -442,6 +478,13 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
         Request::Update { collection, headers } => {
             return collection_request(&collection, headers, "update", &|c| c.update().map(updated));
         }
+        Request::Restart => {
+            if !cfg!(target_os = "linux") || caller != Some(0) {
+                bail!("only root may restart the furnish service (on Linux)");
+            }
+            RESTART.store(true, Ordering::SeqCst);
+            return Ok(Reply::Done);
+        }
         // Reading, like updating: every user may see which versions there are.
         Request::Versions { app: key } => {
             return match app(&key).and_then(|app| app.versions()) {
@@ -483,7 +526,12 @@ fn answer(request: Request, out: &Out, caller: Option<u32>, authorize: &dyn Fn(b
             if force { engine::force_stop() } else { engine::abort() }
             Ok(Reply::Done)
         }
-        Request::Update { .. } | Request::PreviewCollection { .. } | Request::ApplyReviewed { .. } | Request::EnsurePresets { .. } | Request::Versions { .. } => unreachable!("answered above"),
+        Request::Update { .. }
+        | Request::PreviewCollection { .. }
+        | Request::ApplyReviewed { .. }
+        | Request::EnsurePresets { .. }
+        | Request::Versions { .. }
+        | Request::Restart => unreachable!("answered above"),
     }
 }
 
@@ -710,6 +758,21 @@ mod tests {
         let input = Deadline { inner: Trickle, until: Instant::now() + Duration::from_millis(100), set: |_, _| Ok(()) };
         let err = BufReader::new(input).read_line(&mut String::new()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn only_root_may_ask_for_a_restart() {
+        let (queue, _answers) = sync_channel(QUEUE);
+        let out: Out = Arc::new(Mutex::new(Some(queue)));
+        let allowed = |_| Ok(());
+        for caller in [None, Some(1000)] {
+            let err = answer(Request::Restart, &out, caller, &allowed).unwrap_err();
+            assert!(err.to_string().contains("only root"), "{err:#}");
+            assert!(!RESTART.load(Ordering::SeqCst));
+        }
+        let reply = answer(Request::Restart, &out, Some(0), &allowed);
+        assert_eq!(RESTART.swap(false, Ordering::SeqCst), cfg!(target_os = "linux"));
+        assert_eq!(reply.is_ok(), cfg!(target_os = "linux"));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
